@@ -105,17 +105,17 @@ public final class FunctionBinder implements Mutable {
     private int nestedWindowPosition;
     private ObjList<? extends BoundExpression> replacementExpressions;
     private ObjList<ExpressionNode> replacementNodes;
-    private final SqlBinder subqueryBinder;
+    private final SubqueryCompiler subqueries;
     private ExpressionNode windowRoot;
 
     /**
      * Allocates descriptions from the context's pools and hands built roots to its prepared functions; the
-     * sub-query binder is null where no sub-query can occur.
+     * sub-query compiler is null where no sub-query can occur.
      */
-    FunctionBinder(BindContext ctx, FunctionParser parser, SqlBinder subqueryBinder) {
+    FunctionBinder(BindContext ctx, FunctionParser parser, SubqueryCompiler subqueries) {
         this.ctx = ctx;
         this.parser = parser;
-        this.subqueryBinder = subqueryBinder;
+        this.subqueries = subqueries;
     }
 
     /**
@@ -842,7 +842,7 @@ public final class FunctionBinder implements Mutable {
      * Timestamp interval analysis compiles a sub-query BETWEEN bound pair low bound first.
      */
     private void compileTimestampBetweenLowerBound(SqlExecutionContext executionContext) throws SqlException {
-        if (subqueryBinder == null) {
+        if (subqueries == null) {
             return;
         }
         for (int i = 0, n = predicateConjuncts.size(); i < n; i++) {
@@ -854,7 +854,7 @@ public final class FunctionBinder implements Mutable {
                 final int columnIndex = findColumn(conjunct.args.getQuick(2), input, inputAlias);
                 if (columnIndex >= 0 && isNativeTimestampColumn(input.getColumnId(columnIndex))) {
                     final ExpressionNode lo = conjunct.args.getQuick(1);
-                    compiledLowerBoundIndex = subqueryBinder.compileSubquery(lo.queryModel, lo.position, executionContext);
+                    compiledLowerBoundIndex = subqueries.compileSubquery(lo.queryModel, lo.position, executionContext);
                     compiledLowerBoundNode = lo;
                     return;
                 }
@@ -1330,12 +1330,11 @@ public final class FunctionBinder implements Mutable {
         switch (ColumnType.tagOf(type)) {
             case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR -> {
             }
-            default ->
-                    throw SqlException.position(subqueryBinder.getSubqueryFirstColumnPosition(cursor.getSubqueryIndex()))
-                            .put("unsupported column type: ")
-                            .put(output.getColumnName(0))
-                            .put(": ")
-                            .put(ColumnType.nameOf(type));
+            default -> throw SqlException.position(subqueries.getSubqueryFirstColumnPosition(cursor.getSubqueryIndex()))
+                    .put("unsupported column type: ")
+                    .put(output.getColumnName(0))
+                    .put(": ")
+                    .put(ColumnType.nameOf(type));
         }
     }
 
@@ -1547,13 +1546,13 @@ public final class FunctionBinder implements Mutable {
             index = compiledLowerBoundIndex;
             compiledLowerBoundNode = null;
         } else {
-            index = subqueryBinder.compileSubquery(node.queryModel, node.position, executionContext);
+            index = subqueries.compileSubquery(node.queryModel, node.position, executionContext);
         }
-        final LogicalPlan plan = subqueryBinder.getSubqueryPlan(index);
+        final LogicalPlan plan = subqueries.getSubqueryPlan(index);
         final int flags = LogicalPlans.isResultStable(plan, executionContext) ? BoundExpression.STABLE_WITHIN_EXECUTION : 0;
         currentPreparation.isRebuildRequired = true;
         push(cursors.next().of(plan, index, flags, node.position), leafMark());
-        return new SubqueryCursorFunction(subqueryBinder.getSubqueryMetadata(index), true);
+        return new SubqueryCursorFunction(subqueries.getSubqueryMetadata(index), true);
     }
 
     Function createFunction(
@@ -1703,15 +1702,9 @@ public final class FunctionBinder implements Mutable {
         }
     }
 
-    /**
-     * Generates, in bind order, the pending sub-queries among the arguments of a call that failed to resolve or
-     * construct: a sub-query argument is generated before its call, so its errors precede the call's.
-     */
-    void generateArgumentSubqueries(SqlExecutionContext executionContext) throws SqlException {
-        for (int i = arguments.size() - 1; i > -1; i--) {
-            if (arguments.getQuick(i) instanceof CursorExpression cursor) {
-                subqueryBinder.completeSubquery(cursor.getSubqueryIndex(), executionContext);
-            }
+    void completeArgumentSubqueries(SqlExecutionContext executionContext) throws SqlException {
+        if (subqueries != null) {
+            subqueries.completeArgumentSubqueries(arguments, executionContext);
         }
     }
 
@@ -1906,7 +1899,7 @@ public final class FunctionBinder implements Mutable {
     }
 
     void validateNode(ExpressionNode node) {
-        if (node.type == ExpressionNode.QUERY && subqueryBinder != null) {
+        if (node.type == ExpressionNode.QUERY && subqueries != null) {
             return;
         }
         if (node.windowExpression != null && node != windowRoot

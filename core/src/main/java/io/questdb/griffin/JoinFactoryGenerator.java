@@ -1635,7 +1635,7 @@ final class JoinFactoryGenerator {
                     frame.resources.detach(slot);
                     frame.resources.detach(filterSlot);
                     frame.resources.own(filteredSlot, filterGenerator.generate(frame, predicate, step.getOutput(), base, filter,
-                            frame.functionInstantiator, executionContext, frame.isUpdate && SqlCodeGenerator.hasUpdateScan(join)));
+                            frame.functionInstantiator, executionContext, SqlCodeGenerator.hasUpdateScan(join)));
                     slot = filteredSlot;
                 }
                 masterSlot = slot;

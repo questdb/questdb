@@ -82,6 +82,7 @@ final class PivotBinder implements Mutable {
     private final IntList pivotKeyIndexes;
     private final CharSequenceHashSet pivotValues = new CharSequenceHashSet();
     private final StringSink pivotValueSink;
+    private final SubqueryCompiler subqueries;
     private final TemporalJoinBinder temporalJoinBinder;
     private final WindowBinder windowBinder;
     private final ObjectPool<WindowJoinPivotAggregate> windowJoinPivotAggregatePool = new ObjectPool<>(WindowJoinPivotAggregate::new, 4);
@@ -90,6 +91,7 @@ final class PivotBinder implements Mutable {
     PivotBinder(
             BindContext ctx,
             SqlBinder binder,
+            SubqueryCompiler subqueries,
             CairoConfiguration configuration,
             WindowBinder windowBinder,
             TemporalJoinBinder temporalJoinBinder,
@@ -99,6 +101,7 @@ final class PivotBinder implements Mutable {
     ) {
         this.ctx = ctx;
         this.binder = binder;
+        this.subqueries = subqueries;
         this.configuration = configuration;
         this.windowBinder = windowBinder;
         this.temporalJoinBinder = temporalJoinBinder;
@@ -221,8 +224,8 @@ final class PivotBinder implements Mutable {
         final ExpressionNode subquery = column.getSelectSubqueryExpr();
         final int position = subquery.position;
         // The values of the sub-query become output columns, so it is generated and run while binding.
-        final int index = binder.compileSubquery(subquery.queryModel, position, executionContext);
-        try (RecordCursorFactory factory = binder.takeSubquery(index, executionContext)) {
+        final int index = subqueries.compileSubquery(subquery.queryModel, position, executionContext);
+        try (RecordCursorFactory factory = subqueries.takeSubquery(index, executionContext)) {
             final RecordMetadata metadata = factory.getMetadata();
             if (metadata.getColumnCount() != 1) {
                 throw SqlException.$(position, "PIVOT IN subquery must return exactly one column, got ").put(metadata.getColumnCount());
@@ -664,7 +667,7 @@ final class PivotBinder implements Mutable {
         } else if (input.getJoinModels().size() > 1) {
             source = joinBinder.bindJoins(pivot, input, where, executionContext);
         } else {
-            source = binder.bindSource(pivot, input, executionContext);
+            source = binder.bindSource(input, executionContext);
         }
         final LatestByPlan latest = input.getLatestBy().size() > 0 ? binder.bindLatestBy(source, input) : null;
         if (where != null && !(source instanceof JoinPlan)) {

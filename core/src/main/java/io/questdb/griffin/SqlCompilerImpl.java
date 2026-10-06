@@ -215,6 +215,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final StringSink tmpSink = new StringSink();
     private final IntList tmpSlaveKeys = new IntList();
     private final ObjectPool<ExpressionNode> sqlNodePool;
+    private final SubqueryCompiler subqueryCompiler;
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final VacuumColumnVersions vacuumColumnVersions;
@@ -280,7 +281,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // we can pass 1 as worker count because actual query plan does not matter
             // for COMPILE VIEW, what we care about is validating view dependencies
             compileViewContext = new ViewCompilerExecutionContext(engine, 1);
-            binder = new SqlBinder(configuration, functionParser, this);
+            subqueryCompiler = new SubqueryCompiler(configuration, functionParser, this);
+            binder = subqueryCompiler.getBinder();
             final BindContext planNodes = binder.ctx;
             optimiser = new SqlOptimiser(characterStore, planNodes, tmpIds, tmpIndexes, tmpValues, tmpMasterKeys);
         } catch (Throwable th) {
@@ -395,7 +397,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         Misc.freeObjList(tableWriters);
         Misc.free(blockFileWriter);
         Misc.free(compileViewContext);
-        Misc.free(binder);
+        Misc.free(subqueryCompiler);
     }
 
     @Override
@@ -532,7 +534,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     @Override
     public void freeResourcesInFlight() {
-        final Throwable failure = binder.freeResourcesInFlight();
+        final Throwable failure = subqueryCompiler.freeResourcesInFlight();
         if (failure != null) {
             LOG.error().$("could not free in-flight compilation resources [error=").$(failure).I$();
         }
@@ -2211,15 +2213,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void authorizeUpdate(SqlExecutionContext executionContext) throws SqlException {
-        final TableToken tableToken = binder.getUpdateTableToken();
-        final CharSequence tableName = binder.getUpdateTableName();
+        final TableToken tableToken = binder.getUpdateBinder().getTableToken();
+        final CharSequence tableName = binder.getUpdateBinder().getTableName();
         try {
-            executionContext.getSecurityContext().authorizeTableUpdate(tableToken, binder.getUpdateTargetNames());
+            executionContext.getSecurityContext().authorizeTableUpdate(tableToken, binder.getUpdateBinder().getTargetNames());
         } catch (CairoException e) {
             if (e.isAuthorizationError()) {
                 throw e;
             }
-            throw SqlException.position(binder.getUpdateTablePosition()).put(e);
+            throw SqlException.position(binder.getUpdateBinder().getTablePosition()).put(e);
         }
         if (!executionContext.isWalApplication() && !Chars.equalsIgnoreCase(tableToken.getTableName(), tableName)) {
             throw TableReferenceOutOfDateException.of(tableName);
@@ -2227,7 +2229,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private Function bindStatementExpression(ExpressionNode expression, RecordMetadata metadata, int preferredType, SqlExecutionContext executionContext) throws SqlException {
-        return binder.bindExpression(expression, metadata, preferredType, executionContext);
+        return subqueryCompiler.compileExpression(expression, metadata, preferredType, executionContext);
     }
 
     private void checkViewModification(ExecutionModel executionModel) throws SqlException {
@@ -2248,7 +2250,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void clearExceptSqlText() {
-        binder.clear();
+        subqueryCompiler.clear();
         optimiser.clear();
         boundModel = null;
         sqlNodePool.clear();
@@ -3980,7 +3982,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private void compileQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         assert model.getBottomUpColumns().size() > 0 || model.getNestedModel() == null;
         optimiser.clear();
-        compilePlan(binder, model, this, executionContext);
+        compilePlan(subqueryCompiler, model, this, executionContext);
         boundModel = model;
     }
 
@@ -4492,7 +4494,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } catch (Throwable th) {
             // Preparations may still be owned when statement checks reject a
             // successfully bound query before cursor generation starts.
-            binder.freeResourcesInFlight(th);
+            subqueryCompiler.freeResourcesInFlight(th);
             // unregister query on error
             queryRegistry.unregister(sqlId, executionContext);
 
@@ -5466,7 +5468,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void freePlanningResources(Throwable failure) {
-        binder.freeResourcesInFlight(failure);
+        subqueryCompiler.freeResourcesInFlight(failure);
     }
 
     private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -5474,7 +5476,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             QueryModel updateQueryModel = model.getInnerExecutionModel().getQueryModel();
             final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
             final RecordCursorFactory recordCursorFactory = generateUpdateFactory(
-                    binder.getUpdateTableToken(),
+                    binder.getUpdateBinder().getTableToken(),
                     selectQueryModel,
                     updateQueryModel,
                     executionContext
@@ -5497,7 +5499,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (selectQueryModel != boundModel || binder.getRoot() == null) {
             compileQuery(selectQueryModel, executionContext);
         }
-        return generatePlan(binder, binder.isUpdate(), executionContext);
+        return generatePlan(binder, executionContext);
     }
 
     private RecordCursorFactory generateUpdateFactory(
@@ -5506,8 +5508,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             @Transient QueryModel updateQueryModel,
             @Transient SqlExecutionContext executionContext
     ) throws SqlException {
-        final IntList tableColumnTypes = binder.getUpdateTableColumnTypes();
-        final ObjList<CharSequence> tableColumnNames = binder.getUpdateTableColumnNames();
+        final IntList tableColumnTypes = binder.getUpdateBinder().getTableColumnTypes();
+        final ObjList<CharSequence> tableColumnNames = binder.getUpdateBinder().getTableColumnNames();
 
         RecordCursorFactory updateToDataCursorFactory = generateSelectOneShot(selectQueryModel, executionContext, false);
         try {
@@ -6080,31 +6082,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Binds one query level. The binder calls back here for each nested sub-query it must compile while binding.
-     */
-    void bindPlan(SqlBinder binder, QueryModel model, SqlParserCallback parserCallback,
-                  SqlExecutionContext executionContext) throws SqlException {
-        binder.setRoot(binder.bind(model, parserCallback, executionContext));
-    }
-
-    /**
      * Binds the statement, then completes its sub-queries and optimises it: every level shares
      * {@link #optimiser}, and a level is optimised after its sub-queries are generated.
      */
-    void compilePlan(SqlBinder binder, QueryModel model, SqlParserCallback parserCallback,
+    void compilePlan(SubqueryCompiler level, QueryModel model, SqlParserCallback parserCallback,
                      SqlExecutionContext executionContext) throws SqlException {
-        bindPlan(binder, model, parserCallback, executionContext);
-        binder.completeSubqueries(executionContext);
-        optimisePlan(binder, executionContext);
+        level.bind(model, parserCallback, executionContext);
+        level.completeSubqueries(executionContext);
+        optimisePlan(level.getBinder(), executionContext);
     }
 
     protected AlterOperationBuilder createAlterOperationBuilder() {
         return new AlterOperationBuilder();
     }
 
-    RecordCursorFactory generatePlan(SqlBinder binder, boolean isUpdate, SqlExecutionContext executionContext) throws SqlException {
+    RecordCursorFactory generatePlan(SqlBinder binder, SqlExecutionContext executionContext) throws SqlException {
         return codeGenerator.generate(binder.getRoot(), binder.getFunctionInstantiator(), binder.getExpressionRewriter(), binder.getFunctionSources(),
-                isUpdate, executionContext);
+                executionContext);
     }
 
     /**
@@ -6135,7 +6129,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     UpdateOperation generateUpdate(QueryModel updateQueryModel, SqlExecutionContext executionContext, TableRecordMetadata metadata) throws SqlException {
-        final TableToken updateTableToken = binder.getUpdateTableToken();
+        final TableToken updateTableToken = binder.getUpdateBinder().getTableToken();
         final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
 
         // Update QueryModel structure is
@@ -6166,8 +6160,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
             return new UpdateOperation(
                     updateTableToken,
-                    binder.getUpdateTableId(),
-                    binder.getUpdateMetadataVersion(),
+                    binder.getUpdateBinder().getTableId(),
+                    binder.getUpdateBinder().getMetadataVersion(),
                     lexer.getPosition(),
                     recordCursorFactory,
                     updateColumnNames

@@ -108,18 +108,18 @@ public final class FunctionInstantiator implements Mutable {
     private final PreparedFunctions prepared;
     private final ObjList<CursorExpression> sharedBoundCursors = new ObjList<>();
     private final ObjList<ScalarTimestampBoundHolder> sharedBoundHolders = new ObjList<>();
-    private final SqlBinder subqueryBinder;
+    private final SubqueryCompiler subqueries;
     private int bindingDepth;
     private int workerCloneDepth;
 
     /**
-     * The NULL probe schema is borrowed for single calls only; the sub-query binder is null where no sub-query can occur.
+     * The NULL probe schema is borrowed for single calls only; the sub-query compiler is null where no sub-query can occur.
      */
-    FunctionInstantiator(FunctionParser parser, PreparedFunctions prepared, OutputSchema nullProbeSchema, SqlBinder subqueryBinder) {
+    FunctionInstantiator(FunctionParser parser, PreparedFunctions prepared, OutputSchema nullProbeSchema, SubqueryCompiler subqueries) {
         this.parser = parser;
         this.prepared = prepared;
         this.nullProbeSchema = nullProbeSchema;
-        this.subqueryBinder = subqueryBinder;
+        this.subqueries = subqueries;
         nullProbeConstants.add(null);
         this.nullProbeRecord = new VirtualRecord(nullProbeConstants);
     }
@@ -629,7 +629,7 @@ public final class FunctionInstantiator implements Mutable {
     }
 
     int getScalarBoundDepth() {
-        return subqueryBinder.getScalarBoundDepth();
+        return subqueries.getScalarBoundDepth();
     }
 
     Function instantiateSubquery(CursorExpression cursor, SqlExecutionContext executionContext) throws SqlException {
@@ -643,11 +643,11 @@ public final class FunctionInstantiator implements Mutable {
         final int index = cursor.getSubqueryIndex();
         if (bindingDepth > 0) {
             // Binding builds against the output metadata; the generator rebuilds the root.
-            return new SubqueryCursorFunction(subqueryBinder.getSubqueryMetadata(index), true);
+            return new SubqueryCursorFunction(subqueries.getSubqueryMetadata(index), true);
         }
         final boolean isStable = cursor.isStableWithinExecution();
         if (workerCloneDepth == 0) {
-            return new SubqueryCursorFunction(subqueryBinder.takeSubquery(index, executionContext), isStable);
+            return new SubqueryCursorFunction(subqueries.takeSubquery(index, executionContext), isStable);
         }
         // Worker clones receive the owner's sub-query state, so generating their copy serially keeps
         // nested sub-queries from compiling once per worker at every nesting level.
@@ -662,7 +662,7 @@ public final class FunctionInstantiator implements Mutable {
         executionContext.setParallelTopKEnabled(false);
         executionContext.setParallelWindowJoinEnabled(false);
         try {
-            return new SubqueryCursorFunction(subqueryBinder.generateSubquery(index, executionContext), isStable);
+            return new SubqueryCursorFunction(subqueries.generateSubquery(index, executionContext), isStable);
         } finally {
             executionContext.setParallelFilterEnabled(isParallelFilter);
             executionContext.setParallelGroupByEnabled(isParallelGroupBy);
@@ -773,7 +773,7 @@ public final class FunctionInstantiator implements Mutable {
      * An owned factory of the sub-query for a consumer that reads it directly.
      */
     RecordCursorFactory takeSubquery(CursorExpression cursor, SqlExecutionContext executionContext) throws SqlException {
-        return subqueryBinder.takeSubquery(cursor.getSubqueryIndex(), executionContext);
+        return subqueries.takeSubquery(cursor.getSubqueryIndex(), executionContext);
     }
 
     private static final class InstantiationArguments implements Mutable {

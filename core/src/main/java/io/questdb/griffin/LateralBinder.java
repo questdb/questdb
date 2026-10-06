@@ -56,7 +56,7 @@ final class LateralBinder implements Mutable {
      * Binds the body of the dependent join step at {@code index}, whose outer scope is the output of
      * the inputs before it.
      */
-    LogicalPlan bindLateral(QueryModel model, QueryModel source, JoinPlan join, int index, SqlExecutionContext executionContext) throws SqlException {
+    LogicalPlan bindLateral(QueryModel source, JoinPlan join, int index, SqlExecutionContext executionContext) throws SqlException {
         final OutputSchema scope = scopes.next();
         for (int i = 0; i < index; i++) {
             final JoinInput input = join.getInputs().getQuick(i);
@@ -69,7 +69,7 @@ final class LateralBinder implements Mutable {
         }
         ctx.functionBinder.pushOuterScope(scope);
         try {
-            return binder.bindSource(model, source.getJoinModels().getQuick(index), executionContext);
+            return binder.bindSource(source.getJoinModels().getQuick(index), executionContext);
         } finally {
             ctx.functionBinder.popOuterScope();
         }

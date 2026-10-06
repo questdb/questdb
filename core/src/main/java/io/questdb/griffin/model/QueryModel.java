@@ -435,11 +435,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    public void copyUpdateTableMetadata(QueryModel updateTableModel) {
-        this.tableId = updateTableModel.getTableId();
-        this.metadataVersion = updateTableModel.getMetadataVersion();
-    }
-
     public ExpressionNode getAlias() {
         return alias;
     }

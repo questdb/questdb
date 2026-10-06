@@ -124,6 +124,9 @@ public final class ScanPlan extends LogicalPlan {
         this.isRandomAccess = isRandomAccess;
     }
 
+    /**
+     * True when the scan reads the target table of an UPDATE, which the binder opened for write.
+     */
     public boolean isUpdate() {
         return isUpdate;
     }

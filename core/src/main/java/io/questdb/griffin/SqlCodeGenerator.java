@@ -439,7 +439,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 frame.resources.detach(inputSlot);
                 frame.resources.detach(predicateSlot);
                 frame.resources.own(slot, filterGenerator.generate(frame, residual, input.getOutput(), base, predicate,
-                        frame.functionInstantiator, executionContext, frame.isUpdate && hasUpdateScan(input), null,
+                        frame.functionInstantiator, executionContext, hasUpdateScan(input), null,
                         input instanceof ScanPlan scan && scan.hasHint(ScanPlan.HINT_PRE_TOUCH)));
                 return slot;
             }
@@ -608,7 +608,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             FunctionInstantiator functionInstantiator,
             BoundExpressionRewriter expressionRewriter,
             TableFunctionSources functionSources,
-            boolean isUpdate,
             SqlExecutionContext executionContext
     ) throws SqlException {
         if (root == null) {
@@ -623,7 +622,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             frame.functionInstantiator = functionInstantiator;
             frame.expressionRewriter = expressionRewriter;
             frame.functionSources = functionSources;
-            frame.isUpdate = isUpdate;
             try {
                 projectionGenerator.setReferenceCounts(frame, root.getOutput(), 1);
                 projectionGenerator.collectColumnReferenceCounts(frame, root);
@@ -643,7 +641,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 frame.functionInstantiator = null;
                 frame.expressionRewriter = null;
                 frame.functionSources = null;
-                frame.isUpdate = false;
             }
         } finally {
             generationDepth--;

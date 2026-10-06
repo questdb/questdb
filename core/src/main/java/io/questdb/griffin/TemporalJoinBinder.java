@@ -671,7 +671,7 @@ final class TemporalJoinBinder implements Mutable {
         final HorizonJoinContext horizon = sources.getQuick(offsetIndex).getHorizonJoinContext();
         final QueryModel masterModel = sources.getQuick(0);
         final CharSequence masterAlias = sourceAlias(masterModel);
-        LogicalPlan master = binder.bindSource(model, masterModel, executionContext);
+        LogicalPlan master = binder.bindSource(masterModel, executionContext);
         if (where != null) {
             rejectHorizonWhere(where, master.getOutput(), masterAlias);
             final BoundExpression predicate = binder.bindPredicate(where, master, masterModel, executionContext);
@@ -716,7 +716,7 @@ final class TemporalJoinBinder implements Mutable {
             }
             final QueryModel occurrence = sources.getQuick(i);
             final CharSequence slaveAlias = sourceAlias(occurrence);
-            final LogicalPlan slave = binder.bindSource(model, occurrence, executionContext);
+            final LogicalPlan slave = binder.bindSource(occurrence, executionContext);
             final HorizonJoinSlave step = ctx.horizonJoinSlaves.next().of(slave, slaveAlias, occurrence.getJoinKeywordPosition());
             plan.getSlaves().add(step);
             final OutputSchema slaveOutput = slave.getOutput();
@@ -759,12 +759,12 @@ final class TemporalJoinBinder implements Mutable {
             master = joinBinder.bindJoins(model, source, where, first, executionContext);
             where = null;
         } else {
-            master = binder.bindSource(model, masterModel, executionContext);
+            master = binder.bindSource(masterModel, executionContext);
         }
         final WindowJoinPlan plan = ctx.windowJoinPlans.next().of(master, source.getModelPosition());
         for (int i = first, n = sources.size(); i < n; i++) {
             final QueryModel occurrence = sources.getQuick(i);
-            final LogicalPlan slave = binder.bindSource(model, occurrence, executionContext);
+            final LogicalPlan slave = binder.bindSource(occurrence, executionContext);
             final WindowJoinStep step = ctx.windowJoinSteps.next().of(slave, masterAlias, sourceAlias(occurrence),
                     occurrence.getWindowJoinContext().isIncludePrevailing(), occurrence.getJoinKeywordPosition());
             step.setTableSource(occurrence.getNestedModel() == null && occurrence.getTableNameExpr() != null

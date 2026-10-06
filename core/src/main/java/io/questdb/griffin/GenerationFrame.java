@@ -90,7 +90,6 @@ final class GenerationFrame implements Closeable, Mutable {
     boolean isJoinIntervalCapture;
     boolean isJoinSlaveInput;
     boolean isPatternNegated;
-    boolean isUpdate;
     WindowJoinStep joinIntervalStep;
     RuntimeIntrinsicIntervalModel joinIntervals;
     BoundExpression latestWithin;

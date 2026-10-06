@@ -147,15 +147,15 @@ final class BindContext implements Mutable {
     boolean isSubqueryFailed;
     int nextColumnId;
 
-    BindContext(FunctionParser functionParser, ObjectPool<ExpressionNode> bindingExpressions, CharacterStore characterStore, SqlBinder subqueryBinder) {
+    BindContext(FunctionParser functionParser, ObjectPool<ExpressionNode> bindingExpressions, CharacterStore characterStore, SubqueryCompiler subqueries) {
         this.bindingExpressions = bindingExpressions;
         this.characterStore = characterStore;
         this.tmpOuterColumns = projectionAliasIndexes;
         this.functionFactoryCache = functionParser.getFunctionFactoryCache();
         this.expressionRewriter = new BoundExpressionRewriter(functionFactoryCache, columns, constants, functions, outerColumns,
                 parameters, types, preparedFunctions, tmpArguments, tmpPositions);
-        this.functionInstantiator = new FunctionInstantiator(functionParser, preparedFunctions, tmpScope, subqueryBinder);
-        this.functionBinder = new FunctionBinder(this, functionParser, subqueryBinder);
+        this.functionInstantiator = new FunctionInstantiator(functionParser, preparedFunctions, tmpScope, subqueries);
+        this.functionBinder = new FunctionBinder(this, functionParser, subqueries);
         this.functionSources = new TableFunctionSources(functionParser);
     }
 

@@ -647,7 +647,7 @@ final class JoinBinder implements Mutable {
         }
     }
 
-    private LogicalPlan bindJoinSources(QueryModel model, QueryModel source, ExpressionNode where, int sourceCount,
+    private LogicalPlan bindJoinSources(QueryModel source, ExpressionNode where, int sourceCount,
                                         SqlExecutionContext executionContext) throws SqlException {
         final ObjList<QueryModel> sources = source.getJoinModels();
         boolean hasTemporalJoin = false;
@@ -693,10 +693,10 @@ final class JoinBinder implements Mutable {
                 final LogicalPlan input;
                 if (isDependent) {
                     final int outerColumnBase = ctx.functionBinder.getOuterColumnIds().size();
-                    input = lateralBinder.bindLateral(model, source, join, i, executionContext);
+                    input = lateralBinder.bindLateral(source, join, i, executionContext);
                     addLateralDependencies(join, i, outerColumnBase);
                 } else {
-                    input = binder.bindSource(model, occurrence, executionContext);
+                    input = binder.bindSource(occurrence, executionContext);
                 }
                 if (hasTemporalJoin) {
                     retainImplicitTimestamp(input);
@@ -1268,7 +1268,7 @@ final class JoinBinder implements Mutable {
         final boolean previous = ctx.isInsideJoin;
         ctx.isInsideJoin = true;
         try {
-            return bindJoinSources(model, source, where, sourceCount, executionContext);
+            return bindJoinSources(source, where, sourceCount, executionContext);
         } finally {
             ctx.isInsideJoin = previous;
         }

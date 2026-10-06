@@ -1524,16 +1524,6 @@ final class AggregateBinder implements Mutable {
     /**
      * Rejects an aggregate in an UPDATE assignment, or an UPDATE too complex to bind.
      */
-    static SqlException updateAggregateException(QueryModel model, FunctionFactoryCache functionFactoryCache) {
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            final ExpressionNode value = model.getBottomUpColumns().getQuick(i).getAst();
-            if (value.type == ExpressionNode.FUNCTION && functionFactoryCache.isGroupBy(value.token)) {
-                return SqlException.$(value.position, "Unsupported function in SET clause");
-            }
-        }
-        return SqlException.$(model.getModelPosition(), "Unsupported SQL complexity for the UPDATE statement");
-    }
-
     BoundExpression bindAggregateOutput(ExpressionNode expression, QueryModel source, GroupingPlan aggregate, SqlExecutionContext context) throws SqlException {
         ctx.substitutionNodes.clear();
         ctx.substitutionColumns.clear();

@@ -1264,32 +1264,6 @@ final class WindowBinder implements Mutable {
         return true;
     }
 
-    SqlException updateWindowException(QueryModel model) {
-        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
-        boolean isGrouped = false;
-        for (int i = 0, n = columns.size(); i < n && !isGrouped; i++) {
-            final ExpressionNode expression = columns.getQuick(i).getAst();
-            isGrouped = ctx.hasAggregate(expression)
-                    || expression.windowExpression != null && ctx.functionFactoryCache.isGroupBy(expression.token);
-        }
-        if (isGrouped) {
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                final ExpressionNode expression = columns.getQuick(i).getAst();
-                final int position = expression.windowExpression != null ? expression.position : findWindowPosition(expression, false, true);
-                if (position >= 0) {
-                    return SqlException.$(position, "Window function is not allowed in context of aggregation. Use sub-query.");
-                }
-            }
-        }
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final ExpressionNode expression = columns.getQuick(i).getAst();
-            if (expression.windowExpression != null) {
-                return SqlException.emptyWindowContext(expression.position);
-            }
-        }
-        return AggregateBinder.updateAggregateException(model, ctx.functionFactoryCache);
-    }
-
     void validateNamedWindows(QueryModel model) throws SqlException {
         final ObjList<CharSequence> names = model.getNamedWindows().keys();
         for (int i = 0, n = names.size(); i < n; i++) {

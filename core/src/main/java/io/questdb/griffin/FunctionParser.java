@@ -163,7 +163,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private int executionRequirementPosition = -1;
     private RecordMetadata metadata;
     private SqlExecutionContext sqlExecutionContext;
-    private SqlBinder subqueryBinder;
+    private SubqueryCompiler subqueries;
 
     public FunctionParser(CairoConfiguration configuration, FunctionFactoryCache functionFactoryCache) {
         this.configuration = configuration;
@@ -647,7 +647,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 function = createFunction(node, mutableArgs, mutableArgPositions);
             } catch (SqlException e) {
                 if (binding != null) {
-                    binding.generateArgumentSubqueries(sqlExecutionContext);
+                    binding.completeArgumentSubqueries(sqlExecutionContext);
                 }
                 throw e;
             }
@@ -1013,11 +1013,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
-        if (subqueryBinder == null) {
+        if (subqueries == null) {
             throw SqlException.$(node.position, "sub-query is not supported in this context");
         }
-        final int index = subqueryBinder.compileSubquery(node.queryModel, node.position, sqlExecutionContext);
-        return new CursorFunction(subqueryBinder.takeSubquery(index, sqlExecutionContext));
+        final int index = subqueries.compileSubquery(node.queryModel, node.position, sqlExecutionContext);
+        return new CursorFunction(subqueries.takeSubquery(index, sqlExecutionContext));
     }
 
     /**
@@ -1868,9 +1868,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
      * Installs the compiler that generates sub-queries met outside function binding, e.g. in
      * table-function arguments, and returns the previous one for the caller to restore.
      */
-    SqlBinder swapSubqueryBinder(SqlBinder binder) {
-        final SqlBinder previous = subqueryBinder;
-        subqueryBinder = binder;
+    SubqueryCompiler swapSubqueryCompiler(SubqueryCompiler subqueries) {
+        final SubqueryCompiler previous = this.subqueries;
+        this.subqueries = subqueries;
         return previous;
     }
 
