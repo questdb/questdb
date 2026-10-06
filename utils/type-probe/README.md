@@ -107,7 +107,7 @@ site of `sites.tsv`, a `pg_oid` that names no constant, or a new wire kind whose
 ## 4. Predefined places, by kind
 
 <!-- counts: start -->
-The instrument table lists 560 sites where a type's behaviour could differ from its family's, by kind and by the instrument that names each when a type is added:
+The instrument table lists 564 sites where a type's behaviour could differ from its family's, by kind and by the instrument that names each when a type is added:
 
 | kind | build | test | refused at setup | manual | not type dependent | all |
 |---|---|---|---|---|---|---|
@@ -115,7 +115,7 @@ The instrument table lists 560 sites where a type's behaviour could differ from 
 | compare-arm | 0 | 0 | 1 | 0 | 0 | 1 |
 | family-arm | 0 | 6 | 19 | 12 | 43 | 80 |
 | family-opcode | 0 | 4 | 38 | 1 | 16 | 59 |
-| kind-predicate | 0 | 3 | 0 | 0 | 3 | 6 |
+| kind-predicate | 0 | 6 | 0 | 0 | 4 | 10 |
 | pair-switch | 5 | 0 | 0 | 0 | 0 | 5 |
 | policy-switch | 18 | 0 | 0 | 0 | 0 | 18 |
 | registration | 17 | 4 | 0 | 0 | 0 | 21 |
@@ -123,7 +123,7 @@ The instrument table lists 560 sites where a type's behaviour could differ from 
 | tag-switch-default | 0 | 115 | 4 | 22 | 135 | 276 |
 | wire-kind-switch | 14 | 0 | 0 | 3 | 0 | 17 |
 | writer-arm | 0 | 0 | 0 | 0 | 30 | 30 |
-| all | 68 | 133 | 63 | 56 | 240 | 560 |
+| all | 68 | 136 | 63 | 56 | 241 | 564 |
 <!-- counts: end -->
 
 - **Registration.** Six places, each marked by a comment `type-registration: <anchor>`: the tag
@@ -280,7 +280,7 @@ The compiler lists the site when a type is added: an exhaustive switch or match 
 | Rust ColumnTypeTag enum | `core/rust/qdb-core/src/col_type.rs` | `` | where a new type registers itself: javac (or rustc, the C++ compiler) lists the exhaustive switch or the enum |
 | native ColumnType enum | `core/src/main/c/share/column_type.h` | `` | where a new type registers itself: javac (or rustc, the C++ compiler) lists the exhaustive switch or the enum |
 
-### Reported by a test (133)
+### Reported by a test (136)
 
 A coverage test, `TypeDriverTest` or a kit path runs the type through the site and reports what is missing.
 
@@ -396,6 +396,9 @@ A coverage test, `TypeDriverTest` or a kit path runs the type through the site a
 | JsonExtractTypedFunctionFactory.isIntrusivelyOptimized tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/json/JsonExtractTypedFunctionFactory.java` | `isIntrusivelyOptimized` | `FunctionReachTest`: inside a function factory: a later type reaches it only through overload matching, which FunctionReachTest lists for every later type |
 | JsonExtractTypedFunctionFactory.newInstance tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/json/JsonExtractTypedFunctionFactory.java` | `newInstance` | `FunctionReachTest`: inside a function factory: a later type reaches it only through overload matching, which FunctionReachTest lists for every later type |
 | BucketSelectWindowFunction.readLongValue tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/window/BucketSelectWindowFunction.java` | `readLongValue` | `FunctionReachTest`: inside a function factory: a later type reaches it only through overload matching, which FunctionReachTest lists for every later type |
+| CadenceFunctionFactory.newInstance0 isIntegral #1 | `core/src/main/java/io/questdb/griffin/engine/functions/window/CadenceFunctionFactory.java` | `newInstance0` | `sql.subsample_stride`: cadence() takes a value of the type as the stride: an integral type is read with getLong(null), any other refused as no integer |
+| CadenceFunctionFactory.newInstance0 isIntegral #2 | `core/src/main/java/io/questdb/griffin/engine/functions/window/CadenceFunctionFactory.java` | `newInstance0` | `TypeDriverTest`: the seed is read by tier and NULL policy, as at SqlOptimiser.validateCadenceSeedOrThrow, pinned by TypeDriverTest.testSentinelRead* |
+| UniformFunctionFactory.newInstance isIntegral | `core/src/main/java/io/questdb/griffin/engine/functions/window/UniformFunctionFactory.java` | `newInstance` | `sql.subsample_target`: uniform() takes a value of the type as the target point count: an integral type is read with getLong(null), any other refused as no integer |
 | RndSymbolZipfFunctionFactory.newInstance tag switch #1 | `core/src/main/java/io/questdb/griffin/engine/functions/rnd/RndSymbolZipfFunctionFactory.java` | `newInstance` | `FunctionReachTest`: inside a function factory: a later type reaches it only through overload matching, which FunctionReachTest lists for every later type |
 | RndSymbolZipfFunctionFactory.newInstance tag switch #2 | `core/src/main/java/io/questdb/griffin/engine/functions/rnd/RndSymbolZipfFunctionFactory.java` | `newInstance` | `FunctionReachTest`: inside a function factory: a later type reaches it only through overload matching, which FunctionReachTest lists for every later type |
 | LevelTwoPriceFunctionFactory.allowedColumnType tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/finance/LevelTwoPriceFunctionFactory.java` | `allowedColumnType` | `FunctionReachTest`: inside a function factory: a later type reaches it only through overload matching, which FunctionReachTest lists for every later type |
@@ -416,7 +419,7 @@ A coverage test, `TypeDriverTest` or a kit path runs the type through the site a
 | BindVariableServiceImpl.setVarchar0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setVarchar0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, or the type its variable holds, which the kit checks |
 | GreatestNumericFunctionFactory.newInstance tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/math/GreatestNumericFunctionFactory.java` | `newInstance` | `FunctionReachTest`: inside a function factory: a later type reaches it only through overload matching, which FunctionReachTest lists for every later type |
 | LeastNumericFunctionFactory.newInstance tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/math/LeastNumericFunctionFactory.java` | `newInstance` | `FunctionReachTest`: inside a function factory: a later type reaches it only through overload matching, which FunctionReachTest lists for every later type |
-| SortKeyEncoder.keyKind family switch | `core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java` | `keyKind` | `GeneratedAccessorCoverageTest`: the sort-key kind by accessor; GeneratedAccessorCoverageTest reports a type keyKind does not handle (an unsigned INT look-alike, for example) |
+| SortKeyEncoder.keyKind family switch | `core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java` | `keyKind` | `GeneratedAccessorCoverageTest`: the sort-key kind by accessor; GeneratedAccessorCoverageTest reports a type keyKind does not handle (an unsigned INT look-alike, for example); a type given a key kind and encode opcode of its own also adds their arms in encodeFixed8 and encodeFixedColumn |
 | PGOids.getTypeOid tag table TYPE_OIDS | `core/src/main/java/io/questdb/cutlass/pgwire/PGOids.java` | `getTypeOid` | `TypeDriverTest`: the PG type OID table by tag, filled from the type drivers; testProtocolAnswers pins every tag's OID |
 | converters.cpp::Java_io_questdb_griffin_ConvertersNative_fixedToFixed switch | `core/src/main/c/share/converters.cpp` | `Java_io_questdb_griffin_ConvertersNative_fixedToFixed` | `storage.alter`: a switch over a packed pair of native types, not over the enum, so -Wswitch does not list it; a pair it does not list fails ALTER COLUMN TYPE with "Unsupported conversion", which kit path storage.alter reports |
 
@@ -490,7 +493,7 @@ A kit path reaches the site, which refuses the type before it allocates or copie
 | QWP WAL append #6 | `core/src/main/java/io/questdb/cutlass/line/tcp/QwpWalAppender.java` | `appendToWalColumnar` | `ingest.qwp`, "no family arm for <type> at QWP WAL append": the switch keys on familyArmOpcodeOf; an unlike type reaches the default, which raises the guard error |
 | col_type::try_from match | `core/rust/qdb-core/src/col_type.rs` | `try_from` | `storage.parquet`, "unknown QuestDB column tag code": decodes the tag number at the JNI boundary; a Java tag Rust does not know is refused |
 
-### Not type-dependent (240)
+### Not type-dependent (241)
 
 The site moves bytes by width, orders by tier or is reached by one family only, so it cannot treat a new type wrongly; the reason says which.
 
@@ -649,6 +652,7 @@ The site moves bytes by width, orders by tier or is reached by one family only, 
 | AvgDecimalRescaleWindowFunctionFactory.writeNull tag switch #6 | `core/src/main/java/io/questdb/griffin/engine/functions/window/AvgDecimalRescaleWindowFunctionFactory.java` | `writeNull` | reached only for a DECIMAL type: the switch tells the decimal widths apart |
 | AvgDecimalWindowFunctionFactory.newInstance tag switch #1 | `core/src/main/java/io/questdb/griffin/engine/functions/window/AvgDecimalWindowFunctionFactory.java` | `newInstance` | reached only for a DECIMAL type: the switch tells the decimal widths apart |
 | AvgDecimalWindowFunctionFactory.newInstance tag switch #2 | `core/src/main/java/io/questdb/griffin/engine/functions/window/AvgDecimalWindowFunctionFactory.java` | `newInstance` | reached only for a DECIMAL type: the switch tells the decimal widths apart |
+| BucketSelectWindowFunction.coerceAndValidateConstantTarget isIntegral | `core/src/main/java/io/questdb/griffin/engine/functions/window/BucketSelectWindowFunction.java` | `coerceAndValidateConstantTarget` | a relation-kind test; the constant target count is read with getLong(null), as uniform()'s is, which the kit's sql.subsample_target checks for a value of the type and its NULL |
 | CountDecimalWindowFunctionFactory.newInstance tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/window/CountDecimalWindowFunctionFactory.java` | `newInstance` | reached only for a DECIMAL type: the switch tells the decimal widths apart |
 | FirstValueDecimalWindowFunctionFactory.newInstance tag switch #1 | `core/src/main/java/io/questdb/griffin/engine/functions/window/FirstValueDecimalWindowFunctionFactory.java` | `newInstance` | reached only for a DECIMAL type: the switch tells the decimal widths apart |
 | FirstValueDecimalWindowFunctionFactory.newInstance tag switch #2 | `core/src/main/java/io/questdb/griffin/engine/functions/window/FirstValueDecimalWindowFunctionFactory.java` | `newInstance` | reached only for a DECIMAL type: the switch tells the decimal widths apart |
@@ -780,9 +784,9 @@ with `--manual-done`. A ticked copy of the numbered list below is not read.
 31. SortKeyEncoder.keyShapeOf family switch (`core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java`, `keyShapeOf`): decide whether the type behaves as its family's namesake here; if not, give it an arm. Encodes a sort key by accessor; a type ordered unlike its family (an unsigned tier) needs its own encoding, which compareOpcode does not gate; kit paths sql.order_asc and sql.order_desc reach it.
 32. SortKeyEncoder.SortKeyEncoder accessorOpcodeOf (`core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java`, `SortKeyEncoder`): decide whether the type behaves as its family's namesake here; if not, give it an opcode. Encodes a sort key by accessor; a type ordered unlike its family (an unsigned tier) needs its own encoding, which compareOpcode does not gate; kit paths sql.order_asc and sql.order_desc reach it.
 33. SortKeyEncoder.SortKeyEncoder accessorOf (`core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java`, `SortKeyEncoder`): decide whether the type behaves as its family's namesake here; if not, give it an arm. Encodes a sort key by accessor; a type ordered unlike its family (an unsigned tier) needs its own encoding, which compareOpcode does not gate; kit paths sql.order_asc and sql.order_desc reach it.
-34. CairoTextWriter.initWriterAndOverrideImportTypes wire-kind switch (`core/src/main/java/io/questdb/cutlass/text/CairoTextWriter.java`, `initWriterAndOverrideImportTypes`): decide which import type the type's wire kind takes; the default arm keeps the detected one. The CSV import's switch over wire kinds has a default arm that keeps the column as detected; kit path ingest.csv reaches it.
-35. ParallelCsvFileImporter.initWriterAndOverrideImportMetadata wire-kind switch (`core/src/main/java/io/questdb/cutlass/text/ParallelCsvFileImporter.java`, `initWriterAndOverrideImportMetadata`): decide which import type the type's wire kind takes; the default arm keeps the detected one. The CSV import's switch over wire kinds has a default arm that keeps the column as detected; kit path ingest.csv reaches it.
-36. TextMetadataParser.createImportedType wire-kind switch (`core/src/main/java/io/questdb/cutlass/text/TextMetadataParser.java`, `createImportedType`): decide which import type the type's wire kind takes; the default arm keeps the detected one. The CSV import's switch over wire kinds has a default arm that keeps the column as detected; kit path ingest.csv reaches it.
+34. CairoTextWriter.initWriterAndOverrideImportTypes wire-kind switch (`core/src/main/java/io/questdb/cutlass/text/CairoTextWriter.java`, `initWriterAndOverrideImportTypes`): decide which import adapter the type's wire kind takes; the default arm takes `TypeManager.getTypeAdapter` for the column's type, which refuses a type without an adapter. The CSV import's switch over wire kinds has a default arm that takes TypeManager.getTypeAdapter for the column's type; kit path ingest.csv reaches it.
+35. ParallelCsvFileImporter.initWriterAndOverrideImportMetadata wire-kind switch (`core/src/main/java/io/questdb/cutlass/text/ParallelCsvFileImporter.java`, `initWriterAndOverrideImportMetadata`): decide which import adapter the type's wire kind takes; the default arm takes `TypeManager.getTypeAdapter` for the column's type, which refuses a type without an adapter. The CSV import's switch over wire kinds has a default arm that takes TypeManager.getTypeAdapter for the column's type; kit path ingest.csv reaches it.
+36. TextMetadataParser.createImportedType wire-kind switch (`core/src/main/java/io/questdb/cutlass/text/TextMetadataParser.java`, `createImportedType`): decide which import adapter the type's wire kind takes; the default arm takes `TypeManager.getTypeAdapter` for the column's type, which refuses a type without an adapter. The CSV import's switch over wire kinds has a default arm that takes TypeManager.getTypeAdapter for the column's type; kit path ingest.csv reaches it.
 37. decode::decode_int32_dispatch match (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_int32_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
 38. decode::decode_int64_dispatch match (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_int64_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
 39. decode::decode_fixed_len_dispatch match #1 (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_fixed_len_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
@@ -839,6 +843,17 @@ the test, so each failing test is an item: the copier test of `RelationCoverageT
 `RecordToRowCopierUtils.copyOpcode`, its CASE and UNION tests to their pair switches, its cast test,
 `FunctionReachTest`'s later-type test, `RelationRulesTest` and `TypeDriverTest` to the type's
 registration; else to the first row its instrument names.
+
+Some answers go where no single row names them. An explicit cast the type admits (`sql.cast`,
+`RelationCoverageTest`'s cast test) is a function factory of its own,
+`Cast<From>To<Type>FunctionFactory` under `core/src/main/java/io/questdb/griffin/engine/functions/cast/`,
+registered by a line in `core/src/main/resources/function_list.txt`. A CASE escalation
+(`RelationCoverageTest`'s CASE test) is an entry of `CaseCommon`'s constructors table with its
+function class. A `storage.alter` item names one row of its instrument, and a conversion the type
+admits is written at each: `converters.cpp` `fixedToFixed`, with `converters.h`'s
+`is_fixed_convertible` and the `EnumTypeMap` specialisation it asserts, and
+`DecimalColumnTypeConverter.getLoader`. A type given a sort-key kind of its own (`SortKeyEncoder.keyKind`)
+also adds its arms in `encodeFixed8` and `encodeFixedColumn`.
 
 There is one item per location and decision; a compiler error repeated by several builds is one
 item. Of several failures at one kit location (two later types failing the same path), the item
