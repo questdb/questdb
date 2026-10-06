@@ -159,6 +159,17 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return SymbolTable.VALUE_IS_NULL;
     }
 
+    @Override
+    public int keyOf(CharSequence value, int cachedKey) {
+        if (value == null) {
+            return SymbolTable.VALUE_IS_NULL;
+        }
+        if (Chars.equalsNc(value, valueOf(cachedKey, keyOfView))) {
+            return cachedKey;
+        }
+        return keyOf(value);
+    }
+
     public boolean needsReopen(long columnNameTxn) {
         return this.columnNameTxn != columnNameTxn;
     }
