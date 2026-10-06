@@ -32,6 +32,7 @@ import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.IQueryModel;
+import org.jetbrains.annotations.Nullable;
 
 public interface CreateMatViewOperation extends TableStructure, Operation {
 
@@ -88,10 +89,12 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
     boolean isPassthrough();
 
     /**
-     * Replaces the SQL text the view definition stores with {@code matViewSql}. CREATE uses it to store
-     * a passthrough view's query with its top-level wildcard expanded into the columns the view has.
+     * Replaces the SQL text the view definition stores with {@code matViewSql}. CREATE calls it on every
+     * compile pass with the query it rewrites: a passthrough view's top-level wildcard expanded into the
+     * columns the view has, and bare zero-argument function names written as calls. Null stores the text
+     * the user wrote.
      */
-    void setMatViewSql(String matViewSql);
+    void setMatViewSql(@Nullable String matViewSql);
 
     void updateOperationFutureTableToken(TableToken tableToken);
 

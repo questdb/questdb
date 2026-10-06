@@ -523,9 +523,14 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     public void initColumnMetadata(@Transient LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap) {
-        assert columnNames.size() == 0;
-        assert columnBits.size() == 0;
-
+        // Only a create-as-select op scrapes its columns from the query. A CREATE MATERIALIZED VIEW retry
+        // calls this again after validateAndUpdateMetadataFromSelect() has filled the column lists for
+        // the discarded pass.
+        assert selectText != null;
+        columnNames.clear();
+        columnBits.clear();
+        coveringColumnIndicesList.clear();
+        parquetEncodingConfigs.clear();
         colNameToDedupClausePos.clear();
         colNameToIndexClausePos.clear();
         colNameToCastClausePos.clear();

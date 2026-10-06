@@ -91,6 +91,13 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final int baseTableNamePosition;
     private final CairoConfiguration configuration;
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
+    // Index definitions the CREATE statement declares. initColumnMetadata() replaces the create-table
+    // operation's augmented metadata with each pass's derived columns, which include indexes inherited
+    // from the base table, so validateAndUpdateMetadataFromModel() reads the declarations from here.
+    private final LowerCaseCharSequenceObjHashMap<TableColumnMetadata> declaredColumnMetadata = new LowerCaseCharSequenceObjHashMap<>();
+    // PARTITION BY the CREATE statement declares, or NONE. updateMatViewTablePartitionBy() writes the
+    // derived partitioning into the create-table operation, so each pass restores this value first.
+    private final int declaredPartitionBy;
     private final boolean deferred;
     private final LowerCaseCharSequenceHashSet passthroughTimestampColumnNames = new LowerCaseCharSequenceHashSet();
     private final int periodDelay;
@@ -108,7 +115,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private int baseTableTimestampType;
     private CreateTableOperationImpl createTableOperation;
     // The SQL the view definition stores, when it differs from the text the user wrote: a passthrough
-    // view's query with its top-level wildcard expanded into the view's columns. Null stores the text.
+    // view's query with its top-level wildcard expanded into the view's columns, and bare zero-argument
+    // function names written as calls. Null stores the text.
     private String matViewSql;
     private boolean passthrough;
     private int periodLength;
@@ -140,6 +148,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         this.configuration = configuration;
         this.sqlText = sqlText;
         this.createTableOperation = createTableOperation;
+        declaredColumnMetadata.putAll(createTableOperation.getAugmentedColumnMetadata());
+        this.declaredPartitionBy = createTableOperation.getPartitionBy();
         this.refreshType = refreshType;
         this.deferred = deferred;
         this.baseTableName = baseTableName;
@@ -366,7 +376,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
-    public void setMatViewSql(String matViewSql) {
+    public void setMatViewSql(@Nullable String matViewSql) {
         this.matViewSql = matViewSql;
     }
 
@@ -394,8 +404,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         // Compiler must put table together using query metadata.
         createColumnModelMap.clear();
         passthroughTimestampColumnNames.clear();
-        final LowerCaseCharSequenceObjHashMap<TableColumnMetadata> augColumnMetadataMap =
-                createTableOperation.getAugmentedColumnMetadata();
+        passthrough = false;
+        createTableOperation.setPartitionBy(declaredPartitionBy);
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
             // Key the column-model map by the clean display name, matching the factory metadata names
@@ -406,10 +416,10 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             final CreateTableColumnModel model = CreateTableColumnModel.FACTORY.newInstance();
             model.setColumnNamePos(qc.getAst().position);
             model.setColumnType(ColumnType.UNDEFINED);
-            // Copy index() definitions from create table op, so that we don't lose them.
-            TableColumnMetadata augColumnMetadata = augColumnMetadataMap.get(columnName);
-            if (augColumnMetadata != null && augColumnMetadata.isIndexed()) {
-                model.setIndexType(augColumnMetadata.getIndexType(), qc.getAst().position, augColumnMetadata.getIndexValueBlockCapacity());
+            // Copy the declared index() definitions, so that we don't lose them.
+            final TableColumnMetadata declaredMetadata = declaredColumnMetadata.get(columnName);
+            if (declaredMetadata != null && declaredMetadata.isIndexed()) {
+                model.setIndexType(declaredMetadata.getIndexType(), qc.getAst().position, declaredMetadata.getIndexValueBlockCapacity());
             }
             createColumnModelMap.put(columnName, model);
         }

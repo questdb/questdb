@@ -5830,10 +5830,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             }
                             // Reject a bad EXPIRE ROWS policy before the view exists.
                             validateCreateMatViewExpiryPolicy(executionContext, createMatViewOp, createTableOp, metadata);
-                            final String storedSql = buildStoredMatViewSql(executionContext, createMatViewOp, metadata);
-                            if (storedSql != null) {
-                                createMatViewOp.setMatViewSql(storedSql);
-                            }
+                            // Each pass calls setMatViewSql(), even with null, so the view stores what the pass
+                            // that creates it built.
+                            createMatViewOp.setMatViewSql(buildStoredMatViewSql(executionContext, createMatViewOp, metadata));
 
                             if (initialExpiryPolicyVersion != engine.getMetadataCache().getExpiryPolicyVersion()) {
                                 if (retryCount == maxRecompileAttempts) {
