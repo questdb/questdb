@@ -26,24 +26,38 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.DurableEpochManifest;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cutlass.text.ParallelCsvFileImporter;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.mp.SCSequence;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * A process crash right after a partition operation must not change what the table holds. After a crash,
@@ -52,8 +66,10 @@ import java.util.List;
  * it. Each case runs a partition operation on a table with a given save-point history, crashes before any
  * later save point, restarts, and requires the rows, the partition list and the WAL apply position to equal
  * what the table showed before the crash, which is the result of the same statements without a crash.
- * Each operation runs both through the WAL and directly in the writer of a hard-suspended table, the way
- * {@code FORCE DROP PARTITION} always runs; a direct change is not in the WAL at all.
+ * Each operation runs through the WAL and directly in the writer of a hard-suspended table, the way
+ * {@code FORCE DROP PARTITION} always runs, once with the writer free and once queued behind a busy writer; a
+ * direct change is not in the WAL at all. COPY and {@code RESUME WAL FROM TXN} change the table outside the
+ * WAL by themselves.
  * <p>
  * The crash is a process kill: everything written reached the page cache, nothing is synced on the way
  * out. A clean close would take a save point, so the close-time save point is switched off, and the restart
@@ -62,27 +78,64 @@ import java.util.List;
  */
 @RunWith(Parameterized.class)
 public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
+    private static final String CSV = """
+            ts,s,v
+            2024-02-01T00:00:00.000000Z,c1,101
+            2024-02-01T01:00:00.000000Z,c2,102
+            2024-02-02T00:00:00.000000Z,c3,103
+            2024-02-03T00:00:00.000000Z,c4,104
+            """;
+    private static final FilesFacade FF = new TestFilesFacadeImpl() {
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            if (Utf8s.containsAscii(name, DurableEpochManifest.FILE_NAME)) {
+                final int failAfter = failSavePointsAfter;
+                if (savePoints.incrementAndGet() > failAfter && failAfter > -1) {
+                    return -1;
+                }
+            }
+            return super.openRW(name, opts);
+        }
+    };
     private static final long NO_PERIODIC_SAVE_POINT_MS = 3_600_000L;
     private static final String PARTITION = "2024-01-02";
+    // Every save point writes a manifest; counting its opens counts the save points.
+    private static final AtomicInteger savePoints = new AtomicInteger();
+    // The number of save points after which a save point fails with an I/O error; -1 never fails.
+    private static volatile int failSavePointsAfter = -1;
     private final History history;
-    private final boolean isDirect;
     private final Operation operation;
+    private final OperationPath path;
 
-    public AdaptivePartitionDdlCrashTest(History history, Operation operation, boolean isDirect) {
+    public AdaptivePartitionDdlCrashTest(History history, Operation operation, OperationPath path) {
         this.history = history;
         this.operation = operation;
-        this.isDirect = isDirect;
+        this.path = path;
     }
 
-    @Parameterized.Parameters(name = "{0}, {1}, direct={2}")
+    @Parameterized.Parameters(name = "{0}, {1}, {2}")
     public static Collection<Object[]> data() {
         final List<Object[]> params = new ArrayList<>();
         for (History history : History.values()) {
             for (Operation operation : Operation.values()) {
-                params.add(new Object[]{history, operation, false});
-                // TRUNCATE is not forced through on a suspended table.
-                if (operation != Operation.TRUNCATE) {
-                    params.add(new Object[]{history, operation, true});
+                switch (operation) {
+                    // TRUNCATE is not forced through on a suspended table.
+                    case TRUNCATE -> params.add(new Object[]{history, operation, OperationPath.WAL});
+                    // These change the table outside the WAL by themselves.
+                    case COPY_INTO_EXISTING_TABLE, RESUME_WAL_FROM_TXN ->
+                            params.add(new Object[]{history, operation, OperationPath.OWN});
+                    // A table COPY creates is always enrolled when the importer opens its writer, and the second
+                    // engine of ENROLLED_ON_WRITER_OPEN cannot create or drop tables.
+                    case COPY_INTO_NEW_TABLE -> {
+                        if (history != History.ENROLLED_ON_WRITER_OPEN) {
+                            params.add(new Object[]{history, operation, OperationPath.OWN});
+                        }
+                    }
+                    default -> {
+                        params.add(new Object[]{history, operation, OperationPath.WAL});
+                        params.add(new Object[]{history, operation, OperationPath.SUSPENDED});
+                        params.add(new Object[]{history, operation, OperationPath.SUSPENDED_BUSY_WRITER});
+                    }
                 }
             }
         }
@@ -96,7 +149,11 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, history == History.INLINE_SAVE_POINTS_ONLY ? -1 : NO_PERIODIC_SAVE_POINT_MS);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
-        assertMemoryLeak(() -> {
+        setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, "true");
+        inputRoot = temp.newFolder().getAbsolutePath();
+        inputWorkRoot = temp.newFolder().getAbsolutePath();
+        java.nio.file.Files.writeString(java.nio.file.Path.of(inputRoot, "t.csv"), CSV, StandardCharsets.UTF_8);
+        assertMemoryLeak(FF, () -> {
             CairoEngine e = engine;
             try {
                 e.execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -184,38 +241,85 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         Assert.assertEquals("the apply job must take a save point", tracker.getSeqTxn(), tracker.getDurableEpochSeqTxn());
     }
 
-    private void apply(CairoEngine e) throws SqlException {
-        final String sql = switch (operation) {
-            case ATTACH_COPIED_DIR, ATTACH_MOVED_DIR, ATTACH_WITH_COPY_SETTING ->
-                    "ALTER TABLE t ATTACH PARTITION LIST '" + PARTITION + "'";
-            case CONVERT_TO_NATIVE -> "ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '" + PARTITION + "'";
-            case CONVERT_TO_PARQUET -> "ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '" + PARTITION + "'";
-            case DETACH -> "ALTER TABLE t DETACH PARTITION LIST '" + PARTITION + "'";
-            case DROP -> "ALTER TABLE t DROP PARTITION LIST '" + PARTITION + "'";
-            case FORCE_DROP -> "ALTER TABLE t FORCE DROP PARTITION LIST '" + PARTITION + "'";
-            case SQUASH -> {
-                // An out-of-order row splits the last partition, so there is something to squash.
-                setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
-                setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 4);
-                final String unsplit = partitions(e);
-                alter(e, "INSERT INTO t VALUES ('2024-01-04T01:30:00.000000Z', 's98', 98)");
-                Assert.assertNotEquals("the last partition must be split", unsplit.split("\n").length, partitions(e).split("\n").length);
-                yield "ALTER TABLE t SQUASH PARTITIONS";
-            }
-            case TRUNCATE -> "TRUNCATE TABLE t";
-            case TTL -> "ALTER TABLE t SET TTL 2 DAYS";
-        };
+    private void apply(CairoEngine e) throws Exception {
         final String before = partitions(e);
-        if (isDirect) {
-            // A hard-suspended table that denies WAL writes takes the change directly in its writer,
-            // outside the WAL.
-            e.execute("ALTER TABLE t SUSPEND WAL");
-            e.execute(sql);
-            alter(e, "ALTER TABLE t RESUME WAL");
-        } else {
-            alter(e, sql);
+        switch (operation) {
+            case COPY_INTO_EXISTING_TABLE -> {
+                alter(e, "TRUNCATE TABLE t");
+                importCsv(e);
+            }
+            case COPY_INTO_NEW_TABLE -> {
+                e.execute("DROP TABLE t");
+                TestUtils.drainWalQueue(e);
+                importCsv(e);
+            }
+            case RESUME_WAL_FROM_TXN -> {
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "false");
+                e.execute("ALTER TABLE t SUSPEND WAL");
+                e.execute("INSERT INTO t VALUES ('2024-01-06T00:00:00.000000Z', 'skipped', -1)");
+                TestUtils.drainWalQueue(e);
+                final long skippedTxn = e.getTableSequencerAPI().lastTxn(e.verifyTableName("t"));
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+                startOperation();
+                try {
+                    alter(e, "ALTER TABLE t RESUME WAL FROM TXN " + (skippedTxn + 1));
+                } finally {
+                    failSavePointsAfter = -1;
+                }
+                Assert.assertFalse("the transaction must be skipped", snapshot(e).contains("skipped"));
+                return;
+            }
+            default -> applySql(e, sql(e));
         }
         Assert.assertNotEquals("the operation must change the partitions", before, partitions(e));
+    }
+
+    private void applySql(CairoEngine e, String sql) throws Exception {
+        if (path == OperationPath.WAL) {
+            startOperation();
+            try {
+                alter(e, sql);
+            } finally {
+                failSavePointsAfter = -1;
+            }
+            return;
+        }
+        // A hard-suspended table that denies WAL writes takes the change directly in its writer, outside the WAL.
+        e.execute("ALTER TABLE t SUSPEND WAL");
+        startOperation();
+        try {
+            if (path == OperationPath.SUSPENDED) {
+                e.execute(sql);
+            } else {
+                // The writer is busy, so the change is queued and runs when the holder ticks the writer.
+                try (
+                        TableWriter writer = e.getWriter(e.verifyTableName("t"), "test");
+                        SqlCompiler compiler = e.getSqlCompiler();
+                        SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(e);
+                        OperationFuture future = compiler.compile(sql, ctx).execute(new SCSequence())
+                ) {
+                    writer.tick(true);
+                    future.await();
+                }
+            }
+        } finally {
+            failSavePointsAfter = -1;
+        }
+        alter(e, "ALTER TABLE t RESUME WAL");
+    }
+
+    private void importCsv(CairoEngine e) throws Exception {
+        startOperation();
+        try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(e, 1)) {
+            importer.of("t", "t.csv", 1, PartitionBy.DAY, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+            importer.process(AllowAllSecurityContext.INSTANCE);
+        } finally {
+            failSavePointsAfter = -1;
+        }
+        // One save point per COPY statement, not one per imported partition. A table COPY creates has no
+        // save point until the next restart: the importer's writer holds a non-WAL token, so it does not enrol it.
+        final int expected = history == History.NOSYNC || operation == Operation.COPY_INTO_NEW_TABLE ? 0 : 1;
+        Assert.assertEquals("save points during the COPY", expected, savePoints.get());
     }
 
     private void prepare(CairoEngine e) throws SqlException {
@@ -244,6 +348,38 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         }
     }
 
+    private String sql(CairoEngine e) throws SqlException {
+        return switch (operation) {
+            case ATTACH_COPIED_DIR, ATTACH_MOVED_DIR, ATTACH_WITH_COPY_SETTING ->
+                    "ALTER TABLE t ATTACH PARTITION LIST '" + PARTITION + "'";
+            case CONVERT_TO_NATIVE -> "ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '" + PARTITION + "'";
+            case CONVERT_TO_PARQUET -> "ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '" + PARTITION + "'";
+            case DETACH -> "ALTER TABLE t DETACH PARTITION LIST '" + PARTITION + "'";
+            case DROP -> "ALTER TABLE t DROP PARTITION LIST '" + PARTITION + "'";
+            case FORCE_DROP -> "ALTER TABLE t FORCE DROP PARTITION LIST '" + PARTITION + "'";
+            case SQUASH -> {
+                // An out-of-order row splits the last partition, so there is something to squash.
+                setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+                setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 4);
+                final String unsplit = partitions(e);
+                alter(e, "INSERT INTO t VALUES ('2024-01-04T01:30:00.000000Z', 's98', 98)");
+                Assert.assertNotEquals("the last partition must be split", unsplit.split("\n").length, partitions(e).split("\n").length);
+                yield "ALTER TABLE t SQUASH PARTITIONS";
+            }
+            case TRUNCATE -> "TRUNCATE TABLE t";
+            case TTL -> "ALTER TABLE t SET TTL 2 DAYS";
+            default -> throw new AssertionError(operation);
+        };
+    }
+
+    // The save points of the operation are counted from here; under SAVE_POINT_FAILS they fail.
+    private void startOperation() {
+        savePoints.set(0);
+        if (history == History.SAVE_POINT_FAILS) {
+            failSavePointsAfter = 0;
+        }
+    }
+
     public enum History {
         // Created on an adaptive instance: the creation save point is the last one.
         ENROLLED_AT_CREATE,
@@ -253,6 +389,8 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         PERIODIC_SAVE_POINT,
         // The periodic save point is off, so only the inline save points of DDL happen.
         INLINE_SAVE_POINTS_ONLY,
+        // The save point after the operation fails with an I/O error; the next apply batch must take one.
+        SAVE_POINT_FAILS,
         // The control: nothing is rewound after a crash.
         NOSYNC
     }
@@ -266,11 +404,27 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         ATTACH_WITH_COPY_SETTING,
         CONVERT_TO_NATIVE,
         CONVERT_TO_PARQUET,
+        // COPY into an empty WAL table, which attaches each imported partition outside the WAL.
+        COPY_INTO_EXISTING_TABLE,
+        // COPY into a table the importer creates.
+        COPY_INTO_NEW_TABLE,
         DETACH,
         DROP,
         FORCE_DROP,
+        // Skips a transaction by moving the writer's seqTxn past it, outside the WAL.
+        RESUME_WAL_FROM_TXN,
         SQUASH,
         TRUNCATE,
         TTL
+    }
+
+    public enum OperationPath {
+        // The operation changes the table outside the WAL by itself.
+        OWN,
+        // Directly in the writer of a hard-suspended table.
+        SUSPENDED,
+        // As SUSPENDED, queued behind a writer another thread holds.
+        SUSPENDED_BUSY_WRITER,
+        WAL
     }
 }
