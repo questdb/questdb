@@ -5911,7 +5911,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     // A table the principal may not see fails exactly like a missing one, before the statement reads
-    // any of its metadata, e.g. validates the column names of an ALTER TABLE against it.
+    // any of its metadata, e.g. validates the column names of an INSERT against it. ALTER TABLE uses
+    // tableExistsOrFailForWal(), which also lets WAL recovery name such a table.
     private TableToken tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
         if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
             throw SqlException.tableDoesNotExist(position, tableName);

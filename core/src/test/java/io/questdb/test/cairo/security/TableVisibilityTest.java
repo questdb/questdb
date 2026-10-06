@@ -74,6 +74,12 @@ public class TableVisibilityTest extends AbstractCairoTest {
             "SHOW CREATE DATABASE"
     };
 
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        staticOverrides.setProperty(PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT, temp.newFolder("export").getAbsolutePath());
+        AbstractCairoTest.setUpStatic();
+    }
+
     @Test
     public void testCatalogueQueriesHideInvisibleObjects() throws Exception {
         assertMemoryLeak(() -> {
@@ -757,12 +763,6 @@ public class TableVisibilityTest extends AbstractCairoTest {
                 assertExecutionMaskedLikeMissing("ALTER TABLE %s REBASE WAL", "secret_t", denied);
             }
         });
-    }
-
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        staticOverrides.setProperty(PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT, temp.newFolder("export").getAbsolutePath());
-        AbstractCairoTest.setUpStatic();
     }
 
     // Asserts that the statement fails with an authorization error, which the protocols report as denied
