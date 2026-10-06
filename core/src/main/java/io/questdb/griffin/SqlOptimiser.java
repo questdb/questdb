@@ -1568,6 +1568,16 @@ public class SqlOptimiser implements Mutable {
                         || joinType == IQueryModel.JOIN_LT
                         || joinType == IQueryModel.JOIN_SPLICE))) {
                     if (!isInnerJoinKey) {
+                        // A RIGHT or FULL JOIN keeps both key pairs when the key match of ao and bo equals
+                        // the filter ao = bo, so its rows stay the same. Its hash join then probes on both
+                        // keys, and a row that fails the equality misses the map. As an outer join filter,
+                        // the equality would run once per entry of the hash chain of each such row. A LEFT
+                        // JOIN keeps one key, because a key of two columns forgoes the specialized maps of a
+                        // one-column key, and its cursor evaluates a filter on master columns once per row.
+                        if (joinType != IQueryModel.JOIN_LEFT_OUTER
+                                && isFilterEqualToKeyMatch(parent.getJoinModels().getQuick(ai), an, parent.getJoinModels().getQuick(bi), bn)) {
+                            return;
+                        }
                         // Outer joins match on the extra equality without dropping preserved rows. The join
                         // context keeps ao and bo as keys, and the filter push-down rewrites its nodes in
                         // place, so the outer join expression gets its own copies.
@@ -6751,8 +6761,13 @@ public class SqlOptimiser implements Mutable {
     // encode the same as join keys. That holds for two columns of one type whose equal values have equal
     // bytes, with NULL equal to NULL. FLOAT and DOUBLE fail it: 0.0 = -0.0 holds, yet the keys differ.
     private boolean isFilterEqualToKeyMatch(IQueryModel model, CharSequence aName, CharSequence bName) {
-        final int aType = getQueryColumnType(model, getModelColumn(model, aName));
-        final int bType = getQueryColumnType(model, getModelColumn(model, bName));
+        return isFilterEqualToKeyMatch(model, aName, model, bName);
+    }
+
+    // The same test for column aName of aModel and column bName of bModel.
+    private boolean isFilterEqualToKeyMatch(IQueryModel aModel, CharSequence aName, IQueryModel bModel, CharSequence bName) {
+        final int aType = getQueryColumnType(aModel, getModelColumn(aModel, aName));
+        final int bType = getQueryColumnType(bModel, getModelColumn(bModel, bName));
         if (aType < 0 || aType != bType) {
             return false;
         }

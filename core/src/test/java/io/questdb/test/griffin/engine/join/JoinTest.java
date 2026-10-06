@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Numbers;
@@ -8308,6 +8309,50 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftJoinEvaluatesMasterOnlyFilterOncePerMasterRow() throws Exception {
+        // A LEFT JOIN filter that reads no slave column has one value per master row, so the hash join
+        // evaluates it once per master row that finds a hash chain. Evaluated once per chain entry, it
+        // made a master row that fails it walk its whole chain. pa rows 1, 2, 3 and 5 find chains of 3,
+        // 3, 1 and 2 pb rows, and pa row 4 finds none: 4 evaluations instead of 9. A random filter and
+        // a filter that reads a slave column still run once per chain entry.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pa (id INT, x INT, y INT)");
+            execute("INSERT INTO pa VALUES (1, 1, 1), (2, 2, 1), (3, null, null), (4, 3, 3), (5, 2, 2)");
+            execute("CREATE TABLE pb (k INT, v INT)");
+            execute("INSERT INTO pb VALUES (1, 10), (1, 11), (1, 12), (2, 20), (2, 21), (null, 30)");
+
+            // The keys imply the filter pa.x = pa.y. It drops pa row 2 from the chain of key 1, and it
+            // keeps pa row 3, whose null x and y are equal, with the chain of the null key.
+            final String query = "SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.x = pb.k AND pa.y = pb.k ORDER BY pa.id, pb.v";
+            final String expected = """
+                    id\tv
+                    1\t10
+                    1\t11
+                    1\t12
+                    2\tnull
+                    3\t30
+                    4\tnull
+                    5\t20
+                    5\t21
+                    """;
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Left Outer Join Light", "condition: pb.k=pa.y", "filter: pa.x=pa.y")
+                    .returns(expected);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .returns(expected);
+
+            assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter()", 10, 4);
+            assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter() AND pa.id > 0", 10, 4);
+            assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter() AND pa.id > 3", 6, 4);
+            assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter() AND pa.id + rnd_int(0, 1, 0) > 0", 10, 9);
+            assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter() AND pb.v + pa.id > 0", 10, 9);
+        });
+    }
+
+    @Test
     public void testLeftJoinOnAmbiguousNameAfterCrossJoins() throws Exception {
         // x exists in both B and C. The ON clause of the LEFT JOIN D resolves it against the tables that
         // run before D, so the optimiser must not reorder the CROSS JOIN tables.
@@ -10565,22 +10610,23 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testOuterJoinOnKeyNotImpliedByInnerJoinKey() throws Exception {
-        // The implied equality t2.id = t1.id stays an outer join filter when no INNER join key
-        // enforces it: after a CROSS JOIN, or when a RIGHT JOIN between the INNER join and the
-        // FULL JOIN can null both columns. The implied equality t1.a = t2.b joins the same two
-        // tables as the INNER join key t1.id = t2.id, but on other columns, so it stays too, in
-        // either conjunct order: t3.x = t1.a AND t3.x = t2.b implies t1.a = t2.b, while
-        // t3.x = t2.b AND t3.x = t1.a implies t2.b = t1.a, which names the tables in reverse.
-        // A RIGHT JOIN drops unmatched master rows, so there t1.a = t2.b keys the INNER join
-        // instead, unless a LEFT JOIN joins t2 or a RIGHT JOIN runs between the INNER join and
-        // the RIGHT JOIN. A same-table equality filters the scan of its table below the RIGHT JOIN,
-        // also when the table comes first.
+        // The implied equality t2.id = t1.id stays a condition of the outer join when no INNER join
+        // key enforces it: after a CROSS JOIN, or when a RIGHT JOIN between the INNER join and the
+        // FULL JOIN can null both columns. A FULL JOIN keeps both of its keys for it, and a LEFT
+        // JOIN filters on it. The implied equality t1.a = t2.b joins the same two tables as the
+        // INNER join key t1.id = t2.id, but on other columns, so it stays too, in either conjunct
+        // order: t3.x = t1.a AND t3.x = t2.b implies t1.a = t2.b, while t3.x = t2.b AND
+        // t3.x = t1.a implies t2.b = t1.a, which names the tables in reverse. A RIGHT JOIN drops
+        // unmatched master rows, so there t1.a = t2.b keys the INNER join instead, unless a LEFT
+        // JOIN joins t2 or a RIGHT JOIN runs between the INNER join and the RIGHT JOIN, where the
+        // RIGHT JOIN keeps both keys. A same-table equality filters the scan of its table below the
+        // RIGHT JOIN, also when the table comes first.
         assertMemoryLeak(() -> {
             createTablesForOuterJoinOnImpliedKey();
 
             assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 CROSS JOIN t2 FULL JOIN t3 ON t3.id = t2.id AND t3.id = t1.id ORDER BY 1, 2, 3")
                     .noLeakCheck()
-                    .withPlanContaining("filter: t2.id=t1.id")
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: t3.id=t1.id and t3.id=t2.id")
                     .returns("""
                             id\tid1\tid2
                             null\tnull\tnull
@@ -10606,7 +10652,7 @@ public class JoinTest extends AbstractCairoTest {
 
             assertQuery("SELECT t1.id, t2.id, t4.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id RIGHT JOIN t4 ON t4.id = t2.id FULL JOIN t3 ON t3.id = t2.id AND t3.id = t1.id ORDER BY 1, 2, 3, 4")
                     .noLeakCheck()
-                    .withPlanContaining("filter: t2.id=t1.id")
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: t3.id=t1.id and t3.id=t2.id")
                     .returns("""
                             id\tid1\tid2\tid3
                             null\tnull\tnull\t3
@@ -10629,7 +10675,7 @@ public class JoinTest extends AbstractCairoTest {
 
             assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 JOIN t2 ON t1.id = t2.id FULL JOIN t3 ON t3.x = t1.a AND t3.x = t2.b ORDER BY 1, 2, 3, 4, 5")
                     .noLeakCheck()
-                    .withPlanContaining("Hash Full Outer Join Light", "condition: t3.x=t2.b", "filter: t1.a=t2.b")
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: t3.x=t2.b and t3.x=t1.a")
                     .returns("""
                             id\ta\tid1\tb\tx
                             null\tnull\tnull\tnull\tnull
@@ -10663,7 +10709,7 @@ public class JoinTest extends AbstractCairoTest {
 
             assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 JOIN t2 ON t1.id = t2.id FULL JOIN t3 ON t3.x = t2.b AND t3.x = t1.a ORDER BY 1, 2, 3, 4, 5")
                     .noLeakCheck()
-                    .withPlanContaining("Hash Full Outer Join Light", "condition: t3.x=t1.a", "filter: t2.b=t1.a")
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: t3.x=t1.a and t3.x=t2.b")
                     .returns("""
                             id\ta\tid1\tb\tx
                             null\tnull\tnull\tnull\tnull
@@ -10703,7 +10749,7 @@ public class JoinTest extends AbstractCairoTest {
             // the LEFT JOIN may null-extend t2, so t1.a = t2.b must not key it
             assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 LEFT JOIN t2 ON t1.id = t2.id RIGHT JOIN t3 ON t3.x = t1.a AND t3.x = t2.b ORDER BY 1, 2, 3, 4, 5")
                     .noLeakCheck()
-                    .withPlanContaining("Hash Right Outer Join Light", "filter: t1.a=t2.b")
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: t3.x=t2.b and t3.x=t1.a")
                     .returns("""
                             id\ta\tid1\tb\tx
                             null\tnull\tnull\tnull\tnull
@@ -10719,7 +10765,7 @@ public class JoinTest extends AbstractCairoTest {
             execute("INSERT INTO t4 VALUES (2, '2024-01-01T00:00:03')");
             assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t4.id, t3.x FROM t1 JOIN t2 ON t1.id = t2.id RIGHT JOIN t4 ON t4.id = t2.id RIGHT JOIN t3 ON t3.x = t1.a AND t3.x = t2.b ORDER BY 1, 2, 3, 4, 5, 6")
                     .noLeakCheck()
-                    .withPlanContaining("Hash Right Outer Join Light", "condition: t3.x=t2.b", "filter: t1.a=t2.b", "Hash Join Light", "condition: t2.id=t1.id")
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: t3.x=t2.b and t3.x=t1.a", "Hash Join Light", "condition: t2.id=t1.id")
                     .returns("""
                             id\ta\tid1\tb\tid2\tx
                             null\tnull\tnull\tnull\tnull\t20
@@ -11166,6 +11212,112 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterJoinOnKeysSharingColumnKeepsBothKeys() throws Exception {
+        // ON pa.x = pb.k AND pa.y = pb.k implies pa.x = pa.y. A RIGHT or FULL JOIN that cannot filter a
+        // scan on it keeps both keys, so a row that fails the equality misses the hash map. As an outer
+        // join filter, the equality ran once per entry of the hash chain of each such row. The join
+        // keeps both keys only where the filter keeps the rows that the keys match: DOUBLE keys, which
+        // tell 0.0 from -0.0, and columns of two types keep the outer join filter.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pa (id INT, x INT, y INT)");
+            execute("INSERT INTO pa VALUES (1, 1, 1), (2, 2, 1), (3, null, null), (4, 3, 3), (5, 2, 2)");
+            execute("CREATE TABLE pb (k INT, v INT)");
+            execute("INSERT INTO pb VALUES (1, 10), (1, 11), (1, 12), (2, 20), (2, 21), (null, 30), (7, 70)");
+            execute("CREATE TABLE ps (id INT, x SYMBOL, y SYMBOL)");
+            execute("INSERT INTO ps VALUES (1, 'a', 'a'), (2, 'b', 'a'), (3, null, null), (4, 'c', 'c'), (5, 'b', 'b')");
+            execute("CREATE TABLE pt (k SYMBOL, v INT)");
+            execute("INSERT INTO pt VALUES ('a', 10), ('a', 11), ('a', 12), ('b', 20), ('b', 21), (null, 30), ('g', 70)");
+            execute("CREATE TABLE pv (k VARCHAR, v INT)");
+            execute("INSERT INTO pv VALUES ('a', 10), ('a', 11), ('a', 12), ('b', 20), ('b', 21), (null, 30), ('g', 70)");
+            execute("CREATE TABLE pd (id INT, x DOUBLE, y DOUBLE)");
+            execute("INSERT INTO pd VALUES (1, 1.0, 1.0), (2, 2.0, 1.0), (3, null, null), (4, 3.0, 3.0), (5, 2.0, 2.0)");
+            execute("CREATE TABLE pe (k DOUBLE, v INT)");
+            execute("INSERT INTO pe VALUES (1.0, 10), (1.0, 11), (1.0, 12), (2.0, 20), (2.0, 21), (null, 30), (7.0, 70)");
+            execute("CREATE TABLE pm (id INT, x LONG, y INT)");
+            execute("INSERT INTO pm VALUES (1, 1, 1), (2, 2, 1), (3, null, null), (4, 3, 3), (5, 2, 2)");
+
+            // Row 2 fails the equality, row 3 matches the null key, row 4 finds no key and the key 7
+            // finds no row. Each table pair holds the same rows, so every join returns them.
+            final String expectedPreserved = """
+                    id\tv
+                    1\t10
+                    1\t11
+                    1\t12
+                    2\tnull
+                    3\t30
+                    4\tnull
+                    5\t20
+                    5\t21
+                    """;
+            final String expectedFull = """
+                    id\tv
+                    null\t70
+                    1\t10
+                    1\t11
+                    1\t12
+                    2\tnull
+                    3\t30
+                    4\tnull
+                    5\t20
+                    5\t21
+                    """;
+            final String fullJoin = "SELECT pa.id, pb.v FROM pa FULL JOIN pb ON pa.x = pb.k AND pa.y = pb.k ORDER BY pa.id, pb.v";
+            assertQuery(fullJoin)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: pb.k=pa.y and pb.k=pa.x")
+                    .withPlanNotContaining("filter:")
+                    .returns(expectedFull);
+            // the slave-side equality pa.x = pa.y
+            final String slaveRightJoin = "SELECT pa.id, pb.v FROM pb RIGHT JOIN pa ON pb.k = pa.x AND pb.k = pa.y ORDER BY pa.id, pb.v";
+            assertQuery(slaveRightJoin)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: pa.y=pb.k and pa.x=pb.k")
+                    .withPlanNotContaining("filter:")
+                    .returns(expectedPreserved);
+            final String slaveFullJoin = "SELECT pa.id, pb.v FROM pb FULL JOIN pa ON pb.k = pa.x AND pb.k = pa.y ORDER BY pa.id, pb.v";
+            assertQuery(slaveFullJoin)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: pa.y=pb.k and pa.x=pb.k")
+                    .withPlanNotContaining("filter:")
+                    .returns(expectedFull);
+            // SYMBOL keys that share pt.k or pv.k compare as strings
+            final String symbolJoin = "SELECT ps.id, pt.v FROM ps FULL JOIN pt ON ps.x = pt.k AND ps.y = pt.k ORDER BY ps.id, pt.v";
+            assertQuery(symbolJoin)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: pt.k=ps.y and pt.k=ps.x")
+                    .returns(expectedFull);
+            final String symbolVarcharJoin = "SELECT ps.id, pv.v FROM ps FULL JOIN pv ON ps.x = pv.k AND ps.y = pv.k ORDER BY ps.id, pv.v";
+            assertQuery(symbolVarcharJoin)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: pv.k=ps.y and pv.k=ps.x")
+                    .returns(expectedFull);
+            final String doubleJoin = "SELECT pd.id, pe.v FROM pd FULL JOIN pe ON pd.x = pe.k AND pd.y = pe.k ORDER BY pd.id, pe.v";
+            assertQuery(doubleJoin)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: pe.k=pd.y", "filter: pd.x=pd.y")
+                    .returns(expectedFull);
+            // a LONG key cannot pair with the INT key pb.k
+            final String mixedTypeJoin = "SELECT pm.id, pb.v FROM pm FULL JOIN pb ON pm.x = pb.k AND pm.y = pb.k ORDER BY pm.id, pb.v";
+            assertQuery(mixedTypeJoin)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: pb.k=pm.y", "filter: pm.x=pm.y")
+                    .returns(expectedFull);
+
+            // the full-fat hash joins return the same rows
+            for (String query : new String[]{fullJoin, slaveFullJoin, symbolJoin, symbolVarcharJoin, doubleJoin, mixedTypeJoin}) {
+                assertQuery(query)
+                        .noLeakCheck()
+                        .fullFatJoins()
+                        .returns(expectedFull);
+            }
+            assertQuery(slaveRightJoin)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .returns(expectedPreserved);
+        });
+    }
+
+    @Test
     public void testOuterJoinOnKeysSharingColumnOfCrossJoinsAfterNonEquiFullJoin() throws Exception {
         // The LEFT JOIN t4 keeps one key and moves the implied a2 = a3 into its filter. Whichever key it
         // keeps, the CROSS JOIN t2 or t3 that only the filter reads has no other ordering edge.
@@ -11336,15 +11488,20 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testOuterJoinOnKeysSharingColumnOfSubQuery() throws Exception {
-        // The ON keys b.k2 = a.m AND b.kk = a.m imply b.k2 = b.kk, which becomes the outer join filter.
-        // The WHERE constant a.m = 1 implies b.kk = 1, and pushing it into the sub-query renames the key
-        // node kk to the inner name k in place. The outer join filter shared that node, so it read a.k
-        // or failed to resolve k.
+        // The ON keys b.k2 = a.m AND b.kk = a.m imply b.k2 = b.kk. On INT columns the RIGHT and FULL
+        // JOINs keep both keys. On DOUBLE columns, whose keys tell 0.0 from -0.0, b.k2 = b.kk becomes
+        // the outer join filter. The WHERE constant a.m = 1 implies b.kk = 1, and pushing it into the
+        // sub-query renames the key node kk to the inner name k in place. The outer join filter shared
+        // that node, so it read a.k or failed to resolve k.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (id INT, m INT, k INT)");
             execute("INSERT INTO a VALUES (1, 1, 100), (2, 7, 200), (3, 1, 1)");
             execute("CREATE TABLE b (id INT, k INT, k2 INT)");
             execute("INSERT INTO b VALUES (11, 1, 1), (12, 7, 1), (13, 1, 5)");
+            execute("CREATE TABLE ad (id INT, m DOUBLE, k DOUBLE)");
+            execute("INSERT INTO ad VALUES (1, 1.0, 100.0), (2, 7.0, 200.0), (3, 1.0, 1.0)");
+            execute("CREATE TABLE bd (id INT, k DOUBLE, k2 DOUBLE)");
+            execute("INSERT INTO bd VALUES (11, 1.0, 1.0), (12, 7.0, 1.0), (13, 1.0, 5.0)");
             execute("CREATE TABLE a2 (id INT, k INT)");
             execute("INSERT INTO a2 VALUES (1, 1), (2, 7)");
 
@@ -11355,10 +11512,18 @@ public class JoinTest extends AbstractCairoTest {
                     """;
             assertQuery("SELECT a.id, b.id FROM a RIGHT JOIN (SELECT id, k2, k AS kk FROM b WHERE id > 0) b ON b.k2 = a.m AND b.kk = a.m WHERE a.m = 1 ORDER BY a.id")
                     .noLeakCheck()
-                    .withPlanContaining("filter: b.k2=b.kk")
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: k=a.m and k2=a.m")
                     .returns(expectedRenamed);
             assertQuery("SELECT a.id, b.id FROM a FULL JOIN (SELECT id, k2, k AS kk FROM b WHERE id > 0) b ON b.k2 = a.m AND b.kk = a.m WHERE a.m = 1 ORDER BY a.id")
                     .noLeakCheck()
+                    .returns(expectedRenamed);
+            assertQuery("SELECT a.id, b.id FROM ad a RIGHT JOIN (SELECT id, k2, k AS kk FROM bd WHERE id > 0) b ON b.k2 = a.m AND b.kk = a.m WHERE a.m = 1 ORDER BY a.id")
+                    .noLeakCheck()
+                    .withPlanContaining("condition: k=a.m", "filter: b.k2=b.kk")
+                    .returns(expectedRenamed);
+            assertQuery("SELECT a.id, b.id FROM ad a FULL JOIN (SELECT id, k2, k AS kk FROM bd WHERE id > 0) b ON b.k2 = a.m AND b.kk = a.m WHERE a.m = 1 ORDER BY a.id")
+                    .noLeakCheck()
+                    .withPlanContaining("condition: k=a.m", "filter: b.k2=b.kk")
                     .returns(expectedRenamed);
 
             final String expectedSameName = """
@@ -11656,7 +11821,8 @@ public class JoinTest extends AbstractCairoTest {
         // ON pa.x = pb.k AND pa.y = pb.k implies pa.x = pa.y. A pa row that fails it matches no pb row,
         // and the RIGHT JOIN drops such rows, so the equality filters the scan of pa when pa joins by
         // INNER or CROSS join, and when pa is the first table. As an outer join filter it ran once per
-        // hash chain entry, so the join cost grew with the pa rows times the chain length.
+        // hash chain entry, so the join cost grew with the pa rows times the chain length. Where a scan
+        // filter would change the rows, the RIGHT JOIN keeps both keys instead.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE z (id INT)");
             execute("INSERT INTO z VALUES (1), (2), (3), (4)");
@@ -11744,7 +11910,8 @@ public class JoinTest extends AbstractCairoTest {
                     .returns(expected);
 
             // The LEFT JOIN keeps z row 2 with pa row 2, which fails the equality. A filter on the scan
-            // of pa would NULL-extend z row 2, and its null pa.x and pa.y would match pb.k = null.
+            // of pa would NULL-extend z row 2, and its null pa.x and pa.y would match pb.k = null, so
+            // the RIGHT JOIN keeps both keys.
             assertQuery("SELECT z.id, pa.id, pb.v FROM z LEFT JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k ORDER BY pb.v, z.id")
                     .noLeakCheck()
                     .withPlan("""
@@ -11752,8 +11919,7 @@ public class JoinTest extends AbstractCairoTest {
                               keys: [v, id]
                                 SelectedRecord
                                     Hash Right Outer Join Light
-                                      condition: pb.k=pa.y
-                                      filter: pa.x=pa.y
+                                      condition: pb.k=pa.y and pb.k=pa.x
                                         Hash Left Outer Join Light
                                           condition: pa.id=z.id
                                             PageFrame
@@ -11777,7 +11943,8 @@ public class JoinTest extends AbstractCairoTest {
                             null\tnull\t50
                             """);
             // The RIGHT JOIN q keeps q row 2 with pa row 2, which fails the equality. A filter on the scan
-            // of pa would NULL-extend q row 2, which would then match pb.k = null like q row 6.
+            // of pa would NULL-extend q row 2, which would then match pb.k = null like q row 6, so the
+            // RIGHT JOIN pb keeps both keys.
             assertQuery("SELECT pa.id, q.id, pb.v FROM z JOIN pa ON z.id = pa.id RIGHT JOIN q ON pa.id = q.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k ORDER BY pb.v, q.id")
                     .noLeakCheck()
                     .withPlan("""
@@ -11785,8 +11952,7 @@ public class JoinTest extends AbstractCairoTest {
                               keys: [v, id1]
                                 SelectedRecord
                                     Hash Right Outer Join Light
-                                      condition: pb.k=pa.y
-                                      filter: pa.x=pa.y
+                                      condition: pb.k=pa.y and pb.k=pa.x
                                         Hash Right Outer Join Light
                                           condition: q.id=pa.id
                                             Hash Join Light
@@ -13688,6 +13854,27 @@ public class JoinTest extends AbstractCairoTest {
 
     private void assertHashJoinSqlWithRandomAccess(String query, String expected) throws Exception {
         assertHashJoinSql(query, expected, null, false, true);
+    }
+
+    // Runs the query once on the light and once on the full-fat hash join, and asserts the row count and
+    // how many times test_latched_counter() in the join filter ran.
+    private void assertJoinFilterEvaluationCount(String query, int expectedRowCount, int expectedEvaluationCount) throws SqlException {
+        for (boolean isFullFat : new boolean[]{false, true}) {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.setFullFatJoins(isFullFat);
+                try (RecordCursorFactory factory = select(compiler, query, sqlExecutionContext)) {
+                    TestLatchedCounterFunctionFactory.reset(null);
+                    int rowCount = 0;
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        while (cursor.hasNext()) {
+                            rowCount++;
+                        }
+                    }
+                    Assert.assertEquals(query, expectedRowCount, rowCount);
+                    Assert.assertEquals(query, expectedEvaluationCount, TestLatchedCounterFunctionFactory.getCount());
+                }
+            }
+        }
     }
 
     private void assertRepeatedJoinQuery(String query, String left, boolean expectSize) throws Exception {

@@ -1835,6 +1835,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && model.getHorizonJoinContext().getAlias() != null;
     }
 
+    // Returns true when every column the expression reads resolves, as the function parser resolves it,
+    // to a master column of the join metadata, whose master columns precede columnSplit. A sub-query or
+    // an unresolved name fails it. Constants and bind variables read no column.
+    private static boolean isMasterOnlyExpression(ExpressionNode node, RecordMetadata joinMetadata, int columnSplit) {
+        return switch (node.type) {
+            case ExpressionNode.CONSTANT, ExpressionNode.BIND_VARIABLE -> true;
+            case ExpressionNode.LITERAL -> {
+                final int columnIndex = SqlUtil.getColumnIndexQuiet(joinMetadata, node.token);
+                yield columnIndex > -1 && columnIndex < columnSplit;
+            }
+            case ExpressionNode.FUNCTION, ExpressionNode.OPERATION -> {
+                if (node.paramCount < 3) {
+                    yield (node.lhs == null || isMasterOnlyExpression(node.lhs, joinMetadata, columnSplit))
+                            && (node.rhs == null || isMasterOnlyExpression(node.rhs, joinMetadata, columnSplit));
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    if (!isMasterOnlyExpression(node.args.getQuick(i), joinMetadata, columnSplit)) {
+                        yield false;
+                    }
+                }
+                yield true;
+            }
+            default -> false;
+        };
+    }
+
     private static boolean isRightOrFullJoin(int joinType) {
         return joinType == IQueryModel.JOIN_RIGHT_OUTER
                 || joinType == IQueryModel.JOIN_FULL_OUTER
@@ -3031,6 +3057,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory slave,
             int joinType,
             Function filter,
+            boolean isMasterOnlyFilter,
             JoinContext context
     ) {
         /*
@@ -3091,6 +3118,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         slaveKeyCopier,
                         masterMetadata.getColumnCount(),
                         filter,
+                        isMasterOnlyFilter,
                         context,
                         joinType,
                         masterSymbolKeyCols,
@@ -3157,6 +3185,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slaveSink,
                     masterMetadata.getColumnCount(),
                     filter,
+                    isMasterOnlyFilter,
                     context,
                     joinType,
                     masterSymbolKeyCols,
@@ -7487,8 +7516,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             default:
                                 processJoinContext(masterAlias != null, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, joinType == IQueryModel.JOIN_RIGHT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER ? -1 : masterMetadata.getTimestampIndex());
+                                boolean isMasterOnlyJoinFilter = false;
                                 if (slaveModel.getOuterJoinExpressionClause() != null) {
+                                    // A LEFT JOIN filter that reads no slave column has one value per master row,
+                                    // so the cursor evaluates it once per master row instead of once per entry of
+                                    // the row's hash chain. A random or non-deterministic filter must run per entry.
+                                    isMasterOnlyJoinFilter = joinType == IQueryModel.JOIN_LEFT_OUTER
+                                            && isMasterOnlyExpression(slaveModel.getOuterJoinExpressionClause(), joinMetadata, masterMetadata.getColumnCount());
                                     joinFilter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
+                                    isMasterOnlyJoinFilter &= !joinFilter.isRandom() && !joinFilter.isNonDeterministic();
                                 }
 
                                 if (joinFilter != null && joinFilter.isConstant() && !joinFilter.getBool(null)) {
@@ -7515,6 +7551,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         slaveToFree,
                                         joinType,
                                         joinFilter,
+                                        isMasterOnlyJoinFilter,
                                         slaveModel.getJoinContext()
                                 );
                                 masterAlias = null;
