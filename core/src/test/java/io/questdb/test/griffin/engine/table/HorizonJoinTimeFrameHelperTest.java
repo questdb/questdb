@@ -349,21 +349,22 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
                 map.clear();
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(2000, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
                 Assert.assertEquals(2001, trace.visits);
-                // A bounded miss stays below the cost floor, so the second key rescans from its own miss.
+                // A bounded miss stays below the cost floor; the second key was answered by the exhausted
+                // prefix at 1000 and has no record, so it scans to the start once and is bounded after.
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(2001, otherMissingKey, KEY_SINK, KEY_SINK, map, null, breaker));
-                Assert.assertEquals(3002, trace.visits);
+                Assert.assertEquals(4003, trace.visits);
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(2002, otherMissingKey, KEY_SINK, KEY_SINK, map, null, breaker));
-                Assert.assertEquals(3003, trace.visits);
+                Assert.assertEquals(4004, trace.visits);
 
                 // A shallow miss then a one-row gap must not lock a far lookup into a forward scan.
                 helper.of(cursor, null);
                 map.clear();
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(63, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
-                Assert.assertEquals(3067, trace.visits);
+                Assert.assertEquals(4068, trace.visits);
                 Assert.assertEquals(64, helper.findKeyedAsOfMatch(64, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
-                Assert.assertEquals(3068, trace.visits);
+                Assert.assertEquals(4069, trace.visits);
                 Assert.assertEquals(4095, helper.findKeyedAsOfMatch(4095, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
-                Assert.assertEquals(3069, trace.visits);
+                Assert.assertEquals(4070, trace.visits);
             }
         });
     }

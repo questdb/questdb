@@ -674,11 +674,13 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
     }
 
     public void toTop() {
-        if (ownerSlaveFilter != null) {
-            ownerSlaveFilter.toTop();
-        }
-        if (perWorkerSlaveFilters != null) {
-            GroupByUtils.toTop(perWorkerSlaveFilters);
+        if (isSlaveFilterInitialized) {
+            if (ownerSlaveFilter != null) {
+                ownerSlaveFilter.toTop();
+            }
+            if (perWorkerSlaveFilters != null) {
+                GroupByUtils.toTop(perWorkerSlaveFilters);
+            }
         }
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {

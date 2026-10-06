@@ -2318,7 +2318,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                             "(q.venue = 'A' AND q.bid < q.ask) OR q.price < 0",
                                             "q.bid < q.ask",
                                             "q.bid = q.ask - 1",
-                                            "q.venue != 'B'");
+                                            "q.venue != 'B'",
+                                            "q.ts < timestamp_shuffle('2000-01-01T00:00:00.5Z'::TIMESTAMP, '2000-01-01T00:00:00.9Z'::TIMESTAMP)");
                                     for (int predicateIndex = 0; predicateIndex < predicateValues.size(); predicateIndex++) {
                                         final String predicate = predicateValues.getQuick(predicateIndex);
                                         final String query = "SELECT " + (hasGroupKeys ? "t.sym, " : "")
@@ -2760,6 +2761,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
                         """).noRandomAccess().expectSize()
                         .withPlanContaining("Interval forward scan", "slave filter")
                         .returns("avg\n10.0\n");
+                assertQuery("""
+                        SELECT count(), count(q.price), avg(q.price) FROM trades t
+                        HORIZON JOIN (quotes WHERE ts IN '2000-01-02' AND ts IN '2000-01-03') q
+                        LIST (0s) AS h
+                        """).noRandomAccess().expectSize()
+                        .withPlanContaining("slave filter: false")
+                        .returns("count\tcount1\tavg\n1\t0\tnull\n");
                 assertQuery("""
                         SELECT avg(q.price) FROM trades t
                         HORIZON JOIN (quotes WHERE venue IN (SELECT venue FROM allowed WHERE venue = 'A')) q

@@ -124,9 +124,9 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testHorizonJoinFilterKeyMissesFailOnLargeKeySet() throws Exception {
-        // The filter rejects every right-hand row, so each distinct join key records a miss in the
-        // time frame helper's map, which the cursor binds to the per-query tracker in of().
+    public void testHorizonJoinFilterKeyMissesStayWithinLimit() throws Exception {
+        // Once the scan has exhausted the prefix, further misses are not recorded, so the key miss
+        // map stays constant however many distinct master keys miss.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
@@ -146,7 +146,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "LIST (0s) AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
                             TestUtils.assertFactoryInTree(factory, HorizonJoinNotKeyedRecordCursorFactory.class);
-                            assertQueryBreaches(factory, sqlExecutionContext);
+                            assertReleasesAllocations(factory, sqlExecutionContext, 1);
                         }
                     },
                     configuration,

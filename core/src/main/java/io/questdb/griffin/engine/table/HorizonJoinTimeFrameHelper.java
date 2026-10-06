@@ -195,7 +195,6 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
 
             if (backwardWatermark == 0) {
                 // We've scanned all the way to the beginning; key doesn't exist.
-                recordKeyMiss(findKeyMiss(masterRecord, masterAsOfJoinMapSink), masterRecord, masterAsOfJoinMapSink, startRowId);
                 return Long.MIN_VALUE;
             }
 

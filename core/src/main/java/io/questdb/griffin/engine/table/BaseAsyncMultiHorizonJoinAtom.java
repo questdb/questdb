@@ -758,7 +758,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
     }
 
     public void toTop() {
-        for (int s = 0; s < slaveCount; s++) {
+        for (int s = 0; s < initializedSlaveFilterCount; s++) {
             final HorizonJoinSlaveState state = slaveStates.getQuick(s);
             if (state.getFilter() != null) {
                 state.getFilter().toTop();
