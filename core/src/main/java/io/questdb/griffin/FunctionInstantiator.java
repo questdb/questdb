@@ -273,30 +273,36 @@ public final class FunctionInstantiator implements Mutable {
 
     private Function adoptPreparation(PreparedFunctions.Entry entry, OutputSchema input, RecordMetadata metadata) {
         assert !(entry.expression instanceof FunctionExpression call && call.isWindow()) : "bind-time window function is adopted";
-        if (prepared.root(entry).isConstant()) {
-            return prepared.detach(entry);
+        final Function root = prepared.detach(entry);
+        if (root.isConstant()) {
+            return root;
         }
-        assert PreparedFunctions.hasOnlyReadLeaves(entry) : "prepared leaf is not read by its description";
-        for (int k = 0, count = entry.leaves.size(); k < count; k++) {
-            final BindableColumn leaf = entry.leaves.getQuick(k);
-            // Audited NULL folds close discarded operands. These are borrows,
-            // never separately owned leaves; a dead leaf needs no input slot.
-            if (leaf.isOpen()) {
-                final int index = input.getColumnIndexById(leaf.getColumnId());
-                if (index < 0 || input.getColumnType(index) != leaf.getType()
-                        || metadata != null && metadata.getColumnType(index) != leaf.getType()
-                        || leaf instanceof SymbolFunction symbol && symbol.isSymbolTableStatic() != (metadata == null ? input.isSymbolTableStatic(index) : metadata.isSymbolTableStatic(index))) {
-                    throw new IllegalStateException("bound function input has changed");
+        try {
+            assert PreparedFunctions.hasOnlyReadLeaves(entry) : "prepared leaf is not read by its description";
+            for (int k = 0, count = entry.leaves.size(); k < count; k++) {
+                final BindableColumn leaf = entry.leaves.getQuick(k);
+                // Audited NULL folds close discarded operands. These are borrows,
+                // never separately owned leaves; a dead leaf needs no input slot.
+                if (leaf.isOpen()) {
+                    final int index = input.getColumnIndexById(leaf.getColumnId());
+                    if (index < 0 || input.getColumnType(index) != leaf.getType()
+                            || metadata != null && metadata.getColumnType(index) != leaf.getType()
+                            || leaf instanceof SymbolFunction symbol && symbol.isSymbolTableStatic() != (metadata == null ? input.isSymbolTableStatic(index) : metadata.isSymbolTableStatic(index))) {
+                        throw new IllegalStateException("bound function input has changed");
+                    }
                 }
             }
-        }
-        for (int k = 0, count = entry.leaves.size(); k < count; k++) {
-            final BindableColumn leaf = entry.leaves.getQuick(k);
-            if (leaf.isOpen()) {
-                leaf.setColumnIndex(input.getColumnIndexById(leaf.getColumnId()));
+            for (int k = 0, count = entry.leaves.size(); k < count; k++) {
+                final BindableColumn leaf = entry.leaves.getQuick(k);
+                if (leaf.isOpen()) {
+                    leaf.setColumnIndex(input.getColumnIndexById(leaf.getColumnId()));
+                }
             }
+            return root;
+        } catch (Throwable th) {
+            Misc.free(root, th);
+            throw th;
         }
-        return prepared.detach(entry);
     }
 
     private void closePreparation(BoundExpression expression) {
