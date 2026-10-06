@@ -273,7 +273,7 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
     @Override
     public int getExecutionRequirements() {
         // authorizes the caller, see SqlExecutionRequirements
-        return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+        return SqlExecutionRequirements.DISCLOSES_OBJECTS;
     }
 
     @Override

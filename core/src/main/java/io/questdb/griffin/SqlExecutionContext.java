@@ -308,15 +308,16 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return false;
     }
 
-    // Existing live views may contain catalogue functions that CREATE now rejects.
-    // Only the refresh context opts in; CREATE still compiles under the restriction.
+    // The refresh of a live view compiles the SQL that CREATE accepted, with no caller to authorize:
+    // a catalogue function written in that SQL needs no SYSTEM ADMIN here, see
+    // SqlExecutionRequirements.DISCLOSES_OBJECTS.
     default boolean isLiveViewRefresh() {
         return false;
     }
 
-    // Existing materialized views may contain catalogue functions that CREATE now rejects.
-    // Their stored results are governed by the view's own permissions: readers with SELECT on
-    // the view may see table metadata they cannot query directly.
+    // The refresh of a materialized view compiles the SQL that CREATE accepted, with no caller to
+    // authorize: a catalogue function written in that SQL needs no SYSTEM ADMIN here, see
+    // SqlExecutionRequirements.DISCLOSES_OBJECTS. Readers with SELECT on the view read what it lists.
     default boolean isMatViewRefresh() {
         return false;
     }

@@ -66,7 +66,7 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
     @Override
     public int getExecutionRequirements() {
         // lists only the objects the caller may see, see SqlExecutionRequirements
-        return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+        return SqlExecutionRequirements.DISCLOSES_OBJECTS;
     }
 
     @Override

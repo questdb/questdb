@@ -30,13 +30,17 @@ import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.str.Path;
+import io.questdb.test.cairo.security.NoSystemAdminSecurityContext;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class LiveViewRefreshCompatibilityTest extends AbstractLiveViewTest {
-    // a live view body older releases accepted, before CREATE rejected visibility-dependent functions
+    // a live view body older releases accepted from anyone, before CREATE required SYSTEM ADMIN for
+    // visibility-dependent functions
     private static final String LEGACY_SQL = "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts "
             + "ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn "
             + "FROM base WHERE g IN (SELECT table_name FROM tables())";
@@ -47,13 +51,15 @@ public class LiveViewRefreshCompatibilityTest extends AbstractLiveViewTest {
             setCurrentMicros(0);
             createBaseAndLiveView();
             installPersistedLegacySql();
-            // An idempotent schema script replays the DDL an older release accepted: the live view exists,
-            // so the statement is a no-op, which must not compile the body CREATE now rejects first.
-            execute("CREATE LIVE VIEW IF NOT EXISTS lv FLUSH EVERY 100ms START FROM BEGINNING AS " + LEGACY_SQL);
-            Assert.assertEquals(LEGACY_SQL, engine.getLiveViewRegistry().getViewInstance("lv").getDefinition().getViewSql());
-            // IF NOT EXISTS still rejects the body of a live view that does not exist yet
-            assertCreateRejected("CREATE LIVE VIEW IF NOT EXISTS lv2 FLUSH EVERY 100ms START FROM BEGINNING AS " + LEGACY_SQL);
-            Assert.assertNull(engine.getTableTokenIfExists("lv2"));
+            try (SqlExecutionContext nonAdmin = new SqlExecutionContextImpl(engine, 1).with(new NoSystemAdminSecurityContext())) {
+                // An idempotent schema script replays the DDL an older release accepted: the live view exists,
+                // so the statement is a no-op, which must not compile the body CREATE now rejects first.
+                engine.execute("CREATE LIVE VIEW IF NOT EXISTS lv FLUSH EVERY 100ms START FROM BEGINNING AS " + LEGACY_SQL, nonAdmin);
+                Assert.assertEquals(LEGACY_SQL, engine.getLiveViewRegistry().getViewInstance("lv").getDefinition().getViewSql());
+                // IF NOT EXISTS still rejects the body of a live view that does not exist yet
+                assertCreateRejected(nonAdmin, "CREATE LIVE VIEW IF NOT EXISTS lv2 FLUSH EVERY 100ms START FROM BEGINNING AS " + LEGACY_SQL);
+                Assert.assertNull(engine.getTableTokenIfExists("lv2"));
+            }
         });
     }
 
@@ -62,7 +68,9 @@ public class LiveViewRefreshCompatibilityTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             createBaseAndLiveView();
-            assertCreateRejected("CREATE LIVE VIEW rejected FLUSH EVERY 100ms START FROM BEGINNING AS " + LEGACY_SQL);
+            try (SqlExecutionContext nonAdmin = new SqlExecutionContextImpl(engine, 1).with(new NoSystemAdminSecurityContext())) {
+                assertCreateRejected(nonAdmin, "CREATE LIVE VIEW rejected FLUSH EVERY 100ms START FROM BEGINNING AS " + LEGACY_SQL);
+            }
             execute("INSERT INTO base VALUES ('2026-01-01T00:00:01.000000Z', 10, 'base')");
             drainWalQueue();
             installPersistedLegacySql();
@@ -87,13 +95,13 @@ public class LiveViewRefreshCompatibilityTest extends AbstractLiveViewTest {
         });
     }
 
-    private static void assertCreateRejected(String sql) throws Exception {
+    private static void assertCreateRejected(SqlExecutionContext context, String sql) throws Exception {
         try {
-            execute(sql);
-            Assert.fail("CREATE must reject newly restricted catalogue functions");
+            engine.execute(sql, context);
+            Assert.fail("CREATE must reject catalogue functions without SYSTEM ADMIN");
         } catch (SqlException e) {
-            Assert.assertTrue(Chars.contains(e.getFlyweightMessage(),
-                    "administrative function cannot be used in live view: tables"));
+            Assert.assertTrue(e.getFlyweightMessage().toString(), Chars.contains(e.getFlyweightMessage(),
+                    "catalogue function cannot be used in live view without SYSTEM ADMIN: tables"));
         }
     }
 

@@ -31,11 +31,15 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshSqlExecutionContext;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.std.Files;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TableFunctionTestUtils;
+import io.questdb.test.tools.TableFunctionTestUtils.CloseCountingRecordCursorFactory;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -156,6 +160,75 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testRefreshFailsClosedForPersistedAdministrativeFunction() throws Exception {
+        // An administrative function needs the Enterprise security context of its caller, or has side
+        // effects, so a materialized view rejects it at refresh too, however its definition got there.
+        // The refresh must reject it before the function is created at all.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(parallel));
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(parallel));
+        assertMemoryLeak(() -> {
+            final ObjList<CloseCountingRecordCursorFactory> factories = new ObjList<>();
+            TableFunctionTestUtils.register(
+                    engine,
+                    "ent_admin_cursor",
+                    SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT,
+                    factories
+            );
+            try {
+                execute("CREATE TABLE base (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO base VALUES ('2024-01-01T00:00:00Z', 1)");
+                drainWalQueue();
+                execute("CREATE MATERIALIZED VIEW mv WITH BASE base REFRESH MANUAL DEFERRED AS ("
+                        + "SELECT ts, count() c FROM base SAMPLE BY 1d) PARTITION BY DAY");
+                drainWalQueue();
+                final String legacySql = "SELECT base.ts, count() c FROM base CROSS JOIN ent_admin_cursor() SAMPLE BY 1d";
+                installPersistedViewSql("mv", legacySql);
+
+                execute("REFRESH MATERIALIZED VIEW mv FULL");
+                drainWalAndMatViewQueues();
+                assertQuery("SELECT view_name, view_status, invalidation_reason FROM materialized_views")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("view_name\tview_status\tinvalidation_reason\n"
+                                + "mv\tinvalid\t[" + legacySql.indexOf("ent_admin_cursor")
+                                + "]: administrative function cannot be used in materialized view: ent_admin_cursor\n");
+                Assert.assertEquals(0, factories.size());
+            } finally {
+                TableFunctionTestUtils.unregister(engine, "ent_admin_cursor");
+            }
+        });
+    }
+
+    @Test
+    public void testRefreshFailsClosedForPersistedCatalogueFunctionFromView() throws Exception {
+        // A definition that reads a catalogue function through a regular view, which CREATE now rejects,
+        // stops refreshing after the upgrade: the view's definition may have changed since CREATE, so
+        // the refresh cannot tell who chose what the materialized view would store.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(parallel));
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(parallel));
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('2024-01-01T00:00:00Z', 1)");
+            execute("CREATE VIEW names AS (SELECT table_name FROM tables())");
+            drainWalAndViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv WITH BASE base REFRESH MANUAL DEFERRED AS ("
+                    + "SELECT ts, count() c FROM base SAMPLE BY 1d) PARTITION BY DAY");
+            drainWalQueue();
+            final String legacySql = "SELECT base.ts, count() c FROM base CROSS JOIN names SAMPLE BY 1d";
+            installPersistedViewSql("mv", legacySql);
+
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT view_name, view_status, invalidation_reason FROM materialized_views")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_name\tview_status\tinvalidation_reason\n"
+                            + "mv\tinvalid\t[" + legacySql.indexOf("names")
+                            + "]: catalogue function from view names cannot be used in materialized view: tables\n");
+        });
+    }
+
+    @Test
     public void testRefreshFailsClosedForPersistedExternalSourceDefinition() throws Exception {
         // Upgrade-break regression (intended break): older binaries accepted an external-source
         // sub-query (read_parquet) in a materialized-view definition; this binary rejects it, so
@@ -223,7 +296,8 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
             execute("INSERT INTO base VALUES ('2024-01-01T00:00:00Z', 1)");
             drainWalQueue();
 
-            // CREATE still rejects the catalogue function, but older releases stored this definition.
+            // Older releases stored this definition whoever created it, while CREATE now requires SYSTEM
+            // ADMIN for the catalogue function: the refresh keeps compiling a function the definition writes.
             execute("CREATE MATERIALIZED VIEW mv WITH BASE base REFRESH MANUAL DEFERRED AS ("
                     + "SELECT ts, count() c FROM base SAMPLE BY 1d) PARTITION BY DAY");
             drainWalQueue();

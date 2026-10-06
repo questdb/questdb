@@ -3924,17 +3924,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.$(startPos, "SELECT query expected");
                     }
                     queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
-                    final SqlExecutionRequirements executionRequirements = functionParser.getExecutionRequirements();
-                    final int securityContextPosition = executionRequirements.getPosition(
-                            SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
-                    );
-                    if (securityContextPosition > -1) {
-                        throw SqlException.position(securityContextPosition)
-                                .put("administrative function cannot be used in materialized view: ")
-                                .put(executionRequirements.getFunctionName(
-                                        SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
-                                ));
-                    }
+                    // The optimiser created the FROM/JOIN cursor functions and the SHOW statements while
+                    // non-deterministic functions were still allowed, so FunctionParser did not check them
+                    // for the materialized view yet.
+                    functionParser.getExecutionRequirements().checkStoredView(executionContext);
                 } catch (SqlException e) {
                     e.setPosition(e.getPosition() + selectTextPosition);
                     throw e;

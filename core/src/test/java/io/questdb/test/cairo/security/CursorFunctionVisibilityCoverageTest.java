@@ -50,9 +50,10 @@ import java.util.TreeSet;
  * author decides which one it is.
  * <p>
  * The functions of the first two kinds evaluate against the security context of the caller, so
- * they must also declare {@link SqlExecutionRequirements#REQUIRES_ENTERPRISE_SECURITY_CONTEXT},
- * which keeps them out of materialized and live views: those refresh detached from any caller,
- * under a context that sees every object.
+ * they must also declare {@link SqlExecutionRequirements#DISCLOSES_OBJECTS} or
+ * {@link SqlExecutionRequirements#REQUIRES_ENTERPRISE_SECURITY_CONTEXT}, which restrict their use
+ * in materialized and live views: those refresh detached from any caller, under a context that sees
+ * every object.
  */
 public class CursorFunctionVisibilityCoverageTest extends AbstractCairoTest {
     // discloses objects only to callers authorized as admins, others see nothing or only their own
@@ -196,13 +197,13 @@ public class CursorFunctionVisibilityCoverageTest extends AbstractCairoTest {
         for (Set<String> kind : List.of(filtersByVisibility, adminOnly)) {
             for (String factoryClass : kind) {
                 final int requirements = registered.get(factoryClass).getExecutionRequirements();
-                if ((requirements & SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT) == 0) {
+                if ((requirements & (SqlExecutionRequirements.DISCLOSES_OBJECTS | SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT)) == 0) {
                     undeclared.add(factoryClass);
                 }
             }
         }
         Assert.assertEquals(
-                "functions that disclose objects by the caller's security context must declare REQUIRES_ENTERPRISE_SECURITY_CONTEXT",
+                "functions that disclose objects by the caller's security context must declare DISCLOSES_OBJECTS or REQUIRES_ENTERPRISE_SECURITY_CONTEXT",
                 "[]",
                 undeclared.toString()
         );

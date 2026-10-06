@@ -42,7 +42,7 @@ public class TablePartitionsFunctionFactory implements FunctionFactory {
     @Override
     public int getExecutionRequirements() {
         // resolves the table against the caller or its enclosing view, see SqlExecutionRequirements
-        return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+        return SqlExecutionRequirements.DISCLOSES_OBJECTS;
     }
 
     @Override

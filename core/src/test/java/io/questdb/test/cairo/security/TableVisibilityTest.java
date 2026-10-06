@@ -75,30 +75,6 @@ public class TableVisibilityTest extends AbstractCairoTest {
     };
 
     @Test
-    public void testCatalogueFunctionsAreRejectedInMaterializedViews() throws Exception {
-        assertMemoryLeak(() -> {
-            createObjects();
-            // A materialized view refreshes detached from any caller, under a context that sees every
-            // object, and every reader of the view would read what that context saw.
-            final String[] functions = {
-                    "tables()", "all_tables()", "information_schema.tables()", "information_schema.columns()",
-                    "information_schema.questdb_columns()", "pg_catalog.pg_class()", "pg_class()",
-                    "pg_catalog.pg_attribute()", "pg_catalog.pg_attrdef()", "views()", "materialized_views()",
-                    "live_views()", "wal_tables()", "table_storage()", "reader_pool()", "writer_pool()",
-                    "table_columns('visible_t')", "table_partitions('visible_t')", "wal_transactions('visible_t')",
-                    "query_activity()", "export_activity()", "files('" + root + "')", "glob('" + root + "/*')"
-            };
-            for (String function : functions) {
-                final String sql = "CREATE MATERIALIZED VIEW mv_catalogue AS (SELECT v.ts, count() c FROM visible_t v CROSS JOIN "
-                        + function + " SAMPLE BY 1d) PARTITION BY DAY";
-                final String failure = executionFailureOf(sql, sqlExecutionContext);
-                TestUtils.assertContains(function + ": " + failure, failure, "function cannot be used in materialized view");
-                Assert.assertNull(engine.getTableTokenIfExists("mv_catalogue"));
-            }
-        });
-    }
-
-    @Test
     public void testCatalogueQueriesHideInvisibleObjects() throws Exception {
         assertMemoryLeak(() -> {
             createObjects();
