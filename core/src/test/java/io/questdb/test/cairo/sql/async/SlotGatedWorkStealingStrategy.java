@@ -79,7 +79,7 @@ public class SlotGatedWorkStealingStrategy extends AdaptiveWorkStealingStrategy 
     }
 
     @Override
-    public void onBeforeOwnerReduce() {
+    public void onBeforeOwnerStep() {
         awaitWorkerSlotAcquisition();
     }
 

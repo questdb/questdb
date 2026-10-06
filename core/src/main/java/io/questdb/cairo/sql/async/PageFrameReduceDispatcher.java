@@ -313,13 +313,12 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     public boolean consumeUnordered(
             int workerId,
             RingQueue<UnorderedPageFrameReduceTask> queue,
-            MCSequence subSeq,
-            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
+            MCSequence subSeq
     ) {
         if (hasNoPendingTasks(subSeq)) {
             return true;
         }
-        final Fiber fiber = reserveFiber(stealingFrameSequence);
+        final Fiber fiber = reserveFiber(null);
         if (fiber == null) {
             return true;
         }

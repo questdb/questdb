@@ -493,6 +493,9 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
             if (doneLatch.done(claimedCount)) {
                 break;
             }
+            if (!isDraining) {
+                workStealingStrategy.onBeforeOwnerStep();
+            }
             if (canPark) {
                 awaitProgress(dispatcher, observedProgress, observedGlobalProgress, isDraining || !isActive());
             } else {
@@ -643,7 +646,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                 && hasCircuitBreakerInterruptionBeenSuperseded(sqlExecutionContext.getCircuitBreaker(), true)) {
             return false;
         }
-        workStealingStrategy.onBeforeOwnerReduce();
+        workStealingStrategy.onBeforeOwnerStep();
         final int frameIndex = claimFrame();
         if (frameIndex < 0) {
             return false;

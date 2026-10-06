@@ -101,8 +101,7 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                 ? dispatcher.consumeUnordered(
                 workerContext.carrierId(),
                 messageBus.getUnorderedPageFrameReduceQueue(),
-                messageBus.getUnorderedPageFrameReduceSubSeq(),
-                null
+                messageBus.getUnorderedPageFrameReduceSubSeq()
         )
                 : consumeQueue(
                 workerContext.carrierId(),
