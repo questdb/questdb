@@ -54,6 +54,7 @@ import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.griffin.engine.table.KeyMajorPageFrameRecordCursor;
 import io.questdb.griffin.engine.table.PageFrameRowToucher;
 import io.questdb.griffin.engine.table.SelectedRecord;
@@ -377,6 +378,9 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         private final ObjList<AsyncWindowStage> stages = new ObjList<>();
         // the stage whose windows restart at a continued key's first own row, -1 for none
         private int carryStage = -1;
+        // the GROUP BY step, which comes last, or null
+        private AsyncWindowGroupByStage groupStage;
+        private int groupStageIndex = -1;
         private final ObjList<Function> functions;
         // the scan's key column, which key runs read once per run rather than once per row
         private final int keyRunColumnIndex;
@@ -478,10 +482,25 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             outputRecord = stage.bind(outputRecord, outputSymbols);
             outputSymbols = stage;
             keyRunFunctions = null;
+            if (stage instanceof AsyncWindowGroupByStage g) {
+                groupStage = g;
+                groupStageIndex = stageCount - 1;
+            }
+        }
+
+        AsyncWindowGroupByStage getGroupStage() {
+            return groupStage;
         }
 
         void setCarryStage(int carryStage) {
             this.carryStage = carryStage;
+        }
+
+        // The first stage the warm-up rows of a continued key must not reach: the carry stage, whose
+        // running values a task computes from its own rows, or else a GROUP BY, whose groups
+        // must hold the task's own rows only; -1 for none.
+        private int resetStage() {
+            return carryStage > -1 ? carryStage : groupStageIndex;
         }
 
         // Adds the columns a function reads to the list, when all it is made of is known to read
@@ -660,11 +679,14 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 long emitFrom,
                 RecordChain chain,
                 SqlExecutionCircuitBreaker circuitBreaker,
-                UnorderedPageFrameSequence<?> sequence
+                UnorderedPageFrameSequence<?> sequence,
+                @Nullable GroupSplit groupSplit
         ) {
             if (keyRunFunctions != null) {
                 return computeKeyRuns(rows, keyStarts, emitFrom, chain, circuitBreaker, sequence);
             }
+            final long secondKeyStart = keyStarts.size() > 1 ? keyStarts.getQuick(1) : Long.MAX_VALUE;
+            final int resetStage = resetStage();
             // the record moves to other frames, so a stream on this slot positions it again
             streamFrameIndex = -1;
             chain.rewind(rows.size() - emitFrom);
@@ -706,19 +728,65 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 final long batchLo = i - n;
                 for (int j = 0; j < n; j++) {
                     record.setRowIndex(batch[j]);
-                    if (batchLo + j == emitFrom && emitFrom > 0 && carryStage > -1) {
-                        // the warm-up rows rebuilt the stages before the carry stage; its running
-                        // values start at the task's own rows, the cursor adds the key's carry
-                        stages.getQuick(carryStage).toTop();
+                    final long index = batchLo + j;
+                    if (index == emitFrom) {
+                        if (emitFrom > 0 && resetStage > -1) {
+                            // The warm-up rows rebuilt the stages before the carry stage; its
+                            // running values start at the task's own rows, and the cursor adds
+                            // the key's carry. A GROUP BY's groups hold the task's own rows only.
+                            for (int s = resetStage; s < stageCount; s++) {
+                                stages.getQuick(s).toTop();
+                            }
+                        }
+                        if (groupStage != null) {
+                            groupStage.setRowId(groupSplit != null ? groupSplit.walkBase : 0);
+                            if (groupSplit != null && groupSplit.continuesKey) {
+                                groupStage.beginHeadCapture(groupSplit.headChain);
+                            }
+                        }
                     }
-                    if (computeNext(functionInput) && batchLo + j >= emitFrom) {
+                    if (computeNext(functionInput) && index >= emitFrom) {
                         prevOffset = chain.put(outputRecord, prevOffset);
+                        // a group closed by the second key's first row is the first key's last
+                        if (groupSplit != null && index <= secondKeyStart) {
+                            groupSplit.firstKeyGroupRows++;
+                        }
                     }
                 }
+            }
+            if (groupSplit != null) {
+                return finishGroupSplit(groupSplit, chain, prevOffset, secondKeyStart >= rowCount);
             }
             // a GROUP BY step outputs the task's last group now; keys never span tasks then
             if (flush()) {
                 prevOffset = chain.put(outputRecord, prevOffset);
+            }
+            return prevOffset;
+        }
+
+        /**
+         * Ends a task whose keys may continue over tasks, with a GROUP BY step: see
+         * {@link GroupSplit}. The rows of a continued key's first group were captured, not
+         * aggregated; the group open at the end is handed over, not output, when the task's last
+         * key continues in the next task.
+         */
+        private long finishGroupSplit(GroupSplit groupSplit, RecordChain chain, long prevOffset, boolean singleKeyTask) {
+            final AsyncWindowGroupByStage stage = groupStage;
+            final boolean capturing = stage.isCapturing();
+            // the head group is complete unless the task's rows all belong to it and the key goes on
+            groupSplit.headClosed = !capturing || !groupSplit.lastKeyContinues;
+            groupSplit.headRows = groupSplit.continuesKey ? stage.getHeadRowCount() : 0;
+            groupSplit.hasTail = false;
+            groupSplit.tailIsFirstKey = singleKeyTask;
+            if (groupSplit.lastKeyContinues) {
+                if (!capturing) {
+                    groupSplit.hasTail = stage.exportOpenGroup(groupSplit.tailValue, groupSplit.tailKeys);
+                }
+            } else if (!capturing && stage.closeOpenGroup()) {
+                prevOffset = chain.put(outputRecord, prevOffset);
+                if (singleKeyTask) {
+                    groupSplit.firstKeyGroupRows++;
+                }
             }
             return prevOffset;
         }
@@ -1129,6 +1197,60 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
             return source.newSymbolTable(crossIndex.getQuick(columnIndex));
+        }
+    }
+
+    /**
+     * What a task hands the cursor when its keys may continue over tasks and the last step is a
+     * GROUP BY: a group that spans two tasks is aggregated by neither alone. A task that continues
+     * a key captures the rows of the key's first group in {@link #headChain} (the GROUP BY step's
+     * input rows); a task whose last key goes on into the next task leaves that key's open group
+     * in {@link #tailValue} and {@link #tailKeys}. The cursor, in walk order, replays the head rows
+     * into the group the task before left open, and takes the tail over, see
+     * {@link AsyncWindowGroupByStage#replay}.
+     */
+    public static class GroupSplit implements QuietCloseable {
+        final RecordChain headChain;
+        final long[] tailKeys;
+        final SimpleMapValue tailValue;
+        // the task's first key continues a key of the task before it
+        boolean continuesKey;
+        // rows of the chain that are the first key's closed groups, after its head group
+        long firstKeyGroupRows;
+        // the head group ended within the task: no later task continues it
+        boolean headClosed;
+        // a tail group was handed over
+        boolean hasTail;
+        // rows the head chain holds
+        long headRows;
+        // the task's last key goes on in the next task
+        boolean lastKeyContinues;
+        // the tail group is the first key's, which a carry applies to
+        boolean tailIsFirstKey;
+        // the walk position of the task's first own row, the row id of its first group row
+        long walkBase;
+
+        public GroupSplit(RecordChain headChain, int valueCount, int keyCount) {
+            this.headChain = headChain;
+            this.tailValue = new SimpleMapValue(valueCount);
+            this.tailKeys = new long[keyCount];
+        }
+
+        @Override
+        public void close() {
+            Misc.free(headChain);
+            Misc.free(tailValue);
+        }
+
+        void reset() {
+            continuesKey = false;
+            firstKeyGroupRows = 0;
+            headClosed = false;
+            hasTail = false;
+            headRows = 0;
+            lastKeyContinues = false;
+            tailIsFirstKey = false;
+            walkBase = 0;
         }
     }
 }

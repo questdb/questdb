@@ -102,6 +102,10 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     private static final int MODE_SERIAL = 1;
     private static final int MODE_UNDECIDED = 0;
     private static final long ROW_IDS_INITIAL_CAPACITY = 1024;
+    // The first tasks' row budget is task.rows over this, at least 1024 rows or task.rows; it
+    // doubles every worker-count tasks up to task.rows, so that a result of a few hundred thousand
+    // rows, a frequent key's, makes tasks enough for every worker.
+    private static final long TASK_RAMP_DIVISOR = 16;
     private static final int SEGMENT_NONE = 0;
     private static final int SEGMENT_ROUND = 1;
     private static final int SEGMENT_STREAM = 2;
@@ -123,10 +127,25 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     private final Round[] segmentRounds;
     private final AsyncWindowSplitPlan splitPlan;
     private final boolean splitsKeys;
+
     private final long taskRows;
     private final int tasksPerRound;
+    private final int workerCount;
+    // the first tasks' budget, see TASK_RAMP_ROWS: at least a few times a key's warm-up rows
+    private final long rampTaskRows;
+    // tasks collected since the walk started, for the ramp of task sizes
+    private long tasksCollected;
     private RecordCursor baseCursor;
     private SqlExecutionCircuitBreaker circuitBreaker;
+    // keys split over tasks with a GROUP BY step: groups that span tasks are completed by this
+    // thread, see AsyncWindowAtom.GroupSplit; known once the atom has all its steps
+    private boolean groupSplit;
+    // a task whose rows follow the groups this thread completed for it, see processGroupBoundary()
+    private Task deferredTask;
+    // the groups this thread completed, see processGroupBoundary()
+    private Task ownerGroupTask;
+    // rows of the walk collected so far, past the warm-up rows: the next row's walk position
+    private long walkPosition;
     // the task whose rows are being returned
     private Task emitTask;
     private int emitTaskIndex;
@@ -190,6 +209,8 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         // a few tasks per worker, so that the round's tasks balance across the workers; the
         // round's row budget, not this count, bounds the round's memory
         this.tasksPerRound = Math.max(2, 4 * workerCount);
+        this.workerCount = Math.max(1, workerCount);
+        this.rampTaskRows = Math.min(taskRows, Math.max(Math.max(Math.min(taskRows, 1024), taskRows / TASK_RAMP_DIVISOR), 4 * splitPlan.getWarmupRows()));
         // A task's chain holds a task's rows, a few MB, and grows a page at a time: the window
         // store's page keeps the overshoot small where the sort's page would be most of the chain.
         // The sort's value cap bounds it, as it bounds the sort's chain that this replaces.
@@ -249,6 +270,9 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         for (Round round : rounds) {
             failure = Misc.freeBestEffort(failure, round);
         }
+        failure = Misc.freeBestEffort(failure, ownerGroupTask);
+        ownerGroupTask = null;
+        deferredTask = null;
         keptChainBytes = 0;
         ownerRows = Misc.free(ownerRows);
         warmRows = Misc.free(warmRows);
@@ -370,6 +394,13 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                     return true;
                 }
                 finishEmitting(emitTask);
+                if (deferredTask != null) {
+                    // the groups this thread completed came first; now the task's own rows
+                    final Task task = deferredTask;
+                    deferredTask = null;
+                    startEmitting(task);
+                    continue;
+                }
             }
             if (ownerPos < ownerRows.size()) {
                 // streamed row by row, as the serial window computes it
@@ -377,7 +408,11 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                 final AsyncWindowAtom.Slot owner = atom.getSlot(-1);
                 final boolean kept = owner.streamRow(ownerRows, ownerPos++);
                 if (ownerPos == ownerRows.size() && carry.length > 0) {
-                    captureCarry(owner.getOutputRecord());
+                    if (groupSplit) {
+                        captureGroupCarry();
+                    } else {
+                        captureCarry(owner.getOutputRecord());
+                    }
                 }
                 if (kept) {
                     return true;
@@ -424,6 +459,9 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             if (!nextSegment()) {
                 produce();
                 if (!nextSegment()) {
+                    if (groupSplit && flushOwnerGroup()) {
+                        continue;
+                    }
                     releaseChains();
                     return false;
                 }
@@ -442,6 +480,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         isOpen = true;
         this.executionContext = executionContext;
         this.circuitBreaker = executionContext.getCircuitBreaker();
+        this.groupSplit = splitsKeys && atom.hasGroupByStage();
         mode = MODE_UNDECIDED;
         isWorkerSlotsOpen = false;
         resetWalkState();
@@ -552,7 +591,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             final AsyncWindowAtom.Slot slot = atom.getSlot(slotId);
             // a task starts from clean state: warm-up rows rebuild a key it continues
             slot.toTop();
-            task.lastOffset = slot.compute(task.rows, task.keyStarts, task.emitFrom, task.chain, circuitBreaker, sequence);
+            task.lastOffset = slot.compute(task.rows, task.keyStarts, task.emitFrom, task.chain, circuitBreaker, sequence, task.groupSplit);
             task.computedByWorker = workerId > -1;
             slot.countTask();
             atom.countTask(workerId);
@@ -643,7 +682,8 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         int streamKey = -1;
         while (collectedRows < roundRows && round.taskCount < tasksPerRound && !keyMajorCursor.isWalkExhausted()) {
             final Task task = round.nextTask(this);
-            final long taskLimit = Math.min(taskRows, roundRows - collectedRows);
+            final long rampLimit = Math.min(taskRows, rampTaskRows << Math.min(30, tasksCollected++ / workerCount));
+            final long taskLimit = Math.min(rampLimit, roundRows - collectedRows);
             final long emitted = splitsKeys ? collectSlice(task, taskLimit) : collectWholeKeys(task, taskLimit);
             if (emitted == 0) {
                 round.dropLastTask();
@@ -672,6 +712,10 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     private long collectSlice(Task task, long taskLimit) {
         final DirectLongList rows = task.rows;
         task.continuesKey = walkKeyOpen;
+        if (task.groupSplit != null) {
+            task.groupSplit.continuesKey = walkKeyOpen;
+            task.groupSplit.walkBase = walkPosition;
+        }
         if (walkKeyOpen && warmRows != null) {
             for (long i = 0, n = warmRows.size(); i < n; i++) {
                 rows.add(warmRows.get(i));
@@ -691,6 +735,10 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             if (first) {
                 task.firstKeyRows = collected;
                 first = false;
+                if (task.groupSplit != null) {
+                    // a walk that stopped at a key's last row continues it with no row
+                    task.groupSplit.continuesKey = task.continuesKey && collected > 0;
+                }
             }
             if (status == KeyMajorPageFrameRecordCursor.COLLECT_ROW_LIMIT) {
                 walkKeyOpen = true;
@@ -701,6 +749,10 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             if (status == KeyMajorPageFrameRecordCursor.COLLECT_EXHAUSTED) {
                 break;
             }
+        }
+        walkPosition += emitted;
+        if (task.groupSplit != null) {
+            task.groupSplit.lastKeyContinues = walkKeyOpen;
         }
         return emitted;
     }
@@ -761,7 +813,13 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     }
 
     private void finishEmitting(Task task) {
-        if (carry.length > 0 && task.emittedRows > 0) {
+        if (task == ownerGroupTask) {
+            task.chain.clear();
+            emitTask = null;
+            return;
+        }
+        // with a GROUP BY step the carry is the open group's, see processGroupBoundary()
+        if (carry.length > 0 && task.emittedRows > 0 && !groupSplit) {
             captureCarry(task);
         }
         // Returned. A chain a worker filled keeps its memory for the task's next fill, which
@@ -835,7 +893,25 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             chain.setMemoryTracker(memoryTracker);
             chain.setSymbolTableResolver(this);
             rows = newRowIds(memoryTracker);
-            return new Task(chain, rows);
+            final Task task = new Task(chain, rows);
+            if (groupSplit) {
+                try {
+                    final AsyncWindowGroupByStage stage = atom.getSlot(-1).getGroupStage();
+                    final RecordChain headChain = new RecordChain(
+                            stage.getHeadTypes(),
+                            stage.getHeadSink(),
+                            chainPageSize,
+                            (int) Math.min(chainMaxPages, Integer.MAX_VALUE),
+                            PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES.getPropertyPath()
+                    );
+                    headChain.setMemoryTracker(memoryTracker);
+                    task.groupSplit = new AsyncWindowAtom.GroupSplit(headChain, stage.getValueCount(), stage.getKeyCount());
+                } catch (Throwable th) {
+                    Misc.free(task);
+                    throw th;
+                }
+            }
+            return task;
         } catch (Throwable th) {
             Misc.free(chain);
             Misc.free(rows);
@@ -908,7 +984,8 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         while (ownerRows.size() < chunkRows) {
             if (prefixRowsStreamed + ownerRows.size() >= minRows && (splitsKeys || !walkKeyOpen)) {
                 isParallelPhase = true;
-                isOwnerFlushPending = true;
+                // a group the prefix leaves open mid-key is the next task's to continue
+                isOwnerFlushPending = !(groupSplit && walkKeyOpen);
                 break;
             }
             final boolean continued = first && walkKeyOpen;
@@ -929,6 +1006,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             }
         }
         prefixRowsStreamed += ownerRows.size();
+        walkPosition += ownerRows.size();
         atom.getSlot(-1).resetStream();
         // the record may point at the last task returned before a rewind
         record.of(atom.getSlot(-1).getOutputRecord());
@@ -979,6 +1057,11 @@ public class AsyncWindowRecordCursor implements RecordCursor {
 
     private void resetWalkState() {
         emitTask = null;
+        deferredTask = null;
+        walkPosition = 0;
+        if (ownerGroupTask != null) {
+            ownerGroupTask.chain.clear();
+        }
         emitTaskIndex = 0;
         headKind = SEGMENT_NONE;
         headRound = null;
@@ -989,6 +1072,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         segmentHead = 0;
         segmentCount = 0;
         isParallelPhase = minRows <= 0;
+        tasksCollected = 0;
         // the serial mode streams every row, the parallel one its prefix
         isOwnerFlushPending = mode == MODE_SERIAL;
         walkKeyOpen = false;
@@ -1017,12 +1101,119 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         // Once per task of about task.rows rows, a coarse site: cancellation and the timeout are
         // checked on every call, unlike the per-row check, which samples them.
         circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-        if (carry.length > 0 && task.continuesKey) {
+        if (groupSplit) {
+            if (!task.isBoundaryProcessed) {
+                task.isBoundaryProcessed = true;
+                if (processGroupBoundary(task)) {
+                    // the groups this thread completed go first, then the task's rows
+                    deferredTask = task;
+                    beginEmitting(ownerGroupTask);
+                    return;
+                }
+            }
+        } else if (carry.length > 0 && task.continuesKey) {
             applyCarry(task);
         }
+        beginEmitting(task);
+    }
+
+    private void beginEmitting(Task task) {
         task.chain.toTop();
         record.of(task.chain.getRecord());
         emitTask = task;
+    }
+
+    // Combines the carried running value with a column of the first rowCount rows of a chain, in
+    // place, as applyCarry() does for the output's rows.
+    private void applyCarry(RecordChain chain, long rowCount, int column) {
+        final int type = splitPlan.getPrefixType(0);
+        final int op = splitPlan.getPrefixOp(0);
+        long offset = 0;
+        for (long r = 0; r < rowCount; r++) {
+            final long address = chain.getAddress(offset, column);
+            Unsafe.putLong(address, AsyncWindowSplitPlan.combine(op, type, carry[0], Unsafe.getLong(address)));
+            offset = chain.getNextRecordOffset(offset);
+        }
+    }
+
+    // The walk ended with a group open, of a key that had no rows left past the task that left it
+    // open: outputs it. Returns whether there was one.
+    private boolean flushOwnerGroup() {
+        final AsyncWindowGroupByStage stage = atom.getSlot(-1).getGroupStage();
+        if (!stage.closeOpenGroup()) {
+            return false;
+        }
+        if (ownerGroupTask == null) {
+            ownerGroupTask = newTask();
+        }
+        ownerGroupTask.chain.clear();
+        ownerGroupTask.chain.put(stage.getOutputRecord(), -1);
+        beginEmitting(ownerGroupTask);
+        return true;
+    }
+
+    // The carry of a key the query's thread left open mid-key: its open group's key.
+    private void captureGroupCarry() {
+        final AsyncWindowGroupByStage stage = atom.getSlot(-1).getGroupStage();
+        if (stage.isGroupOpen()) {
+            carry[0] = stage.getOpenKey(splitPlan.getGroupCarryKeyIndex());
+        }
+    }
+
+    /**
+     * Completes, in walk order, the groups a task shares with the tasks around it, see
+     * {@link AsyncWindowAtom.GroupSplit}, on the GROUP BY step of this thread's slot, which holds
+     * the group the walk left open so far. When the task continues a key, the carry goes into its
+     * rows of that key, and its captured head rows are replayed into the open group: a head row
+     * with another group key closes it. The head group is closed when the task ended it. When the
+     * task's last key goes on, its tail group becomes the open one, and its key the carry. The
+     * groups closed here go to {@link #ownerGroupTask}; returns whether there are any.
+     */
+    private boolean processGroupBoundary(Task task) {
+        final AsyncWindowGroupByStage stage = atom.getSlot(-1).getGroupStage();
+        final AsyncWindowAtom.GroupSplit gs = task.groupSplit;
+        if (ownerGroupTask == null) {
+            ownerGroupTask = newTask();
+        }
+        final RecordChain groups = ownerGroupTask.chain;
+        groups.clear();
+        long prevOffset = -1;
+        final boolean carries = carry.length > 0;
+        if (!gs.continuesKey && stage.closeOpenGroup()) {
+            // the key the walk stopped in had no rows left: its open group is complete
+            prevOffset = groups.put(stage.getOutputRecord(), prevOffset);
+        }
+        if (gs.continuesKey) {
+            if (carries) {
+                applyCarry(task.chain, gs.firstKeyGroupRows, splitPlan.getPrefixColumn(0));
+                applyCarry(gs.headChain, gs.headRows, splitPlan.getGroupCarryInputColumn());
+            }
+            final RecordChain head = gs.headChain;
+            head.toTop();
+            long rowId = gs.walkBase;
+            while (head.hasNext()) {
+                if (stage.replay(head.getRecord(), rowId++)) {
+                    prevOffset = groups.put(stage.getOutputRecord(), prevOffset);
+                }
+            }
+            if (gs.headClosed && stage.closeOpenGroup()) {
+                prevOffset = groups.put(stage.getOutputRecord(), prevOffset);
+            }
+        }
+        if (gs.lastKeyContinues) {
+            if (gs.hasTail) {
+                assert !stage.isGroupOpen() : "the task's head group is still open with a tail behind it";
+                if (carries && gs.continuesKey && gs.tailIsFirstKey) {
+                    final int k = splitPlan.getGroupCarryKeyIndex();
+                    gs.tailKeys[k] = AsyncWindowSplitPlan.combine(splitPlan.getPrefixOp(0), splitPlan.getPrefixType(0), carry[0], gs.tailKeys[k]);
+                }
+                stage.adoptGroup(gs.tailValue, gs.tailKeys);
+            }
+            if (carries) {
+                carry[0] = stage.getOpenKey(splitPlan.getGroupCarryKeyIndex());
+            }
+        }
+        return prevOffset != -1;
     }
 
     // Waits for every round the workers still compute and resets the sequences: a cursor that
@@ -1161,6 +1352,10 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         private final DirectLongList rows;
         // a worker thread computed the task, not the query's thread; written by the computing thread
         private boolean computedByWorker;
+        // with keys split over tasks and a GROUP BY step, what the task hands over, else null
+        private AsyncWindowAtom.GroupSplit groupSplit;
+        // the groups it shares with the tasks before it were completed, see processGroupBoundary()
+        private boolean isBoundaryProcessed;
         // the first key of the task continues from the rows returned before it
         private boolean continuesKey;
         // rows before this index only rebuild a continued key's state
@@ -1184,6 +1379,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         public void close() {
             Misc.free(chain);
             Misc.free(rows);
+            Misc.free(groupSplit);
         }
 
         // Empties the task for its next round. A task usually holds about taskRows row ids, but
@@ -1195,6 +1391,10 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             rows.clear();
             keyStarts.clear();
             computedByWorker = false;
+            isBoundaryProcessed = false;
+            if (groupSplit != null) {
+                groupSplit.reset();
+            }
             continuesKey = false;
             emitFrom = 0;
             emittedRows = 0;

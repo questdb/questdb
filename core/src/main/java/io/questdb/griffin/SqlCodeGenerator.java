@@ -5159,7 +5159,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } else {
             return null;
         }
-        if (async.getAtom() == null || ((AsyncWindowAtom) async.getAtom()).hasFilterStage()) {
+        if (async.getAtom() == null
+                || ((AsyncWindowAtom) async.getAtom()).hasFilterStage()
+                || ((AsyncWindowAtom) async.getAtom()).hasGroupByStage()) {
             return null;
         }
         final RecordMetadata metadata = factory.getMetadata();
@@ -13436,7 +13438,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } else {
             return null;
         }
-        if (!configuration.isSqlParallelWindowChainEnabled() || async.getAtom() == null || ((AsyncWindowAtom) async.getAtom()).hasFilterStage()) {
+        if (!configuration.isSqlParallelWindowChainEnabled()
+                || async.getAtom() == null
+                || ((AsyncWindowAtom) async.getAtom()).hasFilterStage()
+                || ((AsyncWindowAtom) async.getAtom()).hasGroupByStage()) {
             return null;
         }
         final int[] chainColumns = getAsyncWindowChainColumns(base);
@@ -13728,10 +13733,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
         }
-        final AsyncWindowChainSplit split = async.getChainSplit().thenGroupBy();
+        int groupKeyIndex = -1;
+        for (int i = 0; i < keyCount; i++) {
+            if (keyColumns[i] == groupColumn && groupColumn > -1) {
+                groupKeyIndex = i;
+            }
+        }
+        final boolean[] nonNegative = async.getNonNegativeColumns();
+        final AsyncWindowChainSplit split = async.getChainSplit().thenGroupBy(
+                groupKeyIndex,
+                groupColumn,
+                groupOutput,
+                // a running sum of integers only, see isNonNegativeValue(): combining it is exact
+                groupColumn > -1 && groupColumn < nonNegative.length && nonNegative[groupColumn]
+        );
+        final RecordSink headSink;
+        try {
+            entityColumnFilter.of(baseMetadata.getColumnCount());
+            headSink = RecordSinkFactory.getInstance(configuration, asm, baseMetadata, entityColumnFilter, null);
+        } catch (IllegalArgumentException e) {
+            Misc.freeObjListAndClear(copies);
+            return null;
+        }
         final long taskRows = Math.max(1, configuration.getSqlParallelWindowTaskRows());
+        final AsyncWindowGroupByStage ownerStage = new AsyncWindowGroupByStage(projection, groupByFunctions, keyColumns, keyColumnTypes, valueCount);
+        ownerStage.setHeadLayout(GenericRecordMetadata.copyOf(baseMetadata), headSink);
         final AsyncWindowRecordCursorFactory next = async.withStage(
-                new AsyncWindowGroupByStage(projection, groupByFunctions, keyColumns, keyColumnTypes, valueCount),
+                ownerStage,
                 copies,
                 projectionMetadata,
                 sink,

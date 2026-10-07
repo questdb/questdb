@@ -595,8 +595,8 @@ public class AsyncWindowTest extends AbstractCairoTest {
     public void testNullKeyOnly() throws Exception {
         assertMemoryLeak(() -> {
             createQuote(engine, sqlExecutionContext, "DAY", 2_000);
-            // a single key is not an IN-list scan, so it stays serial
-            assertMatchesSerial(engine, sqlExecutionContext, "select " + IDX50_COLUMNS + " from q where sym in (null) order by sym", false);
+            // a single key walked key-major is table order: a window over it runs on the workers
+            assertMatchesSerial(engine, sqlExecutionContext, "select " + IDX50_COLUMNS + " from q where sym in (null) order by sym");
             assertMatchesSerial(engine, sqlExecutionContext, "select " + IDX50_COLUMNS + " from q where sym in (null, 'NOPE') order by sym");
             assertMatchesSerial(engine, sqlExecutionContext, "select " + IDX50_COLUMNS + " from q where sym in ('NOPE', 'NOPE2') order by sym");
         });

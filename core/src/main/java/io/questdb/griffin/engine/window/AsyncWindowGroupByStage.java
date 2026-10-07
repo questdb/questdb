@@ -26,6 +26,9 @@
 package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
@@ -64,13 +67,22 @@ public class AsyncWindowGroupByStage extends AsyncWindowStage {
     private final int[] keyTypes;
     private final VirtualRecord output;
     private final ObjList<Function> projection;
+    // the layout of the step's input rows, for the chains that capture a task's head rows
+    private ColumnTypes headTypes;
+    private RecordSink headSink;
     private final int valueCount;
     private long[] closedKeys;
     private SimpleMapValue closedValue;
     private long[] currentKeys;
     private SimpleMapValue currentValue;
+    // the rows of a task's head group, see beginHeadCapture()
+    private RecordChain headChain;
+    private final long[] headKeys;
+    private long headPrevOffset = -1;
+    private long headRowCount;
     private Record input;
     private SymbolTableSource inputSymbols;
+    private boolean isCapturing;
     private boolean isGroupOpen;
     private boolean isOpen;
     private long rowId;
@@ -99,6 +111,7 @@ public class AsyncWindowGroupByStage extends AsyncWindowStage {
         this.keyTypes = keyTypes;
         this.valueCount = valueCount;
         this.currentKeys = new long[keyColumns.length];
+        this.headKeys = new long[keyColumns.length];
         this.closedKeys = new long[keyColumns.length];
         this.currentValue = new SimpleMapValue(valueCount);
         this.closedValue = new SimpleMapValue(valueCount);
@@ -164,7 +177,130 @@ public class AsyncWindowGroupByStage extends AsyncWindowStage {
                 projection.getQuick(i).cursorClosed();
             }
             isGroupOpen = false;
+            isCapturing = false;
+            headChain = null;
         }
+    }
+
+    /**
+     * Makes {@code value} and {@code keys} the open group, as if this stage had aggregated its
+     * rows: the group a task left open at its end, which the next task's rows may continue.
+     */
+    public void adoptGroup(SimpleMapValue value, long[] keys) {
+        currentValue.copy(value);
+        System.arraycopy(keys, 0, currentKeys, 0, keys.length);
+        isGroupOpen = true;
+    }
+
+    /**
+     * Until the rows of the first group end, appends them to {@code headChain} instead of
+     * aggregating them: a task that continues a key from the task before it cannot know the
+     * aggregates of the group its first rows continue, which the cursor completes by replaying
+     * them, see {@link #replay}. The rows after them aggregate as usual.
+     */
+    public void beginHeadCapture(RecordChain headChain) {
+        this.headChain = headChain;
+        headChain.clear();
+        headPrevOffset = -1;
+        headRowCount = 0;
+        isCapturing = true;
+        isGroupOpen = false;
+    }
+
+    /**
+     * Closes the open group, if any: {@link #getOutputRecord()} then holds it.
+     */
+    public boolean closeOpenGroup() {
+        if (isGroupOpen) {
+            closeGroup();
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Moves the open group, if any, out of this stage into {@code value} and {@code keys}.
+     */
+    public boolean exportOpenGroup(SimpleMapValue value, long[] keys) {
+        if (isGroupOpen) {
+            value.copy(currentValue);
+            System.arraycopy(currentKeys, 0, keys, 0, keys.length);
+            isGroupOpen = false;
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Rows captured since {@link #beginHeadCapture}.
+     */
+    public long getHeadRowCount() {
+        return headRowCount;
+    }
+
+    public RecordSink getHeadSink() {
+        return headSink;
+    }
+
+    public ColumnTypes getHeadTypes() {
+        return headTypes;
+    }
+
+    public int getKeyCount() {
+        return keyColumns.length;
+    }
+
+    /**
+     * The layout of the step's input rows, which the chains of a task's head rows hold, see
+     * {@link #beginHeadCapture}.
+     */
+    public void setHeadLayout(ColumnTypes headTypes, RecordSink headSink) {
+        this.headTypes = headTypes;
+        this.headSink = headSink;
+    }
+
+    /**
+     * A key of the open group, as its raw bits.
+     */
+    public long getOpenKey(int keyIndex) {
+        return currentKeys[keyIndex];
+    }
+
+    /**
+     * The record the GROUP BY outputs, the projection over the last group closed.
+     */
+    public Record getOutputRecord() {
+        return output;
+    }
+
+    public int getValueCount() {
+        return valueCount;
+    }
+
+    public boolean isCapturing() {
+        return isCapturing;
+    }
+
+    public boolean isGroupOpen() {
+        return isGroupOpen;
+    }
+
+    /**
+     * Adds a row to its group as {@link #computeNext()} adds the input's current row; for the
+     * rows a task captured, see {@link #beginHeadCapture}. Returns true when it closed a group.
+     */
+    public boolean replay(Record record, long rowId) {
+        this.rowId = rowId;
+        return accept(record);
+    }
+
+    /**
+     * The row id the next row is given, its position in the scan's walk: aggregates such as
+     * {@code first()} keep the row with the lowest id, which must be the earliest also when a
+     * group's rows came from several tasks.
+     */
+    public void setRowId(long rowId) {
+        this.rowId = rowId;
     }
 
     /**
@@ -174,6 +310,38 @@ public class AsyncWindowGroupByStage extends AsyncWindowStage {
     @Override
     public boolean computeNext() {
         final Record record = input;
+        if (isCapturing) {
+            if (headPrevOffset == -1) {
+                for (int i = 0, n = keyColumns.length; i < n; i++) {
+                    headKeys[i] = readKey(record, keyColumns[i], keyTypes[i]);
+                }
+                headPrevOffset = headChain.put(record, -1);
+                headRowCount++;
+                rowId++;
+                return false;
+            }
+            boolean same = true;
+            for (int i = 0, n = keyColumns.length; i < n; i++) {
+                if (readKey(record, keyColumns[i], keyTypes[i]) != headKeys[i]) {
+                    same = false;
+                    break;
+                }
+            }
+            if (same) {
+                headPrevOffset = headChain.put(record, headPrevOffset);
+                headRowCount++;
+                rowId++;
+                return false;
+            }
+            // the head group ended: the cursor completes it, this stage goes on with the rows after it
+            isCapturing = false;
+            startGroup(record);
+            return false;
+        }
+        return accept(record);
+    }
+
+    private boolean accept(Record record) {
         if (isGroupOpen) {
             boolean same = true;
             for (int i = 0, n = keyColumns.length; i < n; i++) {
@@ -244,6 +412,7 @@ public class AsyncWindowGroupByStage extends AsyncWindowStage {
     @Override
     public void toTop() {
         isGroupOpen = false;
+        isCapturing = false;
         rowId = 0;
         for (int i = 0, n = projection.size(); i < n; i++) {
             projection.getQuick(i).toTop();

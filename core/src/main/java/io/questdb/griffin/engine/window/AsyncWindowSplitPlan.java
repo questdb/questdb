@@ -69,6 +69,10 @@ public class AsyncWindowSplitPlan implements Plannable {
     private final IntList prefixOps;
     private final IntList prefixTypes;
     private final long warmupRows;
+    // with a GROUP BY step: the carried group key's index among the step's keys, and its column in
+    // the step's input; -1 without a carried group key
+    private int groupCarryInputColumn = -1;
+    private int groupCarryKeyIndex = -1;
 
     public AsyncWindowSplitPlan(int mode, long warmupRows, IntList prefixColumns, IntList prefixOps, IntList prefixTypes) {
         this.mode = mode;
@@ -130,8 +134,25 @@ public class AsyncWindowSplitPlan implements Plannable {
         }
     }
 
+    public int getGroupCarryInputColumn() {
+        return groupCarryInputColumn;
+    }
+
+    public int getGroupCarryKeyIndex() {
+        return groupCarryKeyIndex;
+    }
+
     public int getMode() {
         return mode;
+    }
+
+    /**
+     * With a GROUP BY step whose group key is the carried running value: its index among the
+     * step's keys, and its column in the step's input, whose captured rows take the carry too.
+     */
+    public void setGroupCarry(int keyIndex, int inputColumn) {
+        this.groupCarryKeyIndex = keyIndex;
+        this.groupCarryInputColumn = inputColumn;
     }
 
     public int getPrefixColumn(int i) {

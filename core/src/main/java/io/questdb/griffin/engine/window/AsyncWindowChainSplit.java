@@ -50,6 +50,9 @@ public class AsyncWindowChainSplit {
     // the stage, by index among the steps after the window, whose windows carry; -1 when the
     // window's own functions carry, -2 when nothing does
     private int carryStage = -2;
+    // with a GROUP BY step, see AsyncWindowSplitPlan.setGroupCarry()
+    private int groupCarryInputColumn = -1;
+    private int groupCarryKeyIndex = -1;
     private boolean unsplittable;
     // rows before a continued key's first own row that rebuild the stages, -1 when none are needed
     private long warmupRows = -1;
@@ -89,12 +92,36 @@ public class AsyncWindowChainSplit {
     }
 
     /**
-     * The split after a GROUP BY step: none. A key split over tasks would split a group too, and
-     * its aggregates are not combined.
+     * The split after a GROUP BY step, whose groups the cursor completes when they span tasks
+     * (see {@link AsyncWindowGroupByStage#replay}). Warm-up rows still rebuild the stages before
+     * it. A carry must be the group key's own, a running sum known to hold integers only (so that
+     * combining it is exact, as the group key must be), and the output must show the key.
+     *
+     * @param groupKeyIndex  the group key's index among the step's keys, -1 for none
+     * @param groupInput     the group key's column in the step's input, -1 for none
+     * @param groupOutput    the group key's column in the step's output, -1 when not shown
+     * @param isExactCarry   whether the group key's values are integers
      */
-    public AsyncWindowChainSplit thenGroupBy() {
+    public AsyncWindowChainSplit thenGroupBy(int groupKeyIndex, int groupInput, int groupOutput, boolean isExactCarry) {
         final AsyncWindowChainSplit next = copy();
-        next.unsplittable = true;
+        if (unsplittable) {
+            return next;
+        }
+        if (carryStage > -2) {
+            if (carryColumns.size() != 1
+                    || carryColumns.getQuick(0) != groupInput
+                    || carryOps.getQuick(0) != AsyncWindowSplitPlan.OP_ADD
+                    || groupKeyIndex < 0
+                    || groupOutput < 0
+                    || !isExactCarry) {
+                next.unsplittable = true;
+                return next;
+            }
+            // the carry is combined with the group key, in the output and in captured input rows
+            next.carryColumns.setQuick(0, groupOutput);
+            next.groupCarryKeyIndex = groupKeyIndex;
+            next.groupCarryInputColumn = groupInput;
+        }
         return next;
     }
 
@@ -150,10 +177,14 @@ public class AsyncWindowChainSplit {
             }
             // a carry of the window's own functions has no warm-up rows before it
             assert carryStage != -1;
-            return new AsyncWindowSplitPlan(AsyncWindowSplitPlan.MODE_WARMUP, warmupRows, copyOf(carryColumns), copyOf(carryOps), copyOf(carryTypes));
+            final AsyncWindowSplitPlan plan = new AsyncWindowSplitPlan(AsyncWindowSplitPlan.MODE_WARMUP, warmupRows, copyOf(carryColumns), copyOf(carryOps), copyOf(carryTypes));
+            plan.setGroupCarry(groupCarryKeyIndex, groupCarryInputColumn);
+            return plan;
         }
         if (carryStage > -2) {
-            return new AsyncWindowSplitPlan(AsyncWindowSplitPlan.MODE_PREFIX, 0, copyOf(carryColumns), copyOf(carryOps), copyOf(carryTypes));
+            final AsyncWindowSplitPlan plan = new AsyncWindowSplitPlan(AsyncWindowSplitPlan.MODE_PREFIX, 0, copyOf(carryColumns), copyOf(carryOps), copyOf(carryTypes));
+            plan.setGroupCarry(groupCarryKeyIndex, groupCarryInputColumn);
+            return plan;
         }
         return AsyncWindowSplitPlan.NONE;
     }
@@ -170,6 +201,8 @@ public class AsyncWindowChainSplit {
         copy.carryOps.addAll(carryOps);
         copy.carryTypes.addAll(carryTypes);
         copy.carryStage = carryStage;
+        copy.groupCarryInputColumn = groupCarryInputColumn;
+        copy.groupCarryKeyIndex = groupCarryKeyIndex;
         copy.unsplittable = unsplittable;
         copy.warmupRows = warmupRows;
         return copy;
