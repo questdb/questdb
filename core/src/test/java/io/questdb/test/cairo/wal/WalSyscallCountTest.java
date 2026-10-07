@@ -102,6 +102,41 @@ public class WalSyscallCountTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDdl() throws Exception {
+        Assume.assumeFalse("ADAPTIVE makes its own calls; only its file set must match base", "adaptive".equals(commitMode));
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, isV2 ? 1000 : 0);
+        final CountingFacade ff = new CountingFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES (1000000, 1)");
+            drainWalQueue();
+            for (int i = 0; i < WARMUP + MEASURED; i++) {
+                ff.start(i >= WARMUP);
+                execute("ALTER TABLE x ADD COLUMN c" + i + " INT");
+                ff.stop();
+                drainWalQueue();
+            }
+            final List<String> calls = new ArrayList<>();
+            for (String summary : ff.summaries) {
+                if (!calls.contains(summary)) {
+                    calls.add(summary);
+                }
+            }
+            Assert.assertEquals("DDLs measured", MEASURED, ff.summaries.size());
+            // Base msyncs the txn log's metadata index and data, the txn log header and the sequencer _meta
+            // twice, in every mode. SYNC also syncs the header after it publishes the change, and a V2 log the
+            // part file holding the record, ahead of the header both times.
+            final int msyncs = "sync".equals(commitMode) ? (isV2 ? 8 : 6) : 5;
+            Assert.assertEquals(
+                    "DDL calls differ from base [mode=" + commitMode + ", v2=" + isV2 + ']',
+                    "calls: exists=2 msyncSync=" + msyncs + "; opened: ",
+                    String.join("\n", calls)
+            );
+        });
+    }
+
+    @Test
     public void testOnlyBaseFiles() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, isV2 ? 1000 : 0);

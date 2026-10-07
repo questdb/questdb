@@ -438,7 +438,9 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                 log.beginMetadataChangeEntry(rec.structureVersion, null, null, ts);
                 log.fullSync();
                 log.endMetadataChangeEntry();
-                log.fullSync();
+                if (CommitMode.isPowerLossDurable(configuration.commitMode)) {
+                    log.fullSync();
+                }
             } else {
                 rec = new Rec(lastStructureVersion(), 1 + txn % 3, txn % 2, txn % 100, ts);
                 expected.add(rec);

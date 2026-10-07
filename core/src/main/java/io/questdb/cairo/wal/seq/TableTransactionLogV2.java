@@ -199,8 +199,9 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
     @Override
     public void fullSync() {
-        // Part file must be durable before the header: same ordering invariant as sync0().
-        if (txnPartMem.isOpen()) {
+        // Part file must be durable before the header: same ordering invariant as sync0(). NOSYNC and ASYNC
+        // promise nothing across a power loss and sync the header alone, as base does.
+        if (txnPartMem.isOpen() && CommitMode.isPowerLossDurable(configuration.getCommitMode())) {
             txnPartMem.sync(false);
         }
         txnMem.sync(false);

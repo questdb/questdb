@@ -134,7 +134,8 @@ public interface TableTransactionLogFile extends Closeable {
     void fdatasyncTxnLog();
 
     /**
-     * Syncs/flushes the log files to the disk unconditionally.
+     * Syncs the log to the disk with {@code MS_SYNC}, in every commit mode. Under SYNC and ADAPTIVE that covers
+     * every log file; under NOSYNC and ASYNC a V2 log syncs its header alone.
      */
     void fullSync();
 
