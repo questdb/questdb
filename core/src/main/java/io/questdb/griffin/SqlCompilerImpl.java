@@ -7331,14 +7331,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     ) throws SqlException {
         // The mat-view target check (and the aggregating-view advisory) is handled for ALL modes by the
         // caller (alterTableSetExpire); this only resolves the relative policy against the view.
-        return validateStructuralExpiryPolicy(
-                executionContext,
-                RowExpiryUtil.quoteIdentifier(tableToken.getTableName()),
-                tableMetadata,
-                predicate,
-                true,
-                position
-        );
+        // The probe opens a reader on the view, so a schema change to the view that applies between the
+        // probe's code generation and its getCursor() (an index, SYMBOL CAPACITY, TTL, another SET EXPIRE)
+        // fails it with TableReferenceOutOfDateException. No such change alters the view's column names or
+        // types, so the probe runs again against the new metadata version. A view dropped and re-created
+        // under the same name has a new table id, and the WAL writer rejects the ALTER when it executes.
+        for (int remainingRetries = maxRecompileAttempts; ; remainingRetries--) {
+            try {
+                return validateStructuralExpiryPolicy(
+                        executionContext,
+                        RowExpiryUtil.quoteIdentifier(tableToken.getTableName()),
+                        tableMetadata,
+                        predicate,
+                        true,
+                        position
+                );
+            } catch (TableReferenceOutOfDateException e) {
+                if (remainingRetries == 0) {
+                    throw SqlException.$(position, "too many ").put(e.getFlyweightMessage());
+                }
+                LOG.info().$("retrying EXPIRE ROWS probe [view=").$safe(tableToken.getTableName())
+                        .$(", reason=").$(e.getFlyweightMessage()).I$();
+            }
+        }
     }
 
     /**
