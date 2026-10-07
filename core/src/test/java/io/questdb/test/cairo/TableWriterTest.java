@@ -3146,14 +3146,20 @@ public class TableWriterTest extends AbstractCairoTest {
             TableToken token = engine.getTableTokenIfExists("product");
             engine.releaseAllWriters();
             engine.getTableSequencerAPI().releaseAll();
+            // Two whole structural records, which the open keeps, for changes the sequencer never saved.
             try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
                 path.of(configuration.getDbRoot()).concat(token.getDirName()).concat(SEQ_DIR);
                 openSmallFile(FF, path, path.size(), mem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
                 mem.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, 2);
                 mem.jumpTo(TableTransactionLogFile.HEADER_SIZE);
-                mem.putLong(TableTransactionLogFile.HEADER_SIZE + TableTransactionLogV1.RECORD_SIZE + TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET, 2);
+                for (int structureVersion = 1; structureVersion <= 2; structureVersion++) {
+                    mem.putLong(structureVersion);
+                    mem.putInt(TableTransactionLogFile.STRUCTURAL_CHANGE_WAL_ID);
+                    mem.putInt(-1);
+                    mem.putInt(-1);
+                    mem.putLong(1_759_000_000_000_000L + structureVersion);
+                }
                 mem.sync(false);
-                mem.setTruncateSize(TableTransactionLogFile.HEADER_SIZE + TableTransactionLogV1.RECORD_SIZE + TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES);
             }
             assertException("alter table " + PRODUCT + " add column abc INT;", 12, "expected to read table structure changes but there is none saved in the sequencer");
         });
@@ -3711,6 +3717,42 @@ public class TableWriterTest extends AbstractCairoTest {
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
                 Assert.assertEquals("TableWriter{name=product}", writer.toString());
             }
+        });
+    }
+
+    @Test
+    public void testTornTxnLogTailIsDroppedOnOpen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table product (ts TIMESTAMP, i INT) timestamp(ts) partition by day wal;");
+            drainWalQueue();
+            TableToken token = engine.getTableTokenIfExists("product");
+            engine.releaseAllWriters();
+            engine.getTableSequencerAPI().releaseAll();
+            // The header publishes two txns whose records never reached the disk: record 1 is zeros, record 2
+            // holds only its structure version and the file ends inside it.
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                path.of(configuration.getDbRoot()).concat(token.getDirName()).concat(SEQ_DIR);
+                openSmallFile(FF, path, path.size(), mem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+                mem.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, 2);
+                mem.jumpTo(TableTransactionLogFile.HEADER_SIZE);
+                mem.putLong(TableTransactionLogFile.HEADER_SIZE + TableTransactionLogV1.RECORD_SIZE + TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET, 2);
+                mem.sync(false);
+                mem.setTruncateSize(TableTransactionLogFile.HEADER_SIZE + TableTransactionLogV1.RECORD_SIZE + TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES);
+            }
+            // The open drops the torn tail, so the ALTER and the insert take txns 1 and 2.
+            execute("alter table product add column abc INT");
+            execute("insert into product values ('2024-01-01T00:00:00.000000Z', 1, 2)");
+            drainWalQueue();
+            Assert.assertEquals(2, engine.getTableSequencerAPI().lastTxn(token));
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertQuery("SELECT * FROM product")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ti\tabc
+                            2024-01-01T00:00:00.000000Z\t1\t2
+                            """);
         });
     }
 
