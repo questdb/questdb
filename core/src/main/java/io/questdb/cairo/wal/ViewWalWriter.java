@@ -162,6 +162,10 @@ public class ViewWalWriter extends WalWriterBase {
     private long getSequencerTxn() {
         long seqTxn = sequencer.nextTxn(tableToken, walId, 0L, segmentId, lastSegmentTxn, Long.MAX_VALUE, -1L, 0L);
         assert seqTxn != NO_TXN;
+        // Group commit leaves the log's flush to a batch that only table WAL writers run.
+        if (configuration.getCommitMode() == CommitMode.ADAPTIVE && configuration.getAdaptiveCommitGroupWindowUs() > 0) {
+            sequencer.fdatasyncTxnLog(tableToken);
+        }
         return lastSeqTxn = seqTxn;
     }
 

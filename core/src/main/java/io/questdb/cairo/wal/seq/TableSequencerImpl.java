@@ -28,6 +28,7 @@ import io.questdb.cairo.BinaryAlterSerializer;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.IDGenerator;
 import io.questdb.cairo.IDGeneratorFactory;
 import io.questdb.cairo.TableStructure;
@@ -227,6 +228,11 @@ public class TableSequencerImpl implements TableSequencer {
                 getStructureVersion(), WalUtils.DROP_TABLE_WAL_ID,
                 0, 0, timestamp, 0, 0, 0
         );
+        // Group commit leaves the log's flush to the next batch, and no writer flushes a dropped table again.
+        final CairoConfiguration configuration = engine.getConfiguration();
+        if (configuration.getCommitMode() == CommitMode.ADAPTIVE && configuration.getAdaptiveCommitGroupWindowUs() > 0) {
+            fdatasyncTxnLog();
+        }
         metadata.dropTable();
         notifyTxnCommitted(Long.MAX_VALUE);
         engine.getWalListener().tableDropped(tableToken, txn, timestamp);
