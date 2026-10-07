@@ -88,6 +88,11 @@ public class LiveViewCheckpointFrozenPayloadTest extends AbstractLiveViewTest {
     private static final long DEFINITION_TXN = 23;
     // The last of the sixteen sums and both counts overflow the leaf.
     private static final int GROUPED_MEMBERS = 3;
+    /**
+     * {@link #PER_SEAL_ALLOCATION_LIMIT_BYTES} for a grouped seal, whose per-member walk and
+     * larger set of open files put its steady state at about 3.8 KB.
+     */
+    private static final long GROUPED_PER_SEAL_ALLOCATION_LIMIT_BYTES = 6_144;
     // The key count at which a grouped seal's frozen entries reach the retention limit: two
     // frozen keys, one fused payload and one image per member for each key.
     private static final int GROUPED_RETENTION_KEY_LIMIT =
@@ -97,6 +102,13 @@ public class LiveViewCheckpointFrozenPayloadTest extends AbstractLiveViewTest {
     private static final int MEASURED_SEALS = 8;
     // The payload arena's page, which it grows by whole pages.
     private static final long PAYLOAD_ARENA_PAGE_BYTES = 4_096;
+    /**
+     * Per-seal ceiling on what a warm complete fused or ring seal allocates besides the
+     * copies of its paths. That steady state is about 1.6 KB for a fused seal and 1.1 KB for
+     * a ring one, the same at every key count and under every temp root, so a constant
+     * per-seal allocation of a few kilobytes crosses it.
+     */
+    private static final long PER_SEAL_ALLOCATION_LIMIT_BYTES = 4_096;
     // Keys whose records fill a page count no doubling from one page reaches, so an arena
     // sized in one allocation and one grown record by record end at different capacities.
     private static final int PRESIZED_CAPTURE_KEYS = 5_000;
@@ -110,6 +122,10 @@ public class LiveViewCheckpointFrozenPayloadTest extends AbstractLiveViewTest {
     // 2026-01-01T00:00:00Z.
     private static final long RING_START_MICROS = 1_767_225_600_000_000L;
     private static final String SEAL_DIR = "lv_frozen_payload";
+    // A multiple of the 8- and 16-byte object alignments, 8 being the JVM default with or
+    // without compressed oops or compact object headers, so a path this many bytes longer
+    // costs exactly this many bytes more to copy.
+    private static final int SEAL_DIR_PADDING = 64;
     // Two full cycles of a sparse shared ring's chunk count: two pages, four, six.
     private static final int SHARED_RING_MEASURED_SEALS = 6;
     /**
@@ -226,7 +242,7 @@ public class LiveViewCheckpointFrozenPayloadTest extends AbstractLiveViewTest {
             ) {
                 driveSeedToCompletion(job, "lv");
                 addKeys(job, 1_024, 1);
-                final long narrow = measureSeal(scope);
+                final long narrow = measureSealWithinLimit(scope, PER_SEAL_ALLOCATION_LIMIT_BYTES);
                 final int keys = LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ENTRIES / 2 - 1_024;
                 addKeys(job, keys, 1);
                 final long wide = measureSeal(scope);
@@ -287,7 +303,7 @@ public class LiveViewCheckpointFrozenPayloadTest extends AbstractLiveViewTest {
                 driveSeedToCompletion(job, "lv");
                 addKeys(job, 1_024, GROUPED_SUMS);
                 Assert.assertEquals("runtime-only members", GROUPED_MEMBERS, countRuntimeOnlyProjections());
-                final long narrow = measureSeal(scope);
+                final long narrow = measureSealWithinLimit(scope, GROUPED_PER_SEAL_ALLOCATION_LIMIT_BYTES);
                 addKeys(job, 8_192, GROUPED_SUMS);
                 final long wide = measureSeal(scope);
                 assertSealAllocation(1_024, narrow, 8_192, wide);
@@ -315,7 +331,7 @@ public class LiveViewCheckpointFrozenPayloadTest extends AbstractLiveViewTest {
                         window().getCheckpointWindowStatePlan().getTotalInlineStateBytes()
                 );
                 Assert.assertEquals("no runtime-only member", 0, countRuntimeOnlyProjections());
-                final long narrow = measureSeal(scope);
+                final long narrow = measureSealWithinLimit(scope, PER_SEAL_ALLOCATION_LIMIT_BYTES);
                 addKeys(job, WIDE_FUSED_KEY_COUNT, WIDE_FUSED_COMPONENTS);
                 final long wide = measureSeal(scope);
                 assertSealAllocation(1_024, narrow, WIDE_FUSED_KEY_COUNT, wide);
@@ -339,7 +355,7 @@ public class LiveViewCheckpointFrozenPayloadTest extends AbstractLiveViewTest {
                 driveSeedToCompletion(job, "lv");
                 Assert.assertNull("a ring view keeps no anchor window", viewInstance().getAnchorWindow());
                 addRingKeys(job, 1_024);
-                final long narrow = measureSeal(scope);
+                final long narrow = measureSealWithinLimit(scope, PER_SEAL_ALLOCATION_LIMIT_BYTES);
                 addRingKeys(job, 8_192);
                 final long wide = measureSeal(scope);
                 assertSealAllocation(1_024, narrow, 8_192, wide);
@@ -527,6 +543,7 @@ public class LiveViewCheckpointFrozenPayloadTest extends AbstractLiveViewTest {
      * path, so the steady state grows with the length of the test's temp root. The difference
      * between the two key counts cancels that out, and a single object allocated per key
      * moves it past the bound over the thousands of keys between the two counts.
+     * {@link #measureSealWithinLimit} bounds the steady state itself.
      */
     private static void assertSealAllocation(int narrowKeys, long narrow, int wideKeys, long wide) {
         Assert.assertTrue(
@@ -660,9 +677,22 @@ public class LiveViewCheckpointFrozenPayloadTest extends AbstractLiveViewTest {
      * its layout.
      */
     private void createSealLayout(Path dir) {
+        createSealLayout(dir, 0);
+    }
+
+    /**
+     * Points {@code dir} at a checkpoint directory no seal has written to yet, its path
+     * {@code padding} bytes longer than {@link #createSealLayout(Path)} would make it, and
+     * creates its layout.
+     */
+    private void createSealLayout(Path dir, int padding) {
         final FilesFacade ff = configuration.getFilesFacade();
         try (Path path = new Path()) {
-            dir.of(configuration.getDbRoot()).concat(SEAL_DIR).put(sealDirCount++).concat("_checkpoints");
+            dir.of(configuration.getDbRoot()).concat(SEAL_DIR).put(sealDirCount++);
+            for (int i = 0; i < padding; i++) {
+                dir.put('_');
+            }
+            dir.concat("_checkpoints");
             ff.mkdirs(LiveViewCheckpointLayout.metaDirPath(path, dir).slash(), configuration.getMkDirMode());
             ff.mkdirs(LiveViewCheckpointLayout.dataDirPath(path, dir).slash(), configuration.getMkDirMode());
         }
@@ -677,7 +707,7 @@ public class LiveViewCheckpointFrozenPayloadTest extends AbstractLiveViewTest {
     }
 
     /**
-     * @param sums       how many sums the view projects
+     * @param sums      how many sums the view projects
      * @param hasCounts whether it projects count(*) and count(account_id) beside them
      */
     private void createView(int sums, boolean hasCounts) throws Exception {
@@ -704,14 +734,24 @@ public class LiveViewCheckpointFrozenPayloadTest extends AbstractLiveViewTest {
      * allocated, over {@link #MEASURED_SEALS} seals
      */
     private long measureSeal(TestUtils.ThreadMetricsScope<ThreadMXBean> scope) {
+        try (Path dir = new Path()) {
+            createSealLayout(dir);
+            return measureSeal(scope, dir);
+        }
+    }
+
+    /**
+     * Seals the view's current key set into a fresh timeline in {@code dir} under a fresh
+     * writer, warms both up, then measures.
+     *
+     * @return the fewest heap bytes one warm complete seal of the view's current key set
+     * allocated, over {@link #MEASURED_SEALS} seals
+     */
+    private long measureSeal(TestUtils.ThreadMetricsScope<ThreadMXBean> scope, Path dir) {
         final LiveViewInstance instance = viewInstance();
         final LiveViewWindow window = instance.getAnchorWindow();
         final ObjList<WindowFunction> functions = unwrapWindowFunctions(instance);
-        try (
-                LiveViewCheckpointTimelineStoreWriter writer = new LiveViewCheckpointTimelineStoreWriter(configuration);
-                Path dir = new Path()
-        ) {
-            createSealLayout(dir);
+        try (LiveViewCheckpointTimelineStoreWriter writer = new LiveViewCheckpointTimelineStoreWriter(configuration)) {
             long min = Long.MAX_VALUE;
             for (int i = 0; i < WARMUP_SEALS + MEASURED_SEALS; i++) {
                 // Outside the measurement: the window gives its incremental bookkeeping up, so
@@ -731,6 +771,38 @@ public class LiveViewCheckpointFrozenPayloadTest extends AbstractLiveViewTest {
                 }
             }
             return min;
+        }
+    }
+
+    /**
+     * Checks that one warm complete seal of the view's current key set allocates fewer than
+     * {@code limitBytes} on the heap besides the copies of its paths, and returns what it
+     * allocated in all.
+     * <p>
+     * Every file a seal opens that the file descriptor cache does not already hold costs a
+     * copy of its path, so what a seal allocates grows with the length of its directory's
+     * path, which starts with the test's temp root. A second measurement under a directory
+     * {@link #SEAL_DIR_PADDING} bytes longer grows each copy by exactly that many bytes,
+     * which counts the copies, and taking the directory path's bytes off once per copy
+     * leaves what no temp root moves. A constant per-seal allocation stays in it whole.
+     */
+    private long measureSealWithinLimit(TestUtils.ThreadMetricsScope<ThreadMXBean> scope, long limitBytes) {
+        try (
+                Path dir = new Path();
+                Path paddedDir = new Path()
+        ) {
+            createSealLayout(dir);
+            createSealLayout(paddedDir, SEAL_DIR_PADDING);
+            final long allocated = measureSeal(scope, dir);
+            final long paddedAllocated = measureSeal(scope, paddedDir);
+            final long pathCopyBytes = (paddedAllocated - allocated) * dir.size() / (paddedDir.size() - dir.size());
+            Assert.assertTrue(
+                    "a warm complete seal allocated " + allocated + " bytes on the Java heap, "
+                            + (allocated - pathCopyBytes) + " of them besides the copies of its paths; whatever"
+                            + " the temp root, that must stay under " + limitBytes,
+                    allocated - pathCopyBytes < limitBytes
+            );
+            return allocated;
         }
     }
 

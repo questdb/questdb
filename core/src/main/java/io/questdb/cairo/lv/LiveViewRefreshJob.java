@@ -671,6 +671,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // searches resume anchors through. One per worker, bound to the repair's view
     // per plan; idle outside a repair, which never nests.
     private final TimelineAnchorSource timelineAnchors = new TimelineAnchorSource();
+    // The newest root a dirty drain's segment loop restores the primary runtime from. See
+    // restoreRuntimeAtFrontierRoot.
+    private final LiveViewCheckpointTimelineEntry timelineFrontierRoot = new LiveViewCheckpointTimelineEntry();
     // Wraps the page-frame cursor during O3 replay so pre-LB rows never reach
     // window.processRow. Single instance reused across cycles; rebound via
     // of() each replay.
@@ -1614,6 +1617,33 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long batchMaxTs,
             long seedCursorOffset
     ) {
+        return appendCheckpointTimelineRoot(
+                instance,
+                functions,
+                anchorWindow,
+                baseSeqTxn,
+                batchMaxTs,
+                instance.getLvRowsTotal(),
+                instance.getMinSeenTsSinceCheckpoint(),
+                seedCursorOffset
+        );
+    }
+
+    /**
+     * As above, with the root's cumulative row position and the batch minimum named by the
+     * caller rather than read off the instance. The corrupt-root heal seals from a runtime its
+     * own replay advanced, which neither counter followed.
+     */
+    private LiveViewCheckpointTimelineStoreWriter.Result appendCheckpointTimelineRoot(
+            LiveViewInstance instance,
+            ObjList<WindowFunction> functions,
+            @Nullable LiveViewWindow anchorWindow,
+            long baseSeqTxn,
+            long batchMaxTs,
+            long lvRowPosition,
+            long batchMinTs,
+            long seedCursorOffset
+    ) {
         if (checkpointTimelineStoreWriter == null) {
             checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(
                     engine.getConfiguration(),
@@ -1648,8 +1678,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     instance.getLifecycleIdentity(),
                     true,
                     batchMaxTs,
-                    instance.getLvRowsTotal(),
-                    instance.getMinSeenTsSinceCheckpoint(),
+                    lvRowPosition,
+                    batchMinTs,
                     seedCursorOffset,
                     instance.getMemoryTracker()
             );
@@ -6147,8 +6177,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *
      * @param hasDiscardedLead whether the hand-off discarded an un-flushed lead holding
      *                         output rows. See {@link #o3Replay}
-     * @param advanceTo the base {@code seqTxn} the whole change consumes, carried so a
-     *                  parked loop's residual can be planned from a later turn
+     * @param advanceTo        the base {@code seqTxn} the whole change consumes, carried so a
+     *                         parked loop's residual can be planned from a later turn
      * @return {@link #SEGMENT_REPAIR_COMPLETE} when the segments were the whole change set
      * and the watermark has advanced over it, {@link #SEGMENT_REPAIR_DEFERRED} when a
      * segment's replacement did not apply and the turn must stop,
@@ -6266,16 +6296,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // exactly the ones the table is missing - so the guard denies the segment loop
         // rather than the whole decomposition.
         //
-        // A dirty window state denies the loop too. The drain fed in-order commits through
-        // the window functions before it reached the late one, and its hand-off rewound
-        // latestSeenTs but not the accumulators, so runtimeFrontierTs sits below the state
-        // the runtime holds. A segment's plan quotes the segment's own maximum as its change
-        // ceiling, so the frontier still reaches the segment's finite H and the repair keeps
-        // the primary runtime. The seal after it then freezes those accumulators as a root
-        // at the rewound frontier, the segment's replacement commit clears windowStateDirty,
+        // A dirty window state denies the loop too, unless the newest root sits exactly at
+        // the rewound frontier. The drain fed in-order commits through the window functions
+        // before it reached the late one, and its hand-off rewound latestSeenTs but not the
+        // accumulators, so runtimeFrontierTs sits below the state the runtime holds. A
+        // segment's plan quotes the segment's own maximum as its change ceiling, so the
+        // frontier still reaches the segment's finite H and the repair keeps the primary
+        // runtime. Kept as it is, the seal after it freezes those accumulators as a root at
+        // the rewound frontier, the segment's replacement commit clears windowStateDirty,
         // and the residual repair resumes from that root and folds the in-order rows a
         // second time. The union range quotes the whole pass's ceiling, which puts H above
         // the frontier and promotes the replay's state instead.
+        //
+        // A root at the rewound frontier holds the state the runtime has to be in for the
+        // loop to keep it, so the loop restores the runtime from that root before its first
+        // segment runs - see restoreRuntimeAtFrontierRoot - and runs from there exactly as a
+        // drain that met the late commit first would have run it. A row tying that root
+        // would have grown its timestamp group, which the check at the top of this method
+        // sends to the union range. A newest root below the frontier is not that state: the
+        // runtime would have to replay up to the frontier to reach it, which is the union
+        // range's work, so the loop stays denied there.
         //
         // A discarded lead whose rows tie the durable maximum is un-flushed output the
         // comparison reads as durable: the frontier stands at that maximum, not above it.
@@ -6288,7 +6328,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // selects it and the next drain folds the lead's commits a second time. The
         // hand-off's change ceiling already covers the lead, so the union range re-emits
         // it and seals at the pinned snapshot with the replay's state.
-        final boolean isClosedSegmentRepairAvailable = !windowStateDirty
+        final long headCheckpointMaxTs = instance.getHeadCheckpointMaxTs();
+        final boolean isNewestRootAtFrontier = headCheckpointMaxTs != Numbers.LONG_NULL
+                && headCheckpointMaxTs == runtimeFrontierTs;
+        final boolean isClosedSegmentRepairAvailable = (!windowStateDirty || isNewestRootAtFrontier)
                 && !hasDiscardedLead
                 && durableOutputMaxTs >= runtimeFrontierTs;
         if (!isClosedSegmentRepairAvailable && !isOpenSegmentKeyed) {
@@ -6366,6 +6409,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // classified floor rather than the raw trigger, which is what keeps a
             // correction reaching below the view's boundary from denying the repair.
             return isResidualEmpty ? SEGMENT_REPAIR_NOT_TAKEN : SEGMENT_REPAIR_RESIDUAL;
+        }
+        if (windowStateDirty
+                && (isResidualEmpty || !restoreRuntimeAtFrontierRoot(instance, windowFactory, runtimeFrontierTs))) {
+            // The restore drops the in-order rows the drain fed, and the residual repair is
+            // what replays them, so a loop with no residual behind it would advance the
+            // watermark over rows nothing wrote. The in-order commits always land in the
+            // residual - their rows sit above the frontier - so that arm is defence; the
+            // other is a root that cannot be found or read. The union range replaces the
+            // runtime either way, whatever a failed restore left in it, and it reads the
+            // whole range rather than a key domain.
+            isOpenSegmentKeyDomainReady = false;
+            return SEGMENT_REPAIR_NOT_TAKEN;
         }
         // The loop position, so a segment whose replay parks on the turn budget can hand the
         // segments behind it - and the residual behind those - to the turn that resumes it.
@@ -7373,31 +7428,31 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * matching the fallback behaviour for any LV whose SELECT contains a
      * function still on the default-throw snapshot path.
      *
-     * @param instance      live view being replayed
-     * @param windowFactory the LV's compiled SELECT (window cursor stack)
-     * @param lateRowTs     {@code dataInfo.getMinTimestamp()} that triggered
-     *                      O3 detection
-     * @param changeMaxTs   highest designated timestamp the commits this replay
-     *                      re-materialises touched, or {@link Numbers#LONG_NULL}
-     *                      when the caller cannot bound it. Only an upper bound on
-     *                      the change lets the repair converge below the end of the
-     *                      base table; without one it reads the whole tail, which is
-     *                      what every caller did before the bound existed
-     * @param insertOnly    whether every commit the caller walked only ADDED base rows.
-     *                      A ROWS repair discovers which partition keys the change
-     *                      touched by reading them back out of the post-change snapshot,
-     *                      so a deletion anywhere in the change set denies it that bound;
-     *                      a caller that does not track the question passes false
-     * @param baseToken     base table token (passed in so the replay path
-     *                      doesn't re-look-it-up from the definition)
-     * @param advanceTo     base seqTxn the replay must cover; also the value
-     *                      passed to {@code commitLiveViewWithReplaceRange}
-     *                      so the LV's lvConsumedSeqTxn advances after apply
-     * @param fromSeqTxn    the exclusive floor of the base range the caller rolled back,
-     *                      or {@link Numbers#LONG_NULL} when it cannot name one. The
-     *                      per-segment decomposition re-reads that range row by row to
-     *                      place each row in its own anchor segment; without it the
-     *                      repair keeps the union range
+     * @param instance         live view being replayed
+     * @param windowFactory    the LV's compiled SELECT (window cursor stack)
+     * @param lateRowTs        {@code dataInfo.getMinTimestamp()} that triggered
+     *                         O3 detection
+     * @param changeMaxTs      highest designated timestamp the commits this replay
+     *                         re-materialises touched, or {@link Numbers#LONG_NULL}
+     *                         when the caller cannot bound it. Only an upper bound on
+     *                         the change lets the repair converge below the end of the
+     *                         base table; without one it reads the whole tail, which is
+     *                         what every caller did before the bound existed
+     * @param insertOnly       whether every commit the caller walked only ADDED base rows.
+     *                         A ROWS repair discovers which partition keys the change
+     *                         touched by reading them back out of the post-change snapshot,
+     *                         so a deletion anywhere in the change set denies it that bound;
+     *                         a caller that does not track the question passes false
+     * @param baseToken        base table token (passed in so the replay path
+     *                         doesn't re-look-it-up from the definition)
+     * @param advanceTo        base seqTxn the replay must cover; also the value
+     *                         passed to {@code commitLiveViewWithReplaceRange}
+     *                         so the LV's lvConsumedSeqTxn advances after apply
+     * @param fromSeqTxn       the exclusive floor of the base range the caller rolled back,
+     *                         or {@link Numbers#LONG_NULL} when it cannot name one. The
+     *                         per-segment decomposition re-reads that range row by row to
+     *                         place each row in its own anchor segment; without it the
+     *                         repair keeps the union range
      * @param hasDiscardedLead whether the caller discarded an un-flushed lead holding
      *                         output rows. The lead's commits sit at or below
      *                         {@code fromSeqTxn}, and its rows are output the repair must
@@ -7937,7 +7992,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // the frontier withholds the finite bound: a RANGE or anchor arm localizes behind EOF,
         // which re-versions every root above the correction from the pinned snapshot, and a
         // ROWS arm, which needs the finite bound, does not localize at all.
-        final long runtimeFrontierTs = instance.isSnapshotCapability() && !isHeadTimestampGroupGrown(instance)
+        final boolean isSnapshotCapable = instance.isSnapshotCapability();
+        final boolean isFrontierWithheldForGrownGroup = isSnapshotCapable && isHeadTimestampGroupGrown(instance);
+        final long runtimeFrontierTs = isSnapshotCapable && !isFrontierWithheldForGrownGroup
                 ? instance.getLatestSeenTs()
                 : Numbers.LONG_NULL;
         timelineAnchors.of(instance);
@@ -7961,15 +8018,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // The disposition this repair takes, and the reason it reads more than a
         // localized rebuild would - the runtime counterpart to the static
         // checkpoint_repair_plan, which names only what the SQL admits. A gate above
-        // withheld the dependency inputs on grounds the plan cannot see, so its generic
-        // no-dependency verdict gives way to the specific one.
-        instance.recordCheckpointRepairOutcome(
-                repairPlan.getDisposition(),
-                repairPlan.getDenialReason() == LiveViewCheckpointRepairPlan.DENIAL_NO_DEPENDENCY
-                        && dependencyDenialReason != LiveViewCheckpointRepairPlan.DENIAL_NONE
-                        ? dependencyDenialReason
-                        : repairPlan.getDenialReason()
-        );
+        // withheld the dependency inputs, or the frontier, on grounds the plan cannot see,
+        // so its generic no-dependency or no-runtime-frontier verdict gives way to the
+        // specific one. The grown group gets a code of its own because it clears without
+        // operator action, while a missing frontier reads as missing checkpoint-state
+        // support.
+        final int planDenialReason = repairPlan.getDenialReason();
+        final int denialReason;
+        if (planDenialReason == LiveViewCheckpointRepairPlan.DENIAL_NO_DEPENDENCY
+                && dependencyDenialReason != LiveViewCheckpointRepairPlan.DENIAL_NONE) {
+            denialReason = dependencyDenialReason;
+        } else if (planDenialReason == LiveViewCheckpointRepairPlan.DENIAL_NO_RUNTIME_FRONTIER
+                && isFrontierWithheldForGrownGroup) {
+            denialReason = LiveViewCheckpointRepairPlan.DENIAL_GROWN_HEAD_GROUP;
+        } else {
+            denialReason = planDenialReason;
+        }
+        instance.recordCheckpointRepairOutcome(repairPlan.getDisposition(), denialReason);
         if (rowsBoundSource != null && rowsBoundDiscovery.hasDiscovered()) {
             // The discovery's reads are this repair's reads, so they join the same
             // base-rows-scanned counter the replay reports through - planning and replay
@@ -8476,24 +8541,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // this turn may leave inconsistent is not the primary.
                             repairRuntime.reset();
                         } else if (!isRuntimeAnchorReused) {
-                            // Drop pre-O3 drift before restoring the anchor root:
-                            // clear each function's partition map so accumulator
-                            // state that outran the root's snapshot moment is
-                            // discarded. The anchor map gets the same treatment
-                            // inside LiveViewWindow.restore() (it clears before
-                            // reinserting), so no explicit wipe is needed here.
+                            // Drop pre-O3 drift before restoring the anchor root.
                             // Order matters: function maps clear -> restore root.
-                            // isOpen() rather than a null test: a function whose state the
-                            // window owns keeps a closed map, and its accumulator is
-                            // cleared with the anchor map's own entry instead.
                             final long mapClearStart = System.nanoTime();
-                            final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
-                            for (int i = 0, n = functions.size(); i < n; i++) {
-                                Map m = functions.getQuick(i).getPartitionMap();
-                                if (m != null && m.isOpen()) {
-                                    m.clear();
-                                }
-                            }
+                            clearPartitionMapsForRootRestore(windowFactory.getWindowFunctions());
                             openSegmentRepairPhases.mapClearNanos += System.nanoTime() - mapClearStart;
                             // Wiped, and the restore below can fail or come back empty, so
                             // the runtime is inconsistent until the replay commits.
@@ -9533,10 +9584,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             boolean isKeyedRoute = resumed != null && resumed.getKeyedReplay() != null
                     ? resumed.isKeyedReplayRoute()
                     : isColdKeyedRoute || (repairKeyedReplay.isArmed()
-                                         && !resuming
-                                         && !fullRebuild
-                                         && localized
-                                         && finiteHighBound);
+                                           && !resuming
+                                           && !fullRebuild
+                                           && localized
+                                           && finiteHighBound);
             if (isKeyedRoute && !isColdKeyedRoute && !resuming) {
                 storedRowCursor = openStoredRowCursor(instance, emitLowTs, plan.getHighTsExclusive());
                 if (storedRowCursor == null) {
@@ -11147,6 +11198,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Clears every function's partition map ahead of a root restore into the same runtime,
+     * so accumulator state that outran the root's snapshot moment is discarded. The anchor
+     * map needs no wipe here: {@code LiveViewWindow.restore()} clears it before reinserting.
+     * {@code isOpen()} rather than a null test: a function whose state the window owns keeps
+     * a closed map, and its accumulator is cleared with the anchor map's own entry instead.
+     */
+    private static void clearPartitionMapsForRootRestore(ObjList<WindowFunction> functions) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final Map map = functions.getQuick(i).getPartitionMap();
+            if (map != null && map.isOpen()) {
+                map.clear();
+            }
+        }
+    }
+
+    /**
      * The generation a repair's carried incremental-seal bookkeeping may be re-stamped
      * against, or {@link Numbers#LONG_NULL} when it must be dropped instead.
      * <p>
@@ -12131,14 +12198,48 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * untouched (the temporary capture segment removes itself) and returns
      * {@code false}, and the caller rebuilds the derived state from the applied base
      * instead.
+     * <p>
+     * A ceiling whose timestamp group grew after its seal - an in-order row on its
+     * timestamp that the view materialized later - takes a second route. The base table
+     * holds that row, so the healed ceiling folds it, and the generation's own base
+     * seqTxn then no longer describes the root: the restore replays the commits above
+     * that seqTxn from the ceiling's timestamp up, and would fold the row a second time.
+     * The heal publishes at {@code durableBaseSeqTxn} instead, above which the restore
+     * finds no commit to replay. That alone would also skip every row above the ceiling,
+     * so when the durable frontier runs past the ceiling the replay folds on through the
+     * frontier, and the heal seals a root there at the same base seqTxn - the root a
+     * cadence seal would have left at that point. The splice and the seal are two
+     * publications. A crash between them leaves a generation whose newest root sits
+     * below the frontier at a base seqTxn nothing above it replays from; the restore's
+     * row-count check refuses it, and the caller rebuilds, as it does for a declined heal.
+     * <p>
+     * Either route folds the base table as it stands now, which can hold commits the view
+     * has not consumed yet, or have lost rows the view keeps. A lost row would leave every
+     * root above it short of a row its position counts, so the heal declines when, at any
+     * designated timestamp it folds, the base holds fewer rows than the view's table does. It
+     * counts the rows per interval between two boundaries first, and in the one up to the
+     * frontier on the route that seals it, and walks the timestamps of an interval only when
+     * its count could hide a lost row behind a surplus. A row the view has not consumed is a
+     * surplus the heal keeps when it sits below the durable frontier, where the drain meets
+     * its commit as out of order and repairs it from a root strictly below the commit. On the
+     * frontier the drain folds that commit in order instead, so the heal declines unless the
+     * frontier's own timestamp holds exactly the rows the view's table does. A lost row and a
+     * row the view has not consumed on the very same timestamp still cancel, and the heal does
+     * not see them. Below the frontier the drain's repair of that row's commit re-derives what
+     * depends on the timestamp from the base, so the view converges on the base as a rebuild
+     * would. On the frontier the drain folds that commit in order, over the heal's own fold of
+     * the row, and the row counts twice.
      *
+     * @param durableBaseSeqTxn        the base seqTxn the view's table has applied
+     * @param durableFrontierTimestamp the newest designated timestamp the view's table holds
      * @return true when the corrupt roots were reconstructed and republished
      */
     private boolean reconstructCorruptCheckpointRoots(
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
             LiveViewCheckpointTimelineStoreReader.Result restored,
-            long durableBaseSeqTxn
+            long durableBaseSeqTxn,
+            long durableFrontierTimestamp
     ) {
         final String viewName = instance.getDefinition().getViewName();
         final long predecessorMaxTs = restored.maxTimestamp;
@@ -12163,6 +12264,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         LiveViewCheckpointTimelineStoreWriter.RepairCapture capture = null;
         TableReader baseReader = null;
+        TableReader lvReader = null;
         boolean readerAttached = false;
         try (Path checkpointsDir = new Path()) {
             checkpointsDir.of(engine.getConfiguration().getDbRoot())
@@ -12175,65 +12277,125 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // own boundary is kept, and every corrupt root above it up to and including
             // the ceiling is re-versioned. A non-corrupt boundary caught in the range
             // (a same-timestamp tie the reader stepped over) re-versions to identical
-            // state, which is harmless.
+            // state, which is harmless. The collection runs to the end of the timeline so
+            // the heal also learns whether the ceiling is the newest root, and the roots
+            // above it, if any, leave the schedule before anything is frozen.
             final ObjList<LiveViewCheckpointTimelineEntry> boundaries = new ObjList<>();
-            capture.collectBoundaries(predecessorMaxTs + 1, highTsExclusive, boundaries);
+            capture.collectBoundaries(predecessorMaxTs + 1, Long.MAX_VALUE, boundaries);
+            int ceilingEnd = boundaries.size();
+            while (ceilingEnd > 0 && boundaries.getQuick(ceilingEnd - 1).maxTimestamp > corruptCeilingMaxTs) {
+                ceilingEnd--;
+            }
+            final boolean isCeilingNewest = ceilingEnd == boundaries.size();
+            boundaries.setPos(ceilingEnd);
             if (boundaries.size() == 0) {
                 return false;
             }
             // The durable live-view table is authoritative for each repaired root's
             // position - its rows at or below the boundary's timestamp. A non-native
             // boundary partition has no searchable prefix, so the heal cannot position
-            // its root and defers to the full rebuild.
+            // its root and defers to the full rebuild. The reader stays open until the
+            // per-timestamp check below has read the same version of the table.
             final LongList positions = new LongList();
-            final long predecessorDurableRows;
-            try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
-                for (int i = 0, n = boundaries.size(); i < n; i++) {
-                    final long boundaryMaxTs = boundaries.getQuick(i).maxTimestamp;
-                    final long position = countDurableRowsBelow(
-                            lvReader,
-                            boundaryMaxTs == Long.MAX_VALUE ? Long.MAX_VALUE : boundaryMaxTs + 1
-                    );
-                    if (position < 0) {
-                        return false;
-                    }
-                    positions.add(position);
+            lvReader = engine.getReader(instance.getLiveViewToken());
+            for (int i = 0, n = boundaries.size(); i < n; i++) {
+                final long boundaryMaxTs = boundaries.getQuick(i).maxTimestamp;
+                final long position = countDurableRowsBelow(
+                        lvReader,
+                        boundaryMaxTs == Long.MAX_VALUE ? Long.MAX_VALUE : boundaryMaxTs + 1
+                );
+                if (position < 0) {
+                    return false;
                 }
-                predecessorDurableRows = countDurableRowsBelow(lvReader, predecessorMaxTs + 1);
+                positions.add(position);
             }
+            final long predecessorDurableRows = countDurableRowsBelow(lvReader, predecessorMaxTs + 1);
+            final long frontierDurableRows = countDurableRowsBelow(
+                    lvReader,
+                    durableFrontierTimestamp == Long.MAX_VALUE ? Long.MAX_VALUE : durableFrontierTimestamp + 1
+            );
+            final long belowFrontierDurableRows = countDurableRowsBelow(lvReader, durableFrontierTimestamp);
             // The heal folds the base table, which holds every row on a boundary's timestamp up to
-            // the durable point, and republishes at the generation's own base seqTxn. That stands
-            // in for a sealed root only while the root's timestamp group has not grown since its
-            // seal - the durable table then holds no more rows at or below the boundary than the
-            // root's own position, as coversOwnTimestampGroup reads it. Two roots decide it:
-            // - the ceiling, which the restore below selects. Healed over a grown group it holds
-            //   the tie, and the replay above the generation's base seqTxn feeds the tie again;
+            // the durable point. A healed root stands in for a sealed one only while it holds the
+            // rows its position counts, and a root whose timestamp group grew after its seal - the
+            // durable table holds more rows at or below the boundary than the root's own position,
+            // as coversOwnTimestampGroup reads it - does not. Two roots decide what that costs:
             // - the predecessor the heal warms up from. Over a grown group it lacks the tie, and so
             //   does every root healed above it, while their positions - read off the durable
             //   table - count it, so the restore's row count would pass over accumulators short of
-            //   it.
-            // Either way the rebuild from the applied base is what the caller falls back to, and
-            // declining leaves the timeline exactly as the build that sealed it left it. A
-            // predecessor partition the table does not hold natively yields no count, and no
-            // evidence either way.
+            //   it. Nothing the heal folds puts the tie back, so it declines, the caller rebuilds
+            //   from the applied base, and the timeline stays exactly as the build that sealed it
+            //   left it. A predecessor partition the table does not hold natively yields no count,
+            //   and no evidence either way;
+            // - the ceiling, which the restore below selects. Healed over a grown group it holds
+            //   the tie, so it describes the base as the view's table has applied it rather than as
+            //   the generation's own base seqTxn left it, and the heal publishes it there instead.
             if (predecessorDurableRows > restored.effectiveLvRowPosition) {
                 logHealDeclined(viewName, predecessorMaxTs, restored.effectiveLvRowPosition, predecessorDurableRows);
                 return false;
             }
             final LongList recordedPositions = new LongList();
             capture.collectEffectiveRowPositions(boundaries, recordedPositions);
-            for (int i = 0, n = boundaries.size(); i < n; i++) {
-                if (boundaries.getQuick(i).maxTimestamp == corruptCeilingMaxTs
-                        && positions.getQuick(i) > recordedPositions.getQuick(i)) {
+            final int ceilingIndex = boundaries.size() - 1;
+            boolean isCeilingGrown = false;
+            for (int i = 0, n = boundaries.size(); i < n && !isCeilingGrown; i++) {
+                isCeilingGrown = boundaries.getQuick(i).maxTimestamp == corruptCeilingMaxTs
+                        && positions.getQuick(i) > recordedPositions.getQuick(i);
+            }
+            // The interval the replay folds and the base seqTxn the splice publishes at. An intact
+            // ceiling keeps the generation's own seqTxn, and the restore replays the commits above
+            // it as it always has. A grown one is published at the applied seqTxn, so the replay
+            // folds through the durable frontier, and a frontier above the ceiling gets a root of
+            // its own: nothing above the applied seqTxn would replay the rows between the two.
+            final long scanHighTs;
+            final long publishBaseSeqTxn;
+            if (isCeilingGrown) {
+                // The seal at the frontier has to land as the newest root. The restore selected the
+                // ceiling as the newest root at or below the frontier, so the frontier sits at or
+                // above it, and any root above the ceiling sits above the frontier too, where it
+                // would leave the seal no place to land. Decline rather than publish a splice the
+                // seal could not complete.
+                if (!isCeilingNewest || durableFrontierTimestamp < corruptCeilingMaxTs || frontierDurableRows < 0) {
                     logHealDeclined(
                             viewName,
                             corruptCeilingMaxTs,
-                            recordedPositions.getQuick(i),
-                            positions.getQuick(i)
+                            recordedPositions.getQuick(ceilingIndex),
+                            positions.getQuick(ceilingIndex)
                     );
                     return false;
                 }
+                scanHighTs = durableFrontierTimestamp;
+                publishBaseSeqTxn = durableBaseSeqTxn;
+            } else {
+                scanHighTs = corruptCeilingMaxTs;
+                publishBaseSeqTxn = restored.normalizedBaseSeqTxn;
             }
+            final boolean isFrontierSealed = isCeilingGrown && durableFrontierTimestamp > corruptCeilingMaxTs;
+            // The rows the view's table holds in each interval the replay folds: one interval per
+            // boundary, (previous boundary, boundary], and a last one, (ceiling, frontier], which
+            // only the route that seals the frontier scans. The predecessor's position, rather
+            // than its durable count, is the floor the first interval is measured from: the
+            // decline above proved the table holds no more rows at or below it, and it is the one
+            // figure a predecessor partition the table does not hold natively still has.
+            final int intervalCount = boundaries.size() + 1;
+            final LongList durableIntervalRows = new LongList(intervalCount);
+            long intervalFloorRows = restored.effectiveLvRowPosition;
+            for (int i = 0, n = boundaries.size(); i < n; i++) {
+                durableIntervalRows.add(positions.getQuick(i) - intervalFloorRows);
+                intervalFloorRows = positions.getQuick(i);
+            }
+            durableIntervalRows.add(isFrontierSealed ? frontierDurableRows - intervalFloorRows : 0);
+            final LongList foldedIntervalRows = new LongList(intervalCount);
+            foldedIntervalRows.setAll(intervalCount, 0);
+            // The rows on the frontier's own timestamp, which the replay reaches when the ceiling is
+            // the frontier or the route seals the frontier. A partition the table does not hold
+            // natively leaves no count to check them against.
+            final boolean isFrontierScanned = scanHighTs == durableFrontierTimestamp;
+            if (isFrontierScanned && belowFrontierDurableRows < 0) {
+                return false;
+            }
+            final long durableFrontierGroupRows = isFrontierScanned ? frontierDurableRows - belowFrontierDurableRows : 0;
+            long foldedFrontierGroupRows = 0;
             baseReader = waitForApply(baseToken, durableBaseSeqTxn);
             // The predecessor's state is the replay's warm start. Clear the maps the
             // failed floor restore may have partially filled, then restore it: the
@@ -12258,12 +12420,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // Start strictly above the predecessor: its restored state already covers
             // every row at or below its timestamp, so the frame it holds is the warm-up
             // the replay resumes from. Stop at the ceiling - every corrupt boundary is
-            // at or below it.
+            // at or below it - or, for a grown ceiling, at the durable frontier.
             final long scanLowTs = Math.max(viewLowerBoundTimestamp, predecessorMaxTs + 1);
+            final int scanTimestampIndex = pageFrameFactory.getMetadata().getTimestampIndex();
             try (RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRange(
                     executionContext,
                     scanLowTs,
-                    corruptCeilingMaxTs
+                    scanHighTs
             )) {
                 RecordCursor source = pageCursor;
                 if (filter != null) {
@@ -12282,7 +12445,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         anchorWindow,
                         null,
                         0,
-                        pageFrameFactory.getMetadata().getTimestampIndex()
+                        scanTimestampIndex
                 );
                 source = boundaryFreezingCursor;
                 source = compiledPlan.wrapWindowInput(source, executionContext);
@@ -12298,7 +12461,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // correct - so every row here is warm-up. The freeze cursor
                         // under this one has already segmented the window state at
                         // any boundary the row crossed, which is the whole point of
-                        // walking them.
+                        // walking them, and has frozen exactly the boundaries below
+                        // the row, so their count names the interval the row falls
+                        // in. Each row is one the view's table holds an output row
+                        // for, which is what the counts below check.
+                        foldedIntervalRows.increment(boundaryFreezingCursor.getCaptured());
+                        if (isFrontierScanned
+                                && boundaryFreezingCursor.getRecord().getTimestamp(scanTimestampIndex) == durableFrontierTimestamp) {
+                            foldedFrontierGroupRows++;
+                        }
                     }
                     // Boundaries at or above the last row the replay saw: no qualifying
                     // row sits between them and it, so the state the replay ends on is
@@ -12306,6 +12477,72 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     boundaryFreezingCursor.freezeRemaining();
                 }
             }
+            // The base table can differ from the one the view materialized: waitForApply hands
+            // back a reader at or past the applied seqTxn, and the base can lose rows the view
+            // keeps. A row the base lost leaves every root above it short of a row its position
+            // counts. The checks below run cheapest first, with the base reader still attached
+            // for the last one, which reads the base again. First, per interval: the interval
+            // that lost a row folds fewer rows than the view's table holds there, unless the base
+            // holds rows over in the same interval. Counted per interval, a lost row is not hidden
+            // by a row the base holds over in another interval, which would otherwise leave a
+            // root below that row short of the lost one while the drain's repair of that row
+            // resumes from it.
+            for (int i = 0; i < intervalCount; i++) {
+                final long foldedRows = foldedIntervalRows.getQuick(i);
+                final long durableRows = durableIntervalRows.getQuick(i);
+                if (foldedRows < durableRows) {
+                    logHealDeclinedRows(
+                            viewName,
+                            i == 0 ? predecessorMaxTs : boundaries.getQuick(i - 1).maxTimestamp,
+                            i < boundaries.size() ? boundaries.getQuick(i).maxTimestamp : durableFrontierTimestamp,
+                            durableRows,
+                            foldedRows
+                    );
+                    return false;
+                }
+            }
+            // A row the base holds over is one it applied past the applied seqTxn, from a commit
+            // the view has not consumed, and the drain consumes that commit after the restore
+            // below, which leaves latestSeenTs on the durable frontier. Below the frontier the
+            // drain sees the commit as out of order - drainBaseWal compares its minimum strictly
+            // below latestSeenTs, drainAppliedBase at or below it - and o3Replay re-derives what
+            // depends on it either from the base or from a root strictly below that minimum,
+            // which never folded the row. On the frontier itself drainBaseWal folds the commit in
+            // order, over a runtime the heal already folded its rows into, so the heal declines a
+            // frontier group that does not hold exactly the rows the view's table does.
+            if (isFrontierScanned && foldedFrontierGroupRows != durableFrontierGroupRows) {
+                logHealDeclinedFrontierRows(viewName, durableFrontierTimestamp, durableFrontierGroupRows, foldedFrontierGroupRows);
+                return false;
+            }
+            // Last, per timestamp, where an interval's count still hides a lost row behind rows the
+            // base holds over in the same interval. The drain's repair of their commit re-derives
+            // only what depends on them, and above its convergence bound it keeps the healed
+            // runtime, which never held the lost row, under output rows that count it. So at every
+            // timestamp the base has to hold at least the rows the view's table holds there, and
+            // only a lost row and a row held over on the very same timestamp still cancel. An
+            // interval hides a lost row only when its count shows a surplus, or, once the base has
+            // applied commits the view has not consumed, when their rows there match the loss
+            // exactly. The walk reads only those intervals, so a heal over a base standing at the
+            // applied seqTxn reads the base once.
+            final boolean isBaseAhead = baseReader.getSeqTxn() > durableBaseSeqTxn;
+            for (int i = 0; i < intervalCount; i++) {
+                final long durableRows = durableIntervalRows.getQuick(i);
+                if (durableRows > 0
+                        && (isBaseAhead || foldedIntervalRows.getQuick(i) > durableRows)
+                        && !isHealFloorHeldAtEveryTimestamp(
+                        viewName,
+                        lvReader,
+                        pageFrameFactory,
+                        filter,
+                        scanTimestampIndex,
+                        scanLowTs,
+                        i == 0 ? predecessorMaxTs : boundaries.getQuick(i - 1).maxTimestamp,
+                        i < boundaries.size() ? boundaries.getQuick(i).maxTimestamp : durableFrontierTimestamp
+                )) {
+                    return false;
+                }
+            }
+            lvReader = Misc.free(lvReader);
             executionContext.clearReader();
             engine.attachReader(baseReader);
             readerAttached = false;
@@ -12323,7 +12560,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 checkpointTimelineStoreWriter.publishRepair(
                         capture,
                         definitionTxn,
-                        restored.normalizedBaseSeqTxn,
+                        publishBaseSeqTxn,
                         coveredLvSeqTxn,
                         0,
                         instance.getLifecycleIdentity(),
@@ -12335,11 +12572,31 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 roleLock.unlock();
             }
             capture = Misc.free(capture);
+            if (isFrontierSealed) {
+                // The replay stands at the durable frontier, having folded exactly the rows the
+                // view's table holds up to it, so the window functions hold the runtime the
+                // view's output describes. Seal it where a cadence seal would have, at the
+                // applied seqTxn the splice above was published at. No batch minimum: nothing
+                // since the healed ceiling was frozen proves which of its ring chunks the
+                // runtime still shares, so the seal writes a complete image.
+                appendCheckpointTimelineRoot(
+                        instance,
+                        functions,
+                        anchorWindow,
+                        durableBaseSeqTxn,
+                        durableFrontierTimestamp,
+                        frontierDurableRows,
+                        Numbers.LONG_NULL,
+                        Numbers.LONG_NULL
+                );
+            }
             LOG.info().$("reconstructed corrupt live view checkpoint roots [view=")
                     .$(viewName)
                     .$(", predecessorMaxTs=").$ts(predecessorMaxTs)
                     .$(", corruptCeilingMaxTs=").$ts(corruptCeilingMaxTs)
-                    .$(", roots=").$(boundaries.size()).I$();
+                    .$(", roots=").$(boundaries.size())
+                    .$(", baseSeqTxn=").$(publishBaseSeqTxn)
+                    .$(", sealedFrontier=").$(isFrontierSealed).I$();
             return true;
         } catch (Throwable t) {
             LOG.critical().$("could not reconstruct corrupt live view checkpoint roots [view=")
@@ -12354,9 +12611,101 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 engine.attachReader(baseReader);
             }
             Misc.free(capture);
+            Misc.free(lvReader);
             if (baseReader != null) {
                 baseReader.close();
             }
+        }
+    }
+
+    /**
+     * The heal's per-timestamp floor over one interval it folded, {@code (lowTsExclusive,
+     * highTsInclusive]}: at every designated timestamp in it, the base has to hold at least the
+     * rows the view's table holds there. The walk reads the view table's designated timestamps
+     * the way {@link #countDurableRowsBelow} does, straight off each native partition's timestamp
+     * column, in step with the base rows the heal folded, which it reads again through the heal's
+     * own page-frame factory and filter. Both run in ascending timestamp order. A base row below
+     * the view's next timestamp is one the base holds over, which the floor allows.
+     * <p>
+     * Restore path only, and nothing is allocated per row. A partition of the view's table that
+     * is not native has no timestamp column to walk and leaves no evidence either way, so the
+     * heal declines, as it does when it cannot position a root.
+     *
+     * @param baseLowTsInclusive the heal scan's own lower bound, which also bounds the base rows here
+     * @return true when the floor holds at every timestamp of the interval
+     */
+    private boolean isHealFloorHeldAtEveryTimestamp(
+            String viewName,
+            TableReader lvReader,
+            PageFrameRecordCursorFactory pageFrameFactory,
+            @Nullable Function filter,
+            int baseTimestampIndex,
+            long baseLowTsInclusive,
+            long lowTsExclusive,
+            long highTsInclusive
+    ) throws SqlException {
+        final int partitionCount = lvReader.getPartitionCount();
+        final int lvTimestampIndex = lvReader.getMetadata().getTimestampIndex();
+        try (RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRange(
+                executionContext,
+                Math.max(baseLowTsInclusive, lowTsExclusive + 1),
+                highTsInclusive
+        )) {
+            RecordCursor baseCursor = pageCursor;
+            if (filter != null) {
+                filteringCursor.of(baseCursor, filter, executionContext);
+                baseCursor = filteringCursor;
+            }
+            final Record baseRecord = baseCursor.getRecord();
+            boolean hasBaseRow = baseCursor.hasNext();
+            long groupTs = Numbers.LONG_NULL;
+            long viewGroupRows = 0;
+            long baseGroupRows = 0;
+            partitions:
+            for (int partition = 0; partition < partitionCount; partition++) {
+                if (lvReader.getPartitionMinTimestampFromMetadata(partition) > highTsInclusive) {
+                    break;
+                }
+                if (lvReader.getPartitionRowCountFromMetadata(partition) <= 0
+                        || lvReader.getPartitionMaxTimestampFromMetadata(partition) <= lowTsExclusive) {
+                    continue;
+                }
+                if (lvReader.getPartitionFormatFromMetadata(partition) != PartitionFormat.NATIVE) {
+                    return false;
+                }
+                final long size = lvReader.openPartition(partition);
+                final MemoryCR timestamps = lvReader.getColumn(
+                        TableReader.getPrimaryColumnIndex(lvReader.getColumnBase(partition), lvTimestampIndex)
+                );
+                for (long row = firstRowAtOrAbove(timestamps, size, lowTsExclusive + 1); row < size; row++) {
+                    final long viewTs = timestamps.getLong(row << 3);
+                    if (viewTs > highTsInclusive) {
+                        break partitions;
+                    }
+                    if (viewTs != groupTs) {
+                        if (baseGroupRows < viewGroupRows) {
+                            logHealDeclinedTimestampRows(viewName, groupTs, viewGroupRows, baseGroupRows);
+                            return false;
+                        }
+                        groupTs = viewTs;
+                        viewGroupRows = 0;
+                        baseGroupRows = 0;
+                        while (hasBaseRow && baseRecord.getTimestamp(baseTimestampIndex) < viewTs) {
+                            hasBaseRow = baseCursor.hasNext();
+                        }
+                        while (hasBaseRow && baseRecord.getTimestamp(baseTimestampIndex) == viewTs) {
+                            baseGroupRows++;
+                            hasBaseRow = baseCursor.hasNext();
+                        }
+                    }
+                    viewGroupRows++;
+                }
+            }
+            if (baseGroupRows < viewGroupRows) {
+                logHealDeclinedTimestampRows(viewName, groupTs, viewGroupRows, baseGroupRows);
+                return false;
+            }
+            return true;
         }
     }
 
@@ -12618,6 +12967,68 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", error=").$(t).I$();
             return Numbers.LONG_NULL;
         }
+    }
+
+    /**
+     * Puts the primary runtime back at the newest root, which sits at the runtime frontier,
+     * ahead of a per-segment loop whose change set a dirty drain handed off.
+     * <p>
+     * The drain fed in-order commits through the window functions before it reached the
+     * late one, and the hand-off rewound {@code latestSeenTs} to the frontier but left the
+     * accumulators holding those rows, which no durable output and no root carries. Every
+     * segment repair keeps the primary runtime, and the seal after one may freeze it as a
+     * root at the frontier - a truncating repair drops the root that sat there - so the
+     * loop cannot run over it. Restored, the runtime is the state a drain that met the late
+     * commit first hands the loop: the root's accumulators, anchor map and incremental
+     * baseline, nothing fed since its seal, and no window-state debt. The loop then runs
+     * exactly as it runs for that drain, and every seal, park, discard, fault, unapplied
+     * replacement or restart along it meets the state it meets there. The residual repair
+     * replays the dropped rows from the base, once, as it replays every row above the root.
+     * <p>
+     * The restore is the one a resume replay takes into the primary - clear the function
+     * maps, restore the root by its exact composite key - with the root adopted as the
+     * incremental baseline when it is the generation's head, as it is after a seal. It
+     * reads one root through one predecessor lookup and no base row, whatever the change
+     * set reaches back to.
+     *
+     * @param frontierTs the rewound runtime frontier, which the newest root's own timestamp
+     *                   equals
+     * @return true when the runtime holds the root's state; false when no root sits at the
+     * frontier, or one does and could not be restored, leaving the window-state debt the
+     * drain left for the union range to settle
+     */
+    private boolean restoreRuntimeAtFrontierRoot(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            long frontierTs
+    ) {
+        timelineAnchors.of(instance);
+        if (frontierTs == Long.MAX_VALUE
+                || !timelineAnchors.findAnchorBelow(frontierTs + 1, timelineFrontierRoot)
+                || timelineFrontierRoot.maxTimestamp != frontierTs) {
+            return false;
+        }
+        clearPartitionMapsForRootRestore(windowFactory.getWindowFunctions());
+        final long rootRowPosition = restoreAnchorRoot(
+                instance,
+                windowFactory,
+                frontierTs,
+                timelineFrontierRoot.checkpointId,
+                false
+        );
+        if (rootRowPosition == Numbers.LONG_NULL) {
+            return false;
+        }
+        // Nothing has been fed since the root, as after the seal that froze it, so the batch
+        // minimum the drain lowered goes back up. The drain's rows are gone from the runtime,
+        // and no commit is owed for them.
+        instance.resetMinSeenTsSinceCheckpoint();
+        windowStateDirty = false;
+        LOG.info().$("live view restored its runtime to the root at the frontier ahead of a segment loop [view=")
+                .$(instance.getDefinition().getViewName())
+                .$(", boundary=").$ts(frontierTs)
+                .$(", checkpointId=").$(timelineFrontierRoot.checkpointId).I$();
+        return true;
     }
 
     /**
@@ -13178,7 +13589,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(instance.getDefinition().getViewName())
                     .$(", predecessorMaxTs=").$ts(restored.maxTimestamp)
                     .$(", corruptCeilingMaxTs=").$ts(restored.corruptCeilingMaxTs).I$();
-            if (!reconstructCorruptCheckpointRoots(instance, windowFactory, restored, durableBaseSeqTxn)) {
+            if (!reconstructCorruptCheckpointRoots(
+                    instance,
+                    windowFactory,
+                    restored,
+                    durableBaseSeqTxn,
+                    durableFrontierTimestamp
+            )) {
                 throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
                         .put("live view checkpoint corrupt-root reconstruction failed");
             }
@@ -13221,7 +13638,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // and the row count below then sends a sound timeline to the rebuild - which the
             // restatement guard refuses over a base that lost rows the view retains. The one root
             // producer that reads the base table rather than the commits, the corrupt-root heal
-            // above, declines a root whose group grew rather than fold the tie into it.
+            // above, folds the tie into a ceiling whose group grew and publishes that generation at
+            // the applied seqTxn, so this replay starts above the tie's commit.
             final long lowTimestamp = Math.max(
                     instance.getDefinition().getViewLowerBoundTimestamp(),
                     restored.maxTimestamp
@@ -14456,6 +14874,47 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", boundary=").$ts(boundaryMaxTs)
                 .$(", recordedRows=").$(recordedRows)
                 .$(", durableRows=").$(durableRows).I$();
+    }
+
+    private static void logHealDeclinedFrontierRows(
+            String viewName,
+            long frontierTs,
+            long durableRows,
+            long baseRows
+    ) {
+        LOG.info().$("live view checkpoint heal declined, the base table does not hold the rows the view materialized on its frontier [view=")
+                .$(viewName)
+                .$(", frontier=").$ts(frontierTs)
+                .$(", durableRows=").$(durableRows)
+                .$(", baseRows=").$(baseRows).I$();
+    }
+
+    private static void logHealDeclinedRows(
+            String viewName,
+            long lowTsExclusive,
+            long highTsInclusive,
+            long durableRows,
+            long baseRows
+    ) {
+        LOG.info().$("live view checkpoint heal declined, the base table does not hold the rows the view materialized [view=")
+                .$(viewName)
+                .$(", lowTsExclusive=").$ts(lowTsExclusive)
+                .$(", highTsInclusive=").$ts(highTsInclusive)
+                .$(", durableRows=").$(durableRows)
+                .$(", baseRows=").$(baseRows).I$();
+    }
+
+    private static void logHealDeclinedTimestampRows(
+            String viewName,
+            long timestamp,
+            long durableRows,
+            long baseRows
+    ) {
+        LOG.info().$("live view checkpoint heal declined, the base table does not hold the rows the view materialized on a timestamp [view=")
+                .$(viewName)
+                .$(", timestamp=").$ts(timestamp)
+                .$(", durableRows=").$(durableRows)
+                .$(", baseRows=").$(baseRows).I$();
     }
 
     private static void logRuntimeRestoreDeclined(String viewName, CharSequence cause, String reason) {

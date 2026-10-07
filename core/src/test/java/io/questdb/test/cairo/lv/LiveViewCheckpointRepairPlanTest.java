@@ -972,11 +972,13 @@ public class LiveViewCheckpointRepairPlanTest {
         Assert.assertEquals(LiveViewCheckpointRepairPlan.DENIAL_RESUME_UNPRICED, plan.getDenialReason());
 
         // A view that has run no repair at all has no disposition to report, and the
-        // three codes the caller supplies - the gates that withhold the dependency
-        // inputs before the plan sees them - still render.
+        // four codes the caller supplies - the gates that withhold the dependency
+        // inputs or the runtime frontier before the plan sees them - still render.
         Assert.assertNull(LiveViewCheckpointRepairPlan.dispositionName(0, LiveViewCheckpointRepairPlan.DENIAL_NONE));
         Assert.assertEquals("dedup",
                 LiveViewCheckpointRepairPlan.denialReasonName(LiveViewCheckpointRepairPlan.DENIAL_DEDUP));
+        Assert.assertEquals("grown head group",
+                LiveViewCheckpointRepairPlan.denialReasonName(LiveViewCheckpointRepairPlan.DENIAL_GROWN_HEAD_GROUP));
         Assert.assertEquals("incomplete dependency",
                 LiveViewCheckpointRepairPlan.denialReasonName(LiveViewCheckpointRepairPlan.DENIAL_INCOMPLETE_DEPENDENCY));
         Assert.assertEquals("non-data trigger",

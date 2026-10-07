@@ -207,6 +207,17 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
      */
     public static final int DENIAL_FRONTIER_BELOW_CONVERGENCE = 2;
     /**
+     * The newest root's timestamp group has grown - an in-order row landed on the root's
+     * own timestamp after its seal - and the refresh job withholds the runtime frontier for
+     * as long as the group stays grown, because a converging repair that put the runtime
+     * state back would keep that root without the tie. {@link #of} sees only the missing
+     * frontier and reports {@link #DENIAL_NO_RUNTIME_FRONTIER}, which the caller replaces
+     * with this code. A ROWS dependency only, for the same reason as that one. Transient: the
+     * group stops counting as grown at the first row above the tie or at the next seal, so it
+     * needs no operator action.
+     */
+    public static final int DENIAL_GROWN_HEAD_GROUP = 17;
+    /**
      * At least one window function is covered by none of the RANGE, ROWS and anchor
      * plans, so no union of them describes the view. The caller withholds every
      * dependency input rather than bounding some functions and not others.
@@ -256,16 +267,15 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
      */
     public static final int DENIAL_NO_DURABLE_OUTPUT = 9;
     /**
-     * The repair has no runtime frontier to plan against, for one of two causes. The
-     * view cannot say where its runtime window state stands, because that state travels
-     * through the checkpoint freeze/restore contract and this view's functions do not
-     * support it. Or the newest root's timestamp group has grown - an in-order row
-     * landed on the root's own timestamp after its seal - and the refresh job withholds
-     * the frontier for as long as the group stays grown, because a converging repair
-     * that put the runtime state back would keep that root without the tie. The second
-     * cause is transient and needs no operator action. A ROWS dependency only, for the
-     * same reason as {@link #DENIAL_NO_CHANGE_CEILING}: without the frontier there is
-     * nothing to put back, and only ROWS needs the pre-repair state put back.
+     * The repair has no runtime frontier to plan against: the view cannot say where its
+     * runtime window state stands, because that state travels through the checkpoint
+     * freeze/restore contract and the view does not support it - a window function
+     * carries no checkpoint state, or the anchor state cannot encode the view's partition
+     * key types. A ROWS dependency only, for the same reason as
+     * {@link #DENIAL_NO_CHANGE_CEILING}: without the frontier there is nothing to put
+     * back, and only ROWS needs the pre-repair state put back. A frontier the refresh job
+     * withholds under a grown head group reaches {@link #of} the same way, and the caller
+     * reports it as {@link #DENIAL_GROWN_HEAD_GROUP} instead.
      */
     public static final int DENIAL_NO_RUNTIME_FRONTIER = 10;
     /**
@@ -386,6 +396,7 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
             case DENIAL_NONE -> null;
             case DENIAL_DEDUP -> "dedup";
             case DENIAL_FRONTIER_BELOW_CONVERGENCE -> "frontier below convergence";
+            case DENIAL_GROWN_HEAD_GROUP -> "grown head group";
             case DENIAL_INCOMPLETE_DEPENDENCY -> "incomplete dependency";
             case DENIAL_NON_DATA_TRIGGER -> "non-data trigger";
             case DENIAL_NOT_INSERT_ONLY -> "not insert only";
@@ -567,8 +578,10 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
      * @return the {@code DENIAL_*} code naming why this repair could not localize, or
      * why a localized rebuild lost to a resume, and {@link #DENIAL_NONE} when the
      * rebuild localized and ran. The caller may replace a {@link #DENIAL_NO_DEPENDENCY}
-     * verdict with the more specific reason it withheld the dependency inputs on -
-     * {@link #of} sees only their absence, not the gate that caused it.
+     * verdict with the more specific reason it withheld the dependency inputs on, and a
+     * {@link #DENIAL_NO_RUNTIME_FRONTIER} verdict with {@link #DENIAL_GROWN_HEAD_GROUP}
+     * when it withheld the frontier under a grown head group - {@link #of} sees only
+     * their absence, not the gate that caused it.
      */
     public int getDenialReason() {
         return denialReason;
@@ -873,11 +886,16 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
      *                                window state has incorporated, or
      *                                {@link Numbers#LONG_NULL} when the repair
      *                                cannot or must not put that state back
-     *                                afterwards (no checkpoint-state support, an
-     *                                anchored view whose anchor state this phase
-     *                                does not carry, or a newest root whose
-     *                                timestamp group has grown since its seal, which
-     *                                a converging repair would keep without the tie)
+     *                                afterwards: the view has no checkpoint-state
+     *                                support (a window function without it, or an
+     *                                anchored view whose partition key types the
+     *                                anchor state cannot encode), or the newest
+     *                                root's timestamp group has grown since its
+     *                                seal, which a converging repair would keep
+     *                                without the tie. A ROWS view reports either as
+     *                                {@link #DENIAL_NO_RUNTIME_FRONTIER}, and the
+     *                                caller replaces that with
+     *                                {@link #DENIAL_GROWN_HEAD_GROUP} for the second
      * @param scanCostSource          prices a candidate scan interval against the pinned
      *                                snapshot, or null to leave the choice between a
      *                                qualifying anchor and a localized rebuild
@@ -1334,8 +1352,9 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
             // The three inputs fail for three different reasons: a change set nothing
             // bounds from above, a missing runtime frontier - a view whose functions
             // carry no checkpoint state, or a newest root whose timestamp group has
-            // grown, which clears on its own - and output the runtime holds but has not
-            // flushed. An operator can act on each but the grown group.
+            // grown, which clears on its own and which the caller reports under a code
+            // of its own - and output the runtime holds but has not flushed. An operator
+            // can act on each but the grown group.
             denialReason = changeMaxTs == Numbers.LONG_NULL
                     ? DENIAL_NO_CHANGE_CEILING
                     : runtimeFrontierTs == Numbers.LONG_NULL

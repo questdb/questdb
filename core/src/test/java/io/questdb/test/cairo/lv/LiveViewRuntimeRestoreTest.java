@@ -32,6 +32,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRebuildRestatementGuard;
@@ -99,6 +100,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * and the last of them covers what the restore leaves for a resume anchored on that root. The
  * splice-tie cases then land a late row below the tie: the repair it triggers publishes above the
  * tie's commit, so it has to leave a newest root that holds the tie, whichever route it takes.
+ * Four of them take that late row over a bounded ROWS or RANGE frame, which carries no anchor.
+ * Two more carry a row above the tie in the late row's commit and restart while the repair is
+ * parked: whatever that repair has published by then has to leave the tie restorable.
  */
 public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompatTest {
     // Brings the third and fourth account to a column sized for SMALL_ACCOUNT_SYMBOL_CAPACITY, past
@@ -225,6 +229,39 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             2026-01-02T10:00:00.000000Z\tacct-1\t18.0\t2
             2026-01-03T09:00:00.000000Z\tacct-1\t4.0\t1
             2026-01-03T09:00:00.000000Z\tacct-2\t8.0\t1
+            """;
+    // The splice-tie cases over a bounded frame, which carries no anchor. An hour-wide RANGE frame
+    // carries the late row into no other row, so a repair of it quoted the runtime frontier would
+    // converge below the tie.
+    private static final String SPLICE_RANGE_FRAME = "RANGE BETWEEN 1 HOUR PRECEDING AND CURRENT ROW";
+    private static final String SPLICE_RANGE_ROWS_BELOW_THE_LATE_ROW = """
+            2026-01-01T09:00:00.000000Z\tacct-1\t1.0
+            2026-01-02T09:00:00.000000Z\tacct-1\t2.0
+            """;
+    private static final String SPLICE_RANGE_ROWS_FROM_THE_LATE_ROW = """
+            2026-01-02T10:00:00.000000Z\tacct-1\t18.0
+            2026-01-03T09:00:00.000000Z\tacct-1\t4.0
+            2026-01-03T09:00:00.000000Z\tacct-2\t8.0
+            """;
+    // A ROWS frame reaching one row back carries the late row into acct-1's next row, so two more
+    // acct-1 rows on the second day would let a repair of it quoted the runtime frontier converge
+    // on that day, below the tie.
+    private static final String SPLICE_ROWS_FRAME = "ROWS BETWEEN 1 PRECEDING AND CURRENT ROW";
+    private static final String SPLICE_ROWS_SEEDED_ROWS = "('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0), "
+            + "('2026-01-02T09:00:00.000000Z', 'acct-1', 2.0), "
+            + "('2026-01-02T11:00:00.000000Z', 'acct-1', 32.0), "
+            + "('2026-01-02T12:00:00.000000Z', 'acct-1', 64.0), "
+            + "('2026-01-03T09:00:00.000000Z', 'acct-1', 4.0)";
+    private static final String SPLICE_ROWS_ROWS_BELOW_THE_LATE_ROW = """
+            2026-01-01T09:00:00.000000Z\tacct-1\t1.0
+            2026-01-02T09:00:00.000000Z\tacct-1\t3.0
+            """;
+    private static final String SPLICE_ROWS_ROWS_FROM_THE_LATE_ROW = """
+            2026-01-02T10:00:00.000000Z\tacct-1\t18.0
+            2026-01-02T11:00:00.000000Z\tacct-1\t48.0
+            2026-01-02T12:00:00.000000Z\tacct-1\t96.0
+            2026-01-03T09:00:00.000000Z\tacct-1\t68.0
+            2026-01-03T09:00:00.000000Z\tacct-2\t8.0
             """;
     // ANCHOR DAILY resets each account's accumulators at midnight.
     private static final String SIX_ROWS_OUTPUT = """
@@ -1407,27 +1444,71 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
     }
 
     @Test
-    public void testARestartRestoresATieOnTheNewestRootAfterASegmentRepair() throws Exception {
+    public void testARestartRestoresATieOnTheNewestRootAfterALateRowInAnAnchoredView() throws Exception {
         assertMemoryLeak(() -> assertRestartRestoresATieAfterALateRowBelowIt(false));
     }
 
     @Test
-    public void testARestartRestoresATieOnTheNewestRootAfterASegmentRepairOverABaseThatLostADay() throws Exception {
+    public void testARestartRestoresATieOnTheNewestRootAfterALateRowInAnAnchoredViewOverABaseThatLostADay() throws Exception {
         assertMemoryLeak(() -> assertRestartRestoresATieAfterALateRowBelowIt(true));
     }
 
     @Test
-    public void testARestartRestoresATieOnTheNewestRootAfterAConvergingRepair() throws Exception {
-        // Without the decomposition the late row takes the union range, whose plan converges at the
-        // end of the late day just as the segment's does.
+    public void testARestartRestoresATieOnTheNewestRootAfterALateRowInAnAnchoredViewWithoutThePerSegmentRepair() throws Exception {
+        // Without the decomposition the late row takes the union range directly rather than past
+        // the grown-group gate, and the plan localizes behind the end of the table all the same.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED, "false");
         assertMemoryLeak(() -> assertRestartRestoresATieAfterALateRowBelowIt(false));
     }
 
     @Test
-    public void testARestartRestoresATieOnTheNewestRootAfterAConvergingRepairOverABaseThatLostADay() throws Exception {
+    public void testARestartRestoresATieOnTheNewestRootAfterALateRowInAnAnchoredViewWithoutThePerSegmentRepairOverABaseThatLostADay() throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED, "false");
         assertMemoryLeak(() -> assertRestartRestoresATieAfterALateRowBelowIt(true));
+    }
+
+    @Test
+    public void testARestartRestoresATieOnTheNewestRootAfterALateRowInARangeFramedView() throws Exception {
+        assertMemoryLeak(() -> assertRestartRestoresATieAfterALateRowBelowItInAFramedView(
+                SPLICE_RANGE_FRAME,
+                SPLICE_SEEDED_ROWS,
+                SPLICE_RANGE_ROWS_BELOW_THE_LATE_ROW,
+                SPLICE_RANGE_ROWS_FROM_THE_LATE_ROW,
+                false
+        ));
+    }
+
+    @Test
+    public void testARestartRestoresATieOnTheNewestRootAfterALateRowInARangeFramedViewOverABaseThatLostADay() throws Exception {
+        assertMemoryLeak(() -> assertRestartRestoresATieAfterALateRowBelowItInAFramedView(
+                SPLICE_RANGE_FRAME,
+                SPLICE_SEEDED_ROWS,
+                SPLICE_RANGE_ROWS_BELOW_THE_LATE_ROW,
+                SPLICE_RANGE_ROWS_FROM_THE_LATE_ROW,
+                true
+        ));
+    }
+
+    @Test
+    public void testARestartRestoresATieOnTheNewestRootAfterALateRowInARowsFramedView() throws Exception {
+        assertMemoryLeak(() -> assertRestartRestoresATieAfterALateRowBelowItInAFramedView(
+                SPLICE_ROWS_FRAME,
+                SPLICE_ROWS_SEEDED_ROWS,
+                SPLICE_ROWS_ROWS_BELOW_THE_LATE_ROW,
+                SPLICE_ROWS_ROWS_FROM_THE_LATE_ROW,
+                false
+        ));
+    }
+
+    @Test
+    public void testARestartRestoresATieOnTheNewestRootAfterALateRowInARowsFramedViewOverABaseThatLostADay() throws Exception {
+        assertMemoryLeak(() -> assertRestartRestoresATieAfterALateRowBelowItInAFramedView(
+                SPLICE_ROWS_FRAME,
+                SPLICE_ROWS_SEEDED_ROWS,
+                SPLICE_ROWS_ROWS_BELOW_THE_LATE_ROW,
+                SPLICE_ROWS_ROWS_FROM_THE_LATE_ROW,
+                true
+        ));
     }
 
     @Test
@@ -1524,7 +1605,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
     }
 
     @Test
-    public void testARestartRestoresATieTheLastRestartReplayedAfterASegmentRepair() throws Exception {
+    public void testARestartRestoresATieTheLastRestartReplayedAfterALateRowBelowIt() throws Exception {
         // The first restart replays the tied row onto the root it restores, as a live run would have
         // folded it. Only the batch minimum the restore leaves behind tells the next repair that the
         // root's timestamp group has grown.
@@ -1543,6 +1624,18 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             assertViewRows(SPLICE_LATE_ROW_OUTPUT + "2026-01-03T09:10:00.000000Z\tacct-2\t40.0\t2\n");
             Assert.assertEquals("closed segments repaired over their own range", 0, segmentRepairs);
         });
+    }
+
+    @Test
+    public void testARestartRestoresATieOnTheNewestRootWhileARepairAcrossTwoDaysIsParked() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> assertRestartRestoresATieWhileARepairAcrossTwoDaysIsParked(false));
+    }
+
+    @Test
+    public void testARestartRestoresATieOnTheNewestRootWhileARepairAcrossTwoDaysIsParkedOverABaseThatLostADay() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> assertRestartRestoresATieWhileARepairAcrossTwoDaysIsParked(true));
     }
 
     @Test
@@ -2266,16 +2359,35 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
     }
 
     /**
+     * Asserts the framed splice-tie case's view returns {@code expected}: the rows from
+     * {@link #SPLICE_LATE_ROW} up when {@code isFromTheLateRow}, or else every row.
+     */
+    private void assertFramedViewRows(boolean isFromTheLateRow, String expected) throws Exception {
+        final String query = isFromTheLateRow
+                ? "SELECT * FROM lv WHERE created_at >= '2026-01-02T10:00:00.000000Z'"
+                : "SELECT * FROM lv";
+        assertQuery(query)
+                .noLeakCheck()
+                .timestamp("created_at")
+                .expectSize(!isFromTheLateRow)
+                .returns(expected);
+    }
+
+    /**
      * Seeds the view over {@link #SPLICE_SEEDED_ROWS}, which seals its root on the third day's row,
      * commits {@link #SPLICE_ROOT_TIE} on that root's timestamp, drops the base's first day when
      * {@code isDayLost}, and lands {@link #SPLICE_LATE_ROW} in the second day. A restart then has to
      * restore from the timeline, and the next row has to carry the tied row's amount forward.
      * <p>
-     * The second day is a closed segment below the frontier, so the late row's repair converges
-     * at that day's end, below the newest root. A repair that kept the primary runtime published a
-     * splice stamped at the late commit and kept the newest root as it was, without the tied row
-     * whose commit sits below that stamp, so no restore could replay it: the row count failed and
-     * the rebuild took over, which the guard refuses over a base that lost a day.
+     * The second day is a closed segment below the frontier, so a repair quoted the runtime
+     * frontier would converge at that day's end, below the newest root, and keep the primary
+     * runtime. Such a repair published a splice stamped at the late commit and kept the newest
+     * root as it was, without the tied row whose commit sits below that stamp, so no restore could
+     * replay it: the row count failed and the rebuild took over, which the guard refuses over a
+     * base that lost a day. The refresh withholds the frontier while the newest root's timestamp
+     * group has grown, so the closed-segment loop does not run and the union range's anchor arm
+     * localizes behind the end of the table, which re-versions the newest root from the pinned
+     * snapshot, tie included.
      */
     private void assertRestartRestoresATieAfterALateRowBelowIt(boolean isDayLost) throws Exception {
         createBase("");
@@ -2294,6 +2406,64 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
         insertAndRefresh("('2026-01-03T09:10:00.000000Z', 'acct-2', 32.0)");
         assertViewRows(SPLICE_LATE_ROW_OUTPUT + "2026-01-03T09:10:00.000000Z\tacct-2\t40.0\t2\n");
         Assert.assertEquals("closed segments repaired over their own range", 0, segmentRepairs);
+    }
+
+    /**
+     * {@link #assertRestartRestoresATieAfterALateRowBelowIt} over a view whose bounded
+     * {@code frame} carries no anchor, so the late row's repair has no closed segment to take on
+     * its own. The seeded rows let the frame converge below the tie, where a repair quoted the
+     * runtime frontier would keep the primary runtime and publish a splice that keeps the newest
+     * root as it was, without the tied row. No restore could replay that row, so the restart
+     * would fall back to the rebuild, which the guard refuses over a base that lost a day. The
+     * refresh withholds the frontier while the newest root's timestamp group has grown, so the
+     * RANGE arm localizes behind the end of the table and the ROWS arm does not localize at all.
+     * <p>
+     * Over a base that lost a day the ROWS arm's boundary rebuild recomputes a retained row
+     * below the late row without the lost day, so those cases assert the view from the late row
+     * up: the restart route and the next row are what the tie decides.
+     *
+     * @param seededRows          the base the view is created over, in one commit; the seed sweep
+     *                            seals its root on the third day's row
+     * @param rowsBelowTheLateRow the view's rows below {@link #SPLICE_LATE_ROW}
+     * @param rowsFromTheLateRow  the view's rows from {@link #SPLICE_LATE_ROW} up, the tie included
+     */
+    private void assertRestartRestoresATieAfterALateRowBelowItInAFramedView(
+            String frame,
+            String seededRows,
+            String rowsBelowTheLateRow,
+            String rowsFromTheLateRow,
+            boolean isDayLost
+    ) throws Exception {
+        createBase("");
+        execute("INSERT INTO tx (created_at, account_id, amount) VALUES " + seededRows);
+        drainWalQueue();
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                + "SELECT created_at, account_id, sum(amount) OVER (PARTITION BY account_id ORDER BY created_at "
+                + frame + ") AS windowed_sum FROM tx");
+        insertAndRefresh(SPLICE_ROOT_TIE);
+        assertSingleRootAt("2026-01-03T09:00:00.000000Z");
+        if (isDayLost) {
+            execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-01'");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+        }
+        insertAndRefresh(SPLICE_LATE_ROW);
+        final String expectedRows = "created_at\taccount_id\twindowed_sum\n"
+                + (isDayLost ? "" : rowsBelowTheLateRow)
+                + rowsFromTheLateRow;
+        assertFramedViewRows(isDayLost, expectedRows);
+
+        shutdown();
+        restart();
+        assertRestoredFromTimeline("lv");
+        Assert.assertFalse("the view must keep refreshing", instance("lv").isCheckpointRecoveryBlocked());
+        assertNoRefreshFaults("lv");
+        assertFramedViewRows(isDayLost, expectedRows);
+        // A runtime that missed the tied row would answer 32.0 over one row.
+        insertAndRefresh("('2026-01-03T09:10:00.000000Z', 'acct-2', 32.0)");
+        assertFramedViewRows(isDayLost, expectedRows + "2026-01-03T09:10:00.000000Z\tacct-2\t40.0\n");
     }
 
     /**
@@ -2318,6 +2488,56 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
         // A runtime that missed the tied row would answer 44.0 over three rows.
         insertAndRefresh("('2026-01-02T09:20:00.000000Z', 'acct-1', 32.0)");
         assertViewRows(SEED_ROOT_TIE_OUTPUT + "2026-01-02T09:20:00.000000Z\tacct-1\t60.0\t4\n");
+    }
+
+    /**
+     * Seeds the view as {@link #assertRestartRestoresATieAfterALateRowBelowIt} does, then lands
+     * {@link #SPLICE_LATE_ROW} in the second day and a row above the tie in the third in one
+     * commit, and restarts while the repair that commit triggers is parked on its turn budget.
+     * The restart has to restore from the timeline, and the next row has to carry the tied row's
+     * amount forward.
+     * <p>
+     * The repair spans a closed segment and the open one. Taken per segment, it would publish
+     * the second day's splice first, stamped at the watermark the tie's commit already sits
+     * under, and keep the newest root as it was, without the tied row. Until the open segment's
+     * own repair published, a restore would replay nothing above that stamp, fail its row count
+     * and fall back to the rebuild, which the guard refuses over a base that lost a day. The
+     * refresh takes the union range instead while the newest root's timestamp group has grown.
+     * The helper drives one pass at a time until a repair outside any segment loop parks - the
+     * union range, or a decomposition's residual - and restarts there.
+     */
+    private void assertRestartRestoresATieWhileARepairAcrossTwoDaysIsParked(boolean isDayLost) throws Exception {
+        createBase("");
+        execute("INSERT INTO tx (created_at, account_id, amount) VALUES " + SPLICE_SEEDED_ROWS);
+        drainWalQueue();
+        createView();
+        insertAndRefresh(SPLICE_ROOT_TIE);
+        assertSingleRootAt("2026-01-03T09:00:00.000000Z");
+        if (isDayLost) {
+            dropPartitionAndRefresh("2026-01-01", SPLICE_ROOT_TIE_OUTPUT);
+        }
+        final LiveViewInstance instance = instance("lv");
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            execute("INSERT INTO tx (created_at, account_id, amount) VALUES "
+                    + SPLICE_LATE_ROW + ", ('2026-01-03T10:00:00.000000Z', 'acct-2', 32.0)");
+            drainWalQueue();
+            boolean isParkedOutsideASegmentLoop = false;
+            for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES && !isParkedOutsideASegmentLoop; pass++) {
+                runOnePass(job);
+                final LiveViewCheckpointRepairSession parked = instance.getSuspendedRepair();
+                isParkedOutsideASegmentLoop = parked != null && !parked.getSegmentLoop().isOpen();
+            }
+            Assert.assertTrue(
+                    "the union range, or a decomposition's residual, must park on its turn budget",
+                    isParkedOutsideASegmentLoop
+            );
+        }
+
+        final String viewRows = SPLICE_LATE_ROW_OUTPUT + "2026-01-03T10:00:00.000000Z\tacct-2\t40.0\t2\n";
+        restartAndAssertRestoredOverATie(viewRows, 1);
+        // A runtime that missed the tied row would answer 96.0 over two rows.
+        insertAndRefresh("('2026-01-03T11:00:00.000000Z', 'acct-2', 64.0)");
+        assertViewRows(viewRows + "2026-01-03T11:00:00.000000Z\tacct-2\t104.0\t3\n");
     }
 
     /**
@@ -2664,9 +2884,12 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
 
     /**
      * Restarts the view and asserts the restart restored it from the timeline, replaying
-     * {@code replayedRows} base rows above the root - the tied row among them - with nothing
-     * rebuilt or blocked, and that the view still holds {@code expectedRows}. A replay floored
-     * above the root would also have dropped the tied row as one below the view's START FROM.
+     * {@code replayedRows} base rows above the root, with nothing rebuilt or blocked, and that the
+     * view still holds {@code expectedRows}. The tied row comes back one of two ways: among the
+     * replayed rows over a root sealed before it, or inside a root a repair re-versioned from a
+     * snapshot that holds it, which leaves the restore no tie to replay. The callers that pass
+     * zero replay nothing at all. A replay floored above the root would also have dropped a
+     * replayed tied row as one below the view's START FROM.
      */
     private void restartAndAssertRestoredOverATie(String expectedRows, int replayedRows) throws Exception {
         shutdown();

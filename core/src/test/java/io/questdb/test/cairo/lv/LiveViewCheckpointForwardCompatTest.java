@@ -110,6 +110,10 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
     // stepped over.
     private static final String HEAL_DECLINED =
             "live view checkpoint heal declined, a boundary's timestamp group grew after its seal";
+    // What the restore logs when the base rows the heal folded are not the rows the view's output
+    // holds over the same interval.
+    private static final String HEAL_DECLINED_ROWS =
+            "live view checkpoint heal declined, the base table does not hold the rows the view materialized";
     // Three gates can produce the same outcome here - a valid view holding correct rows - and
     // the state a case can read afterwards does not say which one fired. The log does, so every
     // case names its own gate rather than settling for the shared ending.
@@ -186,95 +190,58 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
     }
 
     @Test
-    public void testAFutureHeadWhoseTimestampGroupGrewIsRebuiltRatherThanHealed() throws Exception {
+    public void testAFutureHeadOverAnUnconsumedOutOfOrderRowIsHealedOverALossyBase() throws Exception {
         assertMemoryLeak(() -> {
-            // A tie on the head after it sealed. The heal would rebuild the head from the base
-            // table, which holds the tie, and republish it at the head's own base seqTxn, which
-            // does not: the restore replays the base above that seqTxn onto the head, the tie with
-            // it, and would fold the tie a second time.
-            seedFiveBoundaries(null, 40, "acct-2");
-            rollBackTheHead();
-
-            capture.drain();
-            capture.assertLogged("live view checkpoint restore fell back past corrupt roots, reconstructing");
-            capture.assertLogged(HEAL_DECLINED + " [view=lv, boundary=2026-01-01T09:00:40.000000Z, "
-                    + "recordedRows=5, durableRows=6]");
-            capture.assertNotLogged("reconstructed corrupt live view checkpoint roots");
-            capture.assertNotLogged("live view checkpoint timeline rebuild does not match durable materialization");
-            assertRebuiltFromAppliedBase("lv");
-            Assert.assertFalse(instance("lv").isInvalid());
-            assertNoRefreshFaults("lv");
-            final String viewRows = "created_at\taccount_id\tcumulative_sum\tcumulative_count\n" +
-                    "2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1\n" +
-                    "2026-01-01T09:00:10.000000Z\tacct-2\t11.0\t1\n" +
-                    "2026-01-01T09:00:20.000000Z\tacct-1\t22.0\t2\n" +
-                    "2026-01-01T09:00:30.000000Z\tacct-2\t42.0\t2\n" +
-                    "2026-01-01T09:00:40.000000Z\tacct-1\t63.0\t3\n" +
-                    "2026-01-01T09:00:40.000000Z\tacct-2\t1042.0\t3\n";
-            assertViewRows(viewRows);
-            assertViewMatchesRecompute();
-
-            commitAndRefresh("('" + timestamp(50) + "', 'acct-2', 100.0)");
-            shutdown();
-            restart();
-            assertRestoredFromTimeline("lv");
-            assertNoRefreshFaults("lv");
-            assertViewRows(viewRows + "2026-01-01T09:00:50.000000Z\tacct-2\t1142.0\t4\n");
-        });
-    }
-
-    @Test
-    public void testAFutureHeadWhoseTimestampGroupGrewKeepsItsTimelineForTheBuildThatReadsIt() throws Exception {
-        assertMemoryLeak(() -> {
-            // The first commit carries a row an hour below the boundaries, and the base loses that
-            // hour. The view keeps the row, so the rebuild the heal leaves to the restart is
-            // refused and the view blocks. A heal that republished the head with the tie folded in
-            // would have left that generation behind for the build that can read the head.
-            seedFiveBoundaries("('2026-01-01T08:00:00.000000Z', 'acct-1', 500.0)", 40, "acct-2");
-            execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-01T08'");
+            // The base loses an hour of the previous day that the view keeps, so a rebuild from the
+            // applied base is refused. It then applies an out-of-order row strictly inside the head's
+            // interval before the view consumes it. The heal folds that row, which sits below the
+            // durable frontier: the drain meets its commit as out of order and repairs it from a
+            // boundary below it, so the heal stands and the view keeps refreshing.
+            seedFiveBoundaries("('2025-12-31T23:00:00.000000Z', 'acct-1', 500.0)", -1, null);
+            execute("ALTER TABLE tx DROP PARTITION LIST '2025-12-31T23'");
             drainWalQueue();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
             }
+            execute("INSERT INTO tx VALUES ('" + timestamp(35) + "', 'acct-1', 1000.0)");
+            drainWalQueue();
+            rollBackTheHead();
+
+            capture.drain();
+            capture.assertLogged("reconstructed corrupt live view checkpoint roots");
+            capture.assertNotLogged(HEAL_DECLINED_ROWS);
+            capture.assertNotLogged("live view rebuild from the applied base refused");
+            assertRestoredFromTimeline("lv");
+            Assert.assertFalse("the heal must not leave the view blocked", instance("lv").isCheckpointRecoveryBlocked());
+            Assert.assertTrue("the drain must repair the late row's commit", repairedRows() > 0);
             assertNoRefreshFaults("lv");
-            final String viewRows = "created_at\taccount_id\tcumulative_sum\tcumulative_count\n" +
-                    "2026-01-01T08:00:00.000000Z\tacct-1\t500.0\t1\n" +
-                    "2026-01-01T09:00:00.000000Z\tacct-1\t501.0\t2\n" +
-                    "2026-01-01T09:00:10.000000Z\tacct-2\t11.0\t1\n" +
-                    "2026-01-01T09:00:20.000000Z\tacct-1\t522.0\t3\n" +
-                    "2026-01-01T09:00:30.000000Z\tacct-2\t42.0\t2\n" +
-                    "2026-01-01T09:00:40.000000Z\tacct-1\t563.0\t4\n" +
-                    "2026-01-01T09:00:40.000000Z\tacct-2\t1042.0\t3\n";
-            assertViewRows(viewRows);
-            final File checkpointsRoot = checkpointsRoot();
-            final ObjList<PageSite> stateRoots = stateRootSites();
-            final PageSite head = stateRoots.getQuick(stateRoots.size() - 1);
-            final int headPageKind = readMetaPageInt(checkpointsRoot, head, LiveViewCheckpointLayout.PAGE_KIND_OFFSET);
-            shutdown();
-            rewriteMetaPageInt(checkpointsRoot, head, LiveViewCheckpointLayout.PAGE_KIND_OFFSET, FUTURE_PAGE_KIND);
-
-            restart();
-            Assert.assertTrue(
-                    "the rebuild must be refused over the lost hour",
-                    instance("lv").isCheckpointRecoveryBlocked()
-            );
-            Assert.assertEquals(
-                    "rebuild_blocked",
-                    LiveViewCheckpointRestoreRoute.name(instance("lv").getCheckpointRestoreRoute())
-            );
+            final String viewRows = """
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2025-12-31T23:00:00.000000Z\tacct-1\t500.0\t1
+                    2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-01T09:00:10.000000Z\tacct-2\t11.0\t1
+                    2026-01-01T09:00:20.000000Z\tacct-1\t22.0\t2
+                    2026-01-01T09:00:30.000000Z\tacct-2\t42.0\t2
+                    2026-01-01T09:00:35.000000Z\tacct-1\t1022.0\t3
+                    2026-01-01T09:00:40.000000Z\tacct-1\t1063.0\t4
+                    """;
             assertViewRows(viewRows);
 
-            // The build that reads the head comes back, and restores off the timeline it sealed,
-            // replaying the tie onto the head exactly once.
+            // New rows keep arriving, and across a restart.
+            commitAndRefresh("('" + timestamp(50) + "', 'acct-1', 100.0), ('" + timestamp(55) + "', 'acct-2', 7.0)");
+            final String grownRows = viewRows + """
+                    2026-01-01T09:00:50.000000Z\tacct-1\t1163.0\t5
+                    2026-01-01T09:00:55.000000Z\tacct-2\t49.0\t3
+                    """;
+            assertViewRows(grownRows);
             shutdown();
-            rewriteMetaPageInt(checkpointsRoot, head, LiveViewCheckpointLayout.PAGE_KIND_OFFSET, headPageKind);
             restart();
             assertRestoredFromTimeline("lv");
             Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
             assertNoRefreshFaults("lv");
-            assertViewRows(viewRows);
-            commitAndRefresh("('" + timestamp(50) + "', 'acct-2', 100.0)");
-            assertViewRows(viewRows + "2026-01-01T09:00:50.000000Z\tacct-2\t1142.0\t4\n");
+            assertViewRows(grownRows);
+            commitAndRefresh("('" + timestamp(59) + "', 'acct-1', 3.0)");
+            assertViewRows(grownRows + "2026-01-01T09:00:59.000000Z\tacct-1\t1166.0\t6\n");
         });
     }
 
@@ -291,14 +258,16 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
             // A row of the tied account in the same anchor day reads the accumulators back. Without
             // the tie they would answer 163.0 over four rows.
             commitAndRefresh("('" + timestamp(50) + "', 'acct-1', 100.0)");
-            assertViewRows("created_at\taccount_id\tcumulative_sum\tcumulative_count\n" +
-                    "2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1\n" +
-                    "2026-01-01T09:00:10.000000Z\tacct-2\t11.0\t1\n" +
-                    "2026-01-01T09:00:20.000000Z\tacct-1\t22.0\t2\n" +
-                    "2026-01-01T09:00:30.000000Z\tacct-2\t42.0\t2\n" +
-                    "2026-01-01T09:00:30.000000Z\tacct-1\t1022.0\t3\n" +
-                    "2026-01-01T09:00:40.000000Z\tacct-1\t1063.0\t4\n" +
-                    "2026-01-01T09:00:50.000000Z\tacct-1\t1163.0\t5\n");
+            assertViewRows("""
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-01T09:00:10.000000Z\tacct-2\t11.0\t1
+                    2026-01-01T09:00:20.000000Z\tacct-1\t22.0\t2
+                    2026-01-01T09:00:30.000000Z\tacct-2\t42.0\t2
+                    2026-01-01T09:00:30.000000Z\tacct-1\t1022.0\t3
+                    2026-01-01T09:00:40.000000Z\tacct-1\t1063.0\t4
+                    2026-01-01T09:00:50.000000Z\tacct-1\t1163.0\t5
+                    """);
             assertViewMatchesRecompute();
             capture.drain();
             capture.assertLogged(HEAL_DECLINED + " [view=lv, boundary=2026-01-01T09:00:30.000000Z, "
@@ -306,6 +275,247 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
             capture.assertNotLogged("reconstructed corrupt live view checkpoint roots");
             assertRebuiltFromAppliedBase("lv");
             assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
+    public void testAFutureHeadWhoseTieTheViewHasNotConsumedIsRebuiltRatherThanHealed() throws Exception {
+        assertMemoryLeak(() -> {
+            // The base applies a tie on the head before the view consumes it, and the restart then
+            // finds the head unreadable. The view's output and applied watermark stop below the
+            // tie, while the base table the heal reads already holds it. A head healed with the
+            // tie folded in would meet the tie again when the drain consumes its commit, so the
+            // heal declines and the restart rebuilds the view from the applied base.
+            seedFiveBoundaries();
+            execute("INSERT INTO tx VALUES ('" + timestamp(40) + "', 'acct-2', 1000.0)");
+            drainWalQueue();
+            rollBackTheHead();
+
+            assertViewRows("""
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-01T09:00:10.000000Z\tacct-2\t11.0\t1
+                    2026-01-01T09:00:20.000000Z\tacct-1\t22.0\t2
+                    2026-01-01T09:00:30.000000Z\tacct-2\t42.0\t2
+                    2026-01-01T09:00:40.000000Z\tacct-1\t63.0\t3
+                    2026-01-01T09:00:40.000000Z\tacct-2\t1042.0\t3
+                    """);
+            assertViewMatchesRecompute();
+            capture.drain();
+            capture.assertLogged("live view checkpoint restore fell back past corrupt roots, reconstructing");
+            capture.assertLogged(HEAL_DECLINED_ROWS);
+            capture.assertNotLogged("reconstructed corrupt live view checkpoint roots");
+            assertRebuiltFromAppliedBase("lv");
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
+    public void testAFutureHeadWhoseTimestampGroupGrewIsHealedAtTheAppliedBase() throws Exception {
+        assertMemoryLeak(() -> {
+            // A tie on the head after it sealed, and no row above it: the durable frontier is the
+            // head's own timestamp. The heal rebuilds the head from the base table, tie included,
+            // and publishes it at the view's applied base seqTxn rather than at the head's own, so
+            // the restore replays nothing onto it and folds the tie exactly once.
+            seedFiveBoundaries(null, 40, "acct-2");
+            rollBackTheHead();
+
+            capture.drain();
+            capture.assertLogged("live view checkpoint restore fell back past corrupt roots, reconstructing");
+            capture.assertLogged("reconstructed corrupt live view checkpoint roots");
+            capture.assertNotLogged(HEAL_DECLINED);
+            capture.assertNotLogged("live view checkpoint timeline rebuild does not match durable materialization");
+            assertRestoredFromTimeline("lv");
+            Assert.assertFalse(instance("lv").isInvalid());
+            assertNoRefreshFaults("lv");
+            Assert.assertEquals(
+                    "the heal re-versions the head in place and seals no boundary of its own",
+                    BOUNDARIES,
+                    countSealedBoundaries("lv")
+            );
+            final String viewRows = """
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-01T09:00:10.000000Z\tacct-2\t11.0\t1
+                    2026-01-01T09:00:20.000000Z\tacct-1\t22.0\t2
+                    2026-01-01T09:00:30.000000Z\tacct-2\t42.0\t2
+                    2026-01-01T09:00:40.000000Z\tacct-1\t63.0\t3
+                    2026-01-01T09:00:40.000000Z\tacct-2\t1042.0\t3
+                    """;
+            assertViewRows(viewRows);
+            assertViewMatchesRecompute();
+
+            // A row of the tied account reads the healed accumulators back: a head that missed the
+            // tie would answer 142.0 over three rows, one that folded it twice 2142.0 over five.
+            commitAndRefresh("('" + timestamp(50) + "', 'acct-2', 100.0)");
+            final String grownRows = viewRows + "2026-01-01T09:00:50.000000Z\tacct-2\t1142.0\t4\n";
+            assertViewRows(grownRows);
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            assertNoRefreshFaults("lv");
+            assertViewRows(grownRows);
+            assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
+    public void testAFutureHeadWhoseTimestampGroupGrewIsHealedOverALossyBase() throws Exception {
+        assertMemoryLeak(() -> {
+            // The first commit carries a row an hour below the boundaries, and the base loses that
+            // hour. The view keeps the row, so the rebuild from the applied base is refused and
+            // would block the view. The heal needs no row below the predecessor it warms up from,
+            // so it brings the view back with its whole history.
+            seedFiveBoundaries("('2026-01-01T08:00:00.000000Z', 'acct-1', 500.0)", 40, "acct-2");
+            execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-01T08'");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertNoRefreshFaults("lv");
+            final String viewRows = """
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T08:00:00.000000Z\tacct-1\t500.0\t1
+                    2026-01-01T09:00:00.000000Z\tacct-1\t501.0\t2
+                    2026-01-01T09:00:10.000000Z\tacct-2\t11.0\t1
+                    2026-01-01T09:00:20.000000Z\tacct-1\t522.0\t3
+                    2026-01-01T09:00:30.000000Z\tacct-2\t42.0\t2
+                    2026-01-01T09:00:40.000000Z\tacct-1\t563.0\t4
+                    2026-01-01T09:00:40.000000Z\tacct-2\t1042.0\t3
+                    """;
+            assertViewRows(viewRows);
+            rollBackTheHead();
+
+            capture.drain();
+            capture.assertLogged("reconstructed corrupt live view checkpoint roots");
+            capture.assertNotLogged(HEAL_DECLINED);
+            capture.assertNotLogged("live view rebuild from the applied base refused");
+            assertRestoredFromTimeline("lv");
+            Assert.assertFalse("the heal must not leave the view blocked", instance("lv").isCheckpointRecoveryBlocked());
+            assertNoRefreshFaults("lv");
+            assertViewRows(viewRows);
+
+            // New rows keep arriving, over the tie folded exactly once, and across a restart.
+            commitAndRefresh("('" + timestamp(50) + "', 'acct-2', 100.0)");
+            final String grownRows = viewRows + "2026-01-01T09:00:50.000000Z\tacct-2\t1142.0\t4\n";
+            assertViewRows(grownRows);
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+            assertNoRefreshFaults("lv");
+            assertViewRows(grownRows);
+        });
+    }
+
+    @Test
+    public void testAFutureHeadWhoseTimestampGroupGrewIsHealedOverAnUnconsumedOutOfOrderRow() throws Exception {
+        assertMemoryLeak(() -> {
+            // The head's group grew after its seal, the base lost an hour of the previous day, and
+            // the base then applied an out-of-order row below the head that the view has not
+            // consumed. The heal folds the tie, which the view's table holds, and the late row,
+            // which the base does, and publishes at the applied base seqTxn. The drain then repairs
+            // the late row's commit from the boundary below it, leaving the tie folded once.
+            seedFiveBoundaries("('2025-12-31T23:00:00.000000Z', 'acct-1', 500.0)", 40, "acct-2");
+            execute("ALTER TABLE tx DROP PARTITION LIST '2025-12-31T23'");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            execute("INSERT INTO tx VALUES ('" + timestamp(35) + "', 'acct-1', 300.0)");
+            drainWalQueue();
+            rollBackTheHead();
+
+            capture.drain();
+            capture.assertLogged("reconstructed corrupt live view checkpoint roots");
+            capture.assertNotLogged(HEAL_DECLINED);
+            capture.assertNotLogged(HEAL_DECLINED_ROWS);
+            assertRestoredFromTimeline("lv");
+            Assert.assertFalse("the heal must not leave the view blocked", instance("lv").isCheckpointRecoveryBlocked());
+            Assert.assertTrue("the drain must repair the late row's commit", repairedRows() > 0);
+            assertNoRefreshFaults("lv");
+            final String viewRows = """
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2025-12-31T23:00:00.000000Z\tacct-1\t500.0\t1
+                    2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-01T09:00:10.000000Z\tacct-2\t11.0\t1
+                    2026-01-01T09:00:20.000000Z\tacct-1\t22.0\t2
+                    2026-01-01T09:00:30.000000Z\tacct-2\t42.0\t2
+                    2026-01-01T09:00:35.000000Z\tacct-1\t322.0\t3
+                    2026-01-01T09:00:40.000000Z\tacct-1\t363.0\t4
+                    2026-01-01T09:00:40.000000Z\tacct-2\t1042.0\t3
+                    """;
+            assertViewRows(viewRows);
+
+            // The tie's account reads its accumulators back: 1142.0 over four rows, where a tie
+            // folded twice would answer 2142.0 over five.
+            commitAndRefresh("('" + timestamp(50) + "', 'acct-2', 100.0)");
+            final String grownRows = viewRows + "2026-01-01T09:00:50.000000Z\tacct-2\t1142.0\t4\n";
+            assertViewRows(grownRows);
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+            assertNoRefreshFaults("lv");
+            assertViewRows(grownRows);
+        });
+    }
+
+    @Test
+    public void testAFutureHeadWhoseTimestampGroupGrewUnderAHigherFrontierIsHealedAndSealedThere() throws Exception {
+        assertMemoryLeak(() -> {
+            seedFiveBoundaries();
+            // One commit puts a tie on the head and a row above it, and the cadence seals neither,
+            // so the durable frontier runs past the head boundary that holds part of its group.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000);
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ADAPTIVE_CADENCE_ENABLED, "false");
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 86_400_000_000L);
+            commitAndRefresh("('" + timestamp(40) + "', 'acct-2', 1000.0), ('" + timestamp(45) + "', 'acct-1', 100.0)");
+            Assert.assertEquals("the commit must not seal a boundary", BOUNDARIES, countSealedBoundaries("lv"));
+            rollBackTheHead();
+
+            // The heal folds the head from the base table, tie included, and then seals the
+            // frontier above it at the view's applied base seqTxn. The restore lands on that root
+            // and replays nothing, so no row above the head is lost and the tie is not folded twice.
+            capture.drain();
+            capture.assertLogged("live view checkpoint restore fell back past corrupt roots, reconstructing");
+            capture.assertLogged("reconstructed corrupt live view checkpoint roots");
+            capture.assertNotLogged(HEAL_DECLINED);
+            assertRestoredFromTimeline("lv");
+            assertNoRefreshFaults("lv");
+            Assert.assertEquals(
+                    "the heal must seal one boundary at the durable frontier",
+                    BOUNDARIES + 1,
+                    countSealedBoundaries("lv")
+            );
+            Assert.assertEquals(ts(timestamp(45)), instance("lv").getHeadCheckpointMaxTs());
+            Assert.assertTrue(isFusedHead("lv"));
+            final String viewRows = """
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-01T09:00:10.000000Z\tacct-2\t11.0\t1
+                    2026-01-01T09:00:20.000000Z\tacct-1\t22.0\t2
+                    2026-01-01T09:00:30.000000Z\tacct-2\t42.0\t2
+                    2026-01-01T09:00:40.000000Z\tacct-1\t63.0\t3
+                    2026-01-01T09:00:40.000000Z\tacct-2\t1042.0\t3
+                    2026-01-01T09:00:45.000000Z\tacct-1\t163.0\t4
+                    """;
+            assertViewRows(viewRows);
+
+            // Both accounts read their healed accumulators back, before and after a restart.
+            commitAndRefresh("('" + timestamp(50) + "', 'acct-2', 100.0), ('" + timestamp(55) + "', 'acct-1', 1.0)");
+            final String grownRows = viewRows + """
+                    2026-01-01T09:00:50.000000Z\tacct-2\t1142.0\t4
+                    2026-01-01T09:00:55.000000Z\tacct-1\t164.0\t5
+                    """;
+            assertViewRows(grownRows);
+            assertViewMatchesRecompute();
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            assertNoRefreshFaults("lv");
+            assertViewRows(grownRows);
+            assertViewMatchesRecompute();
         });
     }
 
@@ -592,6 +802,141 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
         });
     }
 
+    @Test
+    public void testAHealDeclinesWhenTheBaseLostRowsInsideTheHealedInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            // The base loses the hour every boundary sits in, and the view keeps its rows. The
+            // heal warms up from the predecessor and finds no base row between it and the head
+            // it rebuilds, so a healed head would hold the predecessor's state under the head's
+            // position: one acct-1 row short, with nothing in the restore's row count to say so.
+            seedFiveBoundaries("('2026-01-01T08:00:00.000000Z', 'acct-1', 500.0)", -1, null);
+            execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-01T09'");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            final String viewRows = """
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T08:00:00.000000Z\tacct-1\t500.0\t1
+                    2026-01-01T09:00:00.000000Z\tacct-1\t501.0\t2
+                    2026-01-01T09:00:10.000000Z\tacct-2\t11.0\t1
+                    2026-01-01T09:00:20.000000Z\tacct-1\t522.0\t3
+                    2026-01-01T09:00:30.000000Z\tacct-2\t42.0\t2
+                    2026-01-01T09:00:40.000000Z\tacct-1\t563.0\t4
+                    """;
+            assertViewRows(viewRows);
+            final int pageKind = rollBackTheHead();
+
+            // The rebuild from the applied base would drop the lost hour's rows, so the view stops
+            // on the rows it holds rather than serve one computed over a head short of a row: the
+            // healed head would have answered 622.0 over four rows here, against 663.0 over five.
+            commitAndRefresh("('" + timestamp(50) + "', 'acct-1', 100.0)");
+            assertViewRows(viewRows);
+            Assert.assertTrue(instance("lv").isCheckpointRecoveryBlocked());
+            capture.drain();
+            capture.assertLogged("live view checkpoint restore fell back past corrupt roots, reconstructing");
+            capture.assertLogged(HEAL_DECLINED_ROWS + " [view=lv, lowTsExclusive=2026-01-01T09:00:30.000000Z, "
+                    + "highTsInclusive=2026-01-01T09:00:40.000000Z, durableRows=1, baseRows=0]");
+            capture.assertNotLogged("reconstructed corrupt live view checkpoint roots");
+
+            // A declined heal leaves the timeline as the build that sealed it left it, so that
+            // build comes back on the head it sealed, and the row above it reads 663.0 over five.
+            rollForwardTheNewestHeads(1, pageKind);
+            assertRestoredFromTimeline("lv");
+            Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+            assertNoRefreshFaults("lv");
+            assertViewRows(viewRows + "2026-01-01T09:00:50.000000Z\tacct-1\t663.0\t5\n");
+        });
+    }
+
+    @Test
+    public void testAHealDeclinesWhenTheBaseLostRowsBelowAnUnconsumedRowInAHigherInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            // The two newest heads are unreadable, so the heal folds two intervals above their
+            // predecessor. The base lost the hour the lower interval starts in, and applied an
+            // out-of-order row into the upper interval that the view has not consumed: a row short
+            // in one interval, a row over in the other, and in total exactly the rows the view's
+            // table holds. Healed, the lower head would lack 08:59:55's row while its position
+            // counts it, and the drain's repair of the late row resumes from that head.
+            seedFiveBoundariesAcrossAnHour();
+            execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-01T08'");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            final String viewRows = """
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T08:59:30.000000Z\tacct-2\t1.0\t1
+                    2026-01-01T08:59:40.000000Z\tacct-1\t2.0\t1
+                    2026-01-01T08:59:50.000000Z\tacct-2\t5.0\t2
+                    2026-01-01T08:59:55.000000Z\tacct-1\t10.0\t2
+                    2026-01-01T09:00:00.000000Z\tacct-2\t21.0\t3
+                    2026-01-01T09:00:10.000000Z\tacct-1\t42.0\t3
+                    """;
+            assertViewRows(viewRows);
+            execute("INSERT INTO tx VALUES ('" + timestamp(5) + "', 'acct-1', 1000.0)");
+            drainWalQueue();
+            final int pageKind = rollBackTheNewestHeads(2);
+
+            // The rebuild from the applied base would drop the lost hour's rows, so the view stops on
+            // the rows it holds. Healed, it would have answered 1002.0 over two rows at 09:00:05 and
+            // 1034.0 over three at 09:00:10.
+            assertViewRows(viewRows);
+            Assert.assertTrue(instance("lv").isCheckpointRecoveryBlocked());
+            capture.drain();
+            capture.assertLogged("live view checkpoint restore fell back past corrupt roots, reconstructing");
+            capture.assertLogged(HEAL_DECLINED_ROWS + " [view=lv, lowTsExclusive=2026-01-01T08:59:50.000000Z, "
+                    + "highTsInclusive=2026-01-01T09:00:00.000000Z, durableRows=2, baseRows=1]");
+            capture.assertNotLogged("reconstructed corrupt live view checkpoint roots");
+
+            // The build that sealed both heads comes back on them, and its repair of the late row
+            // resumes from the lower head it sealed, which holds 08:59:55's row.
+            rollForwardTheNewestHeads(2, pageKind);
+            assertRestoredFromTimeline("lv");
+            Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+            Assert.assertTrue("the drain must repair the late row's commit", repairedRows() > 0);
+            assertNoRefreshFaults("lv");
+            assertViewRows("""
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T08:59:30.000000Z\tacct-2\t1.0\t1
+                    2026-01-01T08:59:40.000000Z\tacct-1\t2.0\t1
+                    2026-01-01T08:59:50.000000Z\tacct-2\t5.0\t2
+                    2026-01-01T08:59:55.000000Z\tacct-1\t10.0\t2
+                    2026-01-01T09:00:00.000000Z\tacct-2\t21.0\t3
+                    2026-01-01T09:00:05.000000Z\tacct-1\t1010.0\t3
+                    2026-01-01T09:00:10.000000Z\tacct-1\t1042.0\t4
+                    """);
+        });
+    }
+
+    @Test
+    public void testTwoFutureHeadsAreHealedOverAnUnconsumedOutOfOrderRowInTheLowerInterval() throws Exception {
+        assertMemoryLeak(() -> assertTwoFutureHeadsAreHealedOverAnUnconsumedOutOfOrderRow(25, """
+                created_at\taccount_id\tcumulative_sum\tcumulative_count
+                2025-12-31T23:00:00.000000Z\tacct-1\t500.0\t1
+                2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                2026-01-01T09:00:10.000000Z\tacct-2\t11.0\t1
+                2026-01-01T09:00:20.000000Z\tacct-1\t22.0\t2
+                2026-01-01T09:00:25.000000Z\tacct-1\t1022.0\t3
+                2026-01-01T09:00:30.000000Z\tacct-2\t42.0\t2
+                2026-01-01T09:00:40.000000Z\tacct-1\t1063.0\t4
+                """));
+    }
+
+    @Test
+    public void testTwoFutureHeadsAreHealedOverAnUnconsumedOutOfOrderRowInTheUpperInterval() throws Exception {
+        assertMemoryLeak(() -> assertTwoFutureHeadsAreHealedOverAnUnconsumedOutOfOrderRow(35, """
+                created_at\taccount_id\tcumulative_sum\tcumulative_count
+                2025-12-31T23:00:00.000000Z\tacct-1\t500.0\t1
+                2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                2026-01-01T09:00:10.000000Z\tacct-2\t11.0\t1
+                2026-01-01T09:00:20.000000Z\tacct-1\t22.0\t2
+                2026-01-01T09:00:30.000000Z\tacct-2\t42.0\t2
+                2026-01-01T09:00:35.000000Z\tacct-1\t1022.0\t3
+                2026-01-01T09:00:40.000000Z\tacct-1\t1063.0\t4
+                """));
+    }
+
     private static int crc32(byte[] bytes, int offset, int length) {
         final CRC32 crc = new CRC32();
         crc.update(bytes, offset, length);
@@ -845,6 +1190,47 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
                         "2026-01-01T09:00:50.000000Z\tacct-1\t163.0\t4\n");
     }
 
+    /**
+     * The two newest heads are unreadable over a base that lost an hour of the previous day, so a
+     * rebuild from the applied base is refused, and the base applied an out-of-order row at
+     * {@code lateSecond}, which the view has not consumed, into one of the two intervals the heal
+     * folds. The other interval folds exactly the rows the view's table holds. A pure surplus loses
+     * the view no row, so the heal stands on both heads, and the drain repairs the row's commit from
+     * a boundary below it.
+     */
+    private void assertTwoFutureHeadsAreHealedOverAnUnconsumedOutOfOrderRow(int lateSecond, String expectedRows) throws Exception {
+        seedFiveBoundaries("('2025-12-31T23:00:00.000000Z', 'acct-1', 500.0)", -1, null);
+        execute("ALTER TABLE tx DROP PARTITION LIST '2025-12-31T23'");
+        drainWalQueue();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveRefreshToQuiescence(job);
+        }
+        execute("INSERT INTO tx VALUES ('" + timestamp(lateSecond) + "', 'acct-1', 1000.0)");
+        drainWalQueue();
+        rollBackTheNewestHeads(2);
+
+        capture.drain();
+        capture.assertLogged("reconstructed corrupt live view checkpoint roots [view=lv, "
+                + "predecessorMaxTs=2026-01-01T09:00:20.000000Z, corruptCeilingMaxTs=2026-01-01T09:00:40.000000Z, roots=2");
+        capture.assertNotLogged(HEAL_DECLINED_ROWS);
+        assertRestoredFromTimeline("lv");
+        Assert.assertFalse("the heal must not leave the view blocked", instance("lv").isCheckpointRecoveryBlocked());
+        Assert.assertTrue("the drain must repair the late row's commit", repairedRows() > 0);
+        assertNoRefreshFaults("lv");
+        assertViewRows(expectedRows);
+
+        // New rows keep arriving, and across a restart.
+        commitAndRefresh("('" + timestamp(50) + "', 'acct-1', 100.0)");
+        final String grownRows = expectedRows + "2026-01-01T09:00:50.000000Z\tacct-1\t1163.0\t5\n";
+        assertViewRows(grownRows);
+        shutdown();
+        restart();
+        assertRestoredFromTimeline("lv");
+        Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+        assertNoRefreshFaults("lv");
+        assertViewRows(grownRows);
+    }
+
     private void assertViewRows(String expected) throws Exception {
         assertQuery("SELECT created_at, account_id, cumulative_sum, cumulative_count FROM lv")
                 .noLeakCheck()
@@ -953,10 +1339,23 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
 
     private void commitAndRefresh(String values) throws Exception {
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-            execute("INSERT INTO tx VALUES " + values);
-            drainWalQueue();
-            driveRefreshToQuiescence(job);
+            commitAndRefresh(job, values);
         }
+    }
+
+    private void commitAndRefresh(LiveViewRefreshJob job, String values) throws Exception {
+        execute("INSERT INTO tx VALUES " + values);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+    }
+
+    private void createView() throws Exception {
+        execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) "
+                + "TIMESTAMP(created_at) PARTITION BY HOUR WAL");
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                + "SELECT created_at, account_id, sum(amount) OVER w AS cumulative_sum, "
+                + "count(account_id) OVER w AS cumulative_count "
+                + "FROM tx WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')");
     }
 
     private File metaSegmentFile(File checkpointsRoot, long segmentId) {
@@ -971,6 +1370,13 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
     private int readMetaPageInt(File checkpointsRoot, PageSite site, int fieldOffset) throws IOException {
         final byte[] bytes = Files.readAllBytes(metaSegmentFile(checkpointsRoot, site.segmentId).toPath());
         return leInt(bytes, (int) site.offset + fieldOffset);
+    }
+
+    // Base rows the drain's out-of-order repairs replayed since the restart, through either
+    // disposition. In-order appends leave both at zero.
+    private long repairedRows() {
+        final LiveViewInstance instance = instance("lv");
+        return instance.getO3BoundaryReplayRows() + instance.getO3ResumeReplayRows();
     }
 
     private void restart() {
@@ -1012,13 +1418,46 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
     /**
      * Rewrites the head boundary's state root into the page kind a newer build would write - the
      * rollback taken right after that build sealed the head - and restarts.
+     *
+     * @return the page kind the head carried, for {@link #rollForwardTheNewestHeads(int, int)}
      */
-    private void rollBackTheHead() throws IOException {
+    private int rollBackTheHead() throws IOException {
+        return rollBackTheNewestHeads(1);
+    }
+
+    /**
+     * {@link #rollBackTheHead()} for the newer build having sealed the {@code heads} newest
+     * boundaries before the rollback.
+     *
+     * @return the page kind those boundaries carried, which this build sealed them with
+     */
+    private int rollBackTheNewestHeads(int heads) throws IOException {
         final File checkpointsRoot = checkpointsRoot();
         final ObjList<PageSite> stateRoots = stateRootSites();
-        final PageSite head = stateRoots.getQuick(stateRoots.size() - 1);
+        final int pageKind = readMetaPageInt(
+                checkpointsRoot,
+                stateRoots.getQuick(stateRoots.size() - 1),
+                LiveViewCheckpointLayout.PAGE_KIND_OFFSET
+        );
         shutdown();
-        rewriteMetaPageInt(checkpointsRoot, head, LiveViewCheckpointLayout.PAGE_KIND_OFFSET, FUTURE_PAGE_KIND);
+        for (int i = stateRoots.size() - heads, n = stateRoots.size(); i < n; i++) {
+            rewriteMetaPageInt(checkpointsRoot, stateRoots.getQuick(i), LiveViewCheckpointLayout.PAGE_KIND_OFFSET, FUTURE_PAGE_KIND);
+        }
+        restart();
+        return pageKind;
+    }
+
+    /**
+     * Undoes {@link #rollBackTheNewestHeads(int)} - the build that reads those heads comes back -
+     * and restarts.
+     */
+    private void rollForwardTheNewestHeads(int heads, int pageKind) throws IOException {
+        final File checkpointsRoot = checkpointsRoot();
+        final ObjList<PageSite> stateRoots = stateRootSites();
+        shutdown();
+        for (int i = stateRoots.size() - heads, n = stateRoots.size(); i < n; i++) {
+            rewriteMetaPageInt(checkpointsRoot, stateRoots.getQuick(i), LiveViewCheckpointLayout.PAGE_KIND_OFFSET, pageKind);
+        }
         restart();
     }
 
@@ -1030,19 +1469,33 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
     }
 
     /**
+     * Five fused boundaries, one per commit, the two newest above the hour the three oldest sit
+     * in. The commit that seals the fourth boundary carries a row in that earlier hour as well,
+     * so the interval between the third and fourth boundaries straddles the hour.
+     */
+    private void seedFiveBoundariesAcrossAnHour() throws Exception {
+        createView();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveSeedToCompletion(job, "lv");
+            commitAndRefresh(job, "('2026-01-01T08:59:30.000000Z', 'acct-2', 1.0)");
+            commitAndRefresh(job, "('2026-01-01T08:59:40.000000Z', 'acct-1', 2.0)");
+            commitAndRefresh(job, "('2026-01-01T08:59:50.000000Z', 'acct-2', 4.0)");
+            commitAndRefresh(job, "('2026-01-01T08:59:55.000000Z', 'acct-1', 8.0), ('" + timestamp(0) + "', 'acct-2', 16.0)");
+            commitAndRefresh(job, "('" + timestamp(10) + "', 'acct-1', 32.0)");
+        }
+        Assert.assertEquals("the seed must leave one boundary per commit", BOUNDARIES, countSealedBoundaries("lv"));
+        Assert.assertTrue(isFusedHead("lv"));
+        assertNoRefreshFaults("lv");
+    }
+
+    /**
      * {@link #seedFiveBoundaries()}, with two optional extras. {@code earlierRow} rides in the
      * first commit, below the first boundary. {@code tieAccount} commits a row of 1000.0 on the
      * boundary at {@code tieSecond} right after that boundary sealed: the cadence seals no second
      * boundary on one timestamp, so the tie leaves that boundary describing part of its group.
      */
     private void seedFiveBoundaries(String earlierRow, int tieSecond, String tieAccount) throws Exception {
-        execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) "
-                + "TIMESTAMP(created_at) PARTITION BY HOUR WAL");
-        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
-                + "SELECT created_at, account_id, sum(amount) OVER w AS cumulative_sum, "
-                + "count(account_id) OVER w AS cumulative_count "
-                + "FROM tx WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')");
-
+        createView();
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
             driveSeedToCompletion(job, "lv");
             for (int second = 0; second <= 40; second += 10) {

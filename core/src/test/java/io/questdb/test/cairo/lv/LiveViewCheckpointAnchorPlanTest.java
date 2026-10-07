@@ -285,18 +285,6 @@ public class LiveViewCheckpointAnchorPlanTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testNanosecondColumnSegmentBoundaries() {
-        // The bounds are expressed in the designated timestamp's own units, so the same
-        // anchor over a nanosecond column produces nanosecond boundaries.
-        final LiveViewCheckpointAnchorPlan plan = LiveViewCheckpointAnchorPlan.of('d', 1, 0, ColumnType.TIMESTAMP_NANO);
-        Assert.assertNotNull(plan);
-        final long dayStart = ts("2026-08-01T00:00:00.000000Z") * 1000L;
-        final long nextDay = ts("2026-08-02T00:00:00.000000Z") * 1000L;
-        Assert.assertEquals(dayStart, plan.getSegmentStart(dayStart + 1));
-        Assert.assertEquals(nextDay, plan.getSegmentEndExclusive(dayStart + 1));
-    }
-
-    @Test
     public void testEveryFixedStrideBoundIsAWallOfTheRuntimeFloor() {
         // The property the two bounds exist to carry, swept for the zone-less anchor: each
         // bound the plan reports finite is a wall of the floor the runtime anchor calls -
@@ -367,6 +355,18 @@ public class LiveViewCheckpointAnchorPlanTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testNanosecondColumnSegmentBoundaries() {
+        // The bounds are expressed in the designated timestamp's own units, so the same
+        // anchor over a nanosecond column produces nanosecond boundaries.
+        final LiveViewCheckpointAnchorPlan plan = LiveViewCheckpointAnchorPlan.of('d', 1, 0, ColumnType.TIMESTAMP_NANO);
+        Assert.assertNotNull(plan);
+        final long dayStart = ts("2026-08-01T00:00:00.000000Z") * 1000L;
+        final long nextDay = ts("2026-08-02T00:00:00.000000Z") * 1000L;
+        Assert.assertEquals(dayStart, plan.getSegmentStart(dayStart + 1));
+        Assert.assertEquals(nextDay, plan.getSegmentEndExclusive(dayStart + 1));
+    }
+
+    @Test
     public void testOffsetAlignedSegmentBoundaries() {
         final long origin = ts("1970-01-01T09:30:00.000000Z");
         final LiveViewCheckpointAnchorPlan plan = LiveViewCheckpointAnchorPlan.of('d', 1, origin, ColumnType.TIMESTAMP_MICRO);
@@ -421,6 +421,7 @@ public class LiveViewCheckpointAnchorPlanTest extends AbstractLiveViewTest {
                     ('1970-01-02T09:29:59.999999Z'),
                     ('1970-01-02T09:30:00.000000Z')""");
             assertQuery("SELECT ts, timestamp_floor('1d', ts, '1970-01-01T09:30:00.000000Z'::timestamp) anchor FROM probes")
+                    .noLeakCheck()
                     .expectSize()
                     .returns("""
                             ts\tanchor

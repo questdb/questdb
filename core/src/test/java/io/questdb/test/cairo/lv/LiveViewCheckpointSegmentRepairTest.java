@@ -26,15 +26,19 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
 import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewWindow;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -70,6 +74,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
 
+    // The default cairo.live.view.checkpoint.max.duration.micros: a flush that waits this long
+    // seals a root.
+    private static final long DEFAULT_CHECKPOINT_CADENCE_MICROS = 5 * 60_000_000L;
+    // A day streamed one row every five minutes, each flushed on the default cadence: one root
+    // per row, past the 256 boundaries cairo.live.view.checkpoint.repair.max.chained.boundaries
+    // lets a repair re-version by default.
+    private static final int DENSE_DAY_ROWS = 287;
     private static final int ENTRY_CHECKPOINT_ID = 1;
     private static final int ENTRY_EFFECTIVE_POSITION = 5;
     private static final int ENTRY_MAX_TIMESTAMP = 0;
@@ -89,6 +100,24 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
     // maximum. The group does not grow, so the hand-off's lead ceiling and the gate's
     // discarded-lead term decide the route.
     private static final String NEWEST_ROOT_BELOW_THE_TIE = "2026-01-04T02:00:00.000000Z";
+    // The bounded frames the tied-lead cases repair without an anchor, and what each view holds
+    // after the tied rows and the late row at 2026-01-02T03 (acct-2).
+    private static final String RANGE_FRAME = "RANGE BETWEEN 1 HOUR PRECEDING AND CURRENT ROW";
+    private static final String RANGE_FRAMED_TIED_LEAD_ROW_KEPT = """
+            created_at\taccount_id\twindowed_sum
+            2026-01-02T01:00:00.000000Z\tacct-1\t1.0
+            2026-01-02T02:00:00.000000Z\tacct-2\t1.0
+            2026-01-02T03:00:00.000000Z\tacct-2\t2.0
+            2026-01-03T01:00:00.000000Z\tacct-1\t1.0
+            2026-01-03T02:00:00.000000Z\tacct-2\t1.0
+            2026-01-04T01:00:00.000000Z\tacct-1\t1.0
+            2026-01-04T02:00:00.000000Z\tacct-2\t1.0
+            2026-01-04T03:00:00.000000Z\tacct-1\t1.0
+            2026-01-04T03:00:00.000000Z\tacct-2\t2.0
+            """;
+    // Refresh turns the backfill cases need at most to reach the coalesced pass's segment
+    // repair: the first late commit's repair and the coalesced drain take a handful each.
+    private static final int REFRESH_TURNS_TO_PARK = 64;
     // The view after the in-order head rows at 2026-01-04T04 (acct-2) and T05 (acct-1) and the
     // late row at 2026-01-02T03 (acct-2), each folded exactly once.
     private static final String ROWS_FOLDED_ONCE = """
@@ -104,6 +133,22 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
             2026-01-04T04:00:00.000000Z\tacct-2\t2.0\t2
             2026-01-04T05:00:00.000000Z\tacct-1\t3.0\t3
             """;
+    private static final String ROWS_FRAME = "ROWS BETWEEN 1 PRECEDING AND CURRENT ROW";
+    private static final String ROWS_FRAMED_TIED_LEAD_ROW_KEPT = """
+            created_at\taccount_id\twindowed_sum
+            2026-01-02T01:00:00.000000Z\tacct-1\t1.0
+            2026-01-02T02:00:00.000000Z\tacct-2\t1.0
+            2026-01-02T03:00:00.000000Z\tacct-2\t2.0
+            2026-01-03T01:00:00.000000Z\tacct-1\t2.0
+            2026-01-03T02:00:00.000000Z\tacct-2\t2.0
+            2026-01-04T01:00:00.000000Z\tacct-1\t2.0
+            2026-01-04T02:00:00.000000Z\tacct-2\t2.0
+            2026-01-04T03:00:00.000000Z\tacct-1\t2.0
+            2026-01-04T03:00:00.000000Z\tacct-2\t2.0
+            """;
+    // A checkpoint duration of two FLUSH EVERY intervals: a flush that waits that long seals a
+    // root, and the flush an hour after it seals none. See landARowAboveATieOnTheNewestRoot.
+    private static final long SEAL_EVERY_SECOND_FLUSH_MICROS = 2 * FLUSH_EVERY_MICROS;
     // The view after acct-1's flushed row and acct-2's un-flushed lead row at 2026-01-04T03 and
     // the late row at 2026-01-02T03 (acct-2), each emitted exactly once.
     private static final String TIED_LEAD_ROW_KEPT = """
@@ -567,6 +612,366 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testInOrderRowsCoalescedWithALateCommitAtTheNewestRootAreFoldedOnceAfterTheirParkedSegmentRepairIsDiscarded() throws Exception {
+        // Every replay parks after one row, so the late commit's segment repair parks before
+        // it has committed anything, and the parked candidate is then discarded, as a fault on
+        // its next turn would discard it. The runtime the loop kept must not hold the in-order
+        // row by then: the next drain feeds that row again, and with one commit per turn it
+        // flushes it before it reaches the late commit, so a runtime still holding it would
+        // publish the row folded twice.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createBackfillView(INDEXED_KEY, "");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(10, 1, "acct-1"), job);
+                commitDuringTheNextTurn(job, row(10, 2, "acct-2"), row(8, 3, "acct-1"), true);
+                execute("INSERT INTO tx VALUES " + row(9, 3, "acct-2"));
+                drainWalQueue();
+                final long coalescedSegmentStart = ts("2026-01-08T00:00:00.000000Z");
+                boolean isCoalescedSegmentParked = false;
+                for (int i = 0; i < REFRESH_TURNS_TO_PARK && !isCoalescedSegmentParked; i++) {
+                    advanceClockToNextRefreshPass();
+                    job.run();
+                    final LiveViewCheckpointRepairSession parked = viewInstance().getSuspendedRepair();
+                    isCoalescedSegmentParked = parked != null
+                            && parked.getSegmentLoop().getInFlightSegmentStart() == coalescedSegmentStart;
+                }
+                Assert.assertTrue("the coalesced pass's segment repair must park", isCoalescedSegmentParked);
+                viewInstance().discardSuspendedRepair();
+                setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS, 1);
+                setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1_000_000);
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testInOrderRowsCoalescedWithALateCommitAtTheNewestRootAreFoldedOnceWhenTheRepairTruncates() throws Exception {
+        // With no boundary allowed to be re-versioned, every segment repair truncates the
+        // timeline at its own floor instead of splicing it, which drops the root at the
+        // frontier, and the seal after it freezes the runtime the repair kept as a root in its
+        // place. The residual resumes from that root, so the runtime must not hold the in-order
+        // row by then: the loop restored it to the dropped root before its first segment ran.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertCoalescedBackfillRepairsPerSegment(INDEXED_KEY, "", true);
+    }
+
+    @Test
+    public void testInOrderRowsCoalescedWithALateCommitAtTheNewestRootAreFoldedOnceWhenTheRepairTruncatesAcrossTurns() throws Exception {
+        // Every replay parks after one row, so each segment's repair publishes, and the seal
+        // after its truncate freezes the kept runtime, on a turn that resumed it off its session.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertCoalescedBackfillRepairsPerSegment(INDEXED_KEY, "", true);
+    }
+
+    @Test
+    public void testInOrderRowsCoalescedWithALateCommitAtTheNewestRootAreFoldedOnceWhenTheRepairTruncatesBehindAnApplyLag() throws Exception {
+        // The truncating repair again, reached through the runtime recovery's replay.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertCoalescedBackfillRepairsPerSegment(INDEXED_KEY, "", false);
+    }
+
+    @Test
+    public void testInOrderRowsCoalescedWithALateCommitAtTheNewestRootAreRepairedPerSegment() throws Exception {
+        // A backfill interleaved with streaming. The drain that carries the in-order row and
+        // the late one starts at the root the previous repair sealed at the frontier, so that
+        // root already holds the state the hand-off rewound to. The late commit's closed day
+        // is repaired on its own, and the residual resumes from that root.
+        assertCoalescedBackfillRepairsPerSegment(INDEXED_KEY, "", true);
+    }
+
+    @Test
+    public void testInOrderRowsCoalescedWithALateCommitAtTheNewestRootAreRepairedPerSegmentBehindAnApplyLag() throws Exception {
+        // The base has not applied the two commits when the drain reads them, so the repair
+        // defers on the apply lag, and the runtime recovery's replay hands the late one off
+        // from the root it restores, which is the root at the frontier.
+        assertCoalescedBackfillRepairsPerSegment(INDEXED_KEY, "", false);
+    }
+
+    @Test
+    public void testInOrderRowsCoalescedWithALateCommitAtTheNewestRootAreRepairedPerSegmentInAFilteredView() throws Exception {
+        // A filter denies the open segment's keyed resume, so the closed-segment loop alone
+        // decides whether the decomposition runs.
+        assertCoalescedBackfillRepairsPerSegment(INDEXED_KEY, " WHERE amount > 0", true);
+    }
+
+    @Test
+    public void testInOrderRowsCoalescedWithALateCommitAtTheNewestRootAreRepairedPerSegmentOverAnUnindexedKey() throws Exception {
+        // Without a posting index no segment has a keyed read, so every segment replays whole.
+        assertCoalescedBackfillRepairsPerSegment("symbol", "", true);
+    }
+
+    @Test
+    public void testInOrderRowsCoalescedWithALateCommitAtTheNewestRootKeepTheTimelineRestorableWhenTheRepairTruncates() throws Exception {
+        assertTimelineRestorableBehindATruncatingSegmentRepair(false, false);
+    }
+
+    @Test
+    public void testInOrderRowsCoalescedWithALateCommitAtTheNewestRootKeepTheTimelineRestorableWhenTheRepairTruncatesOverALossyBase() throws Exception {
+        // The base lost a day the view keeps, so a restart without a timeline would ask for a
+        // rebuild from the applied base that the restatement guard refuses.
+        assertTimelineRestorableBehindATruncatingSegmentRepair(true, false);
+    }
+
+    @Test
+    public void testInOrderRowsCoalescedWithALateCommitAtTheNewestRootRecoverAnUnappliedSegmentReplacementOverALossyBase() throws Exception {
+        // The late commit's segment repair commits its replacement, and the view's table does
+        // not apply it inline - an LV apply that backs off under memory pressure does the same.
+        // The loop stops, the next turn applies the replacement and repairs the change set
+        // again, and the view must get there without a rebuild from the applied base: the base
+        // lost a day the view keeps, and the restatement guard refuses that rebuild.
+        assertMemoryLeak(() -> {
+            createBackfillView(INDEXED_KEY, "");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                execute("ALTER TABLE tx DROP PARTITION WHERE created_at < '2026-01-03'");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                commit(row(10, 1, "acct-1"), job);
+                job.setSimulatePeerTurnBeforeRefreshLatchForTest(() -> {
+                    try {
+                        execute("INSERT INTO tx VALUES " + row(10, 2, "acct-2"));
+                        execute("INSERT INTO tx VALUES " + row(8, 3, "acct-1"));
+                    } catch (SqlException e) {
+                        throw new RuntimeException(e);
+                    }
+                    // The turn after this one drains both commits together, and its repair's
+                    // replacement does not apply.
+                    job.setSimulatePeerTurnBeforeRefreshLatchForTest(() -> {
+                        drainWalQueue();
+                        job.setSimulateRepairApplyFailureForTest(true);
+                    });
+                });
+                execute("INSERT INTO tx VALUES " + row(9, 3, "acct-2"));
+                drainWalQueue();
+                boolean isReplacementPending = false;
+                for (int i = 0; i < REFRESH_TURNS_TO_PARK && !isReplacementPending; i++) {
+                    advanceClockToNextRefreshPass();
+                    job.run();
+                    isReplacementPending = viewInstance().getPendingReplacementLvSeqTxn() != Numbers.LONG_NULL;
+                }
+                Assert.assertTrue("the segment repair's replacement must stay unapplied", isReplacementPending);
+                job.setSimulateRepairApplyFailureForTest(false);
+                driveRefreshToQuiescence(job);
+                Assert.assertFalse(
+                        "the view must recover without a rebuild the restatement guard refuses",
+                        viewInstance().isCheckpointRecoveryBlocked()
+                );
+                assertViewMatchesRecomputeFrom("2026-01-03T00:00:00.000000Z");
+                commit(row(10, 8, "acct-1") + ", " + row(10, 9, "acct-2"), job);
+                assertViewMatchesRecomputeFrom("2026-01-03T00:00:00.000000Z");
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                assertRestoredFromTimeline("lv");
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecomputeFrom("2026-01-03T00:00:00.000000Z");
+            }
+        });
+    }
+
+    @Test
+    public void testInOrderRowsCoalescedWithALateCommitAtTheNewestRootSurviveAFaultInTheResidual() throws Exception {
+        // A keyed resume of the open segment replays beside the primary runtime rather than over
+        // it, and a fault ahead of its replay leaves that runtime as the segment loop left it,
+        // with nothing marking it for recovery. The loop restored it to the root at the frontier
+        // before its first segment ran, so the retry drains the in-order row over that root's
+        // state, once, rather than over a runtime that already holds it.
+        assertMemoryLeak(() -> {
+            createBackfillView(INDEXED_KEY, "");
+            final AtomicBoolean hasResidualStarted = new AtomicBoolean();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                job.setForceOpenSegmentKeyedReplayForTest(true);
+                driveRefreshToQuiescence(job);
+                commit(row(10, 1, "acct-1"), job);
+                commitDuringTheNextTurn(job, row(10, 2, "acct-2"), row(8, 3, "acct-1"), true);
+                job.setSimulateResumeReplayStartForTest(() -> {
+                    hasResidualStarted.set(true);
+                    throw CairoException.critical(0).put("simulated fault ahead of the residual's replay");
+                });
+                execute("INSERT INTO tx VALUES " + row(9, 3, "acct-2"));
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertTrue("the residual must start for the armed fault to stop it", hasResidualStarted.get());
+                Assert.assertTrue(
+                        "the open segment must take the keyed resume",
+                        job.openSegmentKeyedResumeCountForTest() > 0
+                );
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "(" + recompute(null) + ") order by 2, 1",
+                        "(lv) order by 2, 1",
+                        LOG,
+                        true
+                );
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                assertRestoredFromTimeline("lv");
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute();
+                commit(row(10, 8, "acct-1") + ", " + row(10, 9, "acct-2"), job);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testInOrderRowsCoalescedWithLateCommitsInTwoClosedDaysKeepTheTimelineRestorableWhenTheFirstRepairTruncates() throws Exception {
+        // The loop repairs two closed days, and the restart lands while the second one's repair
+        // is parked behind the first one's truncating commit.
+        assertTimelineRestorableBehindATruncatingSegmentRepair(false, true);
+    }
+
+    @Test
+    public void testARowAboveATieReopensTheClosedSegmentRepair() throws Exception {
+        // While the newest root's timestamp group grows, the head-grown check sends a late row
+        // into a closed day to the union range. A row above the tie ends the episode, and the
+        // closed-segment loop repairs the late day alone again.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, SEAL_EVERY_SECOND_FLUSH_MICROS);
+        assertMemoryLeak(() -> {
+            createTiedLeadView("");
+            final String expected = TIED_LEAD_ROW_KEPT + "2026-01-04T04:00:00.000000Z\tacct-1\t3.0\t3\n";
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                landARowAboveATieOnTheNewestRoot(job);
+                commit(row(2, 3, "acct-2"), job);
+                Assert.assertEquals(
+                        "the late day must be repaired as a segment of its own",
+                        1,
+                        job.segmentRepairCountForTest()
+                );
+                assertViewReturns(expected);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertTiedLeadRowKept(job, expected, """
+                        2026-01-04T08:00:00.000000Z\tacct-1\t4.0\t4
+                        2026-01-04T09:00:00.000000Z\tacct-2\t3.0\t3
+                        """);
+            }
+        });
+    }
+
+    @Test
+    public void testARowAboveATieReopensTheKeyedResumeOfTheOpenSegment() throws Exception {
+        // The same check denies the open segment's keyed resume while the group grows. A row
+        // above the tie ends the episode, and a late row into the runtime's own day takes the
+        // keyed resume again.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, SEAL_EVERY_SECOND_FLUSH_MICROS);
+        assertMemoryLeak(() -> {
+            createTiedLeadView("");
+            final String expected = """
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-02T01:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-02T02:00:00.000000Z\tacct-2\t1.0\t1
+                    2026-01-03T01:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-03T02:00:00.000000Z\tacct-2\t1.0\t1
+                    2026-01-04T01:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-04T02:00:00.000000Z\tacct-2\t1.0\t1
+                    2026-01-04T02:30:00.000000Z\tacct-1\t2.0\t2
+                    2026-01-04T03:00:00.000000Z\tacct-1\t3.0\t3
+                    2026-01-04T03:00:00.000000Z\tacct-2\t2.0\t2
+                    2026-01-04T04:00:00.000000Z\tacct-1\t4.0\t4
+                    """;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                job.setForceOpenSegmentKeyedReplayForTest(true);
+                driveRefreshToQuiescence(job);
+                landARowAboveATieOnTheNewestRoot(job);
+                commit("('2026-01-04T02:30:00.000000Z', 'acct-1', 1.0)", job);
+                Assert.assertEquals(
+                        "the open segment must take the keyed resume",
+                        1,
+                        job.openSegmentKeyedResumeCountForTest()
+                );
+                assertViewReturns(expected);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertTiedLeadRowKept(job, expected, """
+                        2026-01-04T08:00:00.000000Z\tacct-1\t5.0\t5
+                        2026-01-04T09:00:00.000000Z\tacct-2\t3.0\t3
+                        """);
+            }
+        });
+    }
+
+    @Test
+    public void testARowAboveATieReopensTheLocalizedRowsRepair() throws Exception {
+        // A ROWS frame localizes only against the runtime frontier, which the refresh job
+        // withholds while the newest root's timestamp group grows. A row above the tie ends the
+        // episode, and the repair of a late row into a closed day localizes again.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, SEAL_EVERY_SECOND_FLUSH_MICROS);
+        assertMemoryLeak(() -> {
+            createFramedView(ROWS_FRAME, "");
+            final String expected = ROWS_FRAMED_TIED_LEAD_ROW_KEPT + "2026-01-04T04:00:00.000000Z\tacct-1\t2.0\n";
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                landARowAboveATieOnTheNewestRoot(job);
+                commit(row(2, 3, "acct-2"), job);
+                assertQuery("SELECT checkpoint_repair_last_disposition, checkpoint_repair_last_denial FROM live_views()")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                checkpoint_repair_last_disposition\tcheckpoint_repair_last_denial
+                                localized rebuild\t
+                                """);
+                assertFramedViewReturns(expected);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertFramedViewReturns(expected);
+                execute("INSERT INTO tx VALUES " + row(4, 8, "acct-1") + ", " + row(4, 9, "acct-2"));
+                flushNext(job);
+                assertFramedViewReturns(expected + """
+                        2026-01-04T08:00:00.000000Z\tacct-1\t2.0
+                        2026-01-04T09:00:00.000000Z\tacct-2\t2.0
+                        """);
+            }
+        });
+    }
+
+    @Test
+    public void testATieOnTheNewestRootDeniesTheRowsRepairAsAGrownHeadGroup() throws Exception {
+        // While the newest root's timestamp group grows, the refresh job withholds the runtime
+        // frontier, and a ROWS frame cannot localize without it. live_views() names the grown
+        // group rather than the missing frontier: the group clears on its own at the next row
+        // above the tie or the next seal, while a missing frontier reads as a view that lacks
+        // checkpoint-state support.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, SEAL_EVERY_SECOND_FLUSH_MICROS);
+        assertMemoryLeak(() -> {
+            createFramedView(ROWS_FRAME, "");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                growTheNewestRootsTimestampGroup(job);
+                commit(row(2, 3, "acct-2"), job);
+                assertQuery("SELECT checkpoint_repair_last_disposition, checkpoint_repair_last_denial FROM live_views()")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                checkpoint_repair_last_disposition\tcheckpoint_repair_last_denial
+                                boundary rebuild\tgrown head group
+                                """);
+                assertFramedViewReturns(ROWS_FRAMED_TIED_LEAD_ROW_KEPT);
+            }
+        });
+    }
+
+    @Test
     public void testATiedLeadRowSurvivesALateCommitCarryingANewMaxInAFilteredView() throws Exception {
         // The late commit also carries a head row, so the residual is not empty. The loop's
         // residual used to resume from the root the ordinary cadence sealed at the flushed
@@ -582,8 +987,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 """
                         2026-01-04T08:00:00.000000Z\tacct-1\t4.0\t4
                         2026-01-04T09:00:00.000000Z\tacct-2\t3.0\t3
-                        """,
-                0
+                        """
         );
     }
 
@@ -603,8 +1007,35 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 """
                         2026-01-04T08:00:00.000000Z\tacct-1\t4.0\t4
                         2026-01-04T09:00:00.000000Z\tacct-2\t3.0\t3
-                        """,
-                0
+                        """
+        );
+    }
+
+    @Test
+    public void testATiedLeadRowSurvivesALateCommitInAFilteredRangeFramedViewWithTheNewestRootBelowTheTie() throws Exception {
+        // The production shape over a frame that carries no anchor. The newest root's timestamp
+        // group has not grown, so only the hand-off's lead ceiling lifts the union range's
+        // H = changeMaxTs + W + 1 above the lead.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 7 * 24 * FLUSH_EVERY_MICROS);
+        assertTiedLeadRowSurvivesALateCommitInAFramedView(
+                RANGE_FRAME,
+                " WHERE amount > 0",
+                NEWEST_ROOT_BELOW_THE_TIE,
+                RANGE_FRAMED_TIED_LEAD_ROW_KEPT
+        );
+    }
+
+    @Test
+    public void testATiedLeadRowSurvivesALateCommitInAFilteredRowsFramedViewWithTheNewestRootBelowTheTie() throws Exception {
+        // A ROWS frame looks for convergence above the change interval, so only the hand-off's
+        // lead ceiling, which tops that interval at the lead, keeps the search from converging
+        // below the lead.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 7 * 24 * FLUSH_EVERY_MICROS);
+        assertTiedLeadRowSurvivesALateCommitInAFramedView(
+                ROWS_FRAME,
+                " WHERE amount > 0",
+                NEWEST_ROOT_BELOW_THE_TIE,
+                ROWS_FRAMED_TIED_LEAD_ROW_KEPT
         );
     }
 
@@ -623,8 +1054,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 NEWEST_ROOT_AT_THE_TIE,
                 row(2, 3, "acct-2"),
                 TIED_LEAD_ROW_KEPT,
-                TIED_LEAD_ROWS_AFTER_RESTART,
-                0
+                TIED_LEAD_ROWS_AFTER_RESTART
         );
     }
 
@@ -644,8 +1074,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 NEWEST_ROOT_BELOW_THE_TIE,
                 row(2, 3, "acct-2"),
                 TIED_LEAD_ROW_KEPT,
-                TIED_LEAD_ROWS_AFTER_RESTART,
-                0
+                TIED_LEAD_ROWS_AFTER_RESTART
         );
     }
 
@@ -661,8 +1090,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 NEWEST_ROOT_BELOW_THE_TIE,
                 row(2, 3, "acct-2"),
                 TIED_LEAD_ROW_KEPT,
-                TIED_LEAD_ROWS_AFTER_RESTART,
-                0
+                TIED_LEAD_ROWS_AFTER_RESTART
         );
     }
 
@@ -679,8 +1107,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 NEWEST_ROOT_BELOW_THE_TIE,
                 row(2, 3, "acct-2"),
                 TIED_LEAD_ROW_KEPT,
-                TIED_LEAD_ROWS_AFTER_RESTART,
-                0
+                TIED_LEAD_ROWS_AFTER_RESTART
         );
     }
 
@@ -696,8 +1123,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 NEWEST_ROOT_AT_THE_TIE,
                 row(2, 3, "acct-2"),
                 TIED_LEAD_ROW_KEPT,
-                TIED_LEAD_ROWS_AFTER_RESTART,
-                0
+                TIED_LEAD_ROWS_AFTER_RESTART
         );
     }
 
@@ -705,48 +1131,36 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
     public void testATiedLeadRowSurvivesALateCommitInARangeFramedView() throws Exception {
         // The union range's blind spot is not the anchor's alone. A RANGE frame derives
         // H = changeMaxTs + W + 1, which at the tie sits far below the lead row.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) "
-                    + "TIMESTAMP(created_at) PARTITION BY HOUR WAL");
-            execute("INSERT INTO tx VALUES " + seedThreeDays());
-            drainWalQueue();
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1h START FROM BEGINNING AS "
-                    + "SELECT created_at, account_id, sum(amount) OVER (PARTITION BY account_id ORDER BY created_at "
-                    + "RANGE BETWEEN 1 HOUR PRECEDING AND CURRENT ROW) AS windowed_sum "
-                    + "FROM tx WHERE amount > 0");
-            final String expected = """
-                    created_at\taccount_id\twindowed_sum
-                    2026-01-02T01:00:00.000000Z\tacct-1\t1.0
-                    2026-01-02T02:00:00.000000Z\tacct-2\t1.0
-                    2026-01-02T03:00:00.000000Z\tacct-2\t2.0
-                    2026-01-03T01:00:00.000000Z\tacct-1\t1.0
-                    2026-01-03T02:00:00.000000Z\tacct-2\t1.0
-                    2026-01-04T01:00:00.000000Z\tacct-1\t1.0
-                    2026-01-04T02:00:00.000000Z\tacct-2\t1.0
-                    2026-01-04T03:00:00.000000Z\tacct-1\t1.0
-                    2026-01-04T03:00:00.000000Z\tacct-2\t2.0
-                    """;
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                driveRefreshToQuiescence(job);
-                leaveATiedRowInTheLead(job, row(2, 3, "acct-2"));
-                assertRangeViewReturns(expected);
-                flushNext(job);
-                assertRangeViewReturns(expected);
-            }
+        assertTiedLeadRowSurvivesALateCommitInAFramedView(
+                RANGE_FRAME,
+                " WHERE amount > 0",
+                NEWEST_ROOT_AT_THE_TIE,
+                RANGE_FRAMED_TIED_LEAD_ROW_KEPT
+        );
+    }
 
-            restartCycle();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                drainJob(job);
-                driveRefreshToQuiescence(job);
-                assertRangeViewReturns(expected);
-                execute("INSERT INTO tx VALUES " + row(4, 4, "acct-1") + ", " + row(4, 4, "acct-2"));
-                flushNext(job);
-                assertRangeViewReturns(expected + """
-                        2026-01-04T04:00:00.000000Z\tacct-1\t2.0
-                        2026-01-04T04:00:00.000000Z\tacct-2\t2.0
-                        """);
-            }
-        });
+    @Test
+    public void testATiedLeadRowSurvivesALateCommitInAnUnfilteredRangeFramedViewWithTheNewestRootBelowTheTie() throws Exception {
+        // The lead ceiling keeps the tied row in the repair whether or not a filter applies.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 7 * 24 * FLUSH_EVERY_MICROS);
+        assertTiedLeadRowSurvivesALateCommitInAFramedView(
+                RANGE_FRAME,
+                "",
+                NEWEST_ROOT_BELOW_THE_TIE,
+                RANGE_FRAMED_TIED_LEAD_ROW_KEPT
+        );
+    }
+
+    @Test
+    public void testATiedLeadRowSurvivesALateCommitInAnUnfilteredRowsFramedViewWithTheNewestRootBelowTheTie() throws Exception {
+        // The lead ceiling keeps the tied row in the repair whether or not a filter applies.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 7 * 24 * FLUSH_EVERY_MICROS);
+        assertTiedLeadRowSurvivesALateCommitInAFramedView(
+                ROWS_FRAME,
+                "",
+                NEWEST_ROOT_BELOW_THE_TIE,
+                ROWS_FRAMED_TIED_LEAD_ROW_KEPT
+        );
     }
 
     @Test
@@ -762,8 +1176,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 NEWEST_ROOT_AT_THE_TIE,
                 row(2, 3, "acct-2"),
                 TIED_LEAD_ROW_KEPT,
-                TIED_LEAD_ROWS_AFTER_RESTART,
-                0
+                TIED_LEAD_ROWS_AFTER_RESTART
         );
     }
 
@@ -779,8 +1192,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 NEWEST_ROOT_AT_THE_TIE,
                 row(2, 3, "acct-2"),
                 TIED_LEAD_ROW_KEPT,
-                TIED_LEAD_ROWS_AFTER_RESTART,
-                0
+                TIED_LEAD_ROWS_AFTER_RESTART
         );
     }
 
@@ -796,8 +1208,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 NEWEST_ROOT_AT_THE_TIE,
                 row(2, 3, "acct-2"),
                 TIED_LEAD_ROW_KEPT,
-                TIED_LEAD_ROWS_AFTER_RESTART,
-                0
+                TIED_LEAD_ROWS_AFTER_RESTART
         );
     }
 
@@ -813,23 +1224,8 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 NEWEST_ROOT_AT_THE_TIE,
                 row(2, 3, "acct-2"),
                 TIED_LEAD_ROW_KEPT,
-                TIED_LEAD_ROWS_AFTER_RESTART,
-                0
+                TIED_LEAD_ROWS_AFTER_RESTART
         );
-    }
-
-    @Test
-    public void testATiedLeadRowSurvivesARestartAfterAFaultedRepairInAnUnfilteredView() throws Exception {
-        // The restart restores the newest root and replays the base above the seqTxn the root
-        // carries.
-        assertTiedLeadRowSurvivesARepairThatRunsNoResume("", true);
-    }
-
-    @Test
-    public void testATiedLeadRowSurvivesARestartInAFilteredViewWhoseRepairRunsNoResume() throws Exception {
-        // The restart restores the newest root and replays the base above the seqTxn the root
-        // carries, which must return the tied row exactly once.
-        assertTiedLeadRowSurvivesARepairThatRunsNoResume(" WHERE amount > 0", true);
     }
 
     @Test
@@ -886,17 +1282,55 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testATiedLeadRowSurvivesAnInPlaceRestoreAfterAFaultedRepairInAnUnfilteredView() throws Exception {
-        // No restart: a fault that lands after a resume wiped the primary runtime has the
-        // refresh's failure path restore it in place from the newest root, and the flush that
-        // falls due on the turn re-draining the lead's commit makes that commit's row durable.
-        assertTiedLeadRowSurvivesARepairThatRunsNoResume("", false);
+    public void testATiedLeadRowSurvivesARestartInAFilteredViewWhoseRepairRunsNoResume() throws Exception {
+        // The restart restores the newest root and replays the base above the seqTxn the root
+        // carries, which must return the tied row exactly once.
+        assertTiedLeadRowSurvivesARepairThatRunsNoResume(" WHERE amount > 0", true);
+    }
+
+    @Test
+    public void testATiedLeadRowSurvivesARestartInAnUnfilteredViewWhoseRepairRunsNoResume() throws Exception {
+        // The repair at the tie takes the union range and runs no resume, so the armed fault
+        // stays unfired. The restart restores the newest root and replays the base above the
+        // seqTxn the root carries, which must return the tied row exactly once.
+        assertTiedLeadRowSurvivesARepairThatRunsNoResume("", true);
     }
 
     @Test
     public void testATiedLeadRowSurvivesTheNextFlushInAFilteredViewWhoseRepairRunsNoResume() throws Exception {
         // No restart: the flush after the repair must leave the tied row durable exactly once.
         assertTiedLeadRowSurvivesARepairThatRunsNoResume(" WHERE amount > 0", false);
+    }
+
+    @Test
+    public void testATiedLeadRowSurvivesTheNextFlushInAnUnfilteredViewWhoseRepairRunsNoResume() throws Exception {
+        // No restart: the repair at the tie takes the union range and runs no resume, so the
+        // armed fault stays unfired, and the flush after the repair must leave the tied row
+        // durable exactly once.
+        assertTiedLeadRowSurvivesARepairThatRunsNoResume("", false);
+    }
+
+    @Test
+    public void testAViewWithoutCheckpointStateReportsNoRepairDenial() throws Exception {
+        // CREATE rejects a window shape without checkpoint-state support, so only a view that
+        // loses it at runtime lacks it, and the refresh job skips such a view's repair before it
+        // plans one. The late row therefore leaves no disposition and no denial behind - the
+        // grown head group is the one cause of a missing frontier that reaches live_views().
+        assertMemoryLeak(() -> {
+            createFramedView(ROWS_FRAME, "");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                viewInstance().setSnapshotCapability(false);
+                commit(row(2, 3, "acct-2"), job);
+                assertQuery("SELECT checkpoint_repair_last_disposition, checkpoint_repair_last_denial FROM live_views()")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                checkpoint_repair_last_disposition\tcheckpoint_repair_last_denial
+                                \t
+                                """);
+            }
+        });
     }
 
     @Test
@@ -1114,6 +1548,81 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
     }
 
     /**
+     * Seeds eight anchor days under a head row on the tenth, then runs three rounds of a
+     * backfill interleaved with streaming, each walking two days further back. A round's first
+     * late commit lands alone, and its per-segment repair seals a root at the runtime frontier.
+     * The commits that land while that repair's refresh turn runs - an in-order head row, then
+     * a late row one day further back - reach the next pass together, which starts at that root:
+     * it feeds the in-order row through the window functions and hands the late one off with
+     * the frontier rewound to the root.
+     * <p>
+     * {@code isAppliedBeforeTheNextPass} picks whether the base has applied the two commits by
+     * the time that pass reads them. True is the steady state of a busy view, and the forward
+     * drain hands the late commit off itself. False makes the repair defer on the apply lag, and
+     * the runtime recovery that follows restores the root at the frontier and hands the late
+     * commit off from its own replay.
+     * <p>
+     * Every late commit must repair its own closed day alone, and each round must read no more
+     * base rows than its two repaired days hold and its in-order row above the root at the
+     * frontier. A union range from the deeper late day reads every day between it and the head
+     * on top of that, and a residual that rebuilt the open segment from its anchor would read
+     * the head day's earlier rows. The view must match the from-base recompute after every
+     * round, again after a restart restores the root the last round left behind, and once more
+     * after two head rows read the restored accumulators back.
+     */
+    private void assertCoalescedBackfillRepairsPerSegment(
+            String keyColumnType,
+            String filter,
+            boolean isAppliedBeforeTheNextPass
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            createBackfillView(keyColumnType, filter);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(10, 1, "acct-1"), job);
+                for (int round = 0; round < 3; round++) {
+                    final int lateDay = 9 - 2 * round;
+                    final String inOrderRow = row(10, 2 + round, round % 2 == 0 ? "acct-2" : "acct-1");
+                    final String coalescedLateRow = row(lateDay - 1, 3, "acct-1");
+                    final LiveViewInstance instance = viewInstance();
+                    final long segmentRepairsBefore = job.segmentRepairCountForTest();
+                    final long scanRowsBefore = instance.getO3ReplayScanRows();
+                    commitDuringTheNextTurn(job, inOrderRow, coalescedLateRow, isAppliedBeforeTheNextPass);
+                    execute("INSERT INTO tx VALUES " + row(lateDay, 3, "acct-2"));
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                    Assert.assertEquals(
+                            "round " + round + ": each late commit must repair its own closed day alone",
+                            2,
+                            job.segmentRepairCountForTest() - segmentRepairsBefore
+                    );
+                    // Two seeded rows and the late row on each repaired day, and the round's
+                    // in-order row: the residual resumes from the root at the frontier, which
+                    // holds every head-day row below it.
+                    final long scanRowBound = 2 * 3 + 1;
+                    final long scanRows = instance.getO3ReplayScanRows() - scanRowsBefore;
+                    Assert.assertTrue(
+                            "round " + round + ": the repairs must read the repaired days and the round's in-order row alone [scanRows="
+                                    + scanRows + ", bound=" + scanRowBound + ']',
+                            scanRows <= scanRowBound
+                    );
+                    assertViewMatchesRecompute();
+                }
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                assertRestoredFromTimeline("lv");
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute();
+                commit(row(10, 8, "acct-1") + ", " + row(10, 9, "acct-2"), job);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    /**
      * Seeds three anchor days, flushes one in-order row so the runtime frontier sits above the
      * newest root the default checkpoint cadence has sealed, then lets {@code trigger} land
      * in-order commits followed by a late commit into a closed day, all before the next refresh
@@ -1163,7 +1672,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
         });
     }
 
-    private void assertRangeViewReturns(String expected) throws Exception {
+    private void assertFramedViewReturns(String expected) throws Exception {
         assertQuery("SELECT * FROM lv")
                 .noLeakCheck()
                 .timestamp("created_at")
@@ -1196,18 +1705,19 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
      * after the next flush; again after a restart; and once more after two head rows read the
      * restored accumulators back.
      * <p>
+     * The repair must also take no closed segment over its own range: a closed-segment loop that
+     * repaired the late day alone is the route that lost the tied row, so that count pins the
+     * route the row survived.
+     * <p>
      * {@code FLUSH EVERY 1h} keeps the lead un-flushed for as long as the test does not move the
      * clock past it, and {@link #flushNext} is the only call that does.
      *
-     * @param isSeedSealedPerDay      seeds each day in a commit and a flush of its own, so that
-     *                                under a one-row cadence a root sits just below every day's
-     *                                last row
-     * @param newestRootMaxTs         the newest root's maxTimestamp while the tied row sits in
-     *                                the lead, {@link #NEWEST_ROOT_AT_THE_TIE} or
-     *                                {@link #NEWEST_ROOT_BELOW_THE_TIE}, which pins the shape
-     *                                the case covers
-     * @param expectedSegmentRepairs  the closed segments the repair takes over their own range,
-     *                                which pins the route the tied row survived
+     * @param isSeedSealedPerDay seeds each day in a commit and a flush of its own, so that under a
+     *                           one-row cadence a root sits just below every day's last row
+     * @param newestRootMaxTs    the newest root's maxTimestamp while the tied row sits in the
+     *                           lead, {@link #NEWEST_ROOT_AT_THE_TIE} or
+     *                           {@link #NEWEST_ROOT_BELOW_THE_TIE}, which pins the shape the case
+     *                           covers
      */
     private void assertTiedLeadRowSurvivesALateCommit(
             String keyColumnType,
@@ -1216,8 +1726,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
             String newestRootMaxTs,
             String lateRows,
             String expected,
-            String expectedRowsAfterRestart,
-            long expectedSegmentRepairs
+            String expectedRowsAfterRestart
     ) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tx (created_at TIMESTAMP, account_id " + keyColumnType + ", "
@@ -1248,7 +1757,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 assertViewReturns(expected);
                 Assert.assertEquals(
                         "closed segments repaired over their own range",
-                        expectedSegmentRepairs,
+                        0,
                         job.segmentRepairCountForTest()
                 );
                 flushNext(job);
@@ -1263,6 +1772,52 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 execute("INSERT INTO tx VALUES " + row(4, 8, "acct-1") + ", " + row(4, 9, "acct-2"));
                 flushNext(job);
                 assertViewReturns(expected + expectedRowsAfterRestart);
+            }
+        });
+    }
+
+    /**
+     * {@link #assertTiedLeadRowSurvivesALateCommit} over a view whose bounded {@code frame}
+     * carries no anchor, so the late row at 2026-01-02T03 (acct-2) takes the union range: the
+     * closed-segment loop needs an anchor. The view must return {@code expected} after the
+     * repair, again after the next flush, again after a restart, and once more after two head
+     * rows read the restored accumulators back.
+     *
+     * @param filter          the view's WHERE clause, with a leading space, or empty
+     * @param newestRootMaxTs the newest root's maxTimestamp while the tied row sits in the lead,
+     *                        which pins the shape the case covers
+     */
+    private void assertTiedLeadRowSurvivesALateCommitInAFramedView(
+            String frame,
+            String filter,
+            String newestRootMaxTs,
+            String expected
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            createFramedView(frame, filter);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(
+                        "the newest root while the tied row sits in the lead",
+                        ts(newestRootMaxTs),
+                        leaveATiedRowInTheLead(job, row(2, 3, "acct-2"))
+                );
+                assertFramedViewReturns(expected);
+                flushNext(job);
+                assertFramedViewReturns(expected);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                driveRefreshToQuiescence(job);
+                assertFramedViewReturns(expected);
+                execute("INSERT INTO tx VALUES " + row(4, 4, "acct-1") + ", " + row(4, 4, "acct-2"));
+                flushNext(job);
+                assertFramedViewReturns(expected + """
+                        2026-01-04T04:00:00.000000Z\tacct-1\t2.0
+                        2026-01-04T04:00:00.000000Z\tacct-2\t2.0
+                        """);
             }
         });
     }
@@ -1342,6 +1897,119 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
         });
     }
 
+    /**
+     * Streams 2026-01-02 one row every five minutes on the default checkpoint cadence, so the
+     * day holds a root per row, then a sparse closed day and a head row whose flush seals the
+     * root at the frontier. A late commit into 2026-01-03 lands alone, and while its repair's
+     * turn runs, an in-order head row and a late row at 2026-01-02T00:02 - below every root
+     * of that day - commit; with {@code hasSecondClosedDay}, the late commit also carries a
+     * row in 2026-01-03. The pass after it drains both together, starting at the root at the
+     * frontier, and the loop's repair of 2026-01-02 crosses more boundaries than a repair
+     * re-versions, so it truncates the timeline at its own floor rather than splicing it,
+     * which drops the root at the frontier.
+     * <p>
+     * A one-row replay budget then parks whatever runs behind that repair - the residual, or
+     * the repair of 2026-01-03 - and the process restarts there, or once the pass has finished
+     * if nothing parks. The restart must restore from the timeline: the roots below the
+     * truncate describe output nothing has rewritten, and a view without a timeline rebuilds
+     * from the applied base instead, which the restatement guard refuses over a base that
+     * lost a day the view keeps.
+     *
+     * @param isBaseLossy whether the base drops 2026-01-01 after the view consumed it
+     */
+    private void assertTimelineRestorableBehindATruncatingSegmentRepair(
+            boolean isBaseLossy,
+            boolean hasSecondClosedDay
+    ) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) "
+                    + "TIMESTAMP(created_at) PARTITION BY DAY WAL");
+            execute("INSERT INTO tx VALUES " + row(1, 1, "acct-1") + ", " + row(1, 2, "acct-2"));
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                    + "SELECT created_at, account_id, "
+                    + "sum(amount) OVER w AS cumulative_sum, "
+                    + "count(account_id) OVER w AS cumulative_count "
+                    + "FROM tx "
+                    + "WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')");
+            final AtomicBoolean isPeerTurnFired = new AtomicBoolean();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                if (isBaseLossy) {
+                    execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-01'");
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                }
+                for (int i = 1; i <= DENSE_DAY_ROWS; i++) {
+                    execute("INSERT INTO tx VALUES " + rowAtMinute(2, 5 * i, i % 2 == 0 ? "acct-1" : "acct-2"));
+                    drainWalQueue();
+                    setCurrentMicros(currentMicros + DEFAULT_CHECKPOINT_CADENCE_MICROS);
+                    driveRefreshToQuiescence(job);
+                }
+                execute("INSERT INTO tx VALUES " + row(3, 1, "acct-1") + ", " + row(3, 2, "acct-2"));
+                drainWalQueue();
+                setCurrentMicros(currentMicros + DEFAULT_CHECKPOINT_CADENCE_MICROS);
+                driveRefreshToQuiescence(job);
+                execute("INSERT INTO tx VALUES " + row(4, 1, "acct-1"));
+                drainWalQueue();
+                setCurrentMicros(currentMicros + DEFAULT_CHECKPOINT_CADENCE_MICROS);
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = viewInstance();
+                Assert.assertEquals(
+                        "the head row's flush must seal the root at the frontier",
+                        instance.getLatestSeenTs(),
+                        instance.getHeadCheckpointMaxTs()
+                );
+                final String lateRows = rowAtMinute(2, 2, "acct-1")
+                        + (hasSecondClosedDay ? ", " + row(3, 4, "acct-2") : "");
+                job.setSimulatePeerTurnBeforeRefreshLatchForTest(() -> {
+                    isPeerTurnFired.set(true);
+                    try {
+                        execute("INSERT INTO tx VALUES " + row(4, 2, "acct-2"));
+                        execute("INSERT INTO tx VALUES " + lateRows);
+                    } catch (SqlException e) {
+                        throw new RuntimeException(e);
+                    }
+                    job.setSimulatePeerTurnBeforeRefreshLatchForTest(() -> drainWalQueue());
+                });
+                execute("INSERT INTO tx VALUES " + row(3, 3, "acct-2"));
+                drainWalQueue();
+                final TableToken baseToken = engine.verifyTableName("tx");
+                boolean isRestartPointReached = false;
+                for (int i = 0; i < 2 * REFRESH_QUIESCENCE_PASSES && !isRestartPointReached; i++) {
+                    advanceClockToNextRefreshPass();
+                    drainWalQueue();
+                    job.run();
+                    drainWalQueue();
+                    final LiveViewCheckpointRepairSession parked = instance.getSuspendedRepair();
+                    if (isPeerTurnFired.get()) {
+                        // Behind the coalesced pass's first segment: the residual, or a later
+                        // segment of the same loop. The first late commit's own loop repairs one
+                        // segment and parks on it alone.
+                        isRestartPointReached = parked != null
+                                ? !parked.getSegmentLoop().isOpen() || parked.getSegmentLoop().getSegmentsRepaired() > 0
+                                : instance.getLastProcessedSeqTxn() == engine.getTableSequencerAPI().lastTxn(baseToken);
+                    }
+                }
+                Assert.assertTrue("the coalesced pass must reach the restart point", isRestartPointReached);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                assertRestoredFromTimeline("lv");
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecomputeFrom("2026-01-02T00:00:00.000000Z");
+                commit(row(4, 5, "acct-1"), job);
+                assertViewMatchesRecomputeFrom("2026-01-02T00:00:00.000000Z");
+                if (!isBaseLossy) {
+                    assertViewMatchesRecompute();
+                }
+            }
+        });
+    }
+
     private void assertViewMatchesRecompute() throws Exception {
         assertViewMatchesRecompute(null);
     }
@@ -1352,6 +2020,23 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 sqlExecutionContext,
                 "(" + recompute(startFrom) + ") order by 2, 1",
                 "(lv) order by 2, 1",
+                LOG,
+                true
+        );
+        assertNoRefreshFaults("lv");
+    }
+
+    /**
+     * The view's rows at and above {@code fromTs} against the from-base recompute of the same
+     * rows. A view whose base lost history it keeps holds rows below that point no recompute
+     * can produce.
+     */
+    private void assertViewMatchesRecomputeFrom(String fromTs) throws Exception {
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + recompute(fromTs) + ") order by 2, 1",
+                "(SELECT * FROM lv WHERE created_at >= '" + fromTs + "'::timestamp) order by 2, 1",
                 LOG,
                 true
         );
@@ -1374,6 +2059,34 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
     }
 
     /**
+     * Arms the next refresh turn to commit {@code inOrderRow} and then {@code lateRow} ahead of
+     * taking the view's latch, as a writer does while that turn's repair runs. The two commits
+     * reach the pass after it together.
+     *
+     * @param isAppliedBeforeTheNextPass whether the base applies the two commits ahead of the
+     *                                   pass that reads them
+     */
+    private void commitDuringTheNextTurn(
+            LiveViewRefreshJob job,
+            String inOrderRow,
+            String lateRow,
+            boolean isAppliedBeforeTheNextPass
+    ) {
+        job.setSimulatePeerTurnBeforeRefreshLatchForTest(() -> {
+            try {
+                execute("INSERT INTO tx VALUES " + inOrderRow);
+                execute("INSERT INTO tx VALUES " + lateRow);
+            } catch (SqlException e) {
+                throw new RuntimeException(e);
+            }
+            if (isAppliedBeforeTheNextPass) {
+                // Ahead of the pass that reads the two commits, which is the turn after this one.
+                job.setSimulatePeerTurnBeforeRefreshLatchForTest(() -> drainWalQueue());
+            }
+        });
+    }
+
+    /**
      * Two base commits with no refresh between them: the base applies both, then the drain
      * breaks on the first and never reads the second at all. The second is the apply-ahead
      * range - what {@code ApplyWal2TableJob} raced past the O3 trigger - and the repair
@@ -1384,6 +2097,41 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
         execute("insert into tx values " + aheadValues);
         drainWalQueue();
         driveRefreshToQuiescence(job);
+    }
+
+    /**
+     * The anchored view the backfill cases repair, over two accounts on each of 2026-01-02 to
+     * 2026-01-09.
+     *
+     * @param filter the view's WHERE clause, with a leading space, or empty
+     */
+    private void createBackfillView(String keyColumnType, String filter) throws Exception {
+        execute("CREATE TABLE tx (created_at TIMESTAMP, account_id " + keyColumnType + ", "
+                + "amount DOUBLE) TIMESTAMP(created_at) PARTITION BY HOUR WAL");
+        execute("INSERT INTO tx VALUES " + seedTwoAccountsOverDays(2, 9));
+        drainWalQueue();
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                + "SELECT created_at, account_id, "
+                + "sum(amount) OVER w AS cumulative_sum, "
+                + "count(account_id) OVER w AS cumulative_count "
+                + "FROM tx" + filter + " "
+                + "WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')");
+    }
+
+    /**
+     * The view whose bounded {@code frame} carries no anchor, waiting an hour between flushes,
+     * over the three seeded days.
+     *
+     * @param filter the view's WHERE clause, with a leading space, or empty
+     */
+    private void createFramedView(String frame, String filter) throws Exception {
+        execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) "
+                + "TIMESTAMP(created_at) PARTITION BY HOUR WAL");
+        execute("INSERT INTO tx VALUES " + seedThreeDays());
+        drainWalQueue();
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 1h START FROM BEGINNING AS "
+                + "SELECT created_at, account_id, sum(amount) OVER (PARTITION BY account_id ORDER BY created_at "
+                + frame + ") AS windowed_sum FROM tx" + filter);
     }
 
     /**
@@ -1428,6 +2176,38 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
     }
 
     /**
+     * Grows the newest root's timestamp group and leaves it grown. A flush seals a root over
+     * acct-1's row at 2026-01-04T03, and acct-2's row lands on that same timestamp. The next
+     * flush makes it durable and seals no root, so the runtime frontier and the batch minimum
+     * both sit on the root's timestamp with nothing in the lead.
+     * <p>
+     * Needs {@link #SEAL_EVERY_SECOND_FLUSH_MICROS} as the checkpoint duration: the flush at the
+     * tie waits that long and seals, and the flush an hour after it does not.
+     */
+    private void growTheNewestRootsTimestampGroup(LiveViewRefreshJob job) throws Exception {
+        sealARootAtTheTie(job);
+        execute("INSERT INTO tx VALUES " + row(4, 3, "acct-2"));
+        flushNext(job);
+        final LiveViewInstance instance = viewInstance();
+        Assert.assertEquals("the flush must leave nothing in the lead", 0, instance.getLeadRowCount());
+        Assert.assertEquals(
+                "the flush must seal no second root on the tie",
+                ts(NEWEST_ROOT_AT_THE_TIE),
+                instance.getHeadCheckpointMaxTs()
+        );
+        Assert.assertEquals(
+                "the batch minimum must sit on the tie",
+                ts(NEWEST_ROOT_AT_THE_TIE),
+                instance.getMinSeenTsSinceCheckpoint()
+        );
+        Assert.assertEquals(
+                "the runtime frontier must sit on the tie",
+                ts(NEWEST_ROOT_AT_THE_TIE),
+                instance.getLatestSeenTs()
+        );
+    }
+
+    /**
      * Flushes acct-1's row at 2026-01-04T03 and leaves acct-2's row at the same timestamp in
      * the un-flushed lead. Every pass but the flush moves the clock by far less than the hour
      * the view waits between flushes.
@@ -1443,6 +2223,43 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
         driveRefreshToQuiescence(job);
         Assert.assertEquals("the tied row must sit in the un-flushed lead", 1, viewInstance().getLeadRowCount());
         return viewInstance().getHeadCheckpointMaxTs();
+    }
+
+    /**
+     * Grows the newest root's timestamp group, then lands a row above it. A flush seals a root
+     * over acct-1's row at 2026-01-04T03, acct-2's row lands on that same timestamp, and acct-1's
+     * row at 2026-01-04T04 lands above it. The next flush makes both durable and seals no root,
+     * so the batch minimum still sits on the root's timestamp while the runtime frontier has
+     * moved above it. That ends the grown group, and a repair after it may keep the primary
+     * runtime again.
+     * <p>
+     * Needs {@link #SEAL_EVERY_SECOND_FLUSH_MICROS} as the checkpoint duration: the flush at the
+     * tie waits that long and seals, and the flush an hour after it does not.
+     */
+    private void landARowAboveATieOnTheNewestRoot(LiveViewRefreshJob job) throws Exception {
+        sealARootAtTheTie(job);
+        execute("INSERT INTO tx VALUES " + row(4, 3, "acct-2"));
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        execute("INSERT INTO tx VALUES " + row(4, 4, "acct-1"));
+        flushNext(job);
+        final LiveViewInstance instance = viewInstance();
+        Assert.assertEquals("the flush must leave nothing in the lead", 0, instance.getLeadRowCount());
+        Assert.assertEquals(
+                "the flush must seal no root above the tie",
+                ts(NEWEST_ROOT_AT_THE_TIE),
+                instance.getHeadCheckpointMaxTs()
+        );
+        Assert.assertEquals(
+                "the batch minimum must still sit on the tie",
+                ts(NEWEST_ROOT_AT_THE_TIE),
+                instance.getMinSeenTsSinceCheckpoint()
+        );
+        Assert.assertEquals(
+                "the runtime frontier must sit above the tie",
+                ts("2026-01-04T04:00:00.000000Z"),
+                instance.getLatestSeenTs()
+        );
     }
 
     /**
@@ -1492,6 +2309,31 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
     }
 
     /**
+     * One row of {@code account} at {@code minuteOfDay} minutes past midnight on
+     * 2026-01-{@code day}, as an INSERT tuple.
+     */
+    private String rowAtMinute(int day, int minuteOfDay, String account) {
+        return "('2026-01-" + String.format("%02d", day) + "T" + String.format("%02d", minuteOfDay / 60)
+                + ":" + String.format("%02d", minuteOfDay % 60) + ":00.000000Z', '" + account + "', 1.0)";
+    }
+
+    /**
+     * Commits acct-1's row at 2026-01-04T03 and moves the clock a whole checkpoint duration on,
+     * so the flush that makes it durable also seals a root over it.
+     */
+    private void sealARootAtTheTie(LiveViewRefreshJob job) throws Exception {
+        execute("INSERT INTO tx VALUES " + row(4, 3, "acct-1"));
+        drainWalQueue();
+        setCurrentMicros(currentMicros + SEAL_EVERY_SECOND_FLUSH_MICROS);
+        driveRefreshToQuiescence(job);
+        Assert.assertEquals(
+                "the flush must seal a root at the tie",
+                ts(NEWEST_ROOT_AT_THE_TIE),
+                viewInstance().getHeadCheckpointMaxTs()
+        );
+    }
+
+    /**
      * Four accounts on each of 2026-01-02, 2026-01-03 and 2026-01-04. The wider key domain is
      * what separates an incremental freeze from a complete one: a batch touching one account
      * images one key where a complete freeze images four.
@@ -1517,6 +2359,21 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
         return row(2, 1, "acct-1") + ", " + row(2, 2, "acct-2") + ", "
                 + row(3, 1, "acct-1") + ", " + row(3, 2, "acct-2") + ", "
                 + row(4, 1, "acct-1") + ", " + row(4, 2, "acct-2");
+    }
+
+    /**
+     * Two accounts on each day from 2026-01-{@code firstDay} to 2026-01-{@code lastDay}, acct-1
+     * at 01:00 and acct-2 at 02:00.
+     */
+    private String seedTwoAccountsOverDays(int firstDay, int lastDay) {
+        final StringBuilder rows = new StringBuilder();
+        for (int day = firstDay; day <= lastDay; day++) {
+            if (rows.length() > 0) {
+                rows.append(", ");
+            }
+            rows.append(row(day, 1, "acct-1")).append(", ").append(row(day, 2, "acct-2"));
+        }
+        return rows.toString();
     }
 
     /**
