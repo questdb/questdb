@@ -688,6 +688,36 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledRangeEqual() throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        final String expression = "$now..$now";
+        final long now = driver.parseFloorLiteral("2026-03-15T12:00:00.000000Z");
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                driver, configuration, expression, 0, expression.length(), 0)) {
+            compiled.evaluate(out, now);
+            Assert.assertEquals(2, out.size());
+            Assert.assertEquals(now, out.getQuick(0));
+            Assert.assertEquals(now, out.getQuick(1));
+        }
+    }
+
+    @Test
+    public void testCompiledRangeReversed() throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        final String expression = "$now..$now-1h";
+        final long now = driver.parseFloorLiteral("2026-03-15T12:00:00.000000Z");
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                driver, configuration, expression, 0, expression.length(), 0)) {
+            // An empty range must preserve intervals already in the output.
+            out.add(1L, 2L);
+            compiled.evaluate(out, now);
+            Assert.assertEquals(2, out.size());
+            Assert.assertEquals(1, out.getQuick(0));
+            Assert.assertEquals(2, out.getQuick(1));
+        }
+    }
+
+    @Test
     public void testCompiledTickExprAllSuffixesCombined() throws SqlException {
         assertCompiledTickExpr("$today..$today + 5dT09:30@+02:00;1h");
     }
