@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableReader;
@@ -43,6 +44,8 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -140,6 +143,16 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
+    public void testKillsLeaveOnePostingGeneration() throws Exception {
+        assertOnePostingGenerationAfterCrashes(false);
+    }
+
+    @Test
+    public void testPowerLossesLeaveOnePostingGeneration() throws Exception {
+        assertOnePostingGenerationAfterCrashes(true);
+    }
+
+    @Test
     public void testPurgeLogReplayAfterKillKeepsReadersOpen() throws Exception {
         setUpAdaptive();
         runWithCrashFacade(() -> {
@@ -189,6 +202,30 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         });
     }
 
+    // Every partition directory holds one .pv of column s, and every cover file of s belongs to it.
+    private static void assertOnePostingGenerationPerPartition(String tableDir, String where) {
+        final Map<String, List<String>> byPartition = new TreeMap<>();
+        final List<String> files = sealedFiles(tableDir);
+        for (int i = 0, n = files.size(); i < n; i++) {
+            final java.nio.file.Path file = Paths.get(files.get(i));
+            byPartition.computeIfAbsent(file.getParent().getFileName().toString(), k -> new ArrayList<>()).add(file.getFileName().toString());
+        }
+        Assert.assertFalse(where + ": no sealed files", byPartition.isEmpty());
+        for (Map.Entry<String, List<String>> e : byPartition.entrySet()) {
+            String sealTxn = null;
+            for (String name : e.getValue()) {
+                if (name.startsWith("s.pv.")) {
+                    Assert.assertNull(where + ": more than one .pv in " + e.getKey() + ": " + e.getValue(), sealTxn);
+                    sealTxn = name.substring(name.lastIndexOf('.'));
+                }
+            }
+            Assert.assertNotNull(where + ": no .pv in " + e.getKey() + ": " + e.getValue(), sealTxn);
+            for (String name : e.getValue()) {
+                Assert.assertTrue(where + ": a cover of another generation in " + e.getKey() + ": " + e.getValue(), name.endsWith(sealTxn));
+            }
+        }
+    }
+
     // A killed process loses its in-memory purge queue, including what a writer published at close.
     private static void discardPurgeQueue() {
         final SCSequence subSeq = engine.getMessageBus().getPostingSealPurgeSubSeq();
@@ -214,16 +251,30 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         }
     }
 
+    // Makes every removal so far durable, as a journal commit before a power loss would.
+    private static void fsyncTableDirs(String tableDir) {
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Stream<java.nio.file.Path> paths = Files.walk(Paths.get(tableDir), 1)) {
+            paths.filter(Files::isDirectory).forEach(dir -> {
+                final long fd = ff.openRONoCache(Path.getThreadLocal(dir.toString()).$());
+                Assert.assertTrue(fd > -1);
+                ff.fsyncAndClose(fd);
+            });
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
     private static void insertAndApply(String values, PostingSealPurgeJob job) throws Exception {
         execute("INSERT INTO t VALUES " + values);
         drainWalQueue();
         runPurgeJob(job);
     }
 
-    // One WAL commit of ROWS_PER_PASS rows in day 1, from hour 10 + pass, after every earlier row.
+    // One WAL commit of ROWS_PER_PASS rows in day 1, from 10:00 + 10 minutes per pass, after every earlier row.
     private static String passSql(int pass) {
-        final long start = DAY1 + (10L + pass) * HOUR;
-        final long step = HOUR / ROWS_PER_PASS;
+        final long step = HOUR / 60;
+        final long start = DAY1 + 10L * HOUR + pass * ROWS_PER_PASS * step;
         final StringBuilder sql = new StringBuilder("INSERT INTO t VALUES ");
         for (int i = 0; i < ROWS_PER_PASS; i++) {
             final long v = (long) pass * ROWS_PER_PASS + i;
@@ -242,6 +293,13 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         for (int i = 0; i < 4; i++) {
             Os.sleep(1);
             job.run();
+        }
+    }
+
+    private static void runPurgeJobs(PostingSealPurgeJob job, O3PartitionPurgeJob partitionPurge) {
+        runPurgeJob(job);
+        //noinspection StatementWithEmptyBody
+        while (partitionPurge.run()) {
         }
     }
 
@@ -265,6 +323,88 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         // Retry a held purge on every job run, so the job would remove the file as soon as nothing held it.
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT, 1);
+    }
+
+    // Three crashes, each after in-place reseals since the last save point. After each recovery, one more commit, the
+    // next save point and a restart's purge jobs leave one posting generation in the partition.
+    private void assertOnePostingGenerationAfterCrashes(boolean powerLoss) throws Exception {
+        setUpAdaptive();
+        runWithCrashFacade(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (v), v LONG) TIMESTAMP(ts) "
+                    + "PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)");
+            execute(passSql(0));
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("t");
+            final String tableDir = Paths.get(root, token.getDirName()).toString();
+            try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                runPurgeJob(job);
+            }
+            int pass = 0;
+            for (int crash = 1; crash <= 3; crash++) {
+                if (powerLoss) {
+                    markDurableBaseline();
+                }
+                try (
+                        PostingSealPurgeJob job = new PostingSealPurgeJob(engine);
+                        O3PartitionPurgeJob partitionPurge = new O3PartitionPurgeJob(engine, 1)
+                ) {
+                    for (int i = 0; i < PASSES; i++) {
+                        execute(passSql(++pass));
+                        drainWalQueue();
+                        runPurgeJobs(job, partitionPurge);
+                        fsyncTableDirs(tableDir);
+                    }
+                }
+                if (powerLoss) {
+                    engine.releaseAllReaders();
+                    engine.releaseAllWriters();
+                    engine.releaseCrashOrphanedWriters();
+                    discardPurgeQueue();
+                    recoverAfterCrash(new TableToken[]{token});
+                } else {
+                    kill(token);
+                    engine.notifyWalTxnRepublisher(token);
+                    drainWalQueue();
+                }
+                evictPurgeLogScoreboard();
+                Assert.assertFalse("recovery suspended the table", anyTableSuspended(token));
+                assertRowsThroughIndex(pass);
+
+                node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 1);
+                execute(passSql(++pass));
+                drainWalQueue();
+                node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, Long.MAX_VALUE);
+                try (
+                        PostingSealPurgeJob job = new PostingSealPurgeJob(engine);
+                        O3PartitionPurgeJob partitionPurge = new O3PartitionPurgeJob(engine, 1)
+                ) {
+                    runPurgeJobs(job, partitionPurge);
+                }
+                assertRowsThroughIndex(pass);
+                assertOnePostingGenerationPerPartition(tableDir, "crash " + crash);
+            }
+        });
+    }
+
+    // The count and sum of every symbol through the index, against the rows of passes 0 to lastPass.
+    private void assertRowsThroughIndex(int lastPass) throws Exception {
+        final long[] count = new long[SYMBOLS];
+        final long[] sum = new long[SYMBOLS];
+        for (int pass = 0; pass <= lastPass; pass++) {
+            for (int i = 0; i < ROWS_PER_PASS; i++) {
+                final long v = (long) pass * ROWS_PER_PASS + i;
+                count[(int) (v % SYMBOLS)]++;
+                sum[(int) (v % SYMBOLS)] += v;
+            }
+        }
+        for (int k = 0; k < SYMBOLS; k++) {
+            // No leak check: it clears the engine's queues, which would lose the purge tasks the replay published.
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s = '" + (char) ('a' + k) + "'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tsum\n" + count[k] + "\t" + sum[k] + "\n");
+        }
     }
 
     // A kill keeps every byte written but loses the process: its purge queue, scoreboards and sequencer state.
