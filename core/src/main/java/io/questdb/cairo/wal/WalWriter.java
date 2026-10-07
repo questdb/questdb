@@ -684,11 +684,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     protected final void cleanupBeforeClose() {
         // If distressed, no need to rollback, WalWriter will not be used any more.
         if (isDistressed()) {
-            // A distressed writer is discarded; its un-flushed group-commit tail (if any) never advanced
-            // localDurableSeqTxn, so no false durability is claimed. Clear the pending fields AND deregister
-            // under the writer monitor BEFORE doClose closes any fd, so a background flusher that captured
-            // this writer reference before the deregister (weakly-consistent iterator) cannot fdatasync a
-            // closed fd (use-after-close). dropPendingDurable() restores the invariant on the distressed path.
+            // A distressed writer is discarded, but the group-commit batch it already sequenced is still owed its
+            // flush, or nothing moves the frontier past it. Then clear the pending fields AND deregister under
+            // the writer monitor BEFORE doClose closes any fd, so a background flusher that captured this writer
+            // reference before the deregister (weakly-consistent iterator) cannot fdatasync a closed fd
+            // (use-after-close). dropPendingDurable() restores the invariant on the distressed path.
+            flushDiscardedBatch();
             dropPendingDurable();
             return;
         }
@@ -2684,6 +2685,28 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * of a given backlog runs and the pending fields are mutated under one lock. Idempotent: a no-op when
      * nothing is pending (a second caller that lost the race simply finds pendingDurableSeqTxn == -1).
      */
+    /**
+     * Flushes the sequencer log for the batch of a writer that is being discarded. The batch's private files
+     * were flushed before it sequenced, so the log flush makes it durable and moves the frontier past it. Not
+     * after a failed barrier, which no later flush can prove; a failure here is logged, as the writer is
+     * discarded anyway.
+     */
+    private synchronized void flushDiscardedBatch() {
+        if (pendingDurableSeqTxn < 0 || sequencer.isDurabilityFailed() || seqTxnTracker.isDurableFrontierFenced()) {
+            return;
+        }
+        try {
+            final long orphanSweepMark = seqTxnTracker.snapshotOrphanSweepMark();
+            final long coveredSeqTxn = sequencer.fdatasyncTxnLog(tableToken);
+            seqTxnTracker.markWriterDurable(walId, orphanSweepMark, coveredSeqTxn);
+        } catch (Throwable th) {
+            LOG.error().$("could not flush the sequencer log for a discarded WAL writer [table=").$(tableToken)
+                    .$(", walId=").$(walId)
+                    .$(", error=").$(th)
+                    .I$();
+        }
+    }
+
     private synchronized void flushPendingDurable() {
         final long flushTo = pendingDurableSeqTxn;
         if (flushTo < 0) {

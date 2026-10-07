@@ -47,6 +47,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -1261,6 +1262,33 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testDiscardedWriterFlushesItsSequencedBatch() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
+        // Keep the apply-side epoch from moving the frontier by its own route.
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "1h");
+        final WalFdatasyncFacade ff = new WalFdatasyncFacade();
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(1_000_000L);
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("x");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+            try (WalWriter w = engine.getWalWriter(tt)) {
+                commitRow(w, 0L, 0);
+                Assert.assertTrue("test setup: the commit must wait for its batch flush", tracker.getLocalDurableSeqTxn() < tracker.getSeqTxn());
+                ff.reset();
+                // A failure after sequencing that is not a failed flush: the pool discards the writer with its batch.
+                markDistressed(w);
+            }
+            // Its private files were flushed before it sequenced, so flushing the log makes the batch durable.
+            Assert.assertTrue("the discarded writer's batch must be flushed", ff.sequencerFdatasyncs() > 0);
+            Assert.assertEquals("its pin must be released, not orphaned", 0, tracker.getPendingWriterPinCount());
+            Assert.assertEquals(tracker.getSeqTxn(), tracker.getLocalDurableSeqTxn());
+        });
+    }
+
     /**
      * A writer torn down WITHOUT a device flush must ORPHAN its contiguous-prefix pin, not hold it forever.
      *
@@ -1374,6 +1402,12 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
      * compares {@code now - pendingSince >= W}; the WalPurgeJob's broad sweep includes the adaptive
      * group-commit flush of idle writers).
      */
+    private static void markDistressed(WalWriter writer) throws ReflectiveOperationException {
+        final Field distressed = WalWriter.class.getSuperclass().getDeclaredField("distressed");
+        distressed.setAccessible(true);
+        distressed.setBoolean(writer, true);
+    }
+
     private void assertDropAndViewChangeFlushTheSequencerLog(int seqPartTxnCount) throws Exception {
         // No WAL writer batch follows a drop or a view change, so under a window they must flush the log themselves.
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, seqPartTxnCount);
