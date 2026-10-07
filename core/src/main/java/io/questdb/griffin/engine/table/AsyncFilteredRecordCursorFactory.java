@@ -121,7 +121,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         final int maxNegativeLimit;
         boolean isPerWorkerFiltersOwned = true;
         try {
-            cursor = new AsyncFilteredRecordCursor(configuration, filter, base.getScanDirection());
+            cursor = new AsyncFilteredRecordCursor(configuration, base.getMetadata(), filter, base.getScanDirection());
             negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(configuration, base.getScanDirection());
             final int columnCount = base.getMetadata().getColumnCount();
             final IntList columnTypes = new IntList(columnCount);

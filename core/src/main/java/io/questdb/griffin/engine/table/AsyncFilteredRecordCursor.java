@@ -26,14 +26,17 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
@@ -55,8 +58,10 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
     // Used for random access: we may have to deserialize Parquet page frame.
     private final PageFrameMemoryPool frameMemoryPool;
     private final boolean hasDescendingOrder;
+    private final RecordMetadata metadata;
     private final PageFrameMemoryRecord record;
     private boolean allFramesActive;
+    private SelectedRowsBlock block;
     private long cursor = -1;
     private int dispatchLimit;
     private int frameIndex;
@@ -73,7 +78,12 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
     // It is typically copied from LIMIT clause on SQL statement.
     private long rowsRemaining;
 
-    public AsyncFilteredRecordCursor(@NotNull CairoConfiguration configuration, Function filter, int scanDirection) {
+    public AsyncFilteredRecordCursor(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
+            Function filter,
+            int scanDirection
+    ) {
         // close() only frees these once isOpen (set in of()), so a ctor failure must free the
         // already-allocated natives here; build them into locals so the catch can release them.
         PageFrameMemoryRecord record = null;
@@ -87,6 +97,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
             throw th;
         }
         this.filter = filter;
+        this.metadata = metadata;
         this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
         this.record = record;
         this.frameMemoryPool = frameMemoryPool;
@@ -247,6 +258,42 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         return frameSequence.getSymbolTableSource().newSymbolTable(columnIndex);
     }
 
+    /**
+     * The rest of the current frame's selected rows, gathered by their row indexes from the
+     * frame's memory, which the task holds until the cursor collects it. When the current frame
+     * has no rows left, the next frame comes first, as {@link #hasNext()} would fetch it.
+     */
+    @Override
+    public RecordBlock peekRecordBlock(int maxRows) {
+        if (hasDescendingOrder) {
+            return null;
+        }
+        if (frameIndex == -1) {
+            // the first frame, as the first hasNext() fetches it
+            fetchNextFrame(dispatchLimit, false);
+        }
+        if (rowsRemaining <= 0) {
+            return null;
+        }
+        if (frameRowIndex >= frameRowCount) {
+            // no row of this frame is left to return: move to the next frame with rows, as
+            // hasNext() does before returning that frame's first row
+            collectCursor(false);
+            if (frameIndex >= frameLimit) {
+                return null;
+            }
+            fetchNextFrame(dispatchLimit, false);
+            if (frameRowCount < 1 || frameRowIndex >= frameRowCount) {
+                return null;
+            }
+        }
+        if (block == null) {
+            block = new SelectedRowsBlock();
+        }
+        block.of((int) Math.min(Math.min(frameRowCount - frameRowIndex, rowsRemaining), maxRows));
+        return block;
+    }
+
     @Override
     public long preComputedStateSize() {
         return 0;
@@ -275,6 +322,13 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
     @Override
     public long size() {
         return -1;
+    }
+
+    @Override
+    public void skipRecordBlock(int rowCount) {
+        assert frameRowIndex + rowCount <= frameRowCount && rowCount <= rowsRemaining;
+        frameRowIndex += rowCount;
+        rowsRemaining -= rowCount;
     }
 
     @Override
@@ -324,6 +378,14 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
                 throw buildInterruptionException();
             }
         }
+    }
+
+    /**
+     * Forward scans only: a backward scan returns each frame's selected rows in reverse.
+     */
+    @Override
+    public boolean supportsRecordBlocks() {
+        return !hasDescendingOrder;
     }
 
     @Override
@@ -454,6 +516,50 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         record.of(frameSequence.getSymbolTableSource());
         if (recordB != null) {
             recordB.of(frameSequence.getSymbolTableSource());
+        }
+    }
+
+    /**
+     * The current frame's selected rows from {@code frameRowIndex}: the filter's row list gives
+     * each row's index in the frame, at which the record's getters read every column.
+     */
+    private class SelectedRowsBlock implements RecordBlock {
+        private int rowCount;
+
+        @Override
+        public long getColumnAddress(int columnIndex) {
+            if (ColumnType.isVarSize(metadata.getColumnType(columnIndex))) {
+                return 0;
+            }
+            // the address the record's getters read at row index x * stride: 0 for a column
+            // absent from the frame (a column top) and for a column read with a type cast,
+            // both then read through getRecordAt(), as the getters read them
+            return record.getPageAddress(columnIndex);
+        }
+
+        @Override
+        public long getColumnStride(int columnIndex) {
+            return ColumnType.sizeOf(metadata.getColumnType(columnIndex));
+        }
+
+        @Override
+        public Record getRecordAt(int row) {
+            record.setRowIndex(rows.get(frameRowIndex + row));
+            return record;
+        }
+
+        @Override
+        public long getRowIndexesAddress() {
+            return rows.getAddress() + frameRowIndex * Long.BYTES;
+        }
+
+        @Override
+        public int getRowCount() {
+            return rowCount;
+        }
+
+        void of(int rowCount) {
+            this.rowCount = rowCount;
         }
     }
 }

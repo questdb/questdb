@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -450,10 +451,14 @@ public class AsyncHashJoinLightRecordCursorFactory extends AbstractRecordCursorF
         private final RecordSink keySink;
         private final LazySlaveJoinRecord record;
         private final OrderedMap.ProbeView view = new OrderedMap.ProbeView();
+        private JoinBlock block;
         private LongChain.Cursor chainCursor;
         private boolean isOpen;
         private RecordCursor masterCursor;
         private Record masterRecord;
+        // the master record whose key positionSlave() probes: the master cursor's own, or a
+        // master block record that is not
+        private Record probeRecord;
         private boolean slavePositioned;
         private Record slaveRecord;
 
@@ -511,6 +516,7 @@ public class AsyncHashJoinLightRecordCursorFactory extends AbstractRecordCursorF
         public boolean hasNext() {
             if (build.unique) {
                 slavePositioned = false;
+                probeRecord = masterRecord;
                 return masterCursor.hasNext();
             }
             // a key repeats: walk each kept row's chain, as the light hash join does
@@ -549,6 +555,27 @@ public class AsyncHashJoinLightRecordCursorFactory extends AbstractRecordCursorF
             }
         }
 
+        /**
+         * With a unique build, the master's block: every row has one match, so the join's rows are
+         * the master's, its master columns read from the master block's memory and its slave
+         * columns through {@link RecordBlock#getRecordAt}, which positions the slave on demand.
+         */
+        @Override
+        public RecordBlock peekRecordBlock(int maxRows) {
+            if (!build.unique) {
+                return null;
+            }
+            final RecordBlock masterBlock = masterCursor.peekRecordBlock(maxRows);
+            if (masterBlock == null) {
+                return null;
+            }
+            if (block == null) {
+                block = new JoinBlock();
+            }
+            block.master = masterBlock;
+            return block;
+        }
+
         @Override
         public long preComputedStateSize() {
             return masterCursor.preComputedStateSize();
@@ -560,15 +587,32 @@ public class AsyncHashJoinLightRecordCursorFactory extends AbstractRecordCursorF
         }
 
         @Override
+        public void skipRecordBlock(int rowCount) {
+            masterCursor.skipRecordBlock(rowCount);
+            slavePositioned = false;
+            probeRecord = masterRecord;
+        }
+
+        /**
+         * Only with a unique build, which the cursor knows once it opened: the build is complete
+         * before the master cursor opens.
+         */
+        @Override
+        public boolean supportsRecordBlocks() {
+            return build.unique && masterCursor.supportsRecordBlocks();
+        }
+
+        @Override
         public void toTop() {
             masterCursor.toTop();
             chainCursor = null;
             slavePositioned = false;
+            probeRecord = masterRecord;
         }
 
         private MapValue find() {
             view.withKey();
-            keySink.copy(masterRecord, view);
+            keySink.copy(probeRecord, view);
             return view.findValue();
         }
 
@@ -576,12 +620,60 @@ public class AsyncHashJoinLightRecordCursorFactory extends AbstractRecordCursorF
             this.masterCursor = masterCursor;
             this.isOpen = true;
             masterRecord = masterCursor.getRecord();
+            probeRecord = masterRecord;
             slaveRecord = build.slaveCursor.getRecordB();
             record.of(masterRecord, slaveRecord);
             view.setMemoryTracker(build.memoryTracker);
             view.of(build.map);
             chainCursor = null;
             slavePositioned = false;
+        }
+
+        private class JoinBlock implements RecordBlock {
+            private RecordBlock master;
+            // joins a master block record that is not the master cursor's own record
+            private LazySlaveJoinRecord record;
+
+            @Override
+            public long getColumnAddress(int columnIndex) {
+                return columnIndex < columnSplit ? master.getColumnAddress(columnIndex) : 0;
+            }
+
+            @Override
+            public long getColumnRowIndexesAddress(int columnIndex) {
+                return columnIndex < columnSplit ? master.getColumnRowIndexesAddress(columnIndex) : 0;
+            }
+
+            @Override
+            public long getColumnStride(int columnIndex) {
+                return columnIndex < columnSplit ? master.getColumnStride(columnIndex) : 0;
+            }
+
+            @Override
+            public Record getRecordAt(int row) {
+                final Record masterBlockRecord = master.getRecordAt(row);
+                // the slave of a new row: positionSlave() finds it by this row's key
+                slavePositioned = false;
+                probeRecord = masterBlockRecord;
+                if (masterBlockRecord == masterRecord) {
+                    return JoinCursor.this.record;
+                }
+                if (record == null) {
+                    record = new LazySlaveJoinRecord(columnSplit, JoinCursor.this);
+                }
+                record.of(masterBlockRecord, slaveRecord);
+                return record;
+            }
+
+            @Override
+            public int getRowCount() {
+                return master.getRowCount();
+            }
+
+            @Override
+            public long getRowIndexesAddress() {
+                return master.getRowIndexesAddress();
+            }
         }
     }
 }

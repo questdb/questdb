@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
@@ -36,14 +37,18 @@ import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
+import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.DirectLongLongSortedList;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class VirtualFunctionRecordCursor implements RecordCursor {
+    // the most rows of a block whose computed columns are evaluated column-wise in one go
+    private static final int KERNEL_BLOCK_ROWS = 4096;
     protected final VirtualFunctionRecord recordA;
     private final ObjList<Function> functions;
     private final int memoizerCount;
@@ -51,7 +56,18 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     private final PriorityMetadata priorityMetadata;
     private final VirtualFunctionRecord recordB;
     private final boolean supportsRandomAccess;
+    private final int virtualColumnReservedSlots;
     protected RecordCursor baseCursor;
+    // per column, the base column it reads unchanged, for block pass-through, or -1 for a column the
+    // record computes; null until first asked
+    private IntList blockBaseColumns;
+    private VirtualBlock block;
+    // whether no column computes a SYMBOL: see supportsRecordBlocks()
+    private boolean blocksAllowed;
+    // per column, the address of the current block's values of a column computed column-wise, or 0
+    private long[] kernelAddresses;
+    // evaluates the computed columns it has loops for over a block's rows, or null for none
+    private GroupByBatchKernels kernels;
 
     public VirtualFunctionRecordCursor(
             @NotNull PriorityMetadata priorityMetadata,
@@ -72,6 +88,7 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
             this.recordB = null;
         }
         this.supportsRandomAccess = supportsRandomAccess;
+        this.virtualColumnReservedSlots = virtualColumnReservedSlots;
     }
 
     @Override
@@ -82,6 +99,10 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
 
     @Override
     public void close() {
+        if (kernels != null) {
+            // the buffers go with the cursor; the next block allocates them again
+            kernels.clear();
+        }
         baseCursor = Misc.free(baseCursor);
         for (int i = 0, n = functions.size(); i < n; i++) {
             functions.getQuick(i).cursorClosed();
@@ -157,6 +178,43 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
         cursor.toTop();
     }
 
+    /**
+     * The base's block: a column that reads a base column unchanged exposes the base block's
+     * memory for it; a column computed by arithmetic and casts over base columns, which
+     * {@link GroupByBatchKernels#compileProjection} compiles, is evaluated column-wise over the
+     * block's rows into a buffer the block exposes; every other column is computed through
+     * {@link RecordBlock#getRecordAt}, on a record positioned at the base block's row, row by row.
+     */
+    @Override
+    public RecordBlock peekRecordBlock(int maxRows) {
+        if (blockBaseColumns == null) {
+            mapBlockBaseColumns();
+        }
+        if (!blocksAllowed) {
+            return null;
+        }
+        final GroupByBatchKernels kernels = this.kernels;
+        final RecordBlock baseBlock = baseCursor.peekRecordBlock(kernels != null ? Math.min(maxRows, KERNEL_BLOCK_ROWS) : maxRows);
+        if (baseBlock == null) {
+            return null;
+        }
+        if (block == null) {
+            block = new VirtualBlock();
+        }
+        block.base = baseBlock;
+        if (kernels != null) {
+            kernels.ofBlock(baseBlock, baseBlock.getRowCount());
+            for (int i = 0, n = kernelAddresses.length; i < n; i++) {
+                if (kernels.isKernel(i)) {
+                    // null: a column it reads is not in the block's memory, so the row path
+                    final GroupByBatchKernels.Args args = kernels.prepare(i);
+                    kernelAddresses[i] = args != null ? args.address(0) : 0;
+                }
+            }
+        }
+        return block;
+    }
+
     @Override
     public long preComputedStateSize() {
         return 0;
@@ -194,9 +252,27 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void skipRecordBlock(int rowCount) {
+        baseCursor.skipRecordBlock(rowCount);
+    }
+
+    @Override
     public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
         assert baseCursor != null;
         baseCursor.skipRows(rowCount, maxRowsAfterSkip);
+    }
+
+    /**
+     * The base's answer, unless a column computes a SYMBOL. The block fill reads SYMBOL columns
+     * first, row by row, before the other columns, so a computed SYMBOL column would be evaluated
+     * out of the row path's column order; the other computed columns are evaluated in it.
+     */
+    @Override
+    public boolean supportsRecordBlocks() {
+        if (blockBaseColumns == null) {
+            mapBlockBaseColumns();
+        }
+        return blocksAllowed && baseCursor.supportsRecordBlocks();
     }
 
     @Override
@@ -209,6 +285,94 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     private void clearMemos() {
         for (int i = 0; i < memoizerCount; i++) {
             memoizers.getQuick(i).clearMemo();
+        }
+    }
+
+    private void mapBlockBaseColumns() {
+        final int n = functions.size();
+        final IntList baseColumns = new IntList(n);
+        boolean allowed = true;
+        for (int i = 0; i < n; i++) {
+            final Function function = functions.getQuick(i);
+            final ColumnFunction columnFunction = ColumnFunction.unwrap(function);
+            int baseColumn = -1;
+            if (columnFunction != null) {
+                final int index = columnFunction.getColumnIndex();
+                // a reference to a base column, read as the base's type
+                if (index >= virtualColumnReservedSlots && priorityMetadata.getColumnType(index) == function.getType()) {
+                    baseColumn = priorityMetadata.getBaseColumnIndex(index);
+                }
+            }
+            if (baseColumn == -1 && ColumnType.tagOf(function.getType()) == ColumnType.SYMBOL) {
+                allowed = false;
+            }
+            baseColumns.add(baseColumn);
+        }
+        blocksAllowed = allowed;
+        blockBaseColumns = baseColumns;
+        if (allowed) {
+            kernels = GroupByBatchKernels.compileProjection(functions, virtualColumnReservedSlots, KERNEL_BLOCK_ROWS);
+            if (kernels != null) {
+                kernelAddresses = new long[n];
+            }
+        }
+    }
+
+    private class VirtualBlock implements RecordBlock {
+        private RecordBlock base;
+        // computes the columns over a base block record that is not the base cursor's own record
+        private VirtualFunctionRecord record;
+
+        @Override
+        public long getColumnAddress(int columnIndex) {
+            final int baseColumn = blockBaseColumns.getQuick(columnIndex);
+            if (baseColumn != -1) {
+                return base.getColumnAddress(baseColumn);
+            }
+            return kernels != null ? kernelAddresses[columnIndex] : 0;
+        }
+
+        @Override
+        public long getColumnRowIndexesAddress(int columnIndex) {
+            final int baseColumn = blockBaseColumns.getQuick(columnIndex);
+            // a column computed column-wise holds one value per block row, in order
+            return baseColumn != -1 ? base.getColumnRowIndexesAddress(baseColumn) : 0;
+        }
+
+        @Override
+        public long getColumnStride(int columnIndex) {
+            final int baseColumn = blockBaseColumns.getQuick(columnIndex);
+            if (baseColumn != -1) {
+                return base.getColumnStride(baseColumn);
+            }
+            return ColumnType.sizeOf(functions.getQuick(columnIndex).getType());
+        }
+
+        @Override
+        public Record getRecordAt(int row) {
+            final Record baseRecord = base.getRecordAt(row);
+            // a new row: hasNext() would have cleared the memos
+            clearMemos();
+            if (baseRecord == recordA.getBaseRecord()) {
+                return recordA;
+            }
+            if (record == null) {
+                record = new VirtualFunctionRecord(functions, virtualColumnReservedSlots);
+            }
+            if (record.getBaseRecord() != baseRecord) {
+                record.of(baseRecord);
+            }
+            return record;
+        }
+
+        @Override
+        public int getRowCount() {
+            return base.getRowCount();
+        }
+
+        @Override
+        public long getRowIndexesAddress() {
+            return base.getRowIndexesAddress();
         }
     }
 }

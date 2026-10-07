@@ -122,18 +122,122 @@ public class RecordBlockTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFilteredAndBackwardScansOfferNone() throws Exception {
+    public void testAsyncFilterOffersSelectedRows() throws Exception {
         assertMemoryLeak(() -> {
             createAllTypes();
             final Rnd rnd = TestUtils.generateRandom(LOG);
-            // the filtered results' top cursors are filter wrappers, which offer no blocks at all;
-            // the backward scan is a page frame scan that refuses them
-            assertSupportsBlocks(false, "select * from at where l > 5000 limit 100000");
+            for (int k = 0; k < 3; k++) {
+                assertFilterBlocks(engine, sqlExecutionContext, rnd);
+            }
+            // a backward scan returns each frame's rows in reverse, a negative LIMIT from a list
+            // of its own: neither offers blocks
+            assertSupportsBlocks(false, "select * from at where l > 5000 order by ts desc");
+            assertSupportsBlocks(false, "select * from at where l > 5000 limit -100");
+            Assert.assertEquals(0, assertBlocksMatchRows(engine, sqlExecutionContext, "select * from at where l > 5000 order by ts desc", rnd));
+            Assert.assertEquals(0, assertBlocksMatchRows(engine, sqlExecutionContext, "select * from at where l > 5000 limit -100", rnd));
+            // no selected row
+            Assert.assertEquals(0, assertBlocksMatchRows(engine, sqlExecutionContext, "select * from at where l < 0", rnd));
+        });
+    }
+
+    @Test
+    public void testAsyncFilterOffersSelectedRowsOnWorkerPool() throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, context) -> {
+                final SqlExecutionContextImpl ctx = (SqlExecutionContextImpl) context;
+                ctx.changePageFrameSizes(1, 64);
+                createAllTypes(engine, ctx);
+                final Rnd rnd = TestUtils.generateRandom(LOG);
+                for (int run = 0; run < 3; run++) {
+                    assertFilterBlocks(engine, ctx, rnd);
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testAsyncFilterOverParquetFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            createAllTypes();
+            execute("alter table at convert partition to parquet list '1970-01-01', '1970-01-03'");
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            // Parquet frames: the filter's columns decode first, the others for the selected rows
+            // only (late materialization); blocks gather from the decoded buffers
+            for (int k = 0; k < 3; k++) {
+                assertFilterBlocks(engine, sqlExecutionContext, rnd);
+                Assert.assertTrue(assertBlocksMatchRows(engine, sqlExecutionContext, "select * from at where i > 30 and ts < '1970-01-02'", rnd) > 0);
+            }
+        });
+    }
+
+    @Test
+    public void testBackwardScanOffersNone() throws Exception {
+        assertMemoryLeak(() -> {
+            createAllTypes();
+            final Rnd rnd = TestUtils.generateRandom(LOG);
             assertSupportsBlocks(false, "select * from at order by ts desc limit 100000");
-            assertSupportsBlocks(false, "select * from at where s = 'k7' limit 100000");
-            Assert.assertEquals(0, assertBlocksMatchRows(engine, sqlExecutionContext, "select * from at where l > 5000 limit 100000", rnd));
             Assert.assertEquals(0, assertBlocksMatchRows(engine, sqlExecutionContext, "select * from at order by ts desc limit 100000", rnd));
-            Assert.assertEquals(0, assertBlocksMatchRows(engine, sqlExecutionContext, "select * from at where s = 'k7' limit 100000", rnd));
+        });
+    }
+
+    @Test
+    public void testHashJoinLightOffersMasterRows() throws Exception {
+        assertMemoryLeak(() -> {
+            createJoinTable();
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            sqlExecutionContext.setParallelHashJoinProbeEnabled(true);
+            // idx 59 and 70's Manual Opt shapes: a semi-join, master columns only
+            final String mo59 = "select t.ts, t.ex, t.sym, t.v, t.size, t.price, t.x from t t " +
+                    "join (select ex mex, sym msym, min(size) min_size from t) m on t.ex = m.mex and t.sym = m.msym and t.size = m.min_size";
+            final String mo70 = "select ts, ex, sym, v, size, price, x from t " +
+                    "join (select sym msym, min(price) min_price from t) m on t.sym = m.msym where price = min_price";
+            // slave columns too, read through the block's record
+            final String withSlave = "select t.ts, m.msym, t.price, m.min_price, t.x from t " +
+                    "join (select sym msym, min(price) min_price from t) m on t.sym = m.msym where price = min_price";
+            for (String query : new String[]{mo59, mo70, withSlave}) {
+                assertPlanContains(query, "Async Hash Join Light");
+                for (int k = 0; k < 3; k++) {
+                    Assert.assertTrue(query, assertBlocksMatchRows(engine, sqlExecutionContext, query, rnd) > 0);
+                    Assert.assertTrue(query, assertBlocksMatchRows(engine, sqlExecutionContext, query + " limit 3, 250", rnd) > 0);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testIndexScansOfferRowLists() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String indexType : new String[]{"posting", "bitmap"}) {
+                execute("drop table if exists ix");
+                execute("create table ix (ts timestamp, x long) timestamp(ts) partition by DAY");
+                execute("insert into ix select (x * 900000000)::timestamp, x from long_sequence(150)");
+                // the first rows are column tops of the columns added here
+                execute("alter table ix add column s symbol index type " + indexType + ", b boolean, sh short, i int, " +
+                        "f float, d double, l long, s2 symbol, u uuid, v varchar");
+                execute("insert into ix select ((x + 150) * 900000000)::timestamp, x, " +
+                        "case when x % 17 = 0 then null else 'k' || (x % 13) end, x % 3 = 0, (x % 999)::short, " +
+                        "case when x % 11 = 0 then null else x::int end, case when x % 4 = 0 then null else (x / 3.0)::float end, " +
+                        "case when x % 7 = 0 then null else x * 1.5 end, case when x % 5 = 0 then null else x * 1000003 end, " +
+                        "'z' || (x % 7), rnd_uuid4(), 'v' || x from long_sequence(1200)");
+                final Rnd rnd = TestUtils.generateRandom(LOG);
+                final String[] queries = {
+                        "select * from ix where s = 'k7'",
+                        "select * from ix where s = 'k7' and ts in '1970-01-03'",
+                        "select * from ix where s = 'k7' and ts > '1970-01-02T05' limit 40",
+                        "select * from ix where s = 'k7' and l > 3000",
+                        "select * from ix where s in ('k1', 'k7', 'k11')",
+                        "select * from ix where s = null",
+                        "select ts, s, d, s2 from ix where s = 'k3'",
+                };
+                for (String query : queries) {
+                    assertSupportsBlocks(true, query);
+                    for (int k = 0; k < 3; k++) {
+                        Assert.assertTrue(query, assertBlocksMatchRows(engine, sqlExecutionContext, query, rnd) > 0);
+                    }
+                }
+                assertPlanContains(queries[0], "Index forward scan on: s");
+            }
         });
     }
 
@@ -147,6 +251,41 @@ public class RecordBlockTest extends AbstractCairoTest {
             Assert.assertTrue(assertBlocksMatchRows(engine, sqlExecutionContext, "select * from at limit 1000000", rnd) > 0);
             Assert.assertTrue(assertBlocksMatchRows(engine, sqlExecutionContext, "select * from at limit 50, 2000", rnd) > 0);
             Assert.assertEquals(0, assertBlocksMatchRows(engine, sqlExecutionContext, "select * from at where ts < '1970-01-02' limit 100000", rnd));
+        });
+    }
+
+    @Test
+    public void testProjectionsPassBlocksThrough() throws Exception {
+        assertMemoryLeak(() -> {
+            createAllTypes();
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final String[] queries = {
+                    // column references read the base's memory, expressions go row by row
+                    "select ts, (db + l) / 2 mid, s, l, f from at where l > 5000",
+                    // idx 13's shape: a projection over a selection of every column
+                    "select ts, (db + f) / 2 mid from (select * from at where s = 'k7')",
+                    "select ts, s, db, b, ip from at where i > 100",
+                    // an alias referenced twice is memoized: its value per row stays one
+                    "select l + 1 a, a * 2 a2, a - 3 a3, s, ts from at where l > 100",
+                    "select s, s2, l256, v, i * 2 from at where l > 100",
+                    "select case when b then s else s2 end cs, l from at where l > 100",
+                    // a projection over a plain scan
+                    "select l + 1, s, ts from at",
+                    "select ts, (db + l) / 2 mid, s from at where l > 5000 limit 10, 400",
+            };
+            for (String query : queries) {
+                assertSupportsBlocks(true, query);
+                for (int k = 0; k < 3; k++) {
+                    Assert.assertTrue(query, assertBlocksMatchRows(engine, sqlExecutionContext, query, rnd) > 0);
+                }
+            }
+            // arithmetic over base columns is computed column-wise, into memory the block exposes;
+            // a function with no column-wise loop (concat, a CASE) is read through the record
+            assertComputedInMemory("select ts, (db + l) / 2 mid, l * 3 l3, (f - i)::double fi, s from at where l > 5000", true, true, true);
+            assertComputedInMemory("select ts, (db + f) / 2 mid, s || 'x' sx, case when b then l end cl from at where i > 0", true, false, false);
+            // a computed SYMBOL column would be read ahead of the other columns: no blocks
+            assertSupportsBlocks(false, "select v::symbol vs, l from at where l > 100");
+            Assert.assertEquals(0, assertBlocksMatchRows(engine, sqlExecutionContext, "select v::symbol vs, l from at where l > 100", rnd));
         });
     }
 
@@ -194,12 +333,38 @@ public class RecordBlockTest extends AbstractCairoTest {
             assertSupportsBlocks(true, "select * from (select * from at limit 400) limit 30, 350");
             assertSupportsBlocks(true, windowQuery("('A', 'B')"));
             assertSupportsBlocks(true, "select * from (" + windowQuery("('A', 'B')") + ") limit 100");
+            // filters, and projections over blocks
+            assertSupportsBlocks(true, "select * from at where b");
+            assertSupportsBlocks(true, "select l + 1, s from at");
+            assertSupportsBlocks(true, "select l + 1, s from at where b limit 5");
             // none of these ever offers a block, so egress never asks them per row
-            assertSupportsBlocks(false, "select l + 1, s from at");
             assertSupportsBlocks(false, "select * from at order by l limit 10");
             assertSupportsBlocks(false, "select s, count() from at");
             assertSupportsBlocks(false, "select s, count() from at limit 3");
-            assertSupportsBlocks(false, "select * from at where b");
+        });
+    }
+
+    @Test
+    public void testWindowMinMaxFilterOffersBaseRows() throws Exception {
+        assertMemoryLeak(() -> {
+            createJoinTable();
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final String c = "ts, ex, sym, v, size, price, x";
+            final String[] queries = {
+                    // idx 59 and 70: base columns only
+                    "select " + c + " from (select " + c + " from (select " + c + ", min(size) over (partition by ex, sym) min_size from t) where size = min_size)",
+                    "select " + c + " from (select " + c + " from (select " + c + ", min(price) over (partition by sym) min_price from t) where price = min_price)",
+                    // the window columns too, looked up through the block's record
+                    "select " + c + ", mn, mx from (select " + c + ", min(price) over (partition by sym, v) mn, " +
+                            "max(price) over (partition by sym, v) mx from t) where price = mn or price = mx",
+            };
+            for (String query : queries) {
+                assertPlanContains(query, "Async Window Min/Max Filter");
+                for (int k = 0; k < 3; k++) {
+                    Assert.assertTrue(query, assertBlocksMatchRows(engine, sqlExecutionContext, query, rnd) > 0);
+                    Assert.assertTrue(query, assertBlocksMatchRows(engine, sqlExecutionContext, query + " limit 2, 300", rnd) > 0);
+                }
+            }
         });
     }
 
@@ -251,7 +416,9 @@ public class RecordBlockTest extends AbstractCairoTest {
             }
             final int type = metadata.getColumnType(c);
             Assert.assertFalse(ColumnType.isVarSize(type));
-            final long p = address + row * block.getColumnStride(c);
+            final long rowIndexes = block.getColumnRowIndexesAddress(c);
+            final long position = rowIndexes == 0 ? row : Unsafe.getLong(rowIndexes + 8L * row);
+            final long p = address + position * block.getColumnStride(c);
             final String msg = metadata.getColumnName(c);
             switch (ColumnType.tagOf(type)) {
                 case ColumnType.BOOLEAN -> Assert.assertEquals(msg, record.getBool(c), Unsafe.getByte(p) == 1);
@@ -264,10 +431,11 @@ public class RecordBlockTest extends AbstractCairoTest {
                 case ColumnType.DATE -> Assert.assertEquals(msg, record.getDate(c), Unsafe.getLong(p));
                 case ColumnType.TIMESTAMP -> Assert.assertEquals(msg, record.getTimestamp(c), Unsafe.getLong(p));
                 case ColumnType.DECIMAL64 -> Assert.assertEquals(msg, record.getDecimal64(c), Unsafe.getLong(p));
-                case ColumnType.FLOAT ->
-                        Assert.assertEquals(msg, Float.floatToRawIntBits(record.getFloat(c)), Unsafe.getInt(p));
-                case ColumnType.DOUBLE ->
-                        Assert.assertEquals(msg, Double.doubleToRawLongBits(record.getDouble(c)), Unsafe.getLong(p));
+                // NaN is NULL, whatever its bits
+                case ColumnType.FLOAT -> Assert.assertEquals(msg,
+                        Float.floatToIntBits(record.getFloat(c)), Float.floatToIntBits(Unsafe.getFloat(p)));
+                case ColumnType.DOUBLE -> Assert.assertEquals(msg,
+                        Double.doubleToLongBits(record.getDouble(c)), Double.doubleToLongBits(Unsafe.getDouble(p)));
                 case ColumnType.UUID -> {
                     Assert.assertEquals(msg, record.getLong128Lo(c), Unsafe.getLong(p));
                     Assert.assertEquals(msg, record.getLong128Hi(c), Unsafe.getLong(p + 8));
@@ -351,6 +519,42 @@ public class RecordBlockTest extends AbstractCairoTest {
         return blockRows;
     }
 
+    private static void assertFilterBlocks(CairoEngine engine, SqlExecutionContext ctx, Rnd rnd) throws Exception {
+        final String[] queries = {
+                // JIT-compiled, over NULLs and column tops
+                "select * from at where l > 5000",
+                "select * from at where l > 5000 limit 1000",
+                "select * from at where l > 5000 limit 7, 1501",
+                "select * from at where s = 'k7'",
+                "select * from at where i > 100 and b",
+                // a Java filter
+                "select * from at where v like '%3%'",
+                "select * from at where i > 100 and ts in '1970-01-03'",
+                // the selection keeps one row in a few, so most frames hold a handful
+                "select * from at where l % 97 = 0",
+        };
+        for (String query : queries) {
+            Assert.assertTrue(query, assertBlocksMatchRows(engine, ctx, query, rnd) > 0);
+        }
+    }
+
+    // per column after the first, whether the first block holds its values in memory
+    private static void assertComputedInMemory(String query, boolean... inMemory) throws Exception {
+        try (RecordCursorFactory factory = select(query); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            Assert.assertTrue(cursor.supportsRecordBlocks());
+            final RecordBlock block = cursor.peekRecordBlock(1000);
+            Assert.assertNotNull(block);
+            for (int c = 0; c < inMemory.length; c++) {
+                Assert.assertEquals(query + ", column " + (c + 1), inMemory[c], block.getColumnAddress(c + 1) != 0);
+            }
+        }
+    }
+
+    private static void assertPlanContains(String query, String fragment) throws Exception {
+        printSql("explain " + query);
+        TestUtils.assertContains(sink, fragment);
+    }
+
     private static void assertSupportsBlocks(boolean expected, String query) throws Exception {
         try (RecordCursorFactory factory = select(query); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             Assert.assertEquals(query, expected, cursor.supportsRecordBlocks());
@@ -385,16 +589,28 @@ public class RecordBlockTest extends AbstractCairoTest {
                 "from w where sym in ('A', 'C1', 'C2') order by sym";
     }
 
-    private void createAllTypes() throws Exception {
-        execute(ALL_TYPES_DDL.replace(", u uuid, l256 long256, g1 geohash(1c), g3 geohash(3c), g6 geohash(6c), " +
+    private static void createAllTypes(CairoEngine engine, SqlExecutionContext ctx) throws Exception {
+        engine.execute(ALL_TYPES_DDL.replace(", u uuid, l256 long256, g1 geohash(1c), g3 geohash(3c), g6 geohash(6c), " +
                 "g12 geohash(12c), dc64 decimal(12,2), dc128 decimal(30,4), dc256 decimal(60,6), v varchar, st string, bn binary, " +
-                "arr double[]", ""));
+                "arr double[]", ""), ctx);
         // the first rows have column tops for the columns added below
-        execute("insert into at select x % 3 = 0, (x % 120)::byte, (x * 7 % 30000)::short, rnd_char(), x::int, rnd_ipv4(), x, " +
+        engine.execute("insert into at select x % 3 = 0, (x % 120)::byte, (x * 7 % 30000)::short, rnd_char(), x::int, rnd_ipv4(), x, " +
                 "(x * 86400000)::date, (x * 900000000)::timestamp, (x * 1000)::timestamp_ns, (x / 3.0)::float, x * 1.5, " +
-                "'k' || (x % 50), 'z' || (x % 7) from long_sequence(150)");
-        execute("alter table at add column u uuid, l256 long256, g1 geohash(1c), g3 geohash(3c), g6 geohash(6c), " +
-                "g12 geohash(12c), dc64 decimal(12,2), dc128 decimal(30,4), dc256 decimal(60,6), v varchar, st string, bn binary, arr double[]");
-        execute("insert into at " + ALL_TYPES_SELECT.replace("(x * 900000000)::timestamp", "((x + 150) * 900000000)::timestamp") + " from long_sequence(600)");
+                "'k' || (x % 50), 'z' || (x % 7) from long_sequence(150)", ctx);
+        engine.execute("alter table at add column u uuid, l256 long256, g1 geohash(1c), g3 geohash(3c), g6 geohash(6c), " +
+                "g12 geohash(12c), dc64 decimal(12,2), dc128 decimal(30,4), dc256 decimal(60,6), v varchar, st string, bn binary, arr double[]", ctx);
+        engine.execute("insert into at " + ALL_TYPES_SELECT.replace("(x * 900000000)::timestamp", "((x + 150) * 900000000)::timestamp") + " from long_sequence(600)", ctx);
+    }
+
+    private void createAllTypes() throws Exception {
+        createAllTypes(engine, sqlExecutionContext);
+    }
+
+    private void createJoinTable() throws Exception {
+        execute("create table t as (select timestamp_sequence(0, 100000000) ts, rnd_symbol('A', 'B', 'C', null) ex, " +
+                "rnd_symbol(40, 1, 3, 5) sym, rnd_varchar('p', 'q', 'r', null) v, " +
+                "case when x % 37 = 0 then null else ((x * 7919) % 13)::float / 4 end size, " +
+                "case when x % 41 = 0 then null else ((x * 31) % 17) / 3.0 end price, x " +
+                "from long_sequence(3000)) timestamp(ts) partition by day");
     }
 }

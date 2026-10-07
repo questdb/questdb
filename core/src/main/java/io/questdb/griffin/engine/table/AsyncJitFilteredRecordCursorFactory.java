@@ -131,7 +131,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         final int maxNegativeLimit;
         boolean isPerWorkerFiltersOwned = true;
         try {
-            cursor = new AsyncFilteredRecordCursor(configuration, filter, base.getScanDirection());
+            cursor = new AsyncFilteredRecordCursor(configuration, base.getMetadata(), filter, base.getScanDirection());
             negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(configuration, base.getScanDirection());
             bindVarMemory = Vm.getCARWInstance(
                     configuration.getSqlJitBindVarsMemoryPageSize(),

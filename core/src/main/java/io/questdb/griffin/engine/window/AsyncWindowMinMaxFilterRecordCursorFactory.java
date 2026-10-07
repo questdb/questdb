@@ -47,6 +47,7 @@ import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -1586,7 +1587,10 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         private final SelectedRecord recordA;
         private final SelectedRecord recordB;
         private RecordCursor baseCursor;
+        // the base cursor's own record, which the record reads but while a block's record is read
+        private Record baseRecordA;
         private Record baseRecordB;
+        private MinMaxBlock block;
         private boolean isOpen;
         private MemoryTracker memoryTracker;
 
@@ -1652,6 +1656,9 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
 
         @Override
         public boolean hasNext() {
+            if (lookupA.base != baseRecordA) {
+                pointAt(baseRecordA);
+            }
             return baseCursor.hasNext();
         }
 
@@ -1659,6 +1666,23 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         public SymbolTable newSymbolTable(int columnIndex) {
             final int baseIndex = crossIndex.getQuick(columnIndex);
             return baseIndex < baseColumnCount ? baseCursor.newSymbolTable(baseIndex) : null;
+        }
+
+        /**
+         * The base's block: a base column reads the base block's memory, a window column the
+         * lookup, through {@link RecordBlock#getRecordAt}.
+         */
+        @Override
+        public RecordBlock peekRecordBlock(int maxRows) {
+            final RecordBlock baseBlock = baseCursor.peekRecordBlock(maxRows);
+            if (baseBlock == null) {
+                return null;
+            }
+            if (block == null) {
+                block = new MinMaxBlock();
+            }
+            block.base = baseBlock;
+            return block;
         }
 
         @Override
@@ -1681,24 +1705,87 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         }
 
         @Override
+        public void skipRecordBlock(int rowCount) {
+            if (lookupA.base != baseRecordA) {
+                pointAt(baseRecordA);
+            }
+            baseCursor.skipRecordBlock(rowCount);
+        }
+
+        @Override
         public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
             baseCursor.skipRows(rowCount, maxRowsAfterSkip);
         }
 
         @Override
+        public boolean supportsRecordBlocks() {
+            return baseCursor.supportsRecordBlocks();
+        }
+
+        @Override
         public void toTop() {
+            if (lookupA.base != baseRecordA) {
+                pointAt(baseRecordA);
+            }
             baseCursor.toTop();
+        }
+
+        private void pointAt(Record baseRecord) {
+            lookupA.of(baseRecord);
+            joinA.of(baseRecord, lookupA);
         }
 
         void of(RecordCursor baseCursor, MemoryTracker memoryTracker) {
             this.baseCursor = baseCursor;
             this.memoryTracker = memoryTracker;
             this.isOpen = true;
-            final Record baseRecord = baseCursor.getRecord();
+            baseRecordA = baseCursor.getRecord();
             lookupA.bind(memoryTracker);
-            lookupA.of(baseRecord);
-            joinA.of(baseRecord, lookupA);
+            pointAt(baseRecordA);
             baseRecordB = null;
+        }
+
+        private class MinMaxBlock implements RecordBlock {
+            private RecordBlock base;
+
+            @Override
+            public long getColumnAddress(int columnIndex) {
+                final int baseIndex = crossIndex.getQuick(columnIndex);
+                return baseIndex < baseColumnCount ? base.getColumnAddress(baseIndex) : 0;
+            }
+
+            @Override
+            public long getColumnRowIndexesAddress(int columnIndex) {
+                final int baseIndex = crossIndex.getQuick(columnIndex);
+                return baseIndex < baseColumnCount ? base.getColumnRowIndexesAddress(baseIndex) : 0;
+            }
+
+            @Override
+            public long getColumnStride(int columnIndex) {
+                final int baseIndex = crossIndex.getQuick(columnIndex);
+                return baseIndex < baseColumnCount ? base.getColumnStride(baseIndex) : 0;
+            }
+
+            @Override
+            public Record getRecordAt(int row) {
+                final Record baseRecord = base.getRecordAt(row);
+                if (baseRecord != lookupA.base) {
+                    // a base block record that is not the base cursor's own: the window columns
+                    // look up its key, until the cursor moves
+                    pointAt(baseRecord);
+                }
+                return recordA;
+            }
+
+            @Override
+            public int getRowCount() {
+                return base.getRowCount();
+            }
+
+            @Override
+            public long getRowIndexesAddress() {
+                return base.getRowIndexesAddress();
+            }
         }
     }
 }
