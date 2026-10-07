@@ -284,6 +284,8 @@ public class SqlOptimiser implements Mutable {
     private final IntList nullingAnchorByModelPos = new IntList();
     // Inverse permutation of getOrderedJoinModels(): model index -> execution-order position.
     private final IntList nullingExecPosByModel = new IntList();
+    // Scratch of isCrossJoinMovableAfter: the join models that an ON clause reads.
+    private final IntHashSet onClauseRefs = new IntHashSet();
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntSortedList orderingStack = new IntSortedList();
     // (parent, outer join) model index pairs. addFilterOrEmitJoin moves an equality between two ON
@@ -837,6 +839,34 @@ public class SqlOptimiser implements Mutable {
             case ExpressionNode.OPERATION -> isCompileTimeConstant(node.lhs) && isCompileTimeConstant(node.rhs);
             default -> false;
         };
+    }
+
+    // Returns true when the model at index is a CROSS JOIN without a key on which only RIGHT/FULL joins
+    // depend, see deferPinnedCrossJoins. Such a join depends on the CROSS JOIN when it pins its prefix
+    // ahead of it, or when its key reads the CROSS JOIN.
+    private static boolean isDeferrableCrossJoin(ObjList<IQueryModel> joinModels, int index) {
+        final IQueryModel model = joinModels.getQuick(index);
+        if (model.getJoinType() != IQueryModel.JOIN_CROSS) {
+            return false;
+        }
+        final JoinContext context = model.getJoinContext();
+        if (context != null && context.parents.size() > 0) {
+            return false;
+        }
+        final IntHashSet dependencies = model.getDependencies();
+        if (dependencies.size() == 0) {
+            return false;
+        }
+        for (int i = 0, n = dependencies.size(); i < n; i++) {
+            final int joinType = joinModels.getQuick(dependencies.get(i)).getJoinType();
+            if (joinType != IQueryModel.JOIN_RIGHT_OUTER
+                    && joinType != IQueryModel.JOIN_FULL_OUTER
+                    && joinType != IQueryModel.JOIN_CROSS_RIGHT
+                    && joinType != IQueryModel.JOIN_CROSS_FULL) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // Returns true when the INNER join of the later of the two models has the key ai.an = bi.bn, and no
@@ -4389,6 +4419,36 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    // doReorderTables appends a CROSS JOIN that has no key and no dependency after every model it orders,
+    // so the keyed joins probe their rows before the cross product multiplies them. A RIGHT/FULL join pins
+    // the models written before it ahead of it, see constrainRightAndFullJoinsAfterPrefix and
+    // recordNullingJoinPrefix. The pin gives such a CROSS JOIN a dependency, and doReorderTables then runs
+    // it at its written position, so the keyed joins written after it probe the cross product instead.
+    // This method moves each CROSS JOIN on which only RIGHT/FULL joins depend back towards the end of the
+    // order: past each later model that the cross product commutes with, see isCrossJoinMovableAfter, up
+    // to the first model that it does not commute with. That model is at the latest the first RIGHT/FULL
+    // join that depends on the CROSS JOIN. Only the CROSS JOIN moves, so the other models keep their order,
+    // including a model that doReorderTables runs after a RIGHT/FULL join without an ordering edge. The
+    // first model of the order keeps its place: the join takes its timestamp and its row order from it.
+    private void deferPinnedCrossJoins(IQueryModel parent) throws SqlException {
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        final IntList ordered = parent.getOrderedJoinModels();
+        final int n = ordered.size();
+        // from the end of the order back, so that a CROSS JOIN moves up to a later one that moved already,
+        // and the CROSS JOINs keep their order
+        for (int pos = n - 2; pos > 0; pos--) {
+            final int crossIndex = ordered.getQuick(pos);
+            if (!isDeferrableCrossJoin(joinModels, crossIndex)) {
+                continue;
+            }
+            int next = pos + 1;
+            for (; next < n && isCrossJoinMovableAfter(parent, crossIndex, ordered.getQuick(next)); next++) {
+                ordered.setQuick(next - 1, ordered.getQuick(next));
+            }
+            ordered.setQuick(next - 1, crossIndex);
+        }
+    }
+
     /**
      * Re-derives transitive equality filters after a {@code column = constant} predicate has been
      * pushed down into a nested join sub-query (for example, a view that encapsulates the joins).
@@ -6681,6 +6741,48 @@ public class SqlOptimiser implements Mutable {
             return false;
         }
         return false;
+    }
+
+    // Returns true when the CROSS JOIN at crossIndex can run after the model at index without changing the
+    // rows: the model does not depend on the CROSS JOIN, and the cross product commutes with its join.
+    // - INNER and CROSS joins: assignFilters places an ON conjunct that is not a key after every model it
+    //   reads, in execution order.
+    // - LEFT, ASOF and LT joins whose ON clause does not read the CROSS JOIN: they match each row on the
+    //   columns of the other models, so each row of the CROSS JOIN repeats the same matches. An ASOF or LT
+    //   join reads the timestamp of the first model, which keeps its place.
+    // The CROSS JOIN stays ahead of a RIGHT/FULL join, which NULL-extends rows that the cross product would
+    // repeat, and of the other join types. It also stays ahead of a model whose ON clause has a name that
+    // does not resolve to one model, and of another CROSS JOIN that deferPinnedCrossJoins moves, so that the
+    // two keep their order.
+    private boolean isCrossJoinMovableAfter(IQueryModel parent, int crossIndex, int index) throws SqlException {
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        final IQueryModel model = joinModels.getQuick(index);
+        final int joinType = model.getJoinType();
+        final boolean isInner = joinType == IQueryModel.JOIN_INNER || joinType == IQueryModel.JOIN_CROSS;
+        if (!isInner
+                && joinType != IQueryModel.JOIN_LEFT_OUTER
+                && joinType != IQueryModel.JOIN_CROSS_LEFT
+                && joinType != IQueryModel.JOIN_ASOF
+                && joinType != IQueryModel.JOIN_LT) {
+            return false;
+        }
+        if (joinModels.getQuick(crossIndex).getDependencies().contains(index)
+                || isDeferrableCrossJoin(joinModels, index)) {
+            return false;
+        }
+        final JoinContext context = model.getJoinContext();
+        if (context != null
+                && (context.parents.contains(crossIndex)
+                || context.aIndexes.contains(crossIndex)
+                || context.bIndexes.contains(crossIndex))) {
+            return false;
+        }
+        onClauseRefs.clear();
+        if (!collectReferencedJoinModels(parent, model.getJoinCriteria(), onClauseRefs)
+                || !collectReferencedJoinModels(parent, model.getOuterJoinExpressionClause(), onClauseRefs)) {
+            return false;
+        }
+        return isInner || onClauseRefs.excludes(crossIndex);
     }
 
     /**
@@ -10023,6 +10125,7 @@ public class SqlOptimiser implements Mutable {
                 }
             }
         }
+        deferPinnedCrossJoins(model);
     }
 
     private ExpressionNode replaceColumnWithAlias(ExpressionNode node, IQueryModel model) throws SqlException {

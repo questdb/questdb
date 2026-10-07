@@ -2013,6 +2013,769 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinBeforeRightJoinKeepsLaterLeftJoinAfterIt() throws Exception {
+        // A LEFT join written after a RIGHT/FULL join has no ordering edge to it: doReorderTables runs the
+        // outer join first because it is written first. Moving the CROSS JOIN that the outer join waits for
+        // must not let the LEFT join run ahead of the outer join, or the LEFT join misses the NULL-extended
+        // row, whose NULL a.k matches the NULL key of e.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, c.y, b.k bk, d.k dk, e.z ez FROM a CROSS JOIN c JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k LEFT JOIN e ON e.k = a.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Left Outer Join Light
+                                  condition: e.k=a.k
+                                    Nested Loop Right Join
+                                      filter: a.x>=d.k
+                                        Cross Join
+                                            Hash Join Light
+                                              condition: b.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: d
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: e
+                            """)
+                    .returns("""
+                            k\ty\tbk\tdk\tez
+                            4\t1\t4\t7\t0
+                            4\t2\t4\t7\t0
+                            4\t3\t4\t7\t0
+                            6\t1\t6\t7\t2
+                            6\t2\t6\t7\t2
+                            6\t3\t6\t7\t2
+                            null\tnull\tnull\t100\t1
+                            """);
+            assertQuery("SELECT a.k, c.y, b.k bk, d.k dk, e.z ez FROM a CROSS JOIN c JOIN b ON a.k = b.k FULL JOIN d ON a.x >= d.k LEFT JOIN e ON e.k = a.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k\ty\tbk\tdk\tez
+                            2\t1\t2\tnull\t2
+                            2\t2\t2\tnull\t2
+                            2\t3\t2\tnull\t2
+                            4\t1\t4\t7\t0
+                            4\t2\t4\t7\t0
+                            4\t3\t4\t7\t0
+                            6\t1\t6\t7\t2
+                            6\t2\t6\t7\t2
+                            6\t3\t6\t7\t2
+                            null\tnull\tnull\t100\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinKeepsOrderOfCrossJoins() throws Exception {
+        // Both CROSS JOINs move behind the keyed join and keep their written order.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, c1.y y1, c2.y y2, b.k bk, d.k dk FROM a CROSS JOIN c c1 CROSS JOIN c c2 JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Cross Join
+                                        Cross Join
+                                            Hash Join Light
+                                              condition: b.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty1\ty2\tbk\tdk
+                            4\t1\t1\t4\t7
+                            4\t1\t2\t4\t7
+                            4\t1\t3\t4\t7
+                            4\t2\t1\t4\t7
+                            4\t2\t2\t4\t7
+                            4\t2\t3\t4\t7
+                            4\t3\t1\t4\t7
+                            4\t3\t2\t4\t7
+                            4\t3\t3\t4\t7
+                            6\t1\t1\t6\t7
+                            6\t1\t2\t6\t7
+                            6\t1\t3\t6\t7
+                            6\t2\t1\t6\t7
+                            6\t2\t2\t6\t7
+                            6\t2\t3\t6\t7
+                            6\t3\t1\t6\t7
+                            6\t3\t2\t6\t7
+                            6\t3\t3\t6\t7
+                            null\tnull\tnull\tnull\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinOnCrossJoinRunsAfterKeyedJoin() throws Exception {
+        // The RIGHT JOIN reads the CROSS JOIN, which still moves behind the keyed join, up to the RIGHT JOIN.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, c.y, b.k bk, f.k fk FROM a CROSS JOIN c JOIN b ON a.k = b.k RIGHT JOIN f ON f.k = c.y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Right Outer Join Light
+                                  condition: f.k=c.y
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: f
+                            """)
+                    .returns("""
+                            k\ty\tbk\tfk
+                            2\t2\t2\t2
+                            4\t2\t4\t2
+                            6\t2\t6\t2
+                            null\tnull\tnull\t4
+                            null\tnull\tnull\t6
+                            """);
+            assertQuery("SELECT a.k, c.y, b.k bk, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k RIGHT JOIN d ON d.k = c.y + 4")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: d.k=c.y+4
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tdk
+                            2\t3\t2\t7
+                            4\t3\t4\t7
+                            6\t3\t6\t7
+                            null\tnull\tnull\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinRunsAfterInnerJoinReadingIt() throws Exception {
+        // The INNER join's ON conjunct b.k > c.y is a filter, and it moves with the CROSS JOIN.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, c.y, b.k bk, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k AND b.k > c.y RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Filter filter: c.y<b.k
+                                        Cross Join
+                                            Hash Join Light
+                                              condition: b.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tdk
+                            4\t1\t4\t7
+                            4\t2\t4\t7
+                            4\t3\t4\t7
+                            6\t1\t6\t7
+                            6\t2\t6\t7
+                            6\t3\t6\t7
+                            null\tnull\tnull\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinRunsAfterKeyedJoin() throws Exception {
+        // A RIGHT/FULL join pins the CROSS JOIN written before it ahead of it, and doReorderTables then ran
+        // the CROSS JOIN at its written position, so the keyed join probed the cross product: 0.9 s instead
+        // of 6 ms with 100,000 rows in a, 1,000 in c and 100 in b. The CROSS JOIN now runs after the keyed
+        // join, as when no RIGHT/FULL join pins it.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, a.x, c.y, b.k bk, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\tx\ty\tbk\tdk
+                            4\t12\t1\t4\t7
+                            4\t12\t2\t4\t7
+                            4\t12\t3\t4\t7
+                            6\t18\t1\t6\t7
+                            6\t18\t2\t6\t7
+                            6\t18\t3\t6\t7
+                            null\tnull\tnull\tnull\t100
+                            """);
+            assertQuery("SELECT a.k, a.x, c.y, b.k bk, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k FULL JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Full Join
+                                  filter: a.x>=d.k
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\tx\ty\tbk\tdk
+                            2\t6\t1\t2\tnull
+                            2\t6\t2\t2\tnull
+                            2\t6\t3\t2\tnull
+                            4\t12\t1\t4\t7
+                            4\t12\t2\t4\t7
+                            4\t12\t3\t4\t7
+                            6\t18\t1\t6\t7
+                            6\t18\t2\t6\t7
+                            6\t18\t3\t6\t7
+                            null\tnull\tnull\tnull\t100
+                            """);
+            assertQuery("SELECT a.k, c.y, b.k bk, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k RIGHT JOIN d ON a.k = d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Right Outer Join Light
+                                  condition: d.k=a.k
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tdk
+                            null\tnull\tnull\t100
+                            null\tnull\tnull\t7
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinRunsAfterLeftJoin() throws Exception {
+        // The LEFT join does not read the CROSS JOIN, so the CROSS JOIN moves behind it and the keyed join.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, c.y, e.z, b.k bk, d.k dk FROM a CROSS JOIN c LEFT JOIN e ON e.k = a.k JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            Hash Left Outer Join Light
+                                              condition: e.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: e
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tz\tbk\tdk
+                            4\t1\t0\t4\t7
+                            4\t2\t0\t4\t7
+                            4\t3\t0\t4\t7
+                            6\t1\t2\t6\t7
+                            6\t2\t2\t6\t7
+                            6\t3\t2\t6\t7
+                            null\tnull\tnull\tnull\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinRunsAfterTimeSeriesJoin() throws Exception {
+        // The ASOF and LT joins read the timestamp of a, which still drives the join, so the CROSS JOIN moves
+        // behind them.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoinWithTimeSeriesJoin();
+            assertQuery("SELECT a.k, c.y, b.k bk, q.v, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k ASOF JOIN q RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Cross Join
+                                        AsOf Join Fast
+                                            Hash Join Light
+                                              condition: b.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: q
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tv\tdk
+                            4\t1\t4\t3\t7
+                            4\t2\t4\t3\t7
+                            4\t3\t4\t3\t7
+                            6\t1\t6\t5\t7
+                            6\t2\t6\t5\t7
+                            6\t3\t6\t5\t7
+                            null\tnull\tnull\tnull\t100
+                            """);
+            assertQuery("SELECT a.k, c.y, b.k bk, q.v, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k LT JOIN q RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Cross Join
+                                        Lt Join Fast
+                                            Hash Join Light
+                                              condition: b.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: q
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tv\tdk
+                            4\t1\t4\t3\t7
+                            4\t2\t4\t3\t7
+                            4\t3\t4\t3\t7
+                            6\t1\t6\t5\t7
+                            6\t2\t6\t5\t7
+                            6\t3\t6\t5\t7
+                            null\tnull\tnull\tnull\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinRunsBeforeLaterJoins() throws Exception {
+        // A join after the RIGHT JOIN pins the CROSS JOIN ahead of the RIGHT JOIN on master too (#7759).
+        // The CROSS JOIN runs after the keyed join and before the RIGHT JOIN.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, c.y, b.k bk, d.k dk, b2.k b2k FROM a CROSS JOIN c JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k JOIN b b2 ON b2.k = a.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: b2.k=a.k
+                                    Nested Loop Right Join
+                                      filter: a.x>=d.k
+                                        Cross Join
+                                            Hash Join Light
+                                              condition: b.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: d
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
+                            """)
+                    .returns("""
+                            k\ty\tbk\tdk\tb2k
+                            4\t1\t4\t7\t4
+                            4\t2\t4\t7\t4
+                            4\t3\t4\t7\t4
+                            6\t1\t6\t7\t6
+                            6\t2\t6\t7\t6
+                            6\t3\t6\t7\t6
+                            """);
+            assertQuery("SELECT a.k, c.y, b.k bk, d.k dk, b2.k b2k FROM a CROSS JOIN c JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k LEFT JOIN b b2 ON b2.k = d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Left Outer Join Light
+                                  condition: b2.k=d.k
+                                    Nested Loop Right Join
+                                      filter: a.x>=d.k
+                                        Cross Join
+                                            Hash Join Light
+                                              condition: b.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: d
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
+                            """)
+                    .returns("""
+                            k\ty\tbk\tdk\tb2k
+                            4\t1\t4\t7\tnull
+                            4\t2\t4\t7\tnull
+                            4\t3\t4\t7\tnull
+                            6\t1\t6\t7\tnull
+                            6\t2\t6\t7\tnull
+                            6\t3\t6\t7\tnull
+                            null\tnull\tnull\t100\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinStaysAheadOfAsOfJoinOnIt() throws Exception {
+        // The ASOF JOIN keys on the CROSS JOIN, so the CROSS JOIN stays ahead of it.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoinWithTimeSeriesJoin();
+            assertQuery("SELECT a.k, c.y, b.k bk, q.v, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k ASOF JOIN q ON q.k = c.y RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    AsOf Join Fast
+                                      condition: q.k=c.y
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            Cross Join
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: q
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tv\tdk
+                            4\t1\t4\t1\t7
+                            4\t2\t4\t2\t7
+                            4\t3\t4\tnull\t7
+                            6\t1\t6\t4\t7
+                            6\t2\t6\t5\t7
+                            6\t3\t6\tnull\t7
+                            null\tnull\tnull\tnull\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinStaysAheadOfLeftJoinKeyedOnIt() throws Exception {
+        // The LEFT JOIN keys on the CROSS JOIN, so the CROSS JOIN stays ahead of it. The optimiser moves
+        // a.k = c.y into the LEFT JOIN's outer join expression and makes the first table a key-less CROSS
+        // JOIN, which keeps its place at the head of the order.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, c.y, l.k lk, b.k bk, d.k dk FROM a CROSS JOIN c LEFT JOIN l ON l.k = a.k AND l.k = c.y JOIN b ON b.k = l.k RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Hash Join Light
+                                      condition: b.k=l.k
+                                        Hash Left Outer Join Light
+                                          condition: l.k=c.y
+                                          filter: a.k=c.y
+                                            Cross Join
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: l
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tlk\tbk\tdk
+                            null\tnull\tnull\tnull\t7
+                            null\tnull\tnull\tnull\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinStaysAheadOfLeftJoinReadingIt() throws Exception {
+        // The LEFT JOIN's ON clause reads the CROSS JOIN, by its qualified or plain name, so the CROSS JOIN
+        // moves behind the keyed join only, and stays ahead of the LEFT JOIN.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, c.y, b.k bk, e.k ek, e.z, f.k fk, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k LEFT JOIN e ON e.k = a.k AND e.z > c.y JOIN f ON f.k = b.k RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Hash Join Light
+                                      condition: f.k=b.k
+                                        Hash Left Outer Join Light
+                                          condition: e.k=a.k
+                                          filter: c.y<e.z
+                                            Cross Join
+                                                Hash Join Light
+                                                  condition: b.k=a.k
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: a
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: b
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: e
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: f
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tek\tz\tfk\tdk
+                            4\t1\t4\tnull\tnull\t4\t7
+                            4\t2\t4\tnull\tnull\t4\t7
+                            4\t3\t4\tnull\tnull\t4\t7
+                            6\t1\t6\t6\t2\t6\t7
+                            6\t2\t6\tnull\tnull\t6\t7
+                            6\t3\t6\tnull\tnull\t6\t7
+                            null\tnull\tnull\tnull\tnull\tnull\t100
+                            """);
+            assertQuery("SELECT a.k, c.y, b.k bk, e.k ek, e.z, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k LEFT JOIN e ON e.k = a.k AND e.z > y RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Hash Left Outer Join Light
+                                      condition: e.k=a.k
+                                      filter: c.y<e.z
+                                        Cross Join
+                                            Hash Join Light
+                                              condition: b.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: e
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tek\tz\tdk
+                            4\t1\t4\tnull\tnull\t7
+                            4\t2\t4\tnull\tnull\t7
+                            4\t3\t4\tnull\tnull\t7
+                            6\t1\t6\t6\t2\t7
+                            6\t2\t6\tnull\tnull\t7
+                            6\t3\t6\tnull\tnull\t7
+                            null\tnull\tnull\tnull\tnull\t100
+                            """);
+        });
+    }
+
+    @Test
     public void testCrossJoinCount() throws Exception {
         assertMemoryLeak(() -> {
             // 1 partition
@@ -2081,6 +2844,47 @@ public class JoinTest extends AbstractCairoTest {
                     "cross join " +
                     "(select * from TabB where ts > 15L*60L*1000000L order by ts desc) )";
             assertSkipToAndCalculateSize(selectWithIntervalBwdFrame, 81);
+        });
+    }
+
+    @Test
+    public void testCrossJoinFirstBeforeRightJoinStaysFirst() throws Exception {
+        // The key-less first table stays at the head of the order, although running c joined to b first
+        // would probe fewer rows: the join takes its timestamp and its row order from the first table.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, c.y, b.k bk, d.k dk FROM a CROSS JOIN c JOIN b ON c.y = b.k RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Hash Join Light
+                                      condition: b.k=c.y
+                                        Cross Join
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tdk
+                            3\t2\t2\t7
+                            4\t2\t2\t7
+                            5\t2\t2\t7
+                            6\t2\t2\t7
+                            null\tnull\tnull\t100
+                            """);
         });
     }
 
@@ -14319,6 +15123,54 @@ public class JoinTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    private void createTablesForCrossJoinBeforeRightJoin() throws SqlException {
+        execute("CREATE TABLE a (k INT, x INT)");
+        execute("INSERT INTO a VALUES (1, 3), (2, 6), (3, 9), (4, 12), (5, 15), (6, 18)");
+        execute("CREATE TABLE b (k INT)");
+        execute("INSERT INTO b VALUES (2), (4), (6), (8)");
+        execute("CREATE TABLE c (y INT)");
+        execute("INSERT INTO c VALUES (1), (2), (3)");
+        execute("CREATE TABLE d (k INT)");
+        execute("INSERT INTO d VALUES (7), (100)");
+        execute("CREATE TABLE e (k INT, z INT)");
+        execute("INSERT INTO e VALUES (null, 1), (2, 2), (3, 3), (4, 0), (5, 1), (6, 2)");
+        execute("CREATE TABLE f (k INT)");
+        execute("INSERT INTO f VALUES (2), (4), (6)");
+        execute("CREATE TABLE l (k INT)");
+        execute("INSERT INTO l VALUES (1), (2), (3), (4)");
+    }
+
+    private void createTablesForCrossJoinBeforeRightJoinWithTimeSeriesJoin() throws SqlException {
+        execute("CREATE TABLE a (k INT, x INT, ts TIMESTAMP) TIMESTAMP(ts)");
+        execute("""
+                INSERT INTO a VALUES
+                (1, 3, '1970-01-01T00:00:00.000000Z'),
+                (2, 6, '1970-01-01T00:00:01.000000Z'),
+                (3, 9, '1970-01-01T00:00:02.000000Z'),
+                (4, 12, '1970-01-01T00:00:03.000000Z'),
+                (5, 15, '1970-01-01T00:00:04.000000Z'),
+                (6, 18, '1970-01-01T00:00:05.000000Z')
+                """);
+        execute("CREATE TABLE b (k INT)");
+        execute("INSERT INTO b VALUES (2), (4), (6), (8)");
+        execute("CREATE TABLE c (y INT)");
+        execute("INSERT INTO c VALUES (1), (2), (3)");
+        execute("CREATE TABLE d (k INT)");
+        execute("INSERT INTO d VALUES (7), (100)");
+        execute("CREATE TABLE q (k INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+        execute("""
+                INSERT INTO q VALUES
+                (1, 1, '1970-01-01T00:00:00.500000Z'),
+                (2, 2, '1970-01-01T00:00:01.500000Z'),
+                (0, 3, '1970-01-01T00:00:02.500000Z'),
+                (1, 4, '1970-01-01T00:00:03.500000Z'),
+                (2, 5, '1970-01-01T00:00:04.500000Z'),
+                (0, 6, '1970-01-01T00:00:05.500000Z'),
+                (1, 7, '1970-01-01T00:00:06.500000Z'),
+                (2, 8, '1970-01-01T00:00:07.500000Z')
+                """);
     }
 
     private void createTablesForCrossJoinKeyAfterRightJoin() throws SqlException {
