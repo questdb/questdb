@@ -375,6 +375,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private Path dirFsyncPath;
     private boolean distressed = false;
     private DropIndexOperator dropIndexOperator;
+    // Wall-clock ms of the last durable epoch attempt by advanceDurableEpochAtInterval(). A failed epoch leaves
+    // lastEpochTs as it was, so this keeps the retry an interval away too.
+    private long durableEpochAttemptMs;
     // An enrolled adaptive WAL table, on the same terms as enrolment: recovery rewinds it to its last durable
     // epoch, so a change no WAL replay can redo must be followed by one. Set once the constructor has settled
     // the commit mode; the table's WAL flag changes only across a restart.
@@ -16164,6 +16167,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 partitionRemoveCandidates.addAll(partitionRemovalsAfterSavePoint);
                 partitionRemovalsAfterSavePoint.clear();
                 processPartitionRemoveCandidates();
+            }
+        }
+    }
+
+    /**
+     * Takes a durable epoch after rows written outside the WAL by the UDP line protocol, at most once per epoch
+     * interval. Any change since the last epoch, including rows a column add committed, owes one until then, which
+     * a clean close or the next apply batch also takes; a later call takes it once the interval has passed. With
+     * the interval off, only those take it. Does nothing on a table that is not enrolled.
+     */
+    public void advanceDurableEpochAtInterval(CharSequence operation) {
+        if (enrolledAdaptive && !distressed) {
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+            if (tracker.getPinnedEpochTxn() != getTxn()) {
+                final long intervalMs = configuration.getAdaptiveEpochIntervalMs();
+                final long nowMs = configuration.getMicrosecondClock().getTicks() / 1000L;
+                final long lastEpochTs = tracker.getLastEpochTs();
+                // The apply job's cadence gate: no epoch yet, the interval has passed, or the clock went back.
+                if (intervalMs >= 0
+                        && (lastEpochTs == 0 || nowMs < lastEpochTs || nowMs - lastEpochTs >= intervalMs)
+                        && (nowMs < durableEpochAttemptMs || nowMs - durableEpochAttemptMs >= intervalMs)) {
+                    durableEpochAttemptMs = nowMs;
+                    advanceDurableEpochAfter(operation);
+                } else {
+                    tracker.setDurableEpochOwed(true);
+                }
             }
         }
     }

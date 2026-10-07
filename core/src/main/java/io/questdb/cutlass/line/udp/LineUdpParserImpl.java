@@ -236,14 +236,11 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         clearState();
     }
 
-    // A WAL table written here bypasses the WAL, so no replay can redo the commit: an enrolled adaptive table
-    // takes a durable epoch after a commit that wrote rows. An idle tick commits nothing and takes none.
+    // A WAL table written here bypasses the WAL, so no replay can redo its rows, including those a column add
+    // committed before this commit: an enrolled adaptive table takes a durable epoch at most once per interval.
     private static void commit(TableWriter writer) {
-        final long txn = writer.getTxn();
         writer.commit();
-        if (writer.getTxn() != txn) {
-            writer.advanceDurableEpochAfter("udp commit");
-        }
+        writer.advanceDurableEpochAtInterval("udp commit");
     }
 
     private void appendFirstRowAndCacheWriter(CharSequenceCache cache) {

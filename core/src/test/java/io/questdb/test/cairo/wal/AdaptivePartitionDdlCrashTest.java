@@ -371,7 +371,9 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                 } finally {
                     failSavePointsAfter = -1;
                 }
-                Assert.assertEquals("save points of the UDP commit", history == History.NOSYNC ? 0 : 1, savePoints.get());
+                // Inside the save-point interval the batch owes a save point, which the next apply batch or a clean
+                // close takes.
+                Assert.assertEquals("save points of the UDP commit", 0, savePoints.get());
             }
             default -> applySql(e, sql(e));
         }

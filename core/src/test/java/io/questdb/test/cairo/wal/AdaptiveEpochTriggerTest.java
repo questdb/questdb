@@ -25,12 +25,49 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
+import io.questdb.cutlass.line.udp.LineUdpLexer;
+import io.questdb.cutlass.line.udp.LineUdpParserImpl;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicInteger;
+
 public class AdaptiveEpochTriggerTest extends AbstractCairoTest {
+    // Every epoch writes a manifest; counting its opens counts the attempts.
+    private static final FilesFacade FF = new TestFilesFacadeImpl() {
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            if (Utf8s.containsAscii(name, DurableEpochManifest.FILE_NAME)) {
+                epochAttempts.incrementAndGet();
+                if (failEpochs) {
+                    return -1;
+                }
+            }
+            return super.openRW(name, opts);
+        }
+    };
+    private static final long UDP_INTERVAL_MS = 60_000L;
+    // 2024-01-01T00:00:00Z
+    private static final long UDP_T0_MICROS = 1_704_067_200_000_000L;
+    private static final AtomicInteger epochAttempts = new AtomicInteger();
+    private static volatile boolean failEpochs;
 
     @Test
     public void testAdaptiveEpochConfigDefaults() throws Exception {
@@ -201,6 +238,90 @@ public class AdaptiveEpochTriggerTest extends AbstractCairoTest {
         });
     }
 
+    // UDP rows bypass the WAL, so only a durable epoch covers them. A clean restart keeps every one of them; a
+    // crash loses at most the rows since the last epoch, and none older. Each batch ends with a line that adds a
+    // column and is then rejected, so its rows are committed by the column add, not by commitAll().
+    @Test
+    public void testUdpRowsCleanRestartAndCrash() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, UDP_INTERVAL_MS);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 0);
+        setCurrentMicros(UDP_T0_MICROS);
+        assertMemoryLeak(FF, () -> {
+            CairoEngine e = engine;
+            try {
+                e.execute("create table x (ts timestamp, s symbol, v long) timestamp(ts) partition by day wal");
+                e.execute("insert into x values ('2024-01-01', 'w', 0)");
+                TestUtils.drainWalQueue(e);
+                // Inside the interval of the apply batch's epoch: the batch owes one, which the clean close takes.
+                setCurrentMicros(UDP_T0_MICROS + 1_000_000L);
+                udpBatch(e, "u1", "c1");
+                final String firstBatch = rows(e);
+                e = restart(e);
+                Assert.assertEquals(firstBatch, rows(e));
+
+                // The interval has passed, so the batch takes an epoch.
+                setCurrentMicros(UDP_T0_MICROS + UDP_INTERVAL_MS * 1000L + 2_000_000L);
+                udpBatch(e, "u2", "c2");
+                final String covered = rows(e);
+                // Inside the interval again: a crash loses this batch and nothing older.
+                setCurrentMicros(UDP_T0_MICROS + UDP_INTERVAL_MS * 1000L + 3_000_000L);
+                udpBatch(e, "u3", "c3");
+                Assert.assertNotEquals(covered, rows(e));
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+                e = restart(e);
+                TestUtils.drainWalQueue(e);
+                Assert.assertEquals(covered, rows(e));
+            } finally {
+                if (e != engine) {
+                    e.close();
+                }
+            }
+        });
+    }
+
+    // A trickle of UDP batches, one a second, takes at most one epoch per interval; a failed epoch is retried an
+    // interval later, not on every batch, and an idle tick takes the epoch the last batches owe once the interval
+    // has passed.
+    @Test
+    public void testUdpTrickleTakesOneEpochPerInterval() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, UDP_INTERVAL_MS);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 0);
+        setCurrentMicros(UDP_T0_MICROS);
+        assertMemoryLeak(FF, () -> {
+            execute("create table x (ts timestamp, s symbol, v long) timestamp(ts) partition by day wal");
+            execute("insert into x values ('2024-01-01', 'w', 0)");
+            drainWalQueue();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("x"));
+            final LongList epochSeconds = new LongList();
+            epochAttempts.set(0);
+            try (LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration())) {
+                for (int s = 1; s <= 200; s++) {
+                    final long micros = UDP_T0_MICROS + s * 1_000_000L;
+                    setCurrentMicros(micros);
+                    if (s <= 150) {
+                        udpParse(parser, "x,s=u v=" + s + "i " + micros * 1000L + "\n");
+                    }
+                    final long lastEpochTs = tracker.getLastEpochTs();
+                    failEpochs = s == 60;
+                    try {
+                        parser.commitAll();
+                    } finally {
+                        failEpochs = false;
+                    }
+                    if (tracker.getLastEpochTs() != lastEpochTs) {
+                        epochSeconds.add(s);
+                    }
+                }
+                Assert.assertFalse("the idle tick must take the owed epoch", tracker.isDurableEpochOwed());
+            }
+            // 60 s fails, 120 s retries it, 180 s is an idle tick after the trickle ended at 150 s.
+            Assert.assertEquals("[120,180]", epochSeconds.toString());
+            Assert.assertEquals(3, epochAttempts.get());
+        });
+    }
+
     private static long committedSeqTxn(String tableName) {
         TableToken token = engine.verifyTableName(tableName);
         return engine.getTableSequencerAPI().getTxnTracker(token).getSeqTxn();
@@ -209,5 +330,47 @@ public class AdaptiveEpochTriggerTest extends AbstractCairoTest {
     private static long durableEpoch(String tableName) {
         TableToken token = engine.verifyTableName(tableName);
         return engine.getTableSequencerAPI().getTxnTracker(token).getDurableEpochSeqTxn();
+    }
+
+    // Startup in a fresh engine; the writers close with an epoch only if flush on close is on.
+    private static CairoEngine restart(CairoEngine e) {
+        e.releaseAllReaders();
+        e.releaseAllWriters();
+        e.releaseInactive();
+        if (e != engine) {
+            e.close();
+        }
+        return new CairoEngine(configuration);
+    }
+
+    private static String rows(CairoEngine e) throws SqlException {
+        final StringSink sink = new StringSink();
+        e.print("select * from x", sink);
+        return sink.toString();
+    }
+
+    // One UDP batch at the current time: a row, then a line that adds a column, which commits the row, and is
+    // rejected because v is a LONG.
+    private static void udpBatch(CairoEngine e, String row, String column) {
+        final long nanos = e.getConfiguration().getMicrosecondClock().getTicks() * 1000L;
+        try (LineUdpParserImpl parser = new LineUdpParserImpl(e, new DefaultLineUdpReceiverConfiguration())) {
+            udpParse(parser, "x,s=" + row + " v=1i " + nanos + "\nx,s=rejected " + column + "=5i,v=\"x\" " + nanos + "\n");
+            parser.commitAll();
+        }
+    }
+
+    private static void udpParse(LineUdpParserImpl parser, String lines) {
+        final byte[] bytes = lines.getBytes(StandardCharsets.UTF_8);
+        final long mem = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
+        try (LineUdpLexer lexer = new LineUdpLexer(4096)) {
+            for (int i = 0; i < bytes.length; i++) {
+                Unsafe.putByte(mem + i, bytes[i]);
+            }
+            lexer.withParser(parser);
+            lexer.parse(mem, mem + bytes.length);
+            lexer.parseLast();
+        } finally {
+            Unsafe.free(mem, bytes.length, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 }
