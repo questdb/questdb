@@ -58,7 +58,9 @@ public interface PartitionDeltaWriter extends QuietCloseable {
     ) {
     }
 
-    /** Creates or opens the complete catalog before the table commits has_delta. */
+    /**
+     * Creates or opens the complete catalog before the table commits has_delta.
+     */
     void initialize(TableWriter writer, int partitionIndex);
 
     /**
@@ -81,7 +83,9 @@ public interface PartitionDeltaWriter extends QuietCloseable {
      */
     void readTimestampBounds(TableWriter writer, int partitionIndex, long boundsAddr);
 
-    /** Finishes pending initialization and rolls back rows. Returns whether a catalog exists. */
+    /**
+     * Finishes pending initialization and rolls back rows. Returns whether a catalog exists.
+     */
     boolean rollback(TableWriter writer, int partitionIndex, long seqTxn);
 
     void writeCommit(
