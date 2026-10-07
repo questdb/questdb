@@ -183,6 +183,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             x\t0
                             """);
 
+            final String oneSecond = String.valueOf(getSecondsDivisor());
             assertQuery("""
                     SELECT $1 tag, t.sym, h.offset, avg(q.bid) a
                     FROM trades t
@@ -193,15 +194,15 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .withPlanContaining("keys: [sym,offset]")
-                    .returns(
-                            "tag\tsym\toffset\ta\n" +
-                                    "x\tA\t0\t20.0\n" +
-                                    "x\tA\t" + getSecondsDivisor() + "\t40.0\n" +
-                                    "x\tB\t0\t20.0\n" +
-                                    "x\tB\t" + getSecondsDivisor() + "\t60.0\n" +
-                                    "x\tC\t0\t40.0\n" +
-                                    "x\tC\t" + getSecondsDivisor() + "\t40.0\n"
-                    );
+                    .returns("""
+                            tag\tsym\toffset\ta
+                            x\tA\t0\t20.0
+                            x\tA\t#1s\t40.0
+                            x\tB\t0\t20.0
+                            x\tB\t#1s\t60.0
+                            x\tC\t0\t40.0
+                            x\tC\t#1s\t40.0
+                            """.replace("#1s", oneSecond));
             assertQuery("""
                     SELECT $1 tag, t.sym, count() c
                     FROM trades t
@@ -1396,20 +1397,25 @@ public class HorizonJoinTest extends AbstractCairoTest {
             setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, RecordSinkFactory.SINK_TYPE_LOOPING);
             createHorizonTradesAndQuoteTables();
 
-            final String keyedResult = "sym\toffset\ta\n" +
-                    "A\t0\t20.0\n" +
-                    "A\t" + getSecondsDivisor() + "\t40.0\n" +
-                    "B\t0\t20.0\n" +
-                    "B\t" + getSecondsDivisor() + "\t60.0\n" +
-                    "C\t0\t40.0\n" +
-                    "C\t" + getSecondsDivisor() + "\t40.0\n";
-            final String multiKeyedResult = "sym\toffset\ta\tk\n" +
-                    "A\t0\t20.0\t21.0\n" +
-                    "A\t" + getSecondsDivisor() + "\t40.0\t41.0\n" +
-                    "B\t0\t20.0\t21.0\n" +
-                    "B\t" + getSecondsDivisor() + "\t60.0\t61.0\n" +
-                    "C\t0\t40.0\t41.0\n" +
-                    "C\t" + getSecondsDivisor() + "\t40.0\t41.0\n";
+            final String oneSecond = String.valueOf(getSecondsDivisor());
+            final String keyedResult = """
+                    sym\toffset\ta
+                    A\t0\t20.0
+                    A\t#1s\t40.0
+                    B\t0\t20.0
+                    B\t#1s\t60.0
+                    C\t0\t40.0
+                    C\t#1s\t40.0
+                    """.replace("#1s", oneSecond);
+            final String multiKeyedResult = """
+                    sym\toffset\ta\tk
+                    A\t0\t20.0\t21.0
+                    A\t#1s\t40.0\t41.0
+                    B\t0\t20.0\t21.0
+                    B\t#1s\t60.0\t61.0
+                    C\t0\t40.0\t41.0
+                    C\t#1s\t40.0\t41.0
+                    """.replace("#1s", oneSecond);
             for (boolean isParallel : new boolean[]{false, true}) {
                 sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
                 final String singlePlan = isParallel ? "Async Horizon Join workers: 1 offsets: 2" : "Horizon Join offsets: 2";
@@ -1474,13 +1480,15 @@ public class HorizonJoinTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .expectSize()
                         .withPlanContaining(multiPlan)
-                        .returns("sym\toffset\ta\tk\n" +
-                                "A\t0\t20.0\t51.0\n" +
-                                "A\t" + getSecondsDivisor() + "\t40.0\t56.0\n" +
-                                "B\t0\t20.0\t51.0\n" +
-                                "B\t" + getSecondsDivisor() + "\t60.0\t61.0\n" +
-                                "C\t0\t40.0\t61.0\n" +
-                                "C\t" + getSecondsDivisor() + "\t40.0\t61.0\n");
+                        .returns("""
+                                sym\toffset\ta\tk
+                                A\t0\t20.0\t51.0
+                                A\t#1s\t40.0\t56.0
+                                B\t0\t20.0\t51.0
+                                B\t#1s\t60.0\t61.0
+                                C\t0\t40.0\t61.0
+                                C\t#1s\t40.0\t61.0
+                                """.replace("#1s", oneSecond));
             }
         });
     }
@@ -1757,6 +1765,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                         .fails(outerPrefix.length() + position, message);
             }
 
+            final String oneSecond = String.valueOf(getSecondsDivisor());
             // a window function over a HORIZON JOIN sub-query is allowed
             assertQuery(
                     "SELECT offset, a, row_number() OVER (ORDER BY a DESC) + 1 rn " +
@@ -1764,11 +1773,11 @@ public class HorizonJoinTest extends AbstractCairoTest {
             )
                     .noLeakCheck()
                     .expectSize()
-                    .returns(
-                            "offset\ta\trn\n" +
-                                    "0\t25.0\t3\n" +
-                                    getSecondsDivisor() + "\t45.0\t2\n"
-                    );
+                    .returns("""
+                            offset\ta\trn
+                            0\t25.0\t3
+                            #1s\t45.0\t2
+                            """.replace("#1s", oneSecond));
         });
     }
 

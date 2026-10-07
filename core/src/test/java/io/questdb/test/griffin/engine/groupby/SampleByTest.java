@@ -8876,29 +8876,21 @@ public class SampleByTest extends AbstractCairoTest {
                     SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
                     SAMPLE BY 5h FROM '2021-10-29T22:15' TO '2021-10-31' FILL(PREV) ALIGN TO CALENDAR TIME ZONE '+02:00'
                     """;
-            assertQuery(sql + " LIMIT 3")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
+            assertSampleByCursorLimit(
+                    sql,
+                    """
                             ts\tc
                             2021-10-29T20:15:00.000000Z\t9
                             2021-10-30T01:15:00.000000Z\t8
                             2021-10-30T06:15:00.000000Z\t8
-                            """);
-            assertQuery(sql + " LIMIT -3")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .expectSize()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
+                            """,
+                    """
                             ts\tc
                             2021-10-30T11:15:00.000000Z\t8
                             2021-10-30T16:15:00.000000Z\t8
                             2021-10-30T21:15:00.000000Z\t1
-                            """);
+                            """
+            );
         });
     }
 
@@ -8934,29 +8926,21 @@ public class SampleByTest extends AbstractCairoTest {
                     SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
                     SAMPLE BY 1d FROM '2021-10-29' TO '2021-11-03' ALIGN TO CALENDAR TIME ZONE '+05:30'
                     """;
-            assertQuery(sql + " LIMIT 3")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
+            assertSampleByCursorLimit(
+                    sql,
+                    """
                             ts\tc
                             2021-10-29T18:30:00.000000Z\t37
                             2021-10-30T18:30:00.000000Z\t38
                             2021-10-31T18:30:00.000000Z\t39
-                            """);
-            assertQuery(sql + " LIMIT -3")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .expectSize()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
+                            """,
+                    """
                             ts\tc
                             2021-10-30T18:30:00.000000Z\t38
                             2021-10-31T18:30:00.000000Z\t39
                             2021-11-01T18:30:00.000000Z\t39
-                            """);
+                            """
+            );
         });
     }
 
@@ -8971,29 +8955,21 @@ public class SampleByTest extends AbstractCairoTest {
                     SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
                     SAMPLE BY 5h TO NULL ALIGN TO CALENDAR TIME ZONE '+02:00'
                     """;
-            assertQuery(sql + " LIMIT 3")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
+            assertSampleByCursorLimit(
+                    sql,
+                    """
                             ts\tc
                             2021-10-29T17:00:00.000000Z\t3
                             2021-10-29T22:00:00.000000Z\t8
                             2021-10-30T03:00:00.000000Z\t9
-                            """);
-            assertQuery(sql + " LIMIT -3")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .expectSize()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
+                            """,
+                    """
                             ts\tc
                             2021-11-04T13:00:00.000000Z\t8
                             2021-11-04T18:00:00.000000Z\t8
                             2021-11-04T23:00:00.000000Z\t2
-                            """);
+                            """
+            );
         });
     }
 
@@ -9008,29 +8984,21 @@ public class SampleByTest extends AbstractCairoTest {
                     SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
                     SAMPLE BY 5h ALIGN TO CALENDAR TIME ZONE '+02:00'
                     """;
-            assertQuery(sql + " LIMIT 3")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
+            assertSampleByCursorLimit(
+                    sql,
+                    """
                             ts\tc
                             2021-10-29T17:00:00.000000Z\t3
                             2021-10-29T22:00:00.000000Z\t8
                             2021-10-30T03:00:00.000000Z\t9
-                            """);
-            assertQuery(sql + " LIMIT -3")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .expectSize()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
+                            """,
+                    """
                             ts\tc
                             2021-11-04T13:00:00.000000Z\t8
                             2021-11-04T18:00:00.000000Z\t8
                             2021-11-04T23:00:00.000000Z\t2
-                            """);
+                            """
+            );
         });
     }
 
@@ -9044,29 +9012,21 @@ public class SampleByTest extends AbstractCairoTest {
                     SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
                     SAMPLE BY 3h FROM '2021-10-29' TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE '+05:30'
                     """;
-            assertQuery(sql + " LIMIT 3")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
+            assertSampleByCursorLimit(
+                    sql,
+                    """
                             ts\tc
                             2021-10-29T18:30:00.000000Z\t3
                             2021-10-29T21:30:00.000000Z\t4
                             2021-10-30T00:30:00.000000Z\t5
-                            """);
-            assertQuery(sql + " LIMIT -3")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .expectSize()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
+                            """,
+                    """
                             ts\tc
                             2021-10-30T09:30:00.000000Z\t5
                             2021-10-30T12:30:00.000000Z\t5
                             2021-10-30T15:30:00.000000Z\t5
-                            """);
+                            """
+            );
         });
     }
 
@@ -9158,29 +9118,21 @@ public class SampleByTest extends AbstractCairoTest {
                     SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
                     SAMPLE BY 5h TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE '+02:00'
                     """;
-            assertQuery(sql + " LIMIT 3")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
+            assertSampleByCursorLimit(
+                    sql,
+                    """
                             ts\tc
                             2021-10-29T17:00:00.000000Z\t3
                             2021-10-29T22:00:00.000000Z\t8
                             2021-10-30T03:00:00.000000Z\t9
-                            """);
-            assertQuery(sql + " LIMIT -3")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .expectSize()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
+                            """,
+                    """
                             ts\tc
                             2021-10-30T08:00:00.000000Z\t8
                             2021-10-30T13:00:00.000000Z\t8
                             2021-10-30T18:00:00.000000Z\t6
-                            """);
+                            """
+            );
         });
     }
 
@@ -9196,29 +9148,21 @@ public class SampleByTest extends AbstractCairoTest {
                     SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
                     SAMPLE BY 5h TO '2021-10-31' FILL(PREV) ALIGN TO CALENDAR TIME ZONE '+02:00'
                     """;
-            assertQuery(sql + " LIMIT 3")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
+            assertSampleByCursorLimit(
+                    sql,
+                    """
                             ts\tc
                             2021-10-29T17:00:00.000000Z\t3
                             2021-10-29T22:00:00.000000Z\t8
                             2021-10-30T03:00:00.000000Z\t9
-                            """);
-            assertQuery(sql + " LIMIT -3")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .expectSize()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
+                            """,
+                    """
                             ts\tc
                             2021-10-30T08:00:00.000000Z\t8
                             2021-10-30T13:00:00.000000Z\t8
                             2021-10-30T18:00:00.000000Z\t6
-                            """);
+                            """
+            );
         });
     }
 
@@ -9256,29 +9200,21 @@ public class SampleByTest extends AbstractCairoTest {
                     SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
                     SAMPLE BY 5h FROM '2021-10-29' FILL(NULL) ALIGN TO CALENDAR TIME ZONE '+02:00'
                     """;
-            assertQuery(sql + " LIMIT 3")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
+            assertSampleByCursorLimit(
+                    sql,
+                    """
                             ts\tc
                             2021-10-28T22:00:00.000000Z\tnull
                             2021-10-29T03:00:00.000000Z\tnull
                             2021-10-29T08:00:00.000000Z\tnull
-                            """);
-            assertQuery(sql + " LIMIT -3")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .expectSize()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
+                            """,
+                    """
                             ts\tc
                             2021-11-04T09:00:00.000000Z\t8
                             2021-11-04T14:00:00.000000Z\t8
                             2021-11-04T19:00:00.000000Z\t8
-                            """);
+                            """
+            );
         });
     }
 
@@ -9293,29 +9229,21 @@ public class SampleByTest extends AbstractCairoTest {
                     SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
                     SAMPLE BY 5h FROM '2021-10-29' FILL(42) ALIGN TO CALENDAR TIME ZONE '+02:00'
                     """;
-            assertQuery(sql + " LIMIT 3")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
+            assertSampleByCursorLimit(
+                    sql,
+                    """
                             ts\tc
                             2021-10-28T22:00:00.000000Z\t42
                             2021-10-29T03:00:00.000000Z\t42
                             2021-10-29T08:00:00.000000Z\t42
-                            """);
-            assertQuery(sql + " LIMIT -3")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .expectSize()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
+                            """,
+                    """
                             ts\tc
                             2021-11-04T09:00:00.000000Z\t8
                             2021-11-04T14:00:00.000000Z\t8
                             2021-11-04T19:00:00.000000Z\t8
-                            """);
+                            """
+            );
         });
     }
 
@@ -22296,6 +22224,24 @@ public class SampleByTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .withPlanContaining("Sample By\n", planFill)
                 .returns(expected);
+    }
+
+    // Asserts the first three and the last three rows of a statement on the SAMPLE BY cursor path, through
+    // LIMIT 3 and LIMIT -3.
+    private void assertSampleByCursorLimit(String sql, String firstRows, String lastRows) throws Exception {
+        assertQuery(sql + " LIMIT 3")
+                .noLeakCheck()
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n")
+                .returns(firstRows);
+        assertQuery(sql + " LIMIT -3")
+                .noLeakCheck()
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("Sample By\n")
+                .returns(lastRows);
     }
 
     // Asserts a negative FILL value on both SAMPLE BY paths with the same rows: the table alone takes the GROUP BY

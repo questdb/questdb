@@ -1202,6 +1202,102 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateaddOverAliasOrderedSubQueryDesignatesSelectedAlias() throws Exception {
+        // The view designates time, an alias of ts that its ORDER BY names, and dateadd() reads ts. Code
+        // generation keeps the dateadd() timestamp only when the argument is the designated column itself,
+        // so x is not the designated timestamp. A projection that also selects time designates time
+        // instead, as SELECT dateadd('h', 1, ts) x, ts FROM t designates ts. The projection used to
+        // designate x, so SAMPLE BY bucketed by x, an ASOF JOIN matched on x and CREATE TABLE AS designated
+        // x. They now use time, with no error.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, i INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T00:00:00Z', 1),
+                        ('2024-01-01T23:00:00Z', 2),
+                        ('2024-01-01T23:30:00Z', 3),
+                        ('2024-01-02T10:00:00Z', 4)
+                    """);
+            execute("CREATE VIEW vt AS (SELECT ts AS time, ts, i FROM t ORDER BY time)");
+            execute("CREATE TABLE q (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO q VALUES
+                        ('2024-01-01T00:30:00Z', 10),
+                        ('2024-01-01T23:45:00Z', 20),
+                        ('2024-01-02T10:30:00Z', 30)
+                    """);
+
+            final String projection = "SELECT dateadd('h', 1, ts) x, time, i FROM vt";
+            final String expectedRows = """
+                    x\ttime\ti
+                    2024-01-01T01:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1
+                    2024-01-02T00:00:00.000000Z\t2024-01-01T23:00:00.000000Z\t2
+                    2024-01-02T00:30:00.000000Z\t2024-01-01T23:30:00.000000Z\t3
+                    2024-01-02T11:00:00.000000Z\t2024-01-02T10:00:00.000000Z\t4
+                    """;
+            assertQuery(projection)
+                    .noLeakCheck()
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(expectedRows);
+
+            // SAMPLE BY buckets by time and groups by x as a key, so each row has a group of its own
+            assertQuery("SELECT x, count() c, sum(i) s FROM (" + projection + ") SAMPLE BY 1d")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            x\tc\ts
+                            2024-01-01T01:00:00.000000Z\t1\t1
+                            2024-01-02T00:00:00.000000Z\t1\t2
+                            2024-01-02T00:30:00.000000Z\t1\t3
+                            2024-01-02T11:00:00.000000Z\t1\t4
+                            """);
+            assertQuery("SELECT time, x, count() c, sum(i) s FROM (" + projection + ") SAMPLE BY 1d")
+                    .noLeakCheck()
+                    .timestamp("time")
+                    .noRandomAccess()
+                    .returns("""
+                            time\tx\tc\ts
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t1\t1
+                            2024-01-01T00:00:00.000000Z\t2024-01-02T00:00:00.000000Z\t1\t2
+                            2024-01-01T00:00:00.000000Z\t2024-01-02T00:30:00.000000Z\t1\t3
+                            2024-01-02T00:00:00.000000Z\t2024-01-02T11:00:00.000000Z\t1\t4
+                            """);
+
+            // The ASOF JOIN matches on time, so the first row finds no quote although one precedes its x
+            assertQuery("SELECT a.x, a.i, q.ts qts, q.v FROM (" + projection + ") a ASOF JOIN q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x\ti\tqts\tv
+                            2024-01-01T01:00:00.000000Z\t1\t\tnull
+                            2024-01-02T00:00:00.000000Z\t2\t2024-01-01T00:30:00.000000Z\t10
+                            2024-01-02T00:30:00.000000Z\t3\t2024-01-01T00:30:00.000000Z\t10
+                            2024-01-02T11:00:00.000000Z\t4\t2024-01-01T23:45:00.000000Z\t20
+                            """);
+
+            execute("CREATE TABLE shifted AS (" + projection + ")");
+            assertQuery("SELECT x, time, i FROM shifted")
+                    .noLeakCheck()
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(expectedRows);
+
+            // Control: TIMESTAMP(x) designates x again, and SAMPLE BY buckets by it
+            assertQuery("SELECT x, count() c, sum(i) s FROM ((" + projection + ") TIMESTAMP(x)) SAMPLE BY 1d")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .noRandomAccess()
+                    .returns("""
+                            x\tc\ts
+                            2024-01-01T00:00:00.000000Z\t1\t1
+                            2024-01-02T00:00:00.000000Z\t3\t9
+                            """);
+        });
+    }
+
+    @Test
     public void testDateaddOverReorderingSubQueryIsNotDesignatedTimestamp() throws Exception {
         // The optimiser matches a dateadd() argument by name against the table's designated timestamp,
         // past any GROUP BY, DISTINCT, UNION, ORDER BY, join or rename in between. The projection used to
@@ -4306,6 +4402,11 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // the designated timestamp, and interval extraction rejected it with "unknown function name:
         // and_offset"; over an expression it stayed above the projection and failed the same way. It
         // now becomes a dateadd() filter over that column.
+        //
+        // An indexed SYMBOL key sends intrinsicModel.filter straight to compileFilter(), bypassing
+        // generateFilter0() and its stranded-wrapper rebuild, so there the rebuild in
+        // WhereClauseParser.analyzeAndOffset() is the only one on the path. The tr shapes at the end
+        // cover it.
         assertMemoryLeak(() -> {
             createTradesWithReversedTimestamp();
 
@@ -4418,6 +4519,102 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             2024-01-01T00:00:21.000000Z\tS0
                             2024-01-01T00:00:11.000000Z\tS1
                             2024-01-01T00:00:01.000000Z\tS2
+                            """);
+
+            // indexed symbol key: the dateadd() residual rides on the index scan. ts2 runs one minute
+            // ahead of ts, so the filter keeps rows 1-3 only, and drops rows 4-6 even when their
+            // symbol matches.
+            execute("CREATE TABLE tr (ts TIMESTAMP, ts2 TIMESTAMP, sym SYMBOL INDEX, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tr VALUES
+                        ('2024-01-01T00:00:00', '2024-01-01T00:01:00', 'S1', 1),
+                        ('2024-01-01T00:00:10', '2024-01-01T00:01:10', 'S2', 2),
+                        ('2024-01-01T00:00:20', '2024-01-01T00:01:20', 'S0', 3),
+                        ('2024-01-01T00:00:30', '2024-01-01T00:01:30', 'S1', 4),
+                        ('2024-01-01T00:00:40', '2024-01-01T00:01:40', 'S2', 5),
+                        ('2024-01-01T00:00:50', '2024-01-01T00:01:50', 'S0', 6)
+                    """);
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts) x, sym, v FROM (SELECT ts2 ts, sym, v FROM tr))
+                    WHERE x < '2024-01-01T00:01:30' AND sym = 'S1'
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('s',1,ts),sym,v]
+                                SelectedRecord
+                                    PageFrame
+                                        Index forward scan on: sym
+                                          filter: sym=1 and dateadd('s',1,ts2)<2024-01-01T00:01:30.000000Z
+                                        Frame forward scan on: tr
+                            """)
+                    .returns("""
+                            x\tsym\tv
+                            2024-01-01T00:01:01.000000Z\tS1\t1
+                            """);
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts) x, sym, v FROM (SELECT ts2 ts, sym, v FROM tr))
+                    WHERE x < '2024-01-01T00:01:30' AND sym IN ('S1', 'S2')
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('s',1,ts),sym,v]
+                                SelectedRecord
+                                    FilterOnValues
+                                        Table-order scan
+                                            Index forward scan on: sym
+                                              filter: sym=2 and dateadd('s',1,ts2)<2024-01-01T00:01:30.000000Z
+                                            Index forward scan on: sym
+                                              filter: sym=1 and dateadd('s',1,ts2)<2024-01-01T00:01:30.000000Z
+                                        Frame forward scan on: tr
+                            """)
+                    .returns("""
+                            x\tsym\tv
+                            2024-01-01T00:01:01.000000Z\tS1\t1
+                            2024-01-01T00:01:11.000000Z\tS2\t2
+                            """);
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts) x, sym, v FROM (SELECT ts2 ts, sym, v FROM tr))
+                    WHERE x < '2024-01-01T00:01:30' AND sym != 'S1'
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('s',1,ts),sym,v]
+                                SelectedRecord
+                                    FilterOnExcludedValues
+                                      symbolFilter: sym not in ['S1']
+                                      filter: dateadd('s',1,ts2)<2024-01-01T00:01:30.000000Z
+                                        Table-order scan
+                                            Index forward scan on: sym
+                                              filter: sym=2 and dateadd('s',1,ts2)<2024-01-01T00:01:30.000000Z
+                                            Index forward scan on: sym
+                                              filter: sym=3 and dateadd('s',1,ts2)<2024-01-01T00:01:30.000000Z
+                                        Frame forward scan on: tr
+                            """)
+                    .returns("""
+                            x\tsym\tv
+                            2024-01-01T00:01:11.000000Z\tS2\t2
+                            2024-01-01T00:01:21.000000Z\tS0\t3
+                            """);
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts2) x, sym, v FROM tr TIMESTAMP(ts2))
+                    WHERE x < '2024-01-01T00:01:30' AND sym = 'S1'
+                    """)
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('s',1,ts2),sym,v]
+                                PageFrame
+                                    Index forward scan on: sym
+                                      filter: sym=1 and dateadd('s',1,ts2)<2024-01-01T00:01:30.000000Z
+                                    Frame forward scan on: tr
+                            """)
+                    .returns("""
+                            x\tsym\tv
+                            2024-01-01T00:01:01.000000Z\tS1\t1
                             """);
         });
     }
