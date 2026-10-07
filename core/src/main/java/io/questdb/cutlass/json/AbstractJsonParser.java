@@ -33,6 +33,9 @@ public abstract class AbstractJsonParser implements JsonParser, Mutable, QuietCl
     public void clear() {
         lexer.clear();
         csPool.clear();
+        // strings copied before clear() are invalid anyway, their pool entries get reused,
+        // so the next parse refills the buffer from the start instead of growing it forever
+        bufSize = 0;
     }
 
     @Override
