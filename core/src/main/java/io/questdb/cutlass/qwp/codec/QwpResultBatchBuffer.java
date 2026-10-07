@@ -49,6 +49,8 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Utf8Sequence;
 
+import java.util.Arrays;
+
 /**
  * Column-major accumulator for one QWP egress {@code RESULT_BATCH} table block.
  * <p>
@@ -81,6 +83,9 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      * scratch grow-and-write path can never see a negative or wrap-around length.
      */
     private static final long MAX_ARRAY_ELEMENTS = (Integer.MAX_VALUE - 1024) / 8L;
+    // appendBlockSymbols(): the rows filled row by row from a row with a new symbol key, before
+    // the column by column fill is tried again
+    private static final int SYMBOL_ROWS_AFTER_NEW_KEY = 64;
     // Reused Gorilla encoder. One instance per batch buffer (i.e. per connection).
     private final QwpGorillaEncoder gorillaEncoder = new QwpGorillaEncoder();
     private final ObjList<QwpColumnScratch> scratches = new ObjList<>();
@@ -94,6 +99,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     // appendBlock's per-SYMBOL-column address and stride pairs, and column indexes
     private long[] blockSymbolAddresses = EMPTY_LONGS;
     private int[] blockSymbolColumns = EMPTY_INTS;
+    // appendBlockSymbols(): per SYMBOL column, the connection ids of a run of the block's rows
+    private int[][] blockSymbolIds = new int[0][];
     // appendBlockSymbols(): per SYMBOL column, the previous row's key and its connection id
     private int[] blockSymbolLastConnIds = EMPTY_INTS;
     private int[] blockSymbolLastKeys = EMPTY_INTS;
@@ -952,41 +959,82 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
-     * The SYMBOL columns of {@link #appendBlock}: row by row, every SYMBOL column of a row before
-     * the next row, as {@link #appendRow} assigns connection ids.
+     * The SYMBOL columns of {@link #appendBlock}, with the connection ids {@link #appendRow} would
+     * assign: a new key gets its id in row order, every SYMBOL column of a row before the next
+     * row. Rows whose keys all have ids already are filled column by column.
      *
      * @return the rows filled: {@code rows}, or fewer when a row's new dictionary entries take
      * the batch's delta past {@code dictBudgetWireBytes}, in which case that row is the last
      */
     private int appendBlockSymbols(RecordBlock block, int rows, int dictBudgetWireBytes) {
-        final int n = columnCount;
         final QwpColumnScratch[] scs = scratchesArr;
-        final byte[] wts = wireTypesArr;
-        final int[] qts = qdbTypesArr;
-        final QwpEgressColumnDef[] defs = defsArr;
-        final SymbolTable[] sts = symbolTablesArr;
         // a SYMBOL column read from memory: its address and stride; 0 reads it through the record
         final long[] addresses = blockSymbolAddresses(block);
         if (symbolColumnCount == 1 && addresses[0] != 0) {
-            for (int ci = 0; ci < n; ci++) {
-                if (wts[ci] == QwpConstants.TYPE_SYMBOL) {
-                    return appendBlockSymbolColumn(scs[ci], addresses[0], addresses[1], blockSymbolRowIndexes[0], rows, sts[ci], dictBudgetWireBytes);
-                }
-            }
+            final int ci = blockSymbolColumns[0];
+            return appendBlockSymbolColumn(scs[ci], addresses[0], addresses[1], blockSymbolRowIndexes[0], rows, symbolTablesArr[ci], dictBudgetWireBytes);
         }
         // per SYMBOL column read from memory, its previous row's key and connection id: a key's
         // id never changes within a query, so a run of one key needs no lookup
-        final int[] lastKeys = blockSymbolLastKeys(symbolColumnCount);
-        final int[] lastConnIds = blockSymbolLastConnIds;
+        resetBlockSymbolLastKeys(symbolColumnCount);
         final int[] symbolColumns = blockSymbolColumns;
+        boolean allInMemory = true;
         for (int s = 0; s < symbolColumnCount; s++) {
             if (addresses[2 * s] != 0) {
                 scs[symbolColumns[s]].reserveSymbolRows(rows);
+            } else {
+                allInMemory = false;
             }
         }
-        int dictSize = connDict.size();
+        if (!allInMemory) {
+            return appendBlockSymbolRows(block, 0, rows, dictBudgetWireBytes);
+        }
+        // Column by column while every key already has its connection id: no entry is added, so
+        // the order the ids are looked up in does not matter. The first row with a new key, in any
+        // column, and the rows just after it, go row by row, which adds the entries in the row
+        // path's order and stops on the dictionary budget as it does.
+        int r0 = 0;
+        while (r0 < rows) {
+            int known = rows;
+            for (int s = 0; s < symbolColumnCount && known > r0; s++) {
+                known = resolveKnownSymbols(s, r0, known);
+            }
+            if (known > r0) {
+                for (int s = 0; s < symbolColumnCount; s++) {
+                    scs[symbolColumns[s]].appendSymbolConnIdsReserved(blockSymbolIds[s], 0, known - r0);
+                }
+                r0 = known;
+            }
+            if (r0 < rows) {
+                final int hi = Math.min(rows, r0 + SYMBOL_ROWS_AFTER_NEW_KEY);
+                final int taken = appendBlockSymbolRows(block, r0, hi, dictBudgetWireBytes);
+                if (taken < hi) {
+                    return taken;
+                }
+                r0 = hi;
+            }
+        }
+        return rows;
+    }
+
+    /**
+     * {@link #appendBlockSymbols} for rows {@code [lo, hi)}, row by row across the SYMBOL columns.
+     *
+     * @return {@code hi}, or the row after the one whose new entries take the batch's delta past
+     * {@code dictBudgetWireBytes}
+     */
+    private int appendBlockSymbolRows(RecordBlock block, int lo, int hi, int dictBudgetWireBytes) {
+        final QwpColumnScratch[] scs = scratchesArr;
+        final int[] qts = qdbTypesArr;
+        final QwpEgressColumnDef[] defs = defsArr;
+        final SymbolTable[] sts = symbolTablesArr;
+        final long[] addresses = blockSymbolAddresses;
+        final int[] lastKeys = blockSymbolLastKeys;
+        final int[] lastConnIds = blockSymbolLastConnIds;
+        final int[] symbolColumns = blockSymbolColumns;
         final long[] rowIndexes = blockSymbolRowIndexes;
-        for (int r = 0; r < rows; r++) {
+        int dictSize = connDict.size();
+        for (int r = lo; r < hi; r++) {
             for (int s = 0; s < symbolColumnCount; s++) {
                 final int ci = symbolColumns[s];
                 final long address = addresses[2 * s];
@@ -1011,7 +1059,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 }
             }
         }
-        return rows;
+        return hi;
     }
 
     /**
@@ -1072,6 +1120,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             addresses = blockSymbolAddresses = new long[2 * symbolColumnCount];
             blockSymbolColumns = new int[symbolColumnCount];
             blockSymbolRowIndexes = new long[symbolColumnCount];
+            blockSymbolIds = Arrays.copyOf(blockSymbolIds, symbolColumnCount);
         }
         for (int ci = 0, s = 0, n = columnCount; ci < n; ci++) {
             if (wireTypesArr[ci] != QwpConstants.TYPE_SYMBOL) {
@@ -1091,7 +1140,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      * {@link #blockSymbolLastKeys} and {@link #blockSymbolLastConnIds} for {@code count} SYMBOL
      * columns, the keys reset to NULL, which never matches as a previous key.
      */
-    private int[] blockSymbolLastKeys(int count) {
+    private void resetBlockSymbolLastKeys(int count) {
         int[] keys = blockSymbolLastKeys;
         if (keys.length < count) {
             keys = blockSymbolLastKeys = new int[count];
@@ -1100,7 +1149,6 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         for (int i = 0; i < count; i++) {
             keys[i] = SymbolTable.VALUE_IS_NULL;
         }
-        return keys;
     }
 
     /**
@@ -1289,6 +1337,49 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             }
             scratch.appendSymbolConnId(connId);
             return connId;
+        }
+    }
+
+    /**
+     * The connection ids of SYMBOL column {@code s}'s keys in block rows {@code [lo, hi)}, into
+     * {@code blockSymbolIds[s]} from index 0, -1 for NULL, as far as every key already has one.
+     * Adds nothing to the dictionary.
+     *
+     * @return {@code hi}, or the first row whose key has no connection id yet
+     */
+    private int resolveKnownSymbols(int s, int lo, int hi) {
+        final long address = blockSymbolAddresses[2 * s];
+        final long stride = blockSymbolAddresses[2 * s + 1];
+        final long rowIndexes = blockSymbolRowIndexes[s];
+        final IntIntHashMap k2c = scratchesArr[blockSymbolColumns[s]].connKeyToConnId;
+        int[] ids = blockSymbolIds[s];
+        if (ids == null || ids.length < hi - lo) {
+            ids = blockSymbolIds[s] = new int[Math.max(hi - lo, 1024)];
+        }
+        int lastKey = blockSymbolLastKeys[s];
+        int lastConnId = blockSymbolLastConnIds[s];
+        try {
+            for (int r = lo; r < hi; r++) {
+                final long position = rowIndexes == 0 ? r : Unsafe.getLong(rowIndexes + 8L * r);
+                final int key = Unsafe.getInt(address + position * stride);
+                if (key == SymbolTable.VALUE_IS_NULL) {
+                    ids[r - lo] = -1;
+                } else if (key == lastKey) {
+                    ids[r - lo] = lastConnId;
+                } else {
+                    final int mapIdx = k2c.keyIndex(key);
+                    if (mapIdx >= 0) {
+                        return r;
+                    }
+                    lastKey = key;
+                    lastConnId = k2c.valueAt(mapIdx);
+                    ids[r - lo] = lastConnId;
+                }
+            }
+            return hi;
+        } finally {
+            blockSymbolLastKeys[s] = lastKey;
+            blockSymbolLastConnIds[s] = lastConnId;
         }
     }
 

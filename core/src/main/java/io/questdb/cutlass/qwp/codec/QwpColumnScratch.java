@@ -987,6 +987,34 @@ final class QwpColumnScratch implements QuietCloseable {
         rowCount++;
     }
 
+    /**
+     * SYMBOL: {@code n} rows from {@code ids}, starting at {@code offset}, after
+     * {@link #reserveSymbolRows} made room: a connection id, as {@link #appendSymbolConnIdReserved}
+     * appends it, or -1, a NULL, as {@link #appendNull} appends it.
+     */
+    void appendSymbolConnIdsReserved(int[] ids, int offset, int n) {
+        ensureNullBitmapCapacity(rowCount + n);
+        int slot = nonNullCount;
+        int row = rowCount;
+        int cum = slot == 0 ? 0 : Unsafe.getInt(symbolBytesCumAddr + 4L * slot);
+        for (int i = offset, hi = offset + n; i < hi; i++) {
+            final int connId = ids[i];
+            if (connId < 0) {
+                final long byteAddr = nullBitmapAddr + (row >>> 3);
+                Unsafe.putByte(byteAddr, (byte) (Unsafe.getByte(byteAddr) | (1 << (row & 7))));
+                nullCount++;
+            } else {
+                Unsafe.putInt(symbolIdsAddr + 4L * slot, connId);
+                cum += QwpVarint.encodedLength(connId);
+                Unsafe.putInt(symbolBytesCumAddr + 4L * (slot + 1), cum);
+                slot++;
+            }
+            row++;
+        }
+        nonNullCount = slot;
+        rowCount = row;
+    }
+
     void appendUuid(long lo, long hi) {
         ensureValuesCapacity(valuesPos + 16);
         Unsafe.putLong(valuesAddr + valuesPos, lo);
