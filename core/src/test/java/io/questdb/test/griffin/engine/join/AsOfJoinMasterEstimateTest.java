@@ -151,6 +151,22 @@ public class AsOfJoinMasterEstimateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjectedSlaveIsSized() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables("index type posting", false);
+            // TAQ idx 84 and 83 select their slave columns in a subquery: a projection over the table
+            final String slave = "(SELECT sym, ex, ts, bid FROM quotes)";
+            final String sql = "SELECT t.ts, t.sym, q.bid FROM " + MASTER_INTERVAL + " t ASOF JOIN " + slave + " q ON (sym)";
+            assertQuery(sql).noLeakCheck().assertsPlanContaining("AsOf Join Indexed Scan", "auto:master~51 slave~300306 ");
+            assertOnlyJoinDiffers(sql, "asof_dense");
+            assertAllHintsAgree(sql, SINGLE_KEY_HINTS);
+            final String sql2 = "SELECT t.ts, t.sym, t.ex, q.bid FROM (SELECT * FROM trades WHERE px > 99990) t ASOF JOIN " + slave + " q ON (sym, ex)";
+            assertQuery(sql2).noLeakCheck().assertsPlanContaining("AsOf Join Dense Dual Symbol", "prelude: fast master<=300 filtered");
+            assertAllHintsAgree(sql2, TWO_KEY_HINTS);
+        });
+    }
+
+    @Test
     public void testTwoKeyFilteredMasterGetsPrelude() throws Exception {
         assertMemoryLeak(() -> {
             createTables("index type posting", false);

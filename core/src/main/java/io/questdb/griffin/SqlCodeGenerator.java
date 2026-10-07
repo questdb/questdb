@@ -6824,12 +6824,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // sparse/illiquid symbols, dense-ts-cliff guarded). Unknown estimate -> fall
                             // through to Dense (do no harm).
                             if (configuration.isSqlAsOfAutoAlgoEnabled()) {
-                                final long slaveN = estimateBaseRowCount(slave, executionContext);
                                 final long masterLimit = masterLimitOrMinus1(model.getJoinModels().getQuick(0));
                                 final boolean isSlaveIndexed = slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex);
+                                final long slaveN;
                                 final long effMaster;
                                 final int bp;
                                 if (isSlaveIndexed) {
+                                    // a slave written as a subquery is a projection over its table
+                                    slaveN = estimateRowCount(slave, executionContext);
                                     // The index path costs one lookup per master row, so it is sized by the
                                     // rows the master returns: the rows its intervals select, not its table.
                                     effMaster = capByLimit(estimateRowCount(master, executionContext), masterLimit);
@@ -6837,9 +6839,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             ? configuration.getSqlAsOfIndexPostingMaxMasterBp()
                                             : configuration.getSqlAsOfIndexMaxMasterBp();
                                 } else {
-                                    // Memoized keeps the whole-table master estimate: its cost depends on how
-                                    // far back each key's predecessor lies, not on the master row count alone,
-                                    // and a time-sliced or symbol-filtered master is where it loses to Dense.
+                                    // Memoized keeps the estimates it had (whole tables, no projections): its cost
+                                    // depends on how far back each key's predecessor lies, not on the master row
+                                    // count alone, and a time-sliced or symbol-filtered master is where it loses
+                                    // to Dense.
+                                    slaveN = estimateBaseRowCount(slave, executionContext);
                                     effMaster = capByLimit(estimateBaseRowCount(master, executionContext), masterLimit);
                                     bp = configuration.getSqlAsOfIndexMaxMasterBp();
                                 }
@@ -7235,7 +7239,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (masterBp <= 0 || backScanPct <= 0) {
             return;
         }
-        final long slaveN = estimateBaseRowCount(slave, executionContext);
+        final long slaveN = estimateRowCount(slave, executionContext);
         if (slaveN <= 0) {
             return;
         }
