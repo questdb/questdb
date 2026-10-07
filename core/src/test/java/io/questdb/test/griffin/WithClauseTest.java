@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -102,20 +103,22 @@ public class WithClauseTest extends AbstractCairoTest {
             // Six levels would parse c0 64 times. The parser refuses the first copy that finds the
             // nodes spent, at the reference that would parse it, a read of c0 in the text of c1.
             final String sixLevels = denseCteChain(6);
-            assertExceptionNoLeakCheck(
+            assertTooComplexToParse(
                     sixLevels,
                     sixLevels.indexOf("UNION ALL SELECT * FROM c0") + "UNION ALL SELECT * FROM ".length(),
-                    "statement is too complex to parse [nodes=27944, max=27840]"
+                    "nodes",
+                    27_840
             );
             // In 825 characters, CTEs that each read the one before four times would parse c0 16,384
             // times. While only query models counted, the models stayed within budget until the
             // copies had taken 365,336 nodes, so the parser kept about 140 MB before it refused the
             // statement.
             final String fanOut = fanOutCteChain();
-            assertExceptionNoLeakCheck(
+            assertTooComplexToParse(
                     fanOut,
                     fanOut.indexOf("c0,c0 a") + "c0,".length(),
-                    "statement is too complex to parse [nodes=26820, max=26500]"
+                    "nodes",
+                    26_500
             );
         });
     }
@@ -142,17 +145,19 @@ public class WithClauseTest extends AbstractCairoTest {
             // that finds the budget spent, at the reference that would parse it, a read of q0 in
             // the text of q1.
             final String nineLevels = doublingCteChain(9);
-            assertExceptionNoLeakCheck(
+            assertTooComplexToParse(
                     nineLevels,
                     nineLevels.indexOf("UNION ALL SELECT * FROM q0") + "UNION ALL SELECT * FROM ".length(),
-                    "statement is too complex to parse [models=2110, max=2106]"
+                    "models",
+                    2106
             );
             // Twenty levels stop as soon as the parse has taken their 3,336.
             final String twentyLevels = doublingCteChain(20);
-            assertExceptionNoLeakCheck(
+            assertTooComplexToParse(
                     twentyLevels,
                     twentyLevels.indexOf("UNION ALL SELECT * FROM q0") + "UNION ALL SELECT * FROM ".length(),
-                    "statement is too complex to parse [models=3340, max=3336]"
+                    "models",
+                    3336
             );
         });
     }
@@ -179,10 +184,11 @@ public class WithClauseTest extends AbstractCairoTest {
             // statement. The parser now refuses the first copy that finds the characters spent, at
             // a read of c0 in the text of c1.
             final String sevenLevels = declaredLiteralCteChain(7);
-            assertExceptionNoLeakCheck(
+            assertTooComplexToParse(
                     sevenLevels,
                     sevenLevels.indexOf("c0 d"),
-                    "statement is too complex to parse [chars=882557, max=864500]"
+                    "chars",
+                    864_500
             );
         });
     }
@@ -207,10 +213,11 @@ public class WithClauseTest extends AbstractCairoTest {
             // Seven levels used to write 25.8 million characters, about 90 MB, before the node
             // budget refused the statement.
             final String sevenLevels = declaredLiteralCteChain(7);
-            assertExceptionNoLeakCheck(
+            assertTooComplexToParse(
                     sevenLevels,
                     sevenLevels.indexOf("c0 b"),
-                    "statement is too complex to parse [chars=900754, max=864500]"
+                    "chars",
+                    864_500
             );
         });
     }
@@ -367,10 +374,11 @@ public class WithClauseTest extends AbstractCairoTest {
                             """);
             // The allowance of one statement does not carry over to the next one.
             final String nineLevels = doublingCteChain(9);
-            assertExceptionNoLeakCheck(
+            assertTooComplexToParse(
                     nineLevels,
                     nineLevels.indexOf("UNION ALL SELECT * FROM q0") + "UNION ALL SELECT * FROM ".length(),
-                    "statement is too complex to parse [models=2110, max=2106]"
+                    "models",
+                    2106
             );
         });
     }
@@ -442,10 +450,11 @@ public class WithClauseTest extends AbstractCairoTest {
             // Six levels would parse c0 64 times. The parser refuses the first copy that finds the
             // columns spent, at the reference that would parse it, a read of c1 in the text of c2.
             final String sixLevels = wideCteChain(6);
-            assertExceptionNoLeakCheck(
+            assertTooComplexToParse(
                     sixLevels,
                     sixLevels.indexOf("UNION ALL SELECT * FROM c1") + "UNION ALL SELECT * FROM ".length(),
-                    "statement is too complex to parse [columns=15102, max=14820]"
+                    "columns",
+                    14_820
             );
         });
     }
@@ -784,6 +793,20 @@ public class WithClauseTest extends AbstractCairoTest {
         assertQuery("with example as (select * from long_sequence(1))\n" +
                 "select * from example where true where false;")
                 .fails(82, "unexpected token [where]");
+    }
+
+    // Asserts that the parse budget refuses the statement at the position. The error reports how
+    // much of the spent part the parse had taken, a count that moves with any change to how the
+    // parser allocates, so the assertion pins the spent part and its maximum, which follows from
+    // the length of the text, but not the count.
+    private static void assertTooComplexToParse(CharSequence sql, int position, String spentPart, long max) throws Exception {
+        try {
+            assertExceptionNoLeakCheck(sql);
+        } catch (SqlException e) {
+            Assert.assertEquals(position, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "statement is too complex to parse [" + spentPart + '=');
+            TestUtils.assertContains(e.getFlyweightMessage(), ", max=" + max + ']');
+        }
     }
 
     // DECLARE @s := '<800 characters>' WITH c0 AS(SELECT @s,@s,...,@s FROM long_sequence(1)), with

@@ -186,13 +186,18 @@ public class ConcurrentViewCycleTest extends AbstractViewTest {
 
     // EXPLAIN opens the cursor of the plan it prints, and like a SELECT it refuses a plan compiled
     // before a concurrent ALTER VIEW changed a view the plan reads. PGWire and HTTP recompile on
-    // that signal, and so does this reader.
+    // that signal up to the configured recompile attempt limit, then fail the query, and so does
+    // this reader, so a plan that keeps going stale fails the test instead of hanging it.
     private static void printExplain(String viewName, StringSink sink, SqlExecutionContext ctx) throws SqlException {
-        while (true) {
+        final int maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
+        for (int attempt = 1; ; attempt++) {
             try {
                 engine.print("EXPLAIN SELECT * FROM " + viewName, sink, ctx);
                 return;
-            } catch (TableReferenceOutOfDateException ignore) {
+            } catch (TableReferenceOutOfDateException e) {
+                if (attempt == maxRecompileAttempts) {
+                    throw e;
+                }
             }
         }
     }

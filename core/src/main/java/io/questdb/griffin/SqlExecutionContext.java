@@ -266,10 +266,12 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     /**
      * Returns true for the contexts the engine's own jobs run SQL under: a materialized view
-     * refresh, a live view refresh and WAL apply. No principal is reading data through such a
-     * context. The job runs the query on the engine's behalf, under a security context that names
-     * no real user, so view auditing records nothing for it: a row would credit the read to
-     * nobody, once per refresh, or once per node that replays the WAL.
+     * refresh, a live view refresh, WAL apply and view compilation, where the view compiler job and
+     * {@code COMPILE VIEW} each run under their own {@code ViewCompilerExecutionContext}. No
+     * principal is reading data through such a context. The job runs the query on the engine's
+     * behalf, under a security context that names no real user, so view auditing records nothing
+     * for it: a row would credit the read to nobody, once per refresh, once per node that replays
+     * the WAL, or once per compile of a view.
      * <p>
      * Unlike {@link #isMetadataProbe()}, which a caller raises around a single cursor open, this
      * is a fixed property of the context's type.

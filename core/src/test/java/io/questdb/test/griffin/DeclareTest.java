@@ -29,6 +29,7 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
@@ -40,6 +41,7 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TableFunctionTestUtils;
 import io.questdb.test.tools.TableFunctionTestUtils.CloseCountingRecordCursorFactory;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -1867,10 +1869,11 @@ public class DeclareTest extends AbstractSqlParserTest {
             // body of cv, so the error points at the read of cv in the statement that expands it,
             // the third one in the text of @q0.
             final String fiveLevels = declaredDoublingOverView(5);
-            assertExceptionNoLeakCheck(
+            assertTooComplexToParse(
                     fiveLevels,
                     114,
-                    "statement is too complex to parse [models=3857, max=3856]"
+                    "models",
+                    3856
             );
         });
     }
@@ -2375,10 +2378,11 @@ public class DeclareTest extends AbstractSqlParserTest {
                 sql.append(", @q").append(i).append(" := (SELECT * FROM @q").append(i - 1).append(" UNION ALL SELECT * FROM @q").append(i - 1).append(')');
             }
             sql.append(" SELECT count() FROM @q5");
-            assertExceptionNoLeakCheck(
+            assertTooComplexToParse(
                     sql,
                     sql.indexOf("@q1 := (") + "@q1 := (".length(),
-                    "statement is too complex to parse [models=3151, max=3052]"
+                    "models",
+                    3052
             );
         });
     }
@@ -5579,10 +5583,11 @@ public class DeclareTest extends AbstractSqlParserTest {
                             2
                             """);
             final String readTwice = "SELECT * FROM v_chain UNION ALL SELECT * FROM v_chain";
-            assertExceptionNoLeakCheck(
+            assertTooComplexToParse(
                     readTwice,
                     readTwice.lastIndexOf("v_chain"),
-                    "statement is too complex to parse [nodes=65588, max=17380]"
+                    "nodes",
+                    17_380
             );
         });
     }
@@ -5744,6 +5749,20 @@ public class DeclareTest extends AbstractSqlParserTest {
         Assert.assertTrue("instantiated factories: " + factories.size(), factories.size() >= minFactoryCount);
         for (int i = 0, n = factories.size(); i < n; i++) {
             Assert.assertEquals("factory " + i + " of " + n, 1, factories.getQuick(i).getCloseCount());
+        }
+    }
+
+    // Asserts that the parse budget refuses the statement at the position. The error reports how
+    // much of the spent part the parse had taken, a count that moves with any change to how the
+    // parser allocates, so the assertion pins the spent part and its maximum, which follows from
+    // the length of the text, but not the count.
+    private static void assertTooComplexToParse(CharSequence sql, int position, String spentPart, long max) throws Exception {
+        try {
+            assertExceptionNoLeakCheck(sql);
+        } catch (SqlException e) {
+            Assert.assertEquals(position, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "statement is too complex to parse [" + spentPart + '=');
+            TestUtils.assertContains(e.getFlyweightMessage(), ", max=" + max + ']');
         }
     }
 

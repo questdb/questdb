@@ -1,3 +1,27 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.sql.RecordCursor;
@@ -16,8 +40,8 @@ import static org.junit.Assert.*;
 /**
  * The property the whole design rests on: a declared list spliced into IN is indistinguishable from
  * the same list written out in full. Everything else - which IN overload applies, whether an
- * element keeps its own type, whether the members stay in order - follows from that, so it is worth
- * asserting over shapes nobody chose by hand rather than only the ones that occurred to me.
+ * element keeps its own type, whether the members stay in order - follows from that, so this test
+ * asserts it over shapes nobody chose by hand, not only over hand-picked ones.
  * <p>
  * The splice itself never looks at a member's type; the types matter downstream, where the IN node
  * the splice builds picks an overload, a JIT path or an intrinsic scan. So the fuzz runs every shape

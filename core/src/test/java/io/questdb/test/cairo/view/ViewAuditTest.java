@@ -26,20 +26,28 @@ package io.questdb.test.cairo.view;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.lv.LiveViewRefreshSqlExecutionContext;
 import io.questdb.cairo.mv.MatViewRefreshSqlExecutionContext;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.view.ViewCompilerExecutionContext;
+import io.questdb.cairo.view.ViewCompilerJob;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewGraph;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
@@ -66,15 +74,26 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 /**
- * The OSS half of audited views: the parser records what an audited view was read with, and the
- * view definition remembers the flag across a restart. Enterprise turns those records into audit
- * rows and owns the {@code WITH AUDIT} syntax and the permission that guards it, so none of that
- * is asserted here.
+ * The OSS half of audited views: the parser records what an audited view was read with, the view
+ * definition remembers the flag across a restart, and OSS calls the Enterprise hooks and raises the
+ * context flags they read. This class asserts all of that, including the
+ * {@code authorizeAuditView()} gate on DROP VIEW and DROP ALL TABLES and the
+ * {@code isMetadataProbe()} and {@code isBackgroundJob()} flags each audited plan's cursor open
+ * sees. Enterprise turns the records into audit rows and owns the {@code WITH AUDIT} syntax, so
+ * this class asserts neither.
  */
 public class ViewAuditTest extends AbstractCairoTest {
+    private static final String AUDIT_VIEW_DENIED = "audit view permission denied";
+    // How a cursor opened only to check a SELECT shows in auditedPlanCursorOpens.
+    private static final String PROBE_OPEN = "SqlExecutionContextImpl isBackgroundJob=false isMetadataProbe=true";
+    // The context each cursor of a plan with audits opened under since a test armed this, with the
+    // flags Enterprise reads at that open, in open order. Null while no test is looking.
+    private static ObjList<String> auditedPlanCursorOpens;
     // What each plan generated since a test armed this held on its model: the names of the views
     // it audits, sorted. Null while no test is looking.
     private static ObjList<String> generatedPlanAudits;
+    // Makes every cursor open fail once CursorOpenRecordingFactory records it.
+    private static boolean isAuditedPlanCursorOpenRefused;
     // Makes the compiler refuse every plan whose model holds an audit, once the plan generated.
     private static boolean isAuditedPlanRefused;
 
@@ -411,6 +430,63 @@ public class ViewAuditTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropAllTablesNeedsTheAuditPermissionForAnAuditedView() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndView();
+            createAuditedView("v_audited", "SELECT s FROM t");
+
+            // DROP ALL TABLES takes the audited view's marking with it, so it asks for the same
+            // permission DROP VIEW does. Like any other refusal, it reports the view and still
+            // drops the rest.
+            try (SqlExecutionContext denyContext = denyAuditViewContext()) {
+                try {
+                    execute("DROP ALL TABLES", denyContext);
+                    fail("expected DROP ALL TABLES to report the audited view");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "'v_audited': ");
+                    TestUtils.assertContains(e.getFlyweightMessage(), AUDIT_VIEW_DENIED);
+                }
+            }
+
+            final TableToken auditedToken = engine.getTableTokenIfExists("v_audited");
+            assertNotNull("the audited view must survive DROP ALL TABLES", auditedToken);
+            assertTrue(engine.getViewGraph().getViewDefinition(auditedToken).isAudited());
+            assertNull("the plain view should still have been dropped", engine.getTableTokenIfExists("v"));
+            assertNull("the table should still have been dropped", engine.getTableTokenIfExists("t"));
+        });
+    }
+
+    @Test
+    public void testDropViewNeedsTheAuditPermissionForAnAuditedView() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndView();
+            createAuditedView("v_audited", "SELECT s FROM t");
+
+            // Dropping is the only route by which an audited view loses its marking, so a principal
+            // that may drop views but not audit them cannot drop this one.
+            try (SqlExecutionContext denyContext = denyAuditViewContext()) {
+                try {
+                    execute("DROP VIEW v_audited", denyContext);
+                    fail("expected DROP VIEW of an audited view to need the audit permission");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), AUDIT_VIEW_DENIED);
+                }
+                final TableToken auditedToken = engine.getTableTokenIfExists("v_audited");
+                assertNotNull("the audited view must survive the refused DROP VIEW", auditedToken);
+                assertTrue(engine.getViewGraph().getViewDefinition(auditedToken).isAudited());
+
+                // A view that is not audited has no marking to lose, so the same principal drops it.
+                execute("DROP VIEW v", denyContext);
+                assertNull(engine.getTableTokenIfExists("v"));
+            }
+
+            // A principal holding the permission drops the audited view too.
+            execute("DROP VIEW v_audited");
+            assertNull(engine.getTableTokenIfExists("v_audited"));
+        });
+    }
+
+    @Test
     public void testInnerViewsAreCheckedAgainstTheOutermostAuditedView() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTableAndView();
@@ -435,6 +511,64 @@ public class ViewAuditTest extends AbstractCairoTest {
             execute("CREATE TABLE dest (s SYMBOL)");
             markViewAudited("v");
             assertRecordsOneAuditOf("v", "INSERT INTO dest SELECT s FROM v");
+        });
+    }
+
+    @Test
+    public void testMetadataProbeCoversTheCursorOpenOfEachStatementCheckingASelect() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndView();
+            markViewAudited("v");
+            execute("CREATE TABLE trades (ts TIMESTAMP, s SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            // Each statement opens a cursor over its SELECT only to check it, and hands nobody a
+            // row, so Enterprise must not record a read of v at that open. A statement that runs
+            // inside an outer probe hands the flag back raised, not clear.
+            for (boolean isOuterMetadataProbe : new boolean[]{false, true}) {
+                final String suffix = isOuterMetadataProbe ? "_outer" : "";
+                assertCursorOpenIsAMetadataProbe("CREATE VIEW v_probe" + suffix + " AS (SELECT s FROM v)", isOuterMetadataProbe);
+                drainWalAndViewQueues();
+                assertCursorOpenIsAMetadataProbe("ALTER VIEW v_probe" + suffix + " AS (SELECT s FROM v WHERE s != 'z')", isOuterMetadataProbe);
+                assertCursorOpenIsAMetadataProbe(
+                        "CREATE MATERIALIZED VIEW mv_probe" + suffix + """
+                                 AS (
+                                    SELECT ts, max(price) price FROM trades WHERE s IN (SELECT s FROM v) SAMPLE BY 1d
+                                ) PARTITION BY DAY""",
+                        isOuterMetadataProbe
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testMetadataProbeIsRestoredWhenTheCursorOpenFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndView();
+            markViewAudited("v");
+            execute("CREATE TABLE trades (ts TIMESTAMP, s SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE VIEW v_plain AS (SELECT s FROM t)");
+            drainWalAndViewQueues();
+
+            auditedPlanCursorOpens = new ObjList<>();
+            isAuditedPlanCursorOpenRefused = true;
+            try {
+                assertFailedCursorOpenClearsTheProbe("CREATE VIEW v_refused AS (SELECT s FROM v)");
+                assertFailedCursorOpenClearsTheProbe("ALTER VIEW v_plain AS (SELECT s FROM v)");
+                assertFailedCursorOpenClearsTheProbe("""
+                        CREATE MATERIALIZED VIEW mv_refused AS (
+                            SELECT ts, max(price) price FROM trades WHERE s IN (SELECT s FROM v) SAMPLE BY 1d
+                        ) PARTITION BY DAY""");
+            } finally {
+                isAuditedPlanCursorOpenRefused = false;
+                auditedPlanCursorOpens = null;
+                sqlExecutionContext.setMetadataProbe(false);
+            }
+
+            // None of the statements got past the failed open.
+            assertNull(engine.getTableTokenIfExists("v_refused"));
+            assertNull(engine.getTableTokenIfExists("mv_refused"));
+            assertEquals("SELECT s FROM t", engine.getViewGraph().getViewDefinition(engine.getTableTokenIfExists("v_plain")).getViewSql());
         });
     }
 
@@ -468,16 +602,18 @@ public class ViewAuditTest extends AbstractCairoTest {
     public void testOnlyJobContextsAreBackgroundJobs() throws Exception {
         assertMemoryLeak(() -> {
             // Enterprise records nothing for a read made under a context that says it belongs to a
-            // job, so the flag has to be set on the refresh contexts and on nothing a principal
-            // runs queries under. The WAL apply context is package-private; the Enterprise tests
-            // cover it through the rows it does not record.
+            // job, so the flag has to be set on the refresh and view compiler contexts and on
+            // nothing a principal runs queries under. The WAL apply context is package-private;
+            // the Enterprise tests cover it through the rows it does not record.
             assertFalse(sqlExecutionContext.isBackgroundJob());
             try (
                     MatViewRefreshSqlExecutionContext matViewContext = new MatViewRefreshSqlExecutionContext(engine, 1);
-                    LiveViewRefreshSqlExecutionContext liveViewContext = new LiveViewRefreshSqlExecutionContext(engine, 1)
+                    LiveViewRefreshSqlExecutionContext liveViewContext = new LiveViewRefreshSqlExecutionContext(engine, 1);
+                    ViewCompilerExecutionContext viewCompilerContext = engine.createViewCompilerContext(1)
             ) {
                 assertTrue(matViewContext.isBackgroundJob());
                 assertTrue(liveViewContext.isBackgroundJob());
+                assertTrue(viewCompilerContext.isBackgroundJob());
             }
         });
     }
@@ -1255,6 +1391,64 @@ public class ViewAuditTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testViewCompilerReadsAuditedViewsAsABackgroundJob() throws Exception {
+        assertMemoryLeak(() -> {
+            createPivotTablesAndAuditedView();
+            // The view reads a WAL table: a non-WAL ALTER TABLE ADD COLUMN queues no recompile of
+            // the views that read the table, but ApplyWal2TableJob queues one when it applies the
+            // column change.
+            execute("CREATE TABLE pub_wal (symbol SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO pub_wal VALUES
+                        ('AAPL', 1.0, '2024-01-01T00:00:00.000000Z'),
+                        ('MSFT', 2.0, '2024-01-01T00:00:01.000000Z')""");
+            drainWalQueue();
+            execute("""
+                    CREATE VIEW v_pivot AS (
+                        SELECT * FROM (SELECT symbol, price FROM pub_wal)
+                        PIVOT (sum(price) FOR symbol IN (SELECT DISTINCT symbol FROM v_audited))
+                    )""");
+            drainWalAndViewQueues();
+
+            // Each compile of v_pivot runs its PIVOT sub-query, which reads v_audited, for the
+            // names of the columns the view produces. No principal asked for those rows: the view
+            // compiler reads them under a security context that names no user. So the context has
+            // to say it belongs to a job, or Enterprise records the read once per compile.
+            final String compilerOpen = "ViewCompilerExecutionContext isBackgroundJob=true isMetadataProbe=false";
+            auditedPlanCursorOpens = new ObjList<>();
+            try {
+                // DDL on a table the view reads queues the job's recompile of the view.
+                execute("ALTER TABLE pub_wal ADD COLUMN extra INT");
+                drainWalAndViewQueues();
+                assertAuditedPlanCursorOpens(compilerOpen);
+
+                // COMPILE VIEW compiles the body under the compiler's view context, then queues
+                // the job's recompile.
+                execute("COMPILE VIEW v_pivot");
+                drainWalAndViewQueues();
+                assertAuditedPlanCursorOpens(compilerOpen, compilerOpen);
+
+                // The server compiles every view once it starts.
+                try (SqlExecutionContext startupContext = engine.createViewCompilerContext(0)) {
+                    ViewCompilerJob.compileAllViews(engine, startupContext, new ObjList<>());
+                }
+                assertAuditedPlanCursorOpens(compilerOpen);
+            } finally {
+                auditedPlanCursorOpens = null;
+            }
+        });
+    }
+
+    /**
+     * Asserts the cursor opens of plans with audits since the test armed the list, one entry per
+     * open, in open order, then empties the list for the next assertion.
+     */
+    private static void assertAuditedPlanCursorOpens(String... expectedOpens) {
+        assertEquals("wrong audited plan cursor opens", Arrays.toString(expectedOpens), "[" + join(auditedPlanCursorOpens) + "]");
+        auditedPlanCursorOpens.clear();
+    }
+
     /**
      * Compiles the statement as far as its execution model, which is as far as it gets before its
      * own plan is generated, and asserts the audits on the model of each plan generated on the
@@ -1273,6 +1467,24 @@ public class ViewAuditTest extends AbstractCairoTest {
     }
 
     /**
+     * Runs the statement with the context's probe flag at {@code isOuterMetadataProbe}, and
+     * asserts that the one cursor it opens over an audited view opens as a metadata probe, and
+     * that the statement hands the flag back as it found it.
+     */
+    private static void assertCursorOpenIsAMetadataProbe(String sql, boolean isOuterMetadataProbe) throws Exception {
+        sqlExecutionContext.setMetadataProbe(isOuterMetadataProbe);
+        auditedPlanCursorOpens = new ObjList<>();
+        try {
+            execute(sql);
+            assertEquals("wrong audited plan cursor opens for [" + sql + "]", "[" + PROBE_OPEN + "]", "[" + join(auditedPlanCursorOpens) + "]");
+            assertEquals("wrong probe flag after [" + sql + "]", isOuterMetadataProbe, sqlExecutionContext.isMetadataProbe());
+        } finally {
+            auditedPlanCursorOpens = null;
+            sqlExecutionContext.setMetadataProbe(false);
+        }
+    }
+
+    /**
      * Runs the statement and asserts the audits on the model of each plan it generated, as
      * {@link #assertCompileTimePlansRecordAuditsOf} does. The statement's own plan comes last.
      */
@@ -1284,6 +1496,23 @@ public class ViewAuditTest extends AbstractCairoTest {
         } finally {
             generatedPlanAudits = null;
         }
+    }
+
+    /**
+     * Runs the statement while every recorded cursor open fails, and asserts that the one cursor
+     * it opens over an audited view failed as a metadata probe and left the flag clear, as the
+     * statement found it.
+     */
+    private static void assertFailedCursorOpenClearsTheProbe(String sql) throws Exception {
+        try {
+            execute(sql);
+            fail("expected the cursor open of [" + sql + "] to fail");
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "refused cursor open");
+        }
+        assertEquals("wrong audited plan cursor opens for [" + sql + "]", "[" + PROBE_OPEN + "]", "[" + join(auditedPlanCursorOpens) + "]");
+        auditedPlanCursorOpens.clear();
+        assertFalse("the failed cursor open of [" + sql + "] left the probe flag raised", sqlExecutionContext.isMetadataProbe());
     }
 
     /**
@@ -1443,6 +1672,10 @@ public class ViewAuditTest extends AbstractCairoTest {
         createAuditedView("v_audited", "SELECT symbol, price FROM trades");
     }
 
+    private static SqlExecutionContext denyAuditViewContext() {
+        return new SqlExecutionContextImpl(engine, 1).with(new DenyAuditViewSecurityContext(), bindVariableService, null, -1, null);
+    }
+
     // Joins the strings with ", ", as String.join() and Arrays.toString() separate them.
     private static String join(ObjList<String> strings) {
         final StringSink sink = new StringSink();
@@ -1531,6 +1764,69 @@ public class ViewAuditTest extends AbstractCairoTest {
     }
 
     /**
+     * Notes the context the plan's cursor opens under, with the flags Enterprise reads there to
+     * decide whether the open records a read.
+     */
+    private static class CursorOpenRecordingFactory implements RecordCursorFactory {
+        private final RecordCursorFactory base;
+
+        private CursorOpenRecordingFactory(RecordCursorFactory base) {
+            this.base = base;
+        }
+
+        @Override
+        public void close() {
+            base.close();
+        }
+
+        @Override
+        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+            if (auditedPlanCursorOpens != null) {
+                auditedPlanCursorOpens.add(
+                        executionContext.getClass().getSimpleName()
+                                + " isBackgroundJob=" + executionContext.isBackgroundJob()
+                                + " isMetadataProbe=" + executionContext.isMetadataProbe()
+                );
+            }
+            if (isAuditedPlanCursorOpenRefused) {
+                throw SqlException.$(0, "refused cursor open");
+            }
+            return base.getCursor(executionContext);
+        }
+
+        @Override
+        public RecordMetadata getMetadata() {
+            return base.getMetadata();
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return base.recordCursorSupportsRandomAccess();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            base.toPlan(sink);
+        }
+    }
+
+    /**
+     * Grants everything but the permission that guards an audited view's marking: an Enterprise
+     * principal that may drop views but not audit them.
+     */
+    private static final class DenyAuditViewSecurityContext extends AllowAllSecurityContext {
+        @Override
+        public void authorizeAuditView() {
+            throw CairoException.authorization().put(AUDIT_VIEW_DENIED);
+        }
+
+        @Override
+        protected SecurityContext newPrincipalContext(CharSequence principal) {
+            return this;
+        }
+    }
+
+    /**
      * Notes the audits on the model of every plan it generates, where Enterprise's compiler reads
      * them to decide whether the plan records a read when its cursor opens.
      */
@@ -1559,6 +1855,11 @@ public class ViewAuditTest extends AbstractCairoTest {
                 }
                 viewNames.sort(String::compareTo);
                 generatedPlanAudits.add(join(viewNames));
+            }
+            if (auditedPlanCursorOpens != null && audits.size() > 0) {
+                // Enterprise decides whether a read records a row when the plan's cursor opens,
+                // from the flags of the context it opens under.
+                return new CursorOpenRecordingFactory(factory);
             }
             return factory;
         }

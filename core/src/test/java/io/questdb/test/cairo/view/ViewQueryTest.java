@@ -24,7 +24,13 @@
 
 package io.questdb.test.cairo.view;
 
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.view.ViewState;
 import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class ViewQueryTest extends AbstractViewTest {
@@ -1997,16 +2003,18 @@ public class ViewQueryTest extends AbstractViewTest {
             // to v9, and the compiler kept 464 MB after compiling a 22-character read of v9. The
             // parser refuses the expansion that finds the nodes spent, at the second read of v5.
             final String v6 = "CREATE VIEW v6 AS (SELECT * FROM v5 UNION ALL SELECT * FROM v5)";
-            assertExceptionNoLeakCheck(
+            assertTooComplexToParse(
                     v6,
                     v6.lastIndexOf("v5"),
-                    "statement is too complex to parse [nodes=33847, max=33360]"
+                    "nodes",
+                    33_360
             );
             final String read = "SELECT count() FROM (SELECT * FROM v5 UNION ALL SELECT * FROM v5)";
-            assertExceptionNoLeakCheck(
+            assertTooComplexToParse(
                     read,
                     read.lastIndexOf("v5"),
-                    "statement is too complex to parse [nodes=33848, max=33400]"
+                    "nodes",
+                    33_400
             );
         });
     }
@@ -2036,16 +2044,18 @@ public class ViewQueryTest extends AbstractViewTest {
             // spent. That expansion sits in the body of a view, so the error points at the read of
             // the outermost view in the statement that it expands, the second read of v8.
             final String v9 = "CREATE VIEW v9 AS (SELECT * FROM v8 UNION ALL SELECT * FROM v8)";
-            assertExceptionNoLeakCheck(
+            assertTooComplexToParse(
                     v9,
                     v9.lastIndexOf("v8"),
-                    "statement is too complex to parse [models=1902, max=1900]"
+                    "models",
+                    1900
             );
             final String read = "SELECT count() FROM (SELECT * FROM v8 UNION ALL SELECT * FROM v8)";
-            assertExceptionNoLeakCheck(
+            assertTooComplexToParse(
                     read,
                     read.lastIndexOf("v8"),
-                    "statement is too complex to parse [models=1906, max=1904]"
+                    "models",
+                    1904
             );
         });
     }
@@ -2364,11 +2374,12 @@ public class ViewQueryTest extends AbstractViewTest {
             drainWalAndViewQueues();
             // The view compiler job compiles the body of v8 as a statement of its own.
             assertViewState("v7");
-            assertViewState("v8", "statement is too complex to parse [models=1832, max=1830]");
-            assertExceptionNoLeakCheck(
+            assertViewTooComplexToParse("v8", "models", 1830);
+            assertTooComplexToParse(
                     "SELECT count() FROM v8",
                     "SELECT count() FROM ".length(),
-                    "statement is too complex to parse [models=1878, max=1874]"
+                    "models",
+                    1874
             );
             assertQuery("SELECT count(), sum(x) FROM v7")
                     .noLeakCheck()
@@ -2794,6 +2805,43 @@ public class ViewQueryTest extends AbstractViewTest {
                     VIEW1
             );
         });
+    }
+
+    // Asserts that the parse budget refuses the statement at the position.
+    private static void assertTooComplexToParse(CharSequence sql, int position, String spentPart, long max) throws Exception {
+        try {
+            assertExceptionNoLeakCheck(sql);
+        } catch (SqlException e) {
+            Assert.assertEquals(position, e.getPosition());
+            assertTooComplexToParseMessage(e.getFlyweightMessage(), spentPart, max);
+        }
+    }
+
+    // The error reports how much of the spent part the parse had taken, a count that moves with any
+    // change to how the parser allocates, so the assertion pins the spent part and its maximum,
+    // which follows from the length of the text, but not the count.
+    private static void assertTooComplexToParseMessage(CharSequence message, String spentPart, long max) {
+        TestUtils.assertContains(message, "statement is too complex to parse [" + spentPart + '=');
+        TestUtils.assertContains(message, ", max=" + max + ']');
+    }
+
+    // Asserts what assertViewState() does for a view the parse budget made invalid, with the
+    // invalidation reason pinned as assertTooComplexToParseMessage() pins it.
+    private static void assertViewTooComplexToParse(String viewName, String spentPart, long max) {
+        final TableToken viewToken = engine.getTableTokenIfExists(viewName);
+        Assert.assertNotNull(viewToken);
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(viewToken));
+        final ViewState viewState = engine.getViewStateStore().getViewState(viewToken);
+        Assert.assertNotNull(viewState);
+        viewState.lockForRead();
+        try {
+            Assert.assertTrue(viewState.isInvalid());
+            final StringSink reason = new StringSink();
+            viewState.getInvalidationReason(reason);
+            assertTooComplexToParseMessage(reason, spentPart, max);
+        } finally {
+            viewState.unlockAfterRead();
+        }
     }
 
     // SELECT m1.ts, m1.v v1, ..., m<marts>.v v<marts> FROM mart1 m1
