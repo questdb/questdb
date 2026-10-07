@@ -2479,9 +2479,11 @@ public final class TableUtils {
                 // crash. fsync the parent dir too because _pm is a brand-new file in a
                 // brand-new partition directory.
                 if (commitMode != CommitMode.NOSYNC) {
-                    // fsync data.parquet before _pm (data before metadata, mirrors syncColumns0 ordering)
-                    setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
-                    fsyncFileDurable(ff, other.$(), configuration.getWriterFileOpenOpts());
+                    if (CommitMode.isPowerLossDurable(commitMode)) {
+                        // fsync data.parquet before _pm (data before metadata, mirrors syncColumns0 ordering)
+                        setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                        fsyncFileDurable(ff, other.$(), configuration.getWriterFileOpenOpts());
+                    }
                     ff.fsync(parquetMetaFd);
                     if (!Os.isWindows()) {
                         setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);

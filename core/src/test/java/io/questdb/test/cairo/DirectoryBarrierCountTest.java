@@ -54,7 +54,7 @@ import java.util.stream.Stream;
 /**
  * Pins how many directory fsyncs each commit mode pays on the ingest and apply paths, per partition switch,
  * O3 commit into the last partition, WAL writer open, WAL segment roll and WAL column DDL that rolls pending
- * rows, and the fsyncs of the metadata swap per schema change.
+ * rows, the fsyncs of the metadata swap per schema change, and those of the files a schema change rewrites.
  * <p>
  * A directory fsync makes names durable, and a mode takes one only where it promises that what the name
  * points at survives a power loss:
@@ -66,6 +66,9 @@ import java.util.stream.Stream;
  *   fsync of a newly opened segment, as it always had.</li>
  *   <li>A schema change swaps {@code _meta} and fsyncs {@code _meta.swp}, {@code _todo_} and the table
  *   directory twice, under SYNC and ADAPTIVE only.</li>
+ *   <li>A schema change that rewrites data (ALTER COLUMN TYPE, CONVERT PARTITION) fsyncs the files it writes
+ *   under SYNC and ADAPTIVE only, except what ADAPTIVE rebuilds from the WAL; ASYNC keeps only the parquet
+ *   metadata and partition directory fsyncs it always had.</li>
  * </ul>
  * The crash tests that prove these are enough are in {@code DirectoryBarrierCrashTest}.
  */
@@ -212,6 +215,52 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSchemaChangeDataFileFsyncs() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            final boolean durable = isSyncOrAdaptive();
+            final boolean isNoSync = "nosync".equals(commitMode);
+            final boolean isSync = "sync".equals(commitMode);
+            for (String table : new String[]{"x", "w"}) {
+                execute("CREATE TABLE " + table + " (ts TIMESTAMP, s SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY "
+                        + ("x".equals(table) ? "BYPASS WAL" : "WAL"));
+                execute("INSERT INTO " + table + " VALUES ('2024-01-01T00:00:00.000000Z', 'a', 1), "
+                        + "('2024-01-02T00:00:00.000000Z', 'b', 2), ('2024-01-03T00:00:00.000000Z', 'c', 3)");
+                drainWalQueue();
+                // The apply job takes a save point for an adaptive WAL table, which fsyncs more files.
+                final boolean exact = "x".equals(table) || !"adaptive".equals(commitMode);
+
+                // The converted column file of each of the three partitions, under SYNC and ADAPTIVE.
+                ff.clear();
+                execute("ALTER TABLE " + table + " ALTER COLUMN v TYPE DOUBLE");
+                drainWalQueue();
+                if (exact) {
+                    Assert.assertEquals("alter column type" + ff.dump(), durable ? 3 : 0, ff.countOther());
+                }
+
+                // data.parquet under SYNC and ADAPTIVE; _pm and the partition directory in every mode but NOSYNC.
+                ff.clear();
+                execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+                if (exact) {
+                    Assert.assertEquals("convert to parquet" + ff.dump(), (durable ? 1 : 0) + (isNoSync ? 0 : 1), ff.countOther());
+                    Assert.assertEquals("convert to parquet" + ff.dump(), isNoSync ? 0 : 1, ff.total());
+                }
+
+                // The three column files under SYNC only, ADAPTIVE replays the conversion; the partition directory
+                // under SYNC and ADAPTIVE.
+                ff.clear();
+                execute("ALTER TABLE " + table + " CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                drainWalQueue();
+                if (exact) {
+                    Assert.assertEquals("convert to native" + ff.dump(), isSync ? 3 : 0, ff.countOther());
+                    Assert.assertEquals("convert to native" + ff.dump(), durable ? 1 : 0, ff.total());
+                }
+            }
+            assertQuery("SELECT sum(v) FROM w").noRandomAccess().expectSize().returns("sum\n6.0\n");
+        });
+    }
+
+    @Test
     public void testWalApplyPartitionSwitch() throws Exception {
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -318,7 +367,7 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
      * Counts fsyncs of directories by path. A directory fsync opens the directory with
      * {@code openRONoCache}, so that is where the facade learns which descriptors are directories. Also counts
      * fsyncs of the {@code _meta.swp} and {@code _todo_} files of a metadata swap, which it opens with
-     * {@code openRWNoCache}, and renames by target path.
+     * {@code openRWNoCache}, the fsyncs of every other file, and renames by target path.
      */
     private static class DirFsyncCountingFacade extends TestFilesFacadeImpl {
         private final Map<String, Integer> counts = new HashMap<>();
@@ -327,6 +376,7 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
         private final Map<String, Integer> renameCounts = new HashMap<>();
         private int emptyCount;
         private volatile String failRenameTo;
+        private int otherCount;
 
         @Override
         public synchronized boolean close(long fd) {
@@ -404,6 +454,7 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
             counts.clear();
             renameCounts.clear();
             emptyCount = 0;
+            otherCount = 0;
         }
 
         synchronized int count(String dir) {
@@ -432,6 +483,14 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
             return emptyCount;
         }
 
+        /**
+         * fsyncs of files other than {@code _meta.swp} and {@code _todo_}: column files, parquet data and
+         * metadata files.
+         */
+        synchronized int countOther() {
+            return otherCount;
+        }
+
         synchronized int countRenamesTo(String path) {
             return renameCounts.getOrDefault(path, 0);
         }
@@ -455,7 +514,9 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
                 return;
             }
             final String dir = isClosing ? dirFds.remove(fd) : dirFds.get(fd);
-            if (dir != null) {
+            if (dir == null) {
+                otherCount++;
+            } else {
                 counts.merge(dir, 1, Integer::sum);
                 try (Stream<Path> entries = Files.list(Paths.get(dir))) {
                     if (entries.findAny().isEmpty()) {
