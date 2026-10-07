@@ -5038,7 +5038,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             long address = mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
             try {
-                int maxKey = Vect.maxInt(address, columnSize);
+                final long nonNullCount = Vect.minMaxCountInt(address, columnSize, tempMem16b);
+                final int minKey = Unsafe.getInt(tempMem16b);
+                final int maxKey = Unsafe.getInt(tempMem16b + Integer.BYTES);
                 int symbolValues = symbolMapWriters.getQuick(columnIndex).getSymbolCount();
                 if (maxKey >= symbolValues) {
                     throw CairoException.critical(0)
@@ -5050,8 +5052,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .put(symbolValues)
                             .put(']');
                 }
-                int minKey = Vect.minInt(address, columnSize);
-                if (minKey != SymbolTable.VALUE_IS_NULL && minKey < 0) {
+                if (nonNullCount > 0 && minKey < 0) {
                     throw CairoException.critical(0)
                             .put("Symbol file does not match symbol column, invalid key [file=")
                             .put(path)
@@ -5059,7 +5060,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .put(minKey)
                             .put(']');
                 }
-                if (!symbolMapWriters.getQuick(columnIndex).getNullFlag() && symbolDataHasNulls(address, columnSize)) {
+                if (nonNullCount < columnSize) {
                     attachSymbolNullColumns.set(columnIndex);
                 }
             } finally {
