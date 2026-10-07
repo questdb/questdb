@@ -34,10 +34,10 @@ Today a non-last logical partition may hold 1 split (`o3.mid.partition.max.split
 all splits are squashed in the apply path the moment the next day appears.
 
 - One cap for every logical partition: `cairo.o3.partition.max.splits` = 20 (old
-  last-partition value). This and everything below applies to merge-append tables only. A table
-  without merge-append is never visited by the compaction sweep, so its commit keeps the old
-  squash: no hot window, `o3.mid.partition.max.splits` (default 1) behind the last day, and every
-  split folded into the oldest folder.
+  last-partition value). This and everything below applies to WAL tables, with or without
+  merge-append. The sweep does not serve non-WAL tables, so their commit keeps the old squash: no
+  hot window, `o3.mid.partition.max.splits` (default 1) behind the last day, and every split
+  folded into the oldest folder.
 - The cap is a squash target, not a split gate: overflow, then squash. A split that pays -
   MOVE-TAIL, its ingestion forecast, or the O3 prefix split - happens even when the day
   already holds the cap. After the commit, housekeeping squashes the smallest cold adjacent

@@ -17180,12 +17180,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void squashSplitPartitionRange(int lastPartitionCap, int partitionIndexLo, int partitionIndexHi, long lastCommitTxn, long deadlineMicros) {
-        if (isMergeAppendTable()) {
+        if (metadata.isWalEnabled()) {
             squashPartitionRange(lastPartitionCap, partitionIndexLo, partitionIndexHi, lastCommitTxn, deadlineMicros, false);
             return;
         }
-        // Without merge-append, compaction never squashes this table, so the commit keeps owning it: no hot
-        // window, a separate cap for days behind the last one, and every split folded into the oldest folder.
+        // The compaction sweep serves WAL tables only, so nothing else ever folds a non-WAL table's older
+        // days. The commit keeps owning them: no hot window, a separate cap for days behind the last one,
+        // and every split folded into the oldest folder.
         final int cap = partitionIndexHi == txWriter.getPartitionCount()
                 ? lastPartitionCap
                 : configuration.getO3MidPartitionMaxSplits();

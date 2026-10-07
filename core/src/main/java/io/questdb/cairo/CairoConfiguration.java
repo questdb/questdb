@@ -623,8 +623,9 @@ public interface CairoConfiguration {
     int getO3MemMaxPages();
 
     /**
-     * Split cap for a logical partition behind the last one, applied by the commit to tables without
-     * merge-append. Merge-append tables use {@link #getO3PartitionMaxSplits()} for every logical partition.
+     * Split cap for a logical partition behind the last one of a non-WAL table, applied by the commit. The
+     * compaction sweep does not serve non-WAL tables. WAL tables use {@link #getO3PartitionMaxSplits()} for
+     * every logical partition and leave folding older days to the sweep.
      */
     int getO3MidPartitionMaxSplits();
 

@@ -991,6 +991,10 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            // A WAL table's splits are left to compaction up to the cap, and only cold ones are squashed.
+            // Fold the split on the commit that makes it, so the commit squashes into the open partition.
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 1);
+            overrides.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
 
             executeWithRewriteTimestamp(
                     "CREATE TABLE x AS (" +
@@ -1103,6 +1107,10 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            // A WAL table's splits are left to compaction up to the cap, and only cold ones are squashed.
+            // Fold the split on the commit that makes it, so the commit squashes into the open partition.
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 1);
+            overrides.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
 
             executeWithRewriteTimestamp(
                     "CREATE TABLE y (i INT, sym SYMBOL INDEX TYPE POSTING, s STRING, ts #TIMESTAMP)" +
@@ -1266,6 +1274,10 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            // A WAL table's splits are left to compaction up to the cap, and only cold ones are squashed.
+            // Fold the split on the commit that makes it, so the commit squashes into the open partition.
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 1);
+            overrides.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
 
             executeWithRewriteTimestamp(
                     "CREATE TABLE x AS (" +
