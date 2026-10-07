@@ -61,6 +61,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.DirectIntMultiLongHashMap;
+import io.questdb.std.DirectLongLongHashMap;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
@@ -1197,7 +1198,10 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             }
                             // If no luck, do the backward scan.
                             if (needToFindPrevailing) {
-                                findPrevailingForMasterRow(
+                                findPrevailingJoinFiltered(
+                                        atom,
+                                        slotId,
+                                        record,
                                         slaveTimeFrameHelper,
                                         slaveRecord,
                                         slaveSymbolIndex,
@@ -1243,7 +1247,10 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         }
                         // If the index doesn't have the prevailing row, we have to do the backward scan.
                         if (needToFindPrevailing) {
-                            findPrevailingForMasterRow(
+                            findPrevailingJoinFiltered(
+                                    atom,
+                                    slotId,
+                                    record,
                                     slaveTimeFrameHelper,
                                     slaveRecord,
                                     slaveSymbolIndex,
@@ -1261,7 +1268,10 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 } else {
                     // There are no slave rows corresponding to the master page frame for the symbol.
                     // Let's find the prevailing value.
-                    findPrevailingForMasterRow(
+                    findPrevailingJoinFiltered(
+                            atom,
+                            slotId,
+                            record,
                             slaveTimeFrameHelper,
                             slaveRecord,
                             slaveSymbolIndex,
@@ -2144,7 +2154,10 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                                 }
                                 // If no luck, do the backward scan.
                                 if (needToFindPrevailing) {
-                                    findPrevailingForMasterRow(
+                                    findPrevailingJoinFiltered(
+                                            atom,
+                                            slotId,
+                                            record,
                                             slaveTimeFrameHelper,
                                             slaveRecord,
                                             slaveSymbolIndex,
@@ -2190,7 +2203,10 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             }
                             // If the index doesn't have the prevailing row, we have to do the backward scan.
                             if (needToFindPrevailing) {
-                                findPrevailingForMasterRow(
+                                findPrevailingJoinFiltered(
+                                        atom,
+                                        slotId,
+                                        record,
                                         slaveTimeFrameHelper,
                                         slaveRecord,
                                         slaveSymbolIndex,
@@ -2208,7 +2224,10 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     } else {
                         // There are no slave rows corresponding to the master page frame for the symbol.
                         // Let's find the prevailing value.
-                        findPrevailingForMasterRow(
+                        findPrevailingJoinFiltered(
+                                atom,
+                                slotId,
+                                record,
                                 slaveTimeFrameHelper,
                                 slaveRecord,
                                 slaveSymbolIndex,
@@ -2242,8 +2261,39 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             GroupByFunctionsUpdater functionUpdater,
             MapValue value
     ) {
+        final long rowId = findPrevailingRowIdForMasterRow(
+                slaveTimeFrameHelper,
+                slaveRecord,
+                slaveSymbolIndex,
+                slaveSymbolLookupMap,
+                slaveRowFrameIndex,
+                scanStart,
+                masterKey,
+                joinFilter,
+                joinRecord
+        );
+        if (rowId != Long.MIN_VALUE) {
+            slaveTimeFrameHelper.recordAt(rowId);
+            functionUpdater.updateNew(value, joinRecord, rowId);
+            value.setNew(false);
+        }
+    }
+
+    // The last slave row of the master key, at or before the scan start, that passes the join filter
+    // for the master row the join record holds; Long.MIN_VALUE when there is none.
+    static long findPrevailingRowIdForMasterRow(
+            WindowJoinTimeFrameHelper slaveTimeFrameHelper,
+            Record slaveRecord,
+            int slaveSymbolIndex,
+            DirectIntIntHashMap slaveSymbolLookupMap,
+            int slaveRowFrameIndex,
+            long scanStart,
+            int masterKey,
+            Function joinFilter,
+            JoinRecord joinRecord
+    ) {
         if (slaveRowFrameIndex == -1) {
-            return;
+            return Long.MIN_VALUE;
         }
         final int savedFrameIndex = slaveTimeFrameHelper.getBookmarkedFrameIndex();
         final long savedRowId = slaveTimeFrameHelper.getBookmarkedRowIndex();
@@ -2275,14 +2325,76 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     if (!joinFilter.getBool(joinRecord)) {
                         continue;
                     }
-                    functionUpdater.updateNew(value, joinRecord, Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), r));
-                    value.setNew(false);
-                    return;
+                    return Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), r);
                 }
                 scanStart = Long.MAX_VALUE;
             } while (slaveTimeFrameHelper.previousFrame());
         } finally {
             slaveTimeFrameHelper.restoreBookmark(savedFrameIndex, savedRowId);
+        }
+        return Long.MIN_VALUE;
+    }
+
+    // The join-filtered prevailing lookup of the parallel reducers: skips the backward scan for a
+    // master row no slave row can pass the join filter for, and remembers what the scan found for
+    // each (key, filter key) pair within the page frame when the filter is a single symbol equality.
+    private static void findPrevailingJoinFiltered(
+            AsyncWindowJoinFastAtom atom,
+            int slotId,
+            Record masterRecord,
+            WindowJoinTimeFrameHelper slaveTimeFrameHelper,
+            Record slaveRecord,
+            int slaveSymbolIndex,
+            DirectIntIntHashMap slaveSymbolLookupMap,
+            int slaveRowFrameIndex,
+            long scanStart,
+            int masterKey,
+            Function joinFilter,
+            JoinRecord joinRecord,
+            GroupByFunctionsUpdater functionUpdater,
+            MapValue value
+    ) {
+        if (atom.isJoinFilterUnsatisfiable(masterRecord)) {
+            return;
+        }
+        final DirectLongLongHashMap memo = atom.getPrevailingMemo(slotId);
+        final long rowId;
+        if (memo != null) {
+            final long memoKey = atom.getPrevailingMemoKey(masterRecord, masterKey);
+            final long index = memo.keyIndex(memoKey);
+            if (index < 0) {
+                rowId = memo.valueAt(index);
+            } else {
+                rowId = findPrevailingRowIdForMasterRow(
+                        slaveTimeFrameHelper,
+                        slaveRecord,
+                        slaveSymbolIndex,
+                        slaveSymbolLookupMap,
+                        slaveRowFrameIndex,
+                        scanStart,
+                        masterKey,
+                        joinFilter,
+                        joinRecord
+                );
+                memo.putAt(index, memoKey, rowId);
+            }
+        } else {
+            rowId = findPrevailingRowIdForMasterRow(
+                    slaveTimeFrameHelper,
+                    slaveRecord,
+                    slaveSymbolIndex,
+                    slaveSymbolLookupMap,
+                    slaveRowFrameIndex,
+                    scanStart,
+                    masterKey,
+                    joinFilter,
+                    joinRecord
+            );
+        }
+        if (rowId != Long.MIN_VALUE) {
+            slaveTimeFrameHelper.recordAt(rowId);
+            functionUpdater.updateNew(value, joinRecord, rowId);
+            value.setNew(false);
         }
     }
 

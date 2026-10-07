@@ -522,6 +522,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final FunctionParser functionParser;
     private final IntList groupByFunctionPositions = new IntList();
+    private final IntList joinFilterSymbolPairs = new IntList();
     private final IntHashSet intHashSet = new IntHashSet();
     private final ObjectPool<IntList> intListPool = new ObjectPool<>(IntList::new, 4);
     private final MemoryCARW jitIRMem;
@@ -7147,6 +7148,48 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    // Collects the conjuncts of a WINDOW JOIN filter that compare a master SYMBOL column with a slave
+    // SYMBOL column for equality, as (master column, slave column) record index pairs. Returns true
+    // when the filter is nothing but such conjuncts.
+    private boolean collectJoinFilterSymbolPairs(ExpressionNode filter, RecordMetadata joinMetadata, int columnSplit, IntList pairs) {
+        pairs.clear();
+        boolean onlyPairs = true;
+        sqlNodeStack.clear();
+        ExpressionNode node = filter;
+        while (node != null || !sqlNodeStack.isEmpty()) {
+            if (node == null) {
+                node = sqlNodeStack.poll();
+            }
+            if (Chars.equals(node.token, "and") && node.lhs != null && node.rhs != null) {
+                sqlNodeStack.push(node.rhs);
+                node = node.lhs;
+                continue;
+            }
+            boolean isPair = false;
+            if (Chars.equals(node.token, "=")) {
+                final ExpressionNode l = node.lhs;
+                final ExpressionNode r = node.rhs;
+                if (l != null && r != null && l.type == ExpressionNode.LITERAL && r.type == ExpressionNode.LITERAL) {
+                    final int li = SqlUtil.getColumnIndexQuiet(joinMetadata, l.token);
+                    final int ri = SqlUtil.getColumnIndexQuiet(joinMetadata, r.token);
+                    if (li >= 0 && ri >= 0
+                            && joinMetadata.getColumnType(li) == ColumnType.SYMBOL
+                            && joinMetadata.getColumnType(ri) == ColumnType.SYMBOL
+                            && (li < columnSplit) != (ri < columnSplit)
+                            && joinMetadata.isSymbolTableStatic(li)
+                            && joinMetadata.isSymbolTableStatic(ri)) {
+                        pairs.add(Math.min(li, ri));
+                        pairs.add(Math.max(li, ri) - columnSplit);
+                        isPair = true;
+                    }
+                }
+            }
+            onlyPairs &= isPair;
+            node = null;
+        }
+        return onlyPairs && pairs.size() > 0;
+    }
+
     private static long capByLimit(long rowCount, long limit) {
         if (limit < 0) {
             return rowCount;
@@ -7741,6 +7784,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 int leftSymbolIndex = -1;
                                 int rightSymbolIndex = -1;
                                 ExpressionNode parent = null;
+                                joinFilterSymbolPairs.clear();
+                                boolean isJoinFilterOnlySymbolPairs = false;
                                 if (node != null && !isDynamicWindow) {
                                     // Only extract symbol equality for the fast path.
                                     // When isDynamicWindow, the general path handles all filtering via joinFilter.
@@ -7810,6 +7855,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
                                     if (parent != null) {
                                         joinFilter = compileJoinFilter(parent, joinMetadata, executionContext);
+                                        isJoinFilterOnlySymbolPairs = collectJoinFilterSymbolPairs(parent, joinMetadata, columnSplit, joinFilterSymbolPairs);
                                     }
                                 } else if (node != null) {
                                     // Dynamic window: compile the full filter without symbol extraction,
@@ -7846,6 +7892,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     } else {
                                         joinFilter = Misc.free(joinFilter);
                                         parent = null;
+                                        joinFilterSymbolPairs.clear();
+                                        isJoinFilterOnlySymbolPairs = false;
                                     }
                                 }
 
@@ -8018,6 +8066,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     reduceTaskFactory,
                                                     executionContext.getSharedQueryWorkerCount()
                                             );
+                                            if (joinFilterSymbolPairs.size() > 0) {
+                                                ((AsyncWindowJoinFastRecordCursorFactory) master).getAtom()
+                                                        .setJoinFilterSymbolPairs(joinFilterSymbolPairs, isJoinFilterOnlySymbolPairs);
+                                            }
                                         } else {
                                             perWorkerWindowLoFuncs = compileWorkerFunctionsConditionally(
                                                     executionContext,

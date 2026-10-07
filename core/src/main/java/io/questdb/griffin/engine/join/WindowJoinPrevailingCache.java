@@ -51,7 +51,12 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
     // holds <master_key, slave_rowid> pairs
     private final DirectIntLongHashMap cache;
     private int frameIndex = -1;
+    // with summaries: the block whose summary the next lookup starts from, once the scan is done
+    private int nextSummaryBlock = -1;
     private long rowIndex = Long.MIN_VALUE;
+    // the block the scan stops at the start of; -1 when the scan runs to the table start
+    private int scanStopBlock = -1;
+    private @Nullable WindowJoinPrevailingSummaries summaries;
 
     WindowJoinPrevailingCache() {
         this.cache = new DirectIntLongHashMap(
@@ -68,6 +73,8 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
         cache.clear();
         frameIndex = -1;
         rowIndex = Long.MIN_VALUE;
+        scanStopBlock = -1;
+        nextSummaryBlock = -1;
     }
 
     @Override
@@ -97,6 +104,10 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
         if (rowIndex == Long.MIN_VALUE) {
             // oops, previously we've scanned the slave table until the very start
             // or the row index was never initialized (Long.MIN_VALUE)
+            if (nextSummaryBlock >= 0) {
+                // the scan stopped at a block boundary; the blocks below it are summarised
+                return findInSummaries(slaveTimeFrameHelper, slaveRecord, slaveSymbolIndex, slaveSymbolLookupMap, masterKey, masterCacheKey);
+            }
             return Long.MIN_VALUE;
         }
 
@@ -115,6 +126,12 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
                 long rowHi = slaveTimeFrameHelper.getTimeFrameRowHi();
                 scanStart = Math.min(scanStart, rowHi - 1);
 
+                if (scanStopBlock >= 0 && summaries.getBlockOf(frameIndex) < scanStopBlock) {
+                    // walked out of the scan's own block: the rest is summarised
+                    rowIndex = Long.MIN_VALUE;
+                    nextSummaryBlock = scanStopBlock - 1;
+                    break;
+                }
                 for (long r = scanStart; r >= rowLo; r--) {
                     slaveTimeFrameHelper.recordAtRowIndex(r);
 
@@ -137,9 +154,14 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
                 rowIndex = rowLo - 1;
                 scanStart = Long.MAX_VALUE;
             } while (slaveTimeFrameHelper.previousFrame());
-            rowIndex = Long.MIN_VALUE; // we've scanned until the very beginning, no more rows to check
+            if (nextSummaryBlock < 0) {
+                rowIndex = Long.MIN_VALUE; // we've scanned until the very beginning, no more rows to check
+            }
         } finally {
             slaveTimeFrameHelper.restoreBookmark(savedFrameIndex, savedRowId);
+        }
+        if (nextSummaryBlock >= 0) {
+            return findInSummaries(slaveTimeFrameHelper, slaveRecord, slaveSymbolIndex, slaveSymbolLookupMap, masterKey, masterCacheKey);
         }
         return Long.MIN_VALUE;
     }
@@ -152,6 +174,15 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
         cache.clear();
         this.frameIndex = frameIndex;
         this.rowIndex = rowIndex;
+        this.nextSummaryBlock = -1;
+        // The scan covers its own block from the start row down; the blocks below come from the
+        // summaries. Without summaries, or in the first block, it runs to the table start as before.
+        this.scanStopBlock = frameIndex >= 0 && summaries != null && summaries.isEnabled()
+                ? summaries.getBlockOf(frameIndex)
+                : -1;
+        if (scanStopBlock == 0) {
+            scanStopBlock = -1;
+        }
     }
 
     @Override
@@ -159,6 +190,8 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
         cache.reopen();
         frameIndex = -1;
         rowIndex = Long.MIN_VALUE;
+        scanStopBlock = -1;
+        nextSummaryBlock = -1;
     }
 
     /**
@@ -168,5 +201,40 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
      */
     public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
         cache.setMemoryTracker(memoryTracker);
+    }
+
+    /**
+     * Shares the per-block summaries of the slave with this cache; {@code null} keeps the plain
+     * backward scan. Takes effect from the next {@link #of(int, long)}.
+     */
+    public void setSummaries(@Nullable WindowJoinPrevailingSummaries summaries) {
+        this.summaries = summaries;
+    }
+
+    // Walks the summarised blocks below the scan, newest first, for the key's last row.
+    private long findInSummaries(
+            WindowJoinTimeFrameHelper slaveTimeFrameHelper,
+            Record slaveRecord,
+            int slaveSymbolIndex,
+            DirectIntIntHashMap slaveSymbolLookupMap,
+            int masterKey,
+            int masterCacheKey
+    ) {
+        final int savedFrameIndex = slaveTimeFrameHelper.getBookmarkedFrameIndex();
+        final long savedRowId = slaveTimeFrameHelper.getBookmarkedRowIndex();
+        try {
+            for (int block = nextSummaryBlock; block >= 0; block--) {
+                final long rowId = summaries.lastRowIdInBlock(block, masterKey, slaveTimeFrameHelper, slaveRecord, slaveSymbolIndex, slaveSymbolLookupMap);
+                if (rowId != Long.MIN_VALUE) {
+                    cache.put(masterCacheKey, rowId);
+                    return rowId;
+                }
+            }
+        } finally {
+            slaveTimeFrameHelper.restoreBookmark(savedFrameIndex, savedRowId);
+        }
+        // nowhere before the span: remember it, so the next row of this key does not walk again
+        cache.put(masterCacheKey, Long.MIN_VALUE);
+        return Long.MIN_VALUE;
     }
 }

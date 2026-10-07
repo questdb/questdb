@@ -28,6 +28,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -39,9 +40,12 @@ import io.questdb.griffin.engine.table.ConcurrentTimeFrameState;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.DirectBitSet;
 import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.DirectIntMultiLongHashMap;
+import io.questdb.std.DirectLongLongHashMap;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -56,10 +60,23 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
     static final int NULL_KEY = 1;
     static final int SLAVE_MAP_INITIAL_CAPACITY = 16;
     static final double SLAVE_MAP_LOAD_FACTOR = 0.7;
+    // Symbol-equality conjuncts of the join filter, as (master column, slave column) record index
+    // pairs, and per pair the master keys whose value the slave column holds at all: a master row
+    // whose value is missing from the slave can match no slave row, so it has no prevailing row.
+    private final IntList joinFilterSymbolPairs = new IntList();
+    private final ObjList<DirectBitSet> joinFilterMasterKeysInSlave = new ObjList<>();
+    private final IntList joinFilterMasterSymbolCounts = new IntList();
     private final int masterSymbolIndex;
+    // Per slot: (master key, master filter key) -> the prevailing row the backward scan found for the
+    // page frame being reduced. Valid when the join filter is exactly one symbol equality, so its
+    // outcome on a slave row depends on those two keys only.
+    private final ObjList<DirectLongLongHashMap> perWorkerPrevailingMemo = new ObjList<>();
+    private DirectLongLongHashMap ownerPrevailingMemo;
     private final WindowJoinPrevailingCache ownerPrevailingCache;
     private final DirectIntMultiLongHashMap ownerSlaveData;
     private final ObjList<WindowJoinPrevailingCache> perWorkerPrevailingCache;
+    // per-block last rows of each key, shared by the prevailing caches of every slot
+    private final WindowJoinPrevailingSummaries prevailingSummaries;
     private final ObjList<DirectIntMultiLongHashMap> perWorkerSlaveData;
     private final int slaveSymbolIndex;
     // slave-to-master symbol key lookup hash table
@@ -163,12 +180,17 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
 
             if (includePrevailing) {
                 // <symbol_key, rowid> cache for INCLUDE PREVAILING lookups
+                this.prevailingSummaries = new WindowJoinPrevailingSummaries();
                 this.ownerPrevailingCache = new WindowJoinPrevailingCache();
+                ownerPrevailingCache.setSummaries(prevailingSummaries);
                 this.perWorkerPrevailingCache = new ObjList<>(slotCount);
                 for (int i = 0; i < slotCount; i++) {
-                    perWorkerPrevailingCache.extendAndSet(i, new WindowJoinPrevailingCache());
+                    final WindowJoinPrevailingCache prevailingCache = new WindowJoinPrevailingCache();
+                    prevailingCache.setSummaries(prevailingSummaries);
+                    perWorkerPrevailingCache.extendAndSet(i, prevailingCache);
                 }
             } else {
+                this.prevailingSummaries = null;
                 this.ownerPrevailingCache = null;
                 this.perWorkerPrevailingCache = null;
             }
@@ -188,6 +210,30 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
         } else {
             perWorkerSlaveData.getQuick(slotId).clear();
         }
+        final DirectLongLongHashMap memo = getPrevailingMemo(slotId);
+        if (memo != null) {
+            memo.clear();
+        }
+    }
+
+    /**
+     * The memo key of a master row for {@link #getPrevailingMemo(int)}: its join key and the key of
+     * its join filter's symbol column, both non-negative.
+     */
+    public long getPrevailingMemoKey(Record masterRecord, int masterKey) {
+        final int filterKey = masterRecord.getInt(joinFilterSymbolPairs.getQuick(0));
+        return ((long) toSymbolMapKey(masterKey) << 32) | toSymbolMapKey(filterKey);
+    }
+
+    /**
+     * The slot's memo of prevailing rows found by the join-filtered backward scan in the current
+     * page frame, or null when the join filter is not a single symbol equality.
+     */
+    public @Nullable DirectLongLongHashMap getPrevailingMemo(int slotId) {
+        if (slotId == -1) {
+            return ownerPrevailingMemo;
+        }
+        return perWorkerPrevailingMemo.getQuiet(slotId);
     }
 
     public int getMasterSymbolIndex() {
@@ -210,6 +256,42 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
 
     public int getSlaveSymbolIndex() {
         return slaveSymbolIndex;
+    }
+
+    /**
+     * True when a symbol-equality conjunct of the join filter cannot hold for this master row on any
+     * slave row: the master value is not NULL and the slave column's symbol table does not hold it.
+     */
+    public boolean isJoinFilterUnsatisfiable(Record masterRecord) {
+        for (int i = 0, n = joinFilterMasterKeysInSlave.size(); i < n; i++) {
+            final int masterKey = masterRecord.getInt(joinFilterSymbolPairs.getQuick(2 * i));
+            // NULL, or a key the symbol table snapshot does not cover: no claim
+            if (masterKey >= 0 && masterKey < joinFilterMasterSymbolCounts.getQuick(i)
+                    && !joinFilterMasterKeysInSlave.getQuick(i).get(masterKey)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Hands over the symbol-equality conjuncts of the join filter, found by the code generator.
+     *
+     * @param pairs             (master column, slave column) record index pairs
+     * @param isFilterOnlyPairs true when the join filter is nothing but these conjuncts
+     */
+    public void setJoinFilterSymbolPairs(IntList pairs, boolean isFilterOnlyPairs) {
+        joinFilterSymbolPairs.clear();
+        joinFilterSymbolPairs.addAll(pairs);
+        for (int i = 0, n = pairs.size() / 2; i < n; i++) {
+            joinFilterMasterKeysInSlave.add(new DirectBitSet(64, MemoryTag.NATIVE_BIT_SET, true));
+        }
+        if (isFilterOnlyPairs && pairs.size() == 2 && ownerPrevailingMemo == null) {
+            ownerPrevailingMemo = newPrevailingMemo();
+            for (int i = 0, n = perWorkerSlaveData.size(); i < n; i++) {
+                perWorkerPrevailingMemo.extendAndSet(i, newPrevailingMemo());
+            }
+        }
     }
 
     public DirectIntIntHashMap getSlaveSymbolLookupMap() {
@@ -256,17 +338,51 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
         }
 
         final SymbolTableSource slaveSymbolTableSource = ownerSlaveTimeFrameHelper.getSymbolTableSource();
+        joinFilterMasterSymbolCounts.clear();
+        for (int i = 0, n = joinFilterMasterKeysInSlave.size(); i < n; i++) {
+            final StaticSymbolTable masterTable = (StaticSymbolTable) masterSymbolTableSource.getSymbolTable(joinFilterSymbolPairs.getQuick(2 * i));
+            final StaticSymbolTable slaveTable = (StaticSymbolTable) slaveSymbolTableSource.getSymbolTable(joinFilterSymbolPairs.getQuick(2 * i + 1));
+            final DirectBitSet keysInSlave = joinFilterMasterKeysInSlave.getQuick(i);
+            final int masterCount = masterTable.getSymbolCount();
+            joinFilterMasterSymbolCounts.add(masterCount);
+            keysInSlave.reserve(Math.max(1, masterCount));
+            keysInSlave.clear();
+            for (int key = 0; key < masterCount; key++) {
+                if (slaveTable.keyOf(masterTable.valueOf(key)) != StaticSymbolTable.VALUE_NOT_FOUND) {
+                    keysInSlave.set(key);
+                }
+            }
+        }
+        if (ownerPrevailingMemo != null) {
+            ownerPrevailingMemo.setMemoryTracker(memoryTracker);
+            ownerPrevailingMemo.reopen();
+            for (int i = 0, n = perWorkerPrevailingMemo.size(); i < n; i++) {
+                final DirectLongLongHashMap memo = perWorkerPrevailingMemo.getQuick(i);
+                memo.setMemoryTracker(memoryTracker);
+                memo.reopen();
+            }
+        }
         StaticSymbolTable masterSymbolTable = (StaticSymbolTable) masterSymbolTableSource.getSymbolTable(masterSymbolIndex);
         StaticSymbolTable slaveSymbolTable = (StaticSymbolTable) slaveSymbolTableSource.getSymbolTable(slaveSymbolIndex);
-        for (int masterKey = 0, n = masterSymbolTable.getSymbolCount(); masterKey < n; masterKey++) {
+        final int masterSymbolCount = masterSymbolTable.getSymbolCount();
+        if (prevailingSummaries != null) {
+            prevailingSummaries.of(sharedState.getFrameCount(), masterSymbolCount, memoryTracker);
+        }
+        for (int masterKey = 0; masterKey < masterSymbolCount; masterKey++) {
             final CharSequence masterSym = masterSymbolTable.valueOf(masterKey);
             final int slaveKey = slaveSymbolTable.keyOf(masterSym);
             if (slaveKey != StaticSymbolTable.VALUE_NOT_FOUND) {
                 slaveSymbolLookupMap.put(slaveKey + KEY_SHIFT, masterKey);
+                if (prevailingSummaries != null) {
+                    prevailingSummaries.markJoinable(masterKey);
+                }
             }
         }
         if (masterSymbolTable.containsNullValue() && slaveSymbolTable.containsNullValue()) {
             slaveSymbolLookupMap.put(NULL_KEY, StaticSymbolTable.VALUE_IS_NULL);
+            if (prevailingSummaries != null) {
+                prevailingSummaries.markJoinable(StaticSymbolTable.VALUE_IS_NULL);
+            }
         }
     }
 
@@ -282,6 +398,10 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
         cleanupFailure = Misc.freeObjListAndKeepObjectsBestEffort(cleanupFailure, perWorkerSlaveData);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerPrevailingCache);
         cleanupFailure = Misc.freeObjListAndKeepObjectsBestEffort(cleanupFailure, perWorkerPrevailingCache);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, prevailingSummaries);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerPrevailingMemo);
+        cleanupFailure = Misc.freeObjListAndKeepObjectsBestEffort(cleanupFailure, perWorkerPrevailingMemo);
+        cleanupFailure = Misc.freeObjListAndKeepObjectsBestEffort(cleanupFailure, joinFilterMasterKeysInSlave);
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
@@ -293,7 +413,16 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerSlaveData);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerPrevailingCache);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerPrevailingCache);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, prevailingSummaries);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerPrevailingMemo);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerPrevailingMemo);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, joinFilterMasterKeysInSlave);
         CairoException.rethrowCleanupFailure(cleanupFailure);
+    }
+
+    private static DirectLongLongHashMap newPrevailingMemo() {
+        // keys and row ids are non-negative: -1 is free as both the no-key and the no-value marker
+        return new DirectLongLongHashMap(SLAVE_MAP_INITIAL_CAPACITY, SLAVE_MAP_LOAD_FACTOR, -1, -1, MemoryTag.NATIVE_UNORDERED_MAP, false);
     }
 
     static int toSymbolMapKey(int key) {
