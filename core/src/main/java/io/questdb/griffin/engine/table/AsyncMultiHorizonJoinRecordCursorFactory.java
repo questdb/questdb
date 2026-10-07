@@ -400,18 +400,22 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
      * For keyed ASOF JOINs, each slave adaptively chooses between two strategies:
      * <p>
      * 1. <b>Backward-only mode</b> (default): when the ASOF position changes, clear the
-     * key cache and reset the backward watermark. Each position change costs ~K backward
-     * scan rows for K distinct keys. Wins when K is small.
+     * key cache and scan backward from the new position until the key is found. Each position
+     * change costs ~K backward scan rows for K distinct keys. Wins when K is small.
      * <p>
-     * 2. <b>Forward scan mode</b>: forward-scan all slave rows between consecutive ASOF
-     * positions, populating the key map. Cost = O(gap). Wins when K is large or rare keys
-     * cause deep backward scans.
+     * 2. <b>Kept key cache</b>: keep the key cache across positions and leave the slave rows
+     * between consecutive ASOF positions unread until a lookup needs them. A lookup reads the
+     * unread rows above the row of its key in the cache, newest first, down to the key, so a
+     * position never costs more rows than in backward-only mode, and a frame reads every slave
+     * row at most once while its unread intervals fit the helper. Wins when K is large or rare
+     * keys cause deep backward scans. See {@link HorizonJoinTimeFrameHelper#findKeyedAsOfMatch}.
      * <p>
-     * Each slave starts in backward-only mode per frame. The algorithm switches to forward
-     * scan mode for the remainder of the frame when either: (a) backward scan cost at a
-     * position exceeds gap * SWITCH_FACTOR (relative check, within a partition), or
-     * (b) backward scan cost exceeds BWD_SCAN_ABSOLUTE_THRESHOLD (absolute check, handles
-     * cross-partition boundaries where the relative check cannot trigger).
+     * Each slave starts in backward-only mode per frame. The algorithm keeps the key cache for
+     * the remainder of the frame when either: (a) backward scan cost at a position exceeds
+     * gap * SWITCH_FACTOR (relative check, within a partition), or (b) backward scan cost
+     * exceeds BWD_SCAN_ABSOLUTE_THRESHOLD (absolute check, handles cross-partition boundaries
+     * where the relative check cannot trigger), or (c) the backward scans over a run of gaps
+     * below MIN_GAP exceed their total * SWITCH_FACTOR.
      * <p>
      * For non-keyed slaves, the ASOF position is used directly without key matching.
      */

@@ -367,18 +367,20 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
     }
 
     /**
-     * Process all horizon timestamps in sorted order using bidirectional scanning.
+     * Process all horizon timestamps in sorted order using adaptive scanning.
      * <p>
      * This method iterates through pre-sorted (horizonTs, masterRowIdx, offsetIdx) tuples.
      * It uses a "dense ASOF" approach optimized for the common case where most keys
      * appear in the "recent" slave rows:
      * <p>
-     * 1. First tuple: Find ASOF position, backward scan until key match, set watermarks
-     * 2. Subsequent tuples: Forward scan to new ASOF position (caching keys),
-     * then lookup in cache. On cache miss, continue backward scan.
+     * 1. First tuple: Find ASOF position, backward scan until key match, caching the keys of
+     * the rows it reads.
+     * 2. Subsequent tuples: lookup in cache, then read the slave rows above the cached row of
+     * the key that no lookup has read yet, newest first, down to the key.
      * <p>
-     * Each slave row is scanned at most once per frame (either forward or backward).
-     * Watermarks are tracked internally by the helper and reset via toTop().
+     * The helper starts every frame in backward-only mode and keeps the key cache across
+     * positions once the backward scans cost more than the gaps between them, see
+     * {@link HorizonJoinTimeFrameHelper#findKeyedAsOfMatch}. Its state is reset via toTop().
      */
     private static void processHorizonTimestamps(
             AsyncHorizonTimestampIterator horizonIterator,

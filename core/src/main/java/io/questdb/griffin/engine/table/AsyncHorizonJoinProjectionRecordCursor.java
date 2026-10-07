@@ -202,6 +202,11 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
                             .I$();
                     collectCursor(true);
                     if (frameLimit > -1) {
+                        // The reader may stop ahead of the last frame, as it does under a LIMIT.
+                        // A task matches up to maxTaskRows rows, so workers skip the published
+                        // tasks they have not started instead of reducing them for nothing. The
+                        // frame sequence resets the cancellation when the factory reopens it.
+                        frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
                         frameSequence.await();
                     }
                     // Clears the atom, which releases the time frame cursors bound to the states below.
@@ -224,7 +229,11 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
 
     @Override
     public void expectLimitedIteration() {
-        // A LIMIT reads a few rows: cap the number of in-flight tasks.
+        // Only the limited light sorts call this, and only over a random-access base, which this
+        // cursor is not, so no plan reaches it. A LIMIT over this factory compiles to
+        // LimitRecordCursorFactory, whose cursor does not call it: dispatch stays unlimited, and
+        // close() cancels the tasks that the reader leaves unstarted. The override caps the
+        // in-flight tasks for a parent that announces a limited read.
         dispatchLimit = defaultDispatchLimit;
     }
 

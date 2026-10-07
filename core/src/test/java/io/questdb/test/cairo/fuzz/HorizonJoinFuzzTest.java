@@ -481,7 +481,7 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
             if (i > 0) {
                 sink.put(" UNION ALL ");
             }
-            sink.put("SELECT cast(").put(offsetsMicros[i]).put(" AS long) AS h_offset, t.id, t.sym");
+            sink.put("SELECT (").put(offsetsMicros[i]).put(")::LONG AS h_offset, t.id, t.sym");
             for (int s = 0; s < slaveCount; s++) {
                 for (CharSequence col : perSlaveColumns[s]) {
                     sink.put(", ").put(slaveAlias(isMulti, s)).put('.').put(col);

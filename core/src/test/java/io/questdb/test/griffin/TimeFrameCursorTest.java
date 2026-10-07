@@ -29,7 +29,9 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -46,6 +48,8 @@ import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.table.AbstractPageFrameRecordCursor;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameState;
+import io.questdb.griffin.engine.table.ExtraNullColumnCursorFactory;
+import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.griffin.engine.table.TimeFrameCursorImpl;
 import io.questdb.mp.WorkerPool;
@@ -458,6 +462,99 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                     Assert.assertFalse(cursor.prev());
                 }
         );
+    }
+
+    @Test
+    public void testIsParquetFrame() throws Exception {
+        // Both cursors tell the frames of the Parquet partition from the frames of the native ones,
+        // with every partition split into several frames. The answer comes from the frame list, so
+        // asking about every frame opens no partition beyond those that building the list opens:
+        // the Parquet partition, whose row groups the list counts. Page frames and row groups of
+        // 8 rows split each partition of 24 rows into 3 frames.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
+        assertMemoryLeak(() -> {
+            createPartiallyParquetTable();
+            sqlExecutionContext.changePageFrameSizes(8, 8);
+            try (RecordCursorFactory factory = select("x")) {
+                RecordCursorFactory baseFactory = factory instanceof QueryProgress ? factory.getBaseFactory() : factory;
+                TablePageFrameCursor pageFrameCursor = (TablePageFrameCursor) baseFactory.getPageFrameCursor(
+                        sqlExecutionContext,
+                        PartitionFrameCursorFactory.ORDER_ASC
+                );
+                TableReader reader = pageFrameCursor.getTableReader();
+                try (TimeFrameCursorImpl cursor = new TimeFrameCursorImpl(configuration, baseFactory.getMetadata())) {
+                    cursor.of(
+                            pageFrameCursor,
+                            sqlExecutionContext.getPageFrameMinRows(),
+                            sqlExecutionContext.getPageFrameMaxRows(),
+                            1,
+                            sqlExecutionContext.getMemoryTracker()
+                    );
+                    Assert.assertTrue(cursor.next());
+                    Assert.assertEquals(1, reader.getOpenPartitionCount());
+                    int parquetFrameCount = 0;
+                    do {
+                        if (cursor.isParquetFrame(cursor.getTimeFrame().getFrameIndex())) {
+                            parquetFrameCount++;
+                        }
+                    } while (cursor.next());
+                    Assert.assertEquals(1, reader.getOpenPartitionCount());
+                    Assert.assertEquals(3, parquetFrameCount);
+                    assertParquetFrames(cursor);
+                }
+                try (TimeFrameCursor cursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
+                    assertParquetFrames(cursor);
+                }
+                testWithConcurrentCursor(factory, TimeFrameCursorTest::assertParquetFrames);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+            execute("DROP TABLE x");
+        });
+    }
+
+    @Test
+    public void testIsParquetFrameThroughWrappers() throws Exception {
+        // The cursors that wrap the time frame cursors of a table must ask the cursor they wrap:
+        // SelectedRecordCursorFactory's, for a projection that repeats a column, and
+        // ExtraNullColumnCursorFactory's, which adds the null columns of a window join that can't
+        // match. Page frames and row groups of 8 rows split each partition into 3 frames.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
+        assertMemoryLeak(() -> {
+            createPartiallyParquetTable();
+            sqlExecutionContext.changePageFrameSizes(8, 8);
+            try {
+                try (RecordCursorFactory factory = select("SELECT a, a AS a0, t FROM x")) {
+                    try (TimeFrameCursor cursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor instanceof SelectedRecordCursorFactory.SelectedTimeFrameCursor);
+                        assertParquetFrames(cursor);
+                    }
+                    testWithConcurrentCursor(factory, cursor -> {
+                        Assert.assertEquals("SelectedConcurrentTimeFrameCursor", cursor.getClass().getSimpleName());
+                        assertParquetFrames(cursor);
+                    });
+                }
+                final RecordCursorFactory tableFactory = select("x");
+                final GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(tableFactory.getMetadata());
+                metadata.add(new TableColumnMetadata("n", ColumnType.DOUBLE));
+                try (RecordCursorFactory factory = new ExtraNullColumnCursorFactory(metadata, tableFactory.getMetadata().getColumnCount(), tableFactory)) {
+                    try (TimeFrameCursor cursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor instanceof ExtraNullColumnCursorFactory.ExtraNullColumnTimeFrameCursor);
+                        assertParquetFrames(cursor);
+                    }
+                    // The shared state reads the page frames of the table; the wrapper adds its
+                    // columns after the table's, so the timestamp index stays the same.
+                    final RecordCursorFactory baseFactory = tableFactory instanceof QueryProgress ? tableFactory.getBaseFactory() : tableFactory;
+                    testWithConcurrentCursor(baseFactory, factory.newTimeFrameCursor(), cursor -> {
+                        Assert.assertEquals("ExtraNullColumnConcurrentTimeFrameCursor", cursor.getClass().getSimpleName());
+                        assertParquetFrames(cursor);
+                    });
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+            execute("DROP TABLE x");
+        });
     }
 
     @Test
@@ -1790,6 +1887,31 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
         TestUtils.assertEquals(AbstractCairoTest.sink, actualSink);
     }
 
+    /**
+     * Walks every frame of a cursor over the table of {@link #createPartiallyParquetTable()} and
+     * asserts that the cursor tells Parquet exactly the frames of the second day, which it asks
+     * before opening a frame.
+     */
+    private static void assertParquetFrames(TimeFrameCursor cursor) {
+        final TimeFrame frame = cursor.getTimeFrame();
+        int nativeFrameCount = 0;
+        int parquetFrameCount = 0;
+        cursor.toTop();
+        while (cursor.next()) {
+            final boolean isParquet = cursor.isParquetFrame(frame.getFrameIndex());
+            Assert.assertTrue(cursor.open() > 0);
+            final boolean isSecondDay = frame.getTimestampLo() >= Micros.DAY_MICROS && frame.getTimestampLo() < 2 * Micros.DAY_MICROS;
+            Assert.assertEquals("Parquet frame " + frame.getFrameIndex(), isSecondDay, isParquet);
+            if (isParquet) {
+                parquetFrameCount++;
+            } else {
+                nativeFrameCount++;
+            }
+        }
+        Assert.assertEquals(3, parquetFrameCount);
+        Assert.assertEquals(6, nativeFrameCount);
+    }
+
     // Walks the live wrapper chain (following RecordCursor-typed fields) to the base
     // AbstractPageFrameRecordCursor so a test can observe the hint the wrappers forwarded.
     private static AbstractPageFrameRecordCursor findBasePageFrameCursor(RecordCursor cursor) throws Exception {
@@ -1872,6 +1994,17 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
         execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE t >= 0");
     }
 
+    private static void createPartiallyParquetTable() throws Exception {
+        // 72 rows across 3 DAY partitions (days 1970-01-01, 1970-01-02, 1970-01-03); the middle
+        // one becomes Parquet.
+        execute("CREATE TABLE x AS (SELECT" +
+                " rnd_int() a," +
+                " timestamp_sequence(0, 60 * 60 * 1_000_000L) t" +
+                " FROM long_sequence(72)" +
+                ") TIMESTAMP (t) PARTITION BY DAY");
+        execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '1970-01-02'");
+    }
+
     private static void executeWithPool(CustomisableRunnable runnable) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
@@ -1925,7 +2058,18 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
     private void testWithConcurrentCursor(RecordCursorFactory factory, TimeFrameCursorAssertion assertion) throws Exception {
         // Unwrap QueryProgress to get the base factory with direct access to TablePageFrameCursor
         RecordCursorFactory baseFactory = factory instanceof QueryProgress ? factory.getBaseFactory() : factory;
-        ConcurrentTimeFrameCursor cursor = baseFactory.newTimeFrameCursor();
+        testWithConcurrentCursor(baseFactory, baseFactory.newTimeFrameCursor(), assertion);
+    }
+
+    /**
+     * Opens the given concurrent cursor, which this method frees, over a shared state of the page
+     * frames of the given factory, which must not be wrapped in QueryProgress.
+     */
+    private void testWithConcurrentCursor(
+            RecordCursorFactory baseFactory,
+            ConcurrentTimeFrameCursor cursor,
+            TimeFrameCursorAssertion assertion
+    ) throws Exception {
         Assert.assertNotNull(cursor);
         ConcurrentTimeFrameState sharedState = new ConcurrentTimeFrameState();
         try {

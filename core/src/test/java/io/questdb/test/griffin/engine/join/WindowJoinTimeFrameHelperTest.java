@@ -918,6 +918,12 @@ public class WindowJoinTimeFrameHelperTest {
         }
 
         @Override
+        public boolean isParquetFrame(int frameIndex) {
+            // The frames live in memory, as the frames of a native partition do.
+            return false;
+        }
+
+        @Override
         public void jumpTo(int frameIndex) {
             currentFrame = frameIndex;
             jumpHistory.add(frameIndex);

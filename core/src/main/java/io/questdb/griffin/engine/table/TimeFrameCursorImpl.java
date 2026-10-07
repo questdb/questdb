@@ -184,6 +184,13 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     }
 
     @Override
+    public boolean isParquetFrame(int frameIndex) {
+        // buildFrameCache() files every frame with its format, including the skeleton frames of
+        // native partitions that it doesn't open, so the answer needs no partition open.
+        return frameAddressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
+    }
+
+    @Override
     public void jumpTo(int frameIndex) {
         buildFrameCache();
 

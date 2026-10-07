@@ -137,14 +137,18 @@ public class SqlOptimiser implements Mutable {
     // Rewriters that break the 1:1 relationship between baseModel rows and
     // the rows the outer LIMIT counts: DISTINCT and GROUP BY drop rows
     // (SAMPLE BY is encoded as GROUP BY); WINDOW preserves the count but
-    // depends on seeing the full input frame to compute its functions;
-    // HORIZON JOIN runs as a keyed GROUP BY ("GROUP BY with keys" per
-    // HorizonJoinRecordCursorFactory) so it also drops rows. When any of
-    // them sits between the outer LIMIT and baseModel, pushDownLimitAdvice
-    // must not propagate the limit to baseModel, because a row-count
-    // limit at the base cursor produces fewer post-rewrite rows than the
-    // outer LIMIT requested. WINDOW JOIN is intentionally excluded: it
-    // preserves the master side's row count and order, and the rewrite
+    // depends on seeing the full input frame to compute its functions.
+    // rewriteSelectClause0() sets REWRITE_STATUS_USE_HORIZON_JOIN_MODE for
+    // every HORIZON JOIN, with or without aggregates. With aggregates, a
+    // HORIZON JOIN runs as a GROUP BY, keyed or not, so it drops rows.
+    // Without aggregates, it emits one row per left-hand row and offset, so
+    // a row-count limit at the base cursor would count left-hand rows, not
+    // the output rows that the outer LIMIT counts. When any of them sits
+    // between the outer LIMIT and baseModel, pushDownLimitAdvice must not
+    // propagate the limit to baseModel: for the rewriters that drop rows, a
+    // row-count limit at the base cursor produces fewer post-rewrite rows
+    // than the outer LIMIT requested. WINDOW JOIN is intentionally excluded:
+    // it preserves the master side's row count and order, and the rewrite
     // path enforces translationIsRedundant for it (see the assertion on
     // the WINDOW_JOIN branch below), so it never reaches this push-down.
     private static final int LIMIT_PUSH_DOWN_ROW_COUNT_BLOCKERS =

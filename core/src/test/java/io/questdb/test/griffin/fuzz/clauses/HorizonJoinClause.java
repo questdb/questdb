@@ -214,8 +214,8 @@ public final class HorizonJoinClause {
      * rows, so a merged or dropped row changes it.
      */
     private static GeneratedQuery generateProjection(Rnd rnd, FuzzTable master, FuzzTable slave, BindContext ctx, boolean injectFaultFn) {
-        final boolean keyed = rnd.nextInt(3) != 0;
-        final boolean useList = rnd.nextBoolean();
+        final boolean isKeyed = rnd.nextInt(3) != 0;
+        final boolean isListSpec = rnd.nextBoolean();
         final boolean isAggregated = rnd.nextBoolean();
 
         final StringSink rows = new StringSink();
@@ -237,10 +237,10 @@ public final class HorizonJoinClause {
         }
         rows.put(" FROM ").put(master.getName()).put(' ').put(MASTER_ALIAS);
         rows.put(" HORIZON JOIN ").put(slave.getName()).put(' ').put(SLAVE_ALIAS);
-        if (keyed) {
+        if (isKeyed) {
             rows.put(" ON (").put(MASTER_ALIAS).put(".sym = ").put(SLAVE_ALIAS).put(".sym)");
         }
-        appendHorizonSpec(rows, rnd, useList);
+        appendHorizonSpec(rows, rnd, isListSpec);
         // WHERE may reference master columns only.
         PredicateGenerator.appendWhere(rows, rnd, master.getColumns(), MASTER_ALIAS, 1, ctx, injectFaultFn);
 

@@ -600,11 +600,13 @@ public class LimitTest extends AbstractCairoTest {
         });
     }
 
-    // HORIZON JOIN runs as a keyed GROUP BY (see
-    // HorizonJoinRecordCursorFactory), so it drops rows. The current
-    // optimizer absorbs the filter into the join factory in
-    // single-worker mode, so the row-count check is a forward guard for
-    // future rewrites that might re-introduce a separate inner filter.
+    // This HORIZON JOIN aggregates per t.sym, so it runs as a keyed GROUP BY
+    // (see HorizonJoinRecordCursorFactory) and drops rows. A HORIZON JOIN
+    // without aggregates emits one row per left-hand row and offset instead;
+    // the optimizer blocks the limit push-down for both forms. The query has
+    // no WHERE clause, so no base filter would take a pushed limit today, and
+    // the row-count check is a forward guard for future rewrites that might
+    // introduce one.
     @Test
     public void testLimitNotPushedBelowHorizonJoin() throws Exception {
         assertMemoryLeak(() -> {

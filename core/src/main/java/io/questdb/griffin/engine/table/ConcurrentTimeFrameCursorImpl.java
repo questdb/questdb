@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.ParquetDecodeHint;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -116,6 +117,13 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     @Override
     public int getTimestampIndex() {
         return timestampIndex;
+    }
+
+    @Override
+    public boolean isParquetFrame(int frameIndex) {
+        // The shared state files every frame with its format before the cursors run, and the lazy
+        // partition opens patch only addresses, so the formats are safe to read from any thread.
+        return sharedState.getAddressCache().getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
     }
 
     @Override

@@ -31,10 +31,12 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
@@ -71,11 +73,28 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
  * The per-task output grows with the product of rows, offsets and slaves, so a task matches at
  * most {@link AsyncHorizonJoinProjectionAtom#getMaxTaskRows()} rows. The factory sizes native
  * page frames to fit; the owner thread matches the rest of a larger (Parquet) frame itself.
+ * <p>
+ * The native frames shrink as the slots per master row, offsets times slaves, grow. The code
+ * generator therefore picks this factory for at most {@link #MAX_SLOTS_PER_MASTER_ROW} slots and
+ * the serial {@link HorizonJoinProjectionRecordCursorFactory} past that, unless the master lacks
+ * the random access the serial factory needs, as a covering index scan does.
  */
 public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecordCursorFactory {
+    /**
+     * The most slots per master row, offsets times slaves, for which the code generator picks this
+     * factory over a master with random access. A frame costs a reduce task and a page address
+     * cache entry whether or not any of its rows pass the filter, and the factory cuts the master
+     * into frames of the small frame budget divided by the slots. Within the cap, the frames stay
+     * at 1/100 of that budget or larger, 1,000 rows at the default budget of 100,000, so such a
+     * scan makes at most 100 times the frames of a small-frame scan over the same rows. A master
+     * without random access, such as a covering index scan, keeps this factory above the cap, as
+     * the class javadoc says, and its frames shrink further with the slots.
+     */
+    public static final int MAX_SLOTS_PER_MASTER_ROW = 100;
     private static final PageFrameReducer FILTER_AND_MATCH = AsyncHorizonJoinProjectionRecordCursorFactory::filterAndMatch;
     private static final PageFrameReducer MATCH = AsyncHorizonJoinProjectionRecordCursorFactory::match;
     private final SCSequence collectSubSeq = new SCSequence();
+    private final MasterFrameSource masterFrameSource = new MasterFrameSource();
     private final int offsetCount;
     private final int pageFrameMaxRows;
     private final int pageFrameMinRows;
@@ -171,6 +190,14 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
             Misc.free(this, th);
             throw th;
         }
+    }
+
+    /**
+     * Returns whether a projection with the given numbers of offsets and slaves stays within
+     * {@link #MAX_SLOTS_PER_MASTER_ROW}.
+     */
+    public static boolean isWithinSlotCap(int offsetCount, int slaveCount) {
+        return (long) offsetCount * slaveCount <= MAX_SLOTS_PER_MASTER_ROW;
     }
 
     @Override
@@ -368,13 +395,28 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
     }
 
     private PageFrameSequence<AsyncHorizonJoinProjectionAtom> execute(SqlExecutionContext executionContext) throws SqlException {
-        // Size the master frames for the task budget. The slave time frame state is built later,
-        // on the first read, so it sees the default frame sizes again.
-        executionContext.changePageFrameSizes(pageFrameMinRows, pageFrameMaxRows);
+        // The frame sequence opens the master's page frame cursor through masterFrameSource,
+        // which sizes the master frames.
+        return frameSequence.of(masterFrameSource, executionContext, collectSubSeq, ORDER_ASC);
+    }
+
+    /**
+     * Opens the master's page frame cursor with the frame sizes of this factory. The sizes sit on
+     * the execution context for the duration of the master's cursor open only, and the method then
+     * restores the sizes the context had on entry. The cursors the query opens afterwards scan
+     * with those: the sub-queries of the stolen filter, which
+     * {@link AsyncHorizonJoinProjectionAtom#init} opens right after this call, and the slaves. A
+     * sub-query that the master's cursor open evaluates itself, such as one that bounds a runtime
+     * timestamp interval, scans with the master's sizes.
+     */
+    private PageFrameCursor openMasterFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+        final int contextMinRows = executionContext.getPageFrameMinRows();
+        final int contextMaxRows = executionContext.getPageFrameMaxRows();
         try {
-            return frameSequence.of(masterFactory, executionContext, collectSubSeq, ORDER_ASC);
+            executionContext.changePageFrameSizes(pageFrameMinRows, pageFrameMaxRows);
+            return masterFactory.getPageFrameCursor(executionContext, order);
         } finally {
-            executionContext.restoreToDefaultPageFrameSizes();
+            executionContext.changePageFrameSizes(contextMinRows, contextMaxRows);
         }
     }
 
@@ -405,5 +447,32 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
         failure = Misc.freeBestEffort(failure, horizonJoinMetadata);
         failure = Misc.freeBestEffort(failure, resources);
         CairoException.rethrowCleanupFailure(failure);
+    }
+
+    /**
+     * The master as the frame sequence sees it: {@link PageFrameSequence#of} opens the page frame
+     * cursor through this factory, which lets {@link #openMasterFrameCursor} size the frames.
+     */
+    private class MasterFrameSource implements RecordCursorFactory {
+
+        @Override
+        public RecordMetadata getMetadata() {
+            return masterFactory.getMetadata();
+        }
+
+        @Override
+        public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+            return openMasterFrameCursor(executionContext, order);
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return masterFactory.recordCursorSupportsRandomAccess();
+        }
+
+        @Override
+        public boolean supportsPageFrameCursor() {
+            return true;
+        }
     }
 }
