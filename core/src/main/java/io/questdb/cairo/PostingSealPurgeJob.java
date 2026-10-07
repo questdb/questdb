@@ -456,7 +456,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             useful = true;
             boolean done;
             try {
-                done = operator.purge(head);
+                done = operator.purge(head, false);
             } catch (Throwable th) {
                 LOG.error().$("posting seal purge: operator threw, re-queuing [err=").$(th).I$();
                 done = false;
@@ -520,7 +520,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
                     );
                     boolean done;
                     try {
-                        done = operator.purge(entry);
+                        done = operator.purge(entry, true);
                     } catch (Throwable th) {
                         LOG.error().$("posting seal purge: recovery purge failed [err=").$(th).I$();
                         done = false;

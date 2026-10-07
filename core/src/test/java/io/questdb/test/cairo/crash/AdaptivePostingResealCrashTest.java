@@ -26,7 +26,10 @@ package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.PostingSealPurgeJob;
+import io.questdb.cairo.RecoveryCoordinator;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.mp.SCSequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
@@ -48,9 +51,11 @@ import java.util.stream.Stream;
  * point still references outlives the commit that replaced it until the next periodic save point. A crash before
  * that save point recovers from the last one, whose index still reads that {@code .pv} and its covers. The pin
  * of that save point must keep the purge job from removing them, even where the removal would have reached the
- * disk.
+ * disk. The purge rows a crash leaves open are replayed by the next start's purge job, and must not keep readers
+ * out of the recovered table.
  */
 public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
+    private static final long DAY = 86_400_000_000L;
     private static final long DAY1 = 1_704_067_200_000_000L; // 2024-01-01T00:00:00Z
     private static final String EPOCH_METRIC = "questdb_wal_adaptive_epoch_advances_total";
     private static final long HOUR = 3_600_000_000L;
@@ -134,6 +139,87 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         });
     }
 
+    @Test
+    public void testPurgeLogReplayAfterKillKeepsReadersOpen() throws Exception {
+        setUpAdaptive();
+        runWithCrashFacade(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (v), v LONG) TIMESTAMP(ts) "
+                    + "PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)");
+            execute("INSERT INTO t VALUES " + row(DAY1 + 10 * HOUR, 0) + ", " + row(DAY1 + DAY + 10 * HOUR, 1));
+            // The first apply takes the save point the kill recovers from.
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("t");
+            try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                runPurgeJob(job);
+                // Each in-place commit reseals its partition. The first reseal of each day supersedes a .pv the
+                // save point names, so the pin holds its purge row open.
+                insertAndApply(row(DAY1 + 11 * HOUR, 2), job);
+                insertAndApply(row(DAY1 + DAY + 11 * HOUR, 3), job);
+                // A reader up to the kill holds open the purges of the next .pv of each day: windows above the
+                // save point.
+                try (TableReader ignore = getReader(token)) {
+                    insertAndApply(row(DAY1 + 12 * HOUR, 4), job);
+                    insertAndApply(row(DAY1 + 13 * HOUR, 5), job);
+                    insertAndApply(row(DAY1 + DAY + 12 * HOUR, 6), job);
+                    Assert.assertEquals("purge rows open at the kill", 4, job.getOutstandingPurgeTasks());
+                }
+            }
+            kill(token);
+            // A restart builds the purge job, which replays the open rows of its log, before any WAL apply.
+            try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                engine.notifyWalTxnRepublisher(token);
+                drainWalQueue();
+                runPurgeJob(job);
+                // The job stays up, as on a server, and keeps its writer of the purge log.
+                assertQuery("SELECT count(), sum(v) FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\tsum\n7\t21\n");
+                for (int k = 0; k < SYMBOLS; k++) {
+                    long count = 0;
+                    long sum = 0;
+                    for (int v = k; v < 7; v += SYMBOLS) {
+                        count++;
+                        sum += v;
+                    }
+                    assertQuery("SELECT count(), sum(v) FROM t WHERE s = '" + (char) ('a' + k) + "'")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\tsum\n" + count + "\t" + sum + "\n");
+                }
+            }
+        });
+    }
+
+    // A killed process loses its in-memory purge queue, including what a writer published at close.
+    private static void discardPurgeQueue() {
+        final SCSequence subSeq = engine.getMessageBus().getPostingSealPurgeSubSeq();
+        while (true) {
+            final long cursor = subSeq.next();
+            if (cursor == -2) {
+                continue;
+            }
+            if (cursor < 0) {
+                break;
+            }
+            subSeq.done(cursor);
+        }
+    }
+
+    // A fresh process starts the purge log table with a new scoreboard.
+    private static void evictPurgeLogScoreboard() {
+        final TableToken logToken = engine.getTableTokenIfExists("sys.posting_seal_purge_log");
+        if (logToken != null) {
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            engine.getTxnScoreboardPool().remove(logToken);
+        }
+    }
+
+    private static void insertAndApply(String values, PostingSealPurgeJob job) throws Exception {
+        execute("INSERT INTO t VALUES " + values);
+        drainWalQueue();
+        runPurgeJob(job);
+    }
+
     // One WAL commit of ROWS_PER_PASS rows in day 1, from hour 10 + pass, after every earlier row.
     private static String passSql(int pass) {
         final long start = DAY1 + (10L + pass) * HOUR;
@@ -145,6 +231,11 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                     .append((char) ('a' + v % SYMBOLS)).append("', ").append(v).append(')');
         }
         return sql.toString();
+    }
+
+    // A row of symbol v % SYMBOLS and value v.
+    private static String row(long ts, long v) {
+        return "(" + ts + "::timestamp, '" + (char) ('a' + v % SYMBOLS) + "', " + v + ")";
     }
 
     private static void runPurgeJob(PostingSealPurgeJob job) {
@@ -163,5 +254,30 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
             throw new UncheckedIOException(e);
         }
         return files;
+    }
+
+    private static void setUpAdaptive() {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1_000_000_000L);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, Long.MAX_VALUE);
+        // A crash takes no save point at writer close.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        // Retry a held purge on every job run, so the job would remove the file as soon as nothing held it.
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT, 1);
+    }
+
+    // A kill keeps every byte written but loses the process: its purge queue, scoreboards and sequencer state.
+    // The restart recovers every adaptive table before it builds any writer job.
+    private void kill(TableToken token) {
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        engine.releaseCrashOrphanedWalWriters();
+        engine.releaseAllWalWriters();
+        discardPurgeQueue();
+        engine.getTxnScoreboardPool().remove(token);
+        engine.getTableSequencerAPI().resetForReboot(token);
+        new RecoveryCoordinator(engine).recover();
+        evictPurgeLogScoreboard();
     }
 }
