@@ -10816,6 +10816,36 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterJoinInnerDerivedKeyStaysFilterOnRightJoinWithSlaveOnlyRejection() throws Exception {
+        // WHERE b.u > 0 rejects only the RIGHT join's preserved slave, so it drops no NULL-master row.
+        // The INNER-derived a.w = b.k must stay a filter: as a key, it would NULL-extend b (2, null, 5)
+        // and the INNER join would match that row to c.k = NULL, adding a spurious row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, w INT)");
+            execute("INSERT INTO a VALUES (5, 1), (7, 3)");
+            execute("CREATE TABLE b (x INT, k INT, u INT)");
+            execute("INSERT INTO b VALUES (2, 1, 3), (2, null, 5), (0, null, 6)");
+            execute("CREATE TABLE c (k INT)");
+            execute("INSERT INTO c VALUES (1), (null)");
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, b.x bx, b.k bk, b.u bu, c.k ck
+                    FROM a
+                    RIGHT JOIN b ON b.x > 1
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    WHERE b.u > 0
+                    ORDER BY 1, 2, 3, 4, 5, 6
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Nested Loop Right Join")
+                    .returns("""
+                            ax\taw\tbx\tbk\tbu\tck
+                            null\tnull\t0\tnull\t6\tnull
+                            5\t1\t2\t1\t3\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testOuterJoinMasterFilterKeepsMatchedRow() throws Exception {
         // Companion to testOuterJoinMasterFilterStaysPostJoin: that test proves the NULL-master
         // rows are removed; this one proves a genuine master match survives, so the post-join

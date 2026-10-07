@@ -6469,9 +6469,6 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
-    // Returns true when every context-free RIGHT/FULL join at or after fromIndex has each model before it
-    // as a context parent, which constrainRightAndFullJoinsAfterPrefix and recordNullingJoinPrefix record
-    // unless a forward reference leaves the prefix unpinned.
     // Returns true when nullRejectedModelIndexes holds a model that precedes the model at index.
     private boolean hasNullRejectedModelBefore(int index) {
         for (int i = 0, n = nullRejectedModelIndexes.size(); i < n; i++) {
@@ -6482,6 +6479,9 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    // Returns true when every context-free RIGHT/FULL join at or after fromIndex has each model before it
+    // as a context parent, which constrainRightAndFullJoinsAfterPrefix and recordNullingJoinPrefix record
+    // unless a forward reference leaves the prefix unpinned.
     private boolean hasPinnedRightOrFullJoinPrefixes(ObjList<IQueryModel> joinModels, int fromIndex) {
         for (int boundaryIndex = fromIndex, n = joinModels.size(); boundaryIndex < n; boundaryIndex++) {
             final IQueryModel boundaryModel = joinModels.getQuick(boundaryIndex);
