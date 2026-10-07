@@ -257,6 +257,7 @@ public class RecordBlockTest extends AbstractCairoTest {
     @Test
     public void testProjectionsPassBlocksThrough() throws Exception {
         assertMemoryLeak(() -> {
+            allowFunctionMemoization();
             createAllTypes();
             final Rnd rnd = TestUtils.generateRandom(LOG);
             final String[] queries = {
@@ -265,8 +266,11 @@ public class RecordBlockTest extends AbstractCairoTest {
                     // idx 13's shape: a projection over a selection of every column
                     "select ts, (db + f) / 2 mid from (select * from at where s = 'k7')",
                     "select ts, s, db, b, ip from at where i > 100",
-                    // an alias referenced twice is memoized: its value per row stays one
                     "select l + 1 a, a * 2 a2, a - 3 a3, s, ts from at where l > 100",
+                    // a column the outer projection reads three times is memoized in the inner one,
+                    // which computes it into memory the outer one cannot gather with its other
+                    // columns, so the outer reads it through the record, and the memo, per row
+                    "select a, a * 2 a2, a - 3 a3, s from (select l + i a, s, ts from at where l > 100)",
                     "select s, s2, l256, v, i * 2 from at where l > 100",
                     "select case when b then s else s2 end cs, l from at where l > 100",
                     // a projection over a plain scan
@@ -279,6 +283,8 @@ public class RecordBlockTest extends AbstractCairoTest {
                     Assert.assertTrue(query, assertBlocksMatchRows(engine, sqlExecutionContext, query, rnd) > 0);
                 }
             }
+            // the alias read twice is memoized, as in a server: a block's rows must each clear the memo
+            assertPlanContains("select l + 1 a, a * 2 a2, a - 3 a3, s, ts from at where l > 100", "memoize(");
             // arithmetic over base columns is computed column-wise, into memory the block exposes;
             // a function with no column-wise loop (concat, a CASE) is read through the record
             assertComputedInMemory("select ts, (db + l) / 2 mid, l * 3 l3, (f - i)::double fi, s from at where l > 5000", true, true, true);

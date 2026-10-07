@@ -353,6 +353,7 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
                         "select s, ts, db, f, i, s2, ch, ip from at where l > 50",
                         // memoized aliases, computed columns of other types, a plain scan below
                         "select l + 1 a, a * 2 a2, a - 3 a3, s, ts from at where l > 100",
+                        "select a, a * 2 a2, a - 3 a3, s from (select l + i a, s, ts from at where l > 100)",
                         "select s, s2, l256, v, i * 2, g6, dc128 from at where l > 100",
                         "select case when b then s else s2 end cs, l from at where l > 100",
                         "select l + 1, s, ts, d from at",
