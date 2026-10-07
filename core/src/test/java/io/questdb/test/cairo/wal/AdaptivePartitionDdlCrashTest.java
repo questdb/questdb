@@ -180,7 +180,10 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                     // close take one.
                     takeSavePoint(e);
                 }
-                apply(e);
+                e = apply(e);
+                if (operation == Operation.RESUME_WAL_FROM_TXN) {
+                    Assert.assertFalse("the transaction must be skipped", snapshot(e).contains("skipped"));
+                }
                 if (!history.cleanRestart()) {
                     insertDay(e, "2024-01-05", 40);
                 }
@@ -204,6 +207,18 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         e.execute(sql);
         TestUtils.drainWalQueue(e);
         Assert.assertFalse(sql, e.getTableSequencerAPI().isSuspended(e.verifyTableName("t")));
+    }
+
+    private static void assertResumeFails(CairoEngine e, String resume) throws SqlException {
+        try {
+            e.execute(resume);
+            Assert.fail("the statement must fail");
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "the table stays suspended");
+        }
+        TestUtils.drainWalQueue(e);
+        Assert.assertTrue("the table must stay suspended", e.getTableSequencerAPI().isSuspended(e.verifyTableName("t")));
+        Assert.assertFalse("the transaction must be skipped", snapshot(e).contains("skipped"));
     }
 
     private static void insertDay(CairoEngine e, String day, int base) throws SqlException {
@@ -265,7 +280,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         Assert.assertEquals(tracker.getSeqTxn(), tracker.getDurableEpochSeqTxn());
     }
 
-    private void apply(CairoEngine e) throws Exception {
+    private CairoEngine apply(CairoEngine e) throws Exception {
         final String before = partitions(e);
         switch (operation) {
             case COPY_INTO_EXISTING_TABLE -> {
@@ -282,16 +297,24 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                 e.execute("ALTER TABLE t SUSPEND WAL");
                 e.execute("INSERT INTO t VALUES ('2024-01-06T00:00:00.000000Z', 'skipped', -1)");
                 TestUtils.drainWalQueue(e);
-                final long skippedTxn = e.getTableSequencerAPI().lastTxn(e.verifyTableName("t"));
+                final String resume = "ALTER TABLE t RESUME WAL FROM TXN " + (e.getTableSequencerAPI().lastTxn(e.verifyTableName("t")) + 1);
                 setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
                 startOperation();
                 try {
-                    alter(e, "ALTER TABLE t RESUME WAL FROM TXN " + (skippedTxn + 1));
+                    if (history.failsSavePoint()) {
+                        // The skip is not durable, so the statement fails and the table stays suspended.
+                        assertResumeFails(e, resume);
+                        // Nothing is left to skip, but the repeat takes the save point the skip owes, so a crash
+                        // right after it keeps the skip.
+                        failSavePointsAfter = -1;
+                        alter(e, resume);
+                        return crash(e);
+                    }
+                    alter(e, resume);
                 } finally {
                     failSavePointsAfter = -1;
                 }
-                Assert.assertFalse("the transaction must be skipped", snapshot(e).contains("skipped"));
-                return;
+                return e;
             }
             default -> applySql(e, sql(e));
         }
@@ -301,6 +324,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
             Assert.assertTrue("the first partition must attach", rows.contains("\ts11\t"));
             Assert.assertFalse("the second partition must not attach", rows.contains("\ts1\t"));
         }
+        return e;
     }
 
     private void applySql(CairoEngine e, String sql) throws Exception {
@@ -359,6 +383,15 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
             failSavePointsAfter = -1;
         }
         alter(e, "ALTER TABLE t RESUME WAL");
+    }
+
+    // A process kill in the middle of an operation: the writers close without a save point.
+    private CairoEngine crash(CairoEngine e) {
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        final CairoEngine restarted = restart(e);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, history.cleanRestart() ? "true" : "false");
+        TestUtils.drainWalQueue(restarted);
+        return restarted;
     }
 
     private void importCsv(CairoEngine e) throws Exception {

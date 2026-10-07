@@ -569,6 +569,9 @@ public class TableSequencerAPI implements QuietCloseable {
                                 if (tableWriter.isEnrolledAdaptive()) {
                                     skipWriter = tableWriter;
                                 }
+                            } else if (tableWriter.isEnrolledAdaptive() && getTxnTracker(tableToken).isDurableEpochOwed()) {
+                                // A repeat after a failed durable epoch: nothing is left to skip, the epoch is still owed.
+                                skipWriter = tableWriter;
                             }
                         } finally {
                             if (skipWriter == null) {
@@ -586,9 +589,14 @@ public class TableSequencerAPI implements QuietCloseable {
             }
             // The skip is not in the WAL, so the table needs a durable epoch before it resumes, or a crash would
             // replay the skipped transactions. The epoch may take the sequencer lock itself, so it is taken with
-            // the lock released; the table stays suspended meanwhile.
+            // the lock released; the table stays suspended meanwhile, and stays suspended if the epoch fails.
             skipWriter.advanceDurableEpochAfter("resume wal from txn");
             skipWriter = Misc.free(skipWriter);
+            if (getTxnTracker(tableToken).isDurableEpochOwed()) {
+                throw CairoException.nonCritical()
+                        .put("could not make the skipped transactions durable, the table stays suspended; retry RESUME WAL FROM TXN [table=")
+                        .put(tableToken.getTableName()).put(']');
+            }
             try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
                 try {
                     sequencer.resumeTable();
