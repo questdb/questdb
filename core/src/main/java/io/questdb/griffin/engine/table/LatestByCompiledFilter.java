@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
@@ -41,6 +42,7 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -53,16 +55,26 @@ public class LatestByCompiledFilter extends BooleanFunction implements UnaryFunc
     private final DirectLongList auxAddresses;
     private final MemoryCARW bindVarMemory;
     private final DirectLongList dataAddresses;
+    private final IntList filterColumnIndexes;
     private final DirectLongList filteredRows;
     private BatchObserver batchObserver;
     private ObjList<Function> bindVarFunctions;
     private CompiledFilter compiledFilter;
     private Function filter;
+    private boolean isFrameCompiled;
+    private int preparedFrameIndex = -1;
 
-    public LatestByCompiledFilter(CairoConfiguration configuration, Function filter, CompiledFilter compiledFilter, ObjList<Function> bindVarFunctions) {
+    public LatestByCompiledFilter(
+            CairoConfiguration configuration,
+            Function filter,
+            CompiledFilter compiledFilter,
+            ObjList<Function> bindVarFunctions,
+            IntList filterColumnIndexes
+    ) {
         this.filter = filter;
         this.compiledFilter = compiledFilter;
         this.bindVarFunctions = bindVarFunctions;
+        this.filterColumnIndexes = filterColumnIndexes;
         bindVarMemory = Vm.getCARWInstance(configuration.getSqlJitBindVarsMemoryPageSize(),
                 configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_JIT);
         filteredRows = new DirectLongList(Math.min(BATCH_SIZE, configuration.getPageFrameReduceRowIdListCapacity()), MemoryTag.NATIVE_OFFLOAD, true);
@@ -82,12 +94,15 @@ public class LatestByCompiledFilter extends BooleanFunction implements UnaryFunc
         if (filter instanceof LatestByCompiledFilter jit) {
             try {
                 PageFrameMemory memory = memoryPool.navigateTo(frameIndex);
-                if (!memory.hasColumnTops() && !memory.hasColumnTypeCasts()) {
+                if (frameIndex != jit.preparedFrameIndex) {
+                    jit.prepareFrame(memory, addressCache.getColumnCount());
+                    jit.preparedFrameIndex = frameIndex;
+                }
+                if (jit.isFrameCompiled) {
                     if (jit.batchObserver != null) {
                         jit.batchObserver.onJitBatch();
                     }
-                    AsyncFilterUtils.applyCompiledFilter(jit.compiledFilter, jit.bindVarMemory, jit.bindVarFunctions,
-                            memory, addressCache, jit.dataAddresses, jit.auxAddresses, jit.filteredRows, rowLo, rowHi - rowLo);
+                    jit.applyBatch(memory, addressCache, rowLo, rowHi - rowLo);
                     return jit.filteredRows;
                 }
                 if (jit.batchObserver != null) {
@@ -145,6 +160,7 @@ public class LatestByCompiledFilter extends BooleanFunction implements UnaryFunc
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         batchObserver = TEST_BATCH_OBSERVER.get();
+        preparedFrameIndex = -1;
         filteredRows.reopen();
         dataAddresses.reopen();
         auxAddresses.reopen();
@@ -163,11 +179,61 @@ public class LatestByCompiledFilter extends BooleanFunction implements UnaryFunc
         filter.toPlan(sink);
     }
 
+    private void applyBatch(PageFrameMemory memory, PageFrameAddressCache addressCache, long rowLo, long rowCount) {
+        final IntList columnTypes = addressCache.getColumnTypes();
+        for (int i = 0, n = filterColumnIndexes.size(); i < n; i++) {
+            final int columnIndex = filterColumnIndexes.getQuick(i);
+            final int columnType = columnTypes.getQuick(columnIndex);
+            if (ColumnType.isVarSize(columnType)) {
+                dataAddresses.set(columnIndex, memory.getPageAddress(columnIndex));
+                auxAddresses.set(columnIndex, memory.getAuxPageAddress(columnIndex)
+                        + ColumnType.getDriver(columnType).getAuxVectorOffset(rowLo));
+            } else {
+                dataAddresses.set(columnIndex, memory.getPageAddress(columnIndex) + (rowLo << ColumnType.pow2SizeOf(columnType)));
+            }
+        }
+        if (filteredRows.getCapacity() < rowCount) {
+            filteredRows.setCapacity(rowCount);
+        }
+        long hi = compiledFilter.call(
+                dataAddresses.getAddress(),
+                dataAddresses.size(),
+                auxAddresses.getAddress(),
+                bindVarMemory.getAddress(),
+                bindVarFunctions.size(),
+                filteredRows.getAddress(),
+                rowCount
+        );
+        filteredRows.setPos(hi);
+    }
+
     private Throwable closeBuffers(Throwable failure) {
         failure = Misc.freeBestEffort(failure, filteredRows);
         failure = Misc.freeBestEffort(failure, dataAddresses);
         failure = Misc.freeBestEffort(failure, auxAddresses);
         return Misc.freeBestEffort(failure, bindVarMemory);
+    }
+
+    private void prepareFrame(PageFrameMemory memory, int columnCount) {
+        isFrameCompiled = false;
+        if (memory.hasColumnTypeCasts()) {
+            return;
+        }
+        for (int i = 0, n = filterColumnIndexes.size(); i < n; i++) {
+            final int columnIndex = filterColumnIndexes.getQuick(i);
+            if (memory.getPageAddress(columnIndex) == 0 && memory.getAuxPageAddress(columnIndex) == 0) {
+                return;
+            }
+        }
+        if (dataAddresses.size() != columnCount) {
+            dataAddresses.clear();
+            auxAddresses.clear();
+            for (int i = 0; i < columnCount; i++) {
+                dataAddresses.add(0);
+                auxAddresses.add(0);
+            }
+        }
+        isFrameCompiled = true;
     }
 
     static void addJitAttr(PlanSink sink, Function filter) {

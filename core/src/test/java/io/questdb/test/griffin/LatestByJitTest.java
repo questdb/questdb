@@ -305,10 +305,11 @@ public class LatestByJitTest extends AbstractCairoTest {
             final String[] queries = {
                     "SELECT v, w FROM jit_tops WHERE v < 4 LATEST ON ts PARTITION BY s",
                     "SELECT v FROM jit_tops WHERE v < 4 LATEST ON ts PARTITION BY s",
+                    "SELECT v, w FROM jit_tops WHERE w > 35 OR v = 1 LATEST ON ts PARTITION BY s",
             };
-            final String[] expected = {"v\tw\n2\tnull\n3\t30\n", "v\n2\n3\n"};
-            final long[] expectedJitBatches = {1, 2};
-            final long[] expectedFallbackFrames = {1, 0};
+            final String[] expected = {"v\tw\n2\tnull\n3\t30\n", "v\n2\n3\n", "v\tw\n1\tnull\n4\t40\n"};
+            final long[] expectedJitBatches = {2, 2, 1};
+            final long[] expectedFallbackFrames = {0, 0, 1};
             for (int i = 0; i < queries.length; i++) {
                 try (RecordCursorFactory factory = select(queries[i])) {
                     Assert.assertTrue(factory.usesCompiledFilter());

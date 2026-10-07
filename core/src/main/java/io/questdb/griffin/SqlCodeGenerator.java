@@ -2231,10 +2231,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * Accepted generic JIT limitation: f32 comparisons use {@code FLOAT_EPSILON}, slightly wider
      * than the Java filter's {@link Numbers#DOUBLE_TOLERANCE}. All compiled-filter query paths
      * share this discrepancy; it is not specific to LATEST ON. The maintainer accepts boundary-row
-     * differences between JIT and Java evaluation, including projection-driven column-top fallback,
-     * rather than disabling FLOAT JIT. See the scoped review exception in griffin/CLAUDE.md and
-     * CompiledFilterRegressionTest's {@code testNumericColumnVsFloatToleranceBoundConstant},
-     * {@code testFloatRuntimePairTolerance} and {@code testLatestOnFloatRuntimePairTolerance}.
+     * differences between JIT and Java evaluation rather than disabling FLOAT JIT. See the scoped
+     * review exception in griffin/CLAUDE.md and CompiledFilterRegressionTest's
+     * {@code testNumericColumnVsFloatToleranceBoundConstant}, {@code testFloatRuntimePairTolerance}
+     * and {@code testLatestOnFloatRuntimePairTolerance}.
      */
     private Function compileLatestByFilter(
             Function filter,
@@ -2277,7 +2277,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             } finally {
                 clearJitScratch(failure);
             }
-            return new LatestByCompiledFilter(configuration, filter, compiled, bindVariables);
+            final IntHashSet usedColumns = new IntHashSet();
+            collectColumnIndexes(sqlNodeStack, metadata, expression, usedColumns);
+            final IntList filterColumnIndexes = new IntList(usedColumns.size());
+            for (int i = 0, n = usedColumns.size(); i < n; i++) {
+                filterColumnIndexes.add(usedColumns.get(i));
+            }
+            return new LatestByCompiledFilter(configuration, filter, compiled, bindVariables, filterColumnIndexes);
         } catch (SqlException | LimitOverflowException e) {
             Throwable failure = Misc.freeBestEffort(null, compiled);
             failure = Misc.freeObjListBestEffort(failure, bindVariables);

@@ -6151,10 +6151,10 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertJitToleranceQuery("SELECT s FROM ft WHERE f > g LATEST ON ts PARTITION BY s", "s\na\n", "s\n");
             assertJitToleranceQuery("SELECT s FROM ft WHERE f = g", "s\nb\n", "s\na\nb\n");
             assertJitToleranceQuery("SELECT s FROM ft WHERE f = g LATEST ON ts PARTITION BY s", "s\nb\n", "s\na\nb\n");
-            // A frame with a column top runs the Java filter on both paths.
+            // A column top runs the Java filter for plain WHERE; LATEST ON falls back only when a filter column has one.
             execute("ALTER TABLE ft ADD COLUMN pad INT");
             assertJitToleranceQuery("SELECT s, pad FROM ft WHERE f > g", "s\tpad\na\tnull\n", true);
-            assertJitToleranceQuery("SELECT s, pad FROM ft WHERE f > g LATEST ON ts PARTITION BY s", "s\tpad\na\tnull\n", true);
+            assertJitToleranceQuery("SELECT s, pad FROM ft WHERE f > g LATEST ON ts PARTITION BY s", "s\tpad\na\tnull\n", "s\tpad\n");
         });
     }
 
