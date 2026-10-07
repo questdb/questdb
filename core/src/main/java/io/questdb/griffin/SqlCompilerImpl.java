@@ -7465,7 +7465,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * Validates a structural EXPIRE ROWS policy - KEEP LATEST, KEEP [N] HIGHEST/LOWEST, or a window WHEN -
      * against {@code metadata}, then compiles the query a read of the policied object runs.
      * <p>
-     * Every mode ends at the same compile probe. Resolving the policy's column names answers half the
+     * Every mode ends at the same compile probe, which runs when the user submits the statement but not
+     * when WAL apply replays it. Resolving the policy's column names answers half the
      * question: {@link SqlParser} splices the stored policy text into a generated query, and that query is
      * stricter than name resolution. It refuses a KEEP LATEST key of a type LATEST ON has no support for, a
      * key whose unquoted name is a SQL keyword, a keep column with no usable {@code max()}. A policy that
@@ -7490,7 +7491,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 validateKeepByColumn(metadata, predicate, position);
             }
         }
-        probeExpiryPolicyRead(executionContext, source, tsName(metadata), predicate, position);
+        // The probe runs when the user submits the statement, and not when WAL apply replays the stored
+        // SET EXPIRE. By then the probe has already accepted the policy for this view, and a view's column
+        // names and types cannot change in between, so running it again checks nothing new. A second run
+        // can fail only for reasons unrelated to the policy: the probe borrows a compiler and a view reader
+        // and opens the view's files, and any of these can fail when the server is under load.
+        if (!executionContext.isWalApplication()) {
+            probeExpiryPolicyRead(executionContext, source, tsName(metadata), predicate, position);
+        }
         return RowExpiryUtil.isWindow(predicate)
                 ? ExpiryValidationResult.NON_MONOTONIC
                 : ExpiryValidationResult.MONOTONIC;
@@ -7541,22 +7549,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } catch (SqlException | CairoException | ImplicitCastException e) {
             // A missing SELECT on a column the probe reads keeps its identity, so the caller reports it as
-            // forbidden, the same way the scalar policy's authorizeExpiryPredicateSelect does. WAL apply
-            // reruns this probe under the root context, which never raises one, so the recoverable wrapper
-            // below is not needed for it.
+            // forbidden, the same way the scalar policy's authorizeExpiryPredicateSelect does.
             if (e instanceof CairoException ce && ce.isAuthorizationError()) {
                 throw ce;
             }
             // ImplicitCastException extends RuntimeException, not CairoException: a raw WHEN window
             // predicate can still cast per row, and it must read as an invalid policy, not as an ICE.
-            //
-            // walRecoverable, like the dependent-view rejections in alterTableSetExpire: OperationExecutor
-            // recompiles a stored SET EXPIRE at WAL apply, so this probe runs again there. A plain
-            // SqlException at apply suspends the table, and a borrow that fails under load reaches this
-            // catch the same way a bad policy does. Skipping the ALTER keeps a transient failure from
-            // taking the table down; the statement-time caller reads the message either way.
             final String reason = reasonOf(e);
-            throw SqlException.walRecoverable(position).put("invalid EXPIRE ROWS policy: ").put(reason);
+            throw SqlException.$(position, "invalid EXPIRE ROWS policy: ").put(reason);
         }
     }
 

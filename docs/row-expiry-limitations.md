@@ -264,3 +264,25 @@ reads "no policy" and stops hiding expired rows, with no error or log line.
 - **Why accepted:** this is how the `_meta` minor-version mechanism treats any
   trailing section. It matters more here because the lost field is a retention
   control, so it needs an operator note wherever downgrades are documented.
+
+### WAL apply does not re-check a structural policy
+
+When a user runs `SET EXPIRE` with KEEP LATEST, KEEP HIGHEST/LOWEST or a window
+WHEN, the server compiles and opens the query a read of the view will run, and
+rejects the policy if that fails. WAL apply re-compiles the stored `SET EXPIRE`
+on the primary and on every replica, and skips that check. Every node therefore
+stores the policy as the primary accepted it. When a replica runs a different
+QuestDB version from the primary, for example during a rolling upgrade, and that
+version cannot compile the generated read query, every read of the view on that
+replica fails until `DROP EXPIRE`.
+
+- **Why accepted:** the check borrows a compiler and a view reader and opens the
+  view's files. At apply, any of these can fail under load for reasons that have
+  nothing to do with the policy, and the check cannot tell such a failure from a
+  bad policy. Treating it as a bad policy would discard a `SET EXPIRE` the user
+  was told succeeded; treating it as fatal would suspend the view. The check
+  already ran when the statement did, against the same view, whose column names
+  and types cannot change before apply. On a node running the same version, a
+  second run can only fail for reasons unrelated to the policy.
+- **Pinned by:**
+  `MatViewReaderPoolRetryTest.testSetExpireSurvivesViewReaderPoolExhaustionDuringApply`.
