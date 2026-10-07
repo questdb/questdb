@@ -203,11 +203,6 @@ public class TableConverter {
                                     }
                                 }
                                 metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
-                                // Last in-place mutation of _meta on this path, and it lands inside the
-                                // checksummed range -- so the checksum resetMetadataVersion recomputed
-                                // above now describes the PREVIOUS contents. Refresh after the final
-                                // write, not before it.
-                                TableUtils.refreshMetaBodyChecksum(metaMem);
 
                                 // The converted table is a fresh WAL lineage sitting at seqTxn 0, so give it
                                 // its own generation-zero anchor here, the way the REBASE WAL clone does. The

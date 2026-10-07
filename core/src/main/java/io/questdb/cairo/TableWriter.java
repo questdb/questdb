@@ -14786,7 +14786,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
-            TableUtils.storeMetaBodyChecksum(ddlMem, ddlMem.getAppendOffset());
             ddlMem.sync(false);
             if (commitMode != CommitMode.NOSYNC) {
                 try {

@@ -33,7 +33,6 @@ import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.cairo.wal.seq.TableTransactionLogV2;
 import io.questdb.cairo.wal.seq.TxnLogCrcSidecar;
-import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -259,39 +258,6 @@ public class OlderBinaryWriteCompatTest extends AbstractCairoTest {
                     "a stamped CRC that disagrees with a record only this binary wrote must still suspend",
                     engine.getTableSequencerAPI().isSuspended(tt)
             );
-        });
-    }
-
-    /**
-     * {@code _meta} carries a body checksum gated on the format's minor version. An older binary rewrites
-     * {@code _meta} at a lower minor version and never writes a checksum, so the gate should close and the
-     * stale checksum bytes should be ignored rather than read as damage.
-     * <p>
-     * Poking the minor version down, while keeping the low short that validates it, is how the sibling
-     * upgrade tests simulate an older writer.
-     */
-    @Test
-    public void testMetaAtOlderMinorVersionIgnoresItsStaleChecksum() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE dg_meta (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO dg_meta VALUES ('2024-01-01T00:00:00.000000Z', 1)");
-            drainWalQueue();
-
-            final TableToken tt = engine.verifyTableName("dg_meta");
-            engine.releaseInactive();
-            final Path meta = Paths.get(
-                    engine.getConfiguration().getDbRoot().toString(),
-                    tt.getDirName(),
-                    TableUtils.META_FILE_NAME
-            );
-            downgradeMetaMinorVersion(meta, TableUtils.META_FORMAT_MINOR_VERSION_ENROLLED_COMMIT_MODE);
-
-            engine.releaseInactive();
-            assertQuery("SELECT count() FROM dg_meta")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("count\n1\n");
         });
     }
 
@@ -522,7 +488,6 @@ public class OlderBinaryWriteCompatTest extends AbstractCairoTest {
     private class LegacyInPlaceEdit {
         private final long checksumA = TxnCorruptionUtils.readBodyChecksumSlotA(engine, TABLE);
         private final long checksumB = TxnCorruptionUtils.readBodyChecksumSlotB(engine, TABLE);
-        private final long metaChecksum = readLongAt(metaPath(), TableUtils.META_OFFSET_BODY_CHECKSUM_64);
         private final int minorVersion;
         private final int stampA = TxnCorruptionUtils.readChecksumStampA(engine, TABLE);
         private final int stampB = TxnCorruptionUtils.readChecksumStampB(engine, TABLE);
@@ -533,7 +498,6 @@ public class OlderBinaryWriteCompatTest extends AbstractCairoTest {
                 raf.seek(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
                 minorVersion = Integer.reverseBytes(raf.readInt());
             }
-            Assert.assertNotEquals(0, metaChecksum);
             Assert.assertNotEquals(0, TxnCorruptionUtils.readLiveAreaChecksumStamp(engine, TABLE));
         }
 
@@ -542,8 +506,6 @@ public class OlderBinaryWriteCompatTest extends AbstractCairoTest {
             Assert.assertEquals("conversion/rebase must not advance the materialized txn", txn,
                     TxnCorruptionUtils.readLiveAreaTxn(engine, TABLE));
             try (RandomAccessFile raf = new RandomAccessFile(metaPath().toFile(), "rw")) {
-                raf.seek(TableUtils.META_OFFSET_BODY_CHECKSUM_64);
-                raf.writeLong(Long.reverseBytes(metaChecksum));
                 raf.seek(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
                 raf.writeInt(Integer.reverseBytes(minorVersion));
             }
@@ -602,27 +564,6 @@ public class OlderBinaryWriteCompatTest extends AbstractCairoTest {
             final long size = bb.getLong(isA ? ColumnVersionReader.OFFSET_SIZE_A_64 : ColumnVersionReader.OFFSET_SIZE_B_64);
             Assert.assertTrue("precondition: the live _cv area must carry a trailer", raf.length() >= offset + size + 16);
             raf.setLength(offset + size);
-        }
-    }
-
-    /**
-     * Lowers {@code _meta}'s format minor version (the high short) while keeping the low short that
-     * validates it, so the file reads as one an older binary wrote rather than as a corrupt one.
-     */
-    private static void downgradeMetaMinorVersion(Path meta, short target) throws Exception {
-        try (RandomAccessFile raf = new RandomAccessFile(meta.toFile(), "rw")) {
-            final byte[] buf = new byte[Integer.BYTES];
-            raf.seek(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
-            raf.readFully(buf);
-            final int current = ByteBuffer.wrap(buf).order(ByteOrder.LITTLE_ENDIAN).getInt();
-            Assert.assertEquals(
-                    "precondition: _meta must carry the body-checksum minor version before it is downgraded",
-                    TableUtils.META_FORMAT_MINOR_VERSION_BODY_CHECKSUM,
-                    Numbers.decodeHighShort(current)
-            );
-            final int downgraded = Numbers.encodeLowHighShorts(Numbers.decodeLowShort(current), target);
-            raf.seek(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
-            raf.write(ByteBuffer.allocate(Integer.BYTES).order(ByteOrder.LITTLE_ENDIAN).putInt(downgraded).array());
         }
     }
 
