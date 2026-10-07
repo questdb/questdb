@@ -171,11 +171,21 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 return;
             }
             if (writer != null) {
-                commit(writer);
+                writer.commit();
             }
             for (int i = 0, n = commitList.size(); i < n; i++) {
                 //noinspection resource
-                commit(commitList.valueQuick(i));
+                commitList.valueQuick(i).commit();
+            }
+            // A WAL table written here bypasses the WAL, so no replay can redo its rows, including those a column add
+            // committed before this commit: an enrolled adaptive table takes a durable epoch at most once per interval.
+            // Every cached writer, not only the ones this tick committed: a table that went quiet still takes the
+            // epoch its UDP rows owe within the interval.
+            for (int i = 0, n = writerCache.size(); i < n; i++) {
+                final TableWriter cachedWriter = writerCache.valueQuick(i).writer;
+                if (cachedWriter != null) {
+                    cachedWriter.advanceDurableEpochAtInterval("udp commit");
+                }
             }
         } finally {
             commitList.clear();
@@ -234,13 +244,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             LOG.error().$((Sinkable) e).$();
         }
         clearState();
-    }
-
-    // A WAL table written here bypasses the WAL, so no replay can redo its rows, including those a column add
-    // committed before this commit: an enrolled adaptive table takes a durable epoch at most once per interval.
-    private static void commit(TableWriter writer) {
-        writer.commit();
-        writer.advanceDurableEpochAtInterval("udp commit");
     }
 
     private void appendFirstRowAndCacheWriter(CharSequenceCache cache) {

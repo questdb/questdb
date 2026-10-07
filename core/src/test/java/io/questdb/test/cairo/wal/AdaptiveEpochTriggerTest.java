@@ -238,6 +238,81 @@ public class AdaptiveEpochTriggerTest extends AbstractCairoTest {
         });
     }
 
+    // A receiver that writes several tables commits only the tables a tick wrote, yet every table it holds takes the
+    // epoch its UDP rows owe within one interval: x and z go quiet while y stays busy, z writes again in between, and
+    // y, the last table written until x writes again, goes quiet while the receiver idles. No table takes more than
+    // one epoch per interval, and a crash at the end loses no UDP row.
+    @Test
+    public void testUdpQuietTablesTakeEpochWithinInterval() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, UDP_INTERVAL_MS);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 0);
+        setCurrentMicros(UDP_T0_MICROS);
+        assertMemoryLeak(() -> {
+            final String[] tables = {"x", "y", "z"};
+            final SeqTxnTracker[] trackers = new SeqTxnTracker[tables.length];
+            final long[] lastEpochTs = new long[tables.length];
+            final LongList[] epochSeconds = new LongList[tables.length];
+            final int[] owedSince = new int[tables.length];
+            final String[] beforeCrash = new String[tables.length];
+            for (String table : tables) {
+                execute("create table " + table + " (ts timestamp, s symbol, v long) timestamp(ts) partition by day wal");
+                execute("insert into " + table + " values ('2024-01-01', 'w', 0)");
+            }
+            drainWalQueue();
+            for (int t = 0; t < tables.length; t++) {
+                trackers[t] = engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName(tables[t]));
+                lastEpochTs[t] = trackers[t].getLastEpochTs();
+                epochSeconds[t] = new LongList();
+            }
+            try (LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration())) {
+                for (int s = 1; s <= 300; s++) {
+                    final long micros = UDP_T0_MICROS + s * 1_000_000L;
+                    setCurrentMicros(micros);
+                    final boolean[] writes = {s == 1 || s == 150, s <= 130, s == 1 || s == 100};
+                    final StringBuilder lines = new StringBuilder();
+                    for (int t = 0; t < tables.length; t++) {
+                        if (writes[t]) {
+                            lines.append(tables[t]).append(",s=u v=").append(s).append("i ").append(micros * 1000L).append('\n');
+                        }
+                    }
+                    if (!lines.isEmpty()) {
+                        udpParse(parser, lines.toString());
+                    }
+                    parser.commitAll();
+                    for (int t = 0; t < tables.length; t++) {
+                        if (!trackers[t].isDurableEpochOwed()) {
+                            owedSince[t] = 0;
+                        } else if (owedSince[t] == 0) {
+                            owedSince[t] = s;
+                        }
+                        Assert.assertTrue(
+                                tables[t] + " still owes an epoch " + (s - owedSince[t]) + " s after its UDP rows",
+                                owedSince[t] == 0 || (s - owedSince[t]) * 1000L < UDP_INTERVAL_MS
+                        );
+                        if (trackers[t].getLastEpochTs() != lastEpochTs[t]) {
+                            lastEpochTs[t] = trackers[t].getLastEpochTs();
+                            epochSeconds[t].add(s);
+                        }
+                    }
+                }
+                for (int t = 0; t < tables.length; t++) {
+                    beforeCrash[t] = rows(engine, tables[t]);
+                }
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+            }
+            Assert.assertEquals("[60,150]", epochSeconds[0].toString());
+            Assert.assertEquals("[60,120,180]", epochSeconds[1].toString());
+            Assert.assertEquals("[60,120]", epochSeconds[2].toString());
+            try (CairoEngine restarted = restart(engine)) {
+                TestUtils.drainWalQueue(restarted);
+                for (int t = 0; t < tables.length; t++) {
+                    Assert.assertEquals(tables[t] + " lost UDP rows in the crash", beforeCrash[t], rows(restarted, tables[t]));
+                }
+            }
+        });
+    }
+
     // UDP rows bypass the WAL, so only a durable epoch covers them. A clean restart keeps every one of them; a
     // crash loses at most the rows since the last epoch, and none older. Each batch ends with a line that adds a
     // column and is then rejected, so its rows are committed by the column add, not by commitAll().
@@ -256,22 +331,22 @@ public class AdaptiveEpochTriggerTest extends AbstractCairoTest {
                 // Inside the interval of the apply batch's epoch: the batch owes one, which the clean close takes.
                 setCurrentMicros(UDP_T0_MICROS + 1_000_000L);
                 udpBatch(e, "u1", "c1");
-                final String firstBatch = rows(e);
+                final String firstBatch = rows(e, "x");
                 e = restart(e);
-                Assert.assertEquals(firstBatch, rows(e));
+                Assert.assertEquals(firstBatch, rows(e, "x"));
 
                 // The interval has passed, so the batch takes an epoch.
                 setCurrentMicros(UDP_T0_MICROS + UDP_INTERVAL_MS * 1000L + 2_000_000L);
                 udpBatch(e, "u2", "c2");
-                final String covered = rows(e);
+                final String covered = rows(e, "x");
                 // Inside the interval again: a crash loses this batch and nothing older.
                 setCurrentMicros(UDP_T0_MICROS + UDP_INTERVAL_MS * 1000L + 3_000_000L);
                 udpBatch(e, "u3", "c3");
-                Assert.assertNotEquals(covered, rows(e));
+                Assert.assertNotEquals(covered, rows(e, "x"));
                 setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
                 e = restart(e);
                 TestUtils.drainWalQueue(e);
-                Assert.assertEquals(covered, rows(e));
+                Assert.assertEquals(covered, rows(e, "x"));
             } finally {
                 if (e != engine) {
                     e.close();
@@ -343,9 +418,9 @@ public class AdaptiveEpochTriggerTest extends AbstractCairoTest {
         return new CairoEngine(configuration);
     }
 
-    private static String rows(CairoEngine e) throws SqlException {
+    private static String rows(CairoEngine e, String table) throws SqlException {
         final StringSink sink = new StringSink();
-        e.print("select * from x", sink);
+        e.print("select * from " + table, sink);
         return sink.toString();
     }
 
