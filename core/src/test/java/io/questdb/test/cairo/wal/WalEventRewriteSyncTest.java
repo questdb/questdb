@@ -56,15 +56,15 @@ import java.util.Map;
  * The durability barriers a commit pays on its WAL event files when a concurrent ALTER TABLE ADD COLUMN is
  * replayed into it (the NO_TXN path), and on every commit after that.
  * <ul>
- *   <li>ADD COLUMN SYMBOL rewrites the pending record in place. In every mode but NOSYNC both {@code _event}
- *   and {@code _event.i} must get a device barrier holding the rewritten record before the txn is sequenced:
+ *   <li>ADD COLUMN SYMBOL rewrites the pending record in place. In SYNC and ADAPTIVE both {@code _event} and
+ *   {@code _event.i} must get a device barrier holding the rewritten record before the txn is sequenced:
  *   once a sequencer record names the txn, no mix of original and rewritten files may be left for a power
- *   loss to expose. NOSYNC promises nothing across a power loss and pays no barrier, as in base.</li>
+ *   loss to expose. NOSYNC and ASYNC promise nothing across a power loss and pay no barrier, as in base.</li>
  *   <li>A roll that moves the pending rows into a new segment re-creates the record there. Under ADAPTIVE it
  *   needs the same pre-sequencing barrier that the commit's own sync gave the old segment.</li>
  *   <li>Nothing else changes: the NO_TXN path pays exactly one extra MS_ASYNC plus one barrier per event file
- *   for a rewrite outside NOSYNC and nothing for a column that is not rewritten, and the commits after the race pay exactly
- *   the per-commit grade of their mode.</li>
+ *   for a rewrite in SYNC and ADAPTIVE and nothing for a column that is not rewritten, and the commits after
+ *   the race pay exactly the per-commit grade of their mode.</li>
  * </ul>
  */
 @RunWith(Parameterized.class)
@@ -124,7 +124,7 @@ public class WalEventRewriteSyncTest extends AbstractCairoTest {
             ff.tracker = tracker;
             final boolean isRewritten = "SYMBOL".equals(columnType);
             final boolean isAdaptive = "adaptive".equals(commitMode);
-            final boolean isFlushedRewrite = isRewritten && !"nosync".equals(commitMode);
+            final boolean isFlushedRewrite = isRewritten && ("sync".equals(commitMode) || isAdaptive);
             final long seqTxn = isRoll ? 3 : 2;
             try (WalWriter writer = getWalWriter("x")) {
                 if (isRoll) {
@@ -142,7 +142,7 @@ public class WalEventRewriteSyncTest extends AbstractCairoTest {
                 Assert.assertEquals(isRoll ? 1 : 0, writer.getSegmentId());
 
                 // ADAPTIVE makes every record durable before sequencing it; after a roll that has to happen
-                // again in the new segment. A rewrite needs it in every mode but NOSYNC. Otherwise no barrier.
+                // again in the new segment. A rewrite needs it in SYNC too. Otherwise no barrier.
                 final int recordLength = readRecordLength(eventFile);
                 final boolean needsBarrier = isFlushedRewrite || isAdaptive;
                 for (String file : EVENT_FILES) {

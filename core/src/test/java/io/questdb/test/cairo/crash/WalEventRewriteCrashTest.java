@@ -53,8 +53,8 @@ import java.util.List;
 import java.util.stream.Stream;
 
 /**
- * A WAL event record rewritten in place must read back after a power loss, in every commit mode but
- * NOSYNC, whatever the kernel wrote back on its own.
+ * A WAL event record rewritten in place must read back after a power loss, in SYNC and ADAPTIVE, whatever
+ * the kernel wrote back on its own. NOSYNC and ASYNC promise nothing across a power loss.
  * <p>
  * When a concurrent ALTER TABLE ADD COLUMN ... SYMBOL is sequenced while a writer commits pending rows, the
  * writer's commit gets NO_TXN, replays the ALTER, and rewrites its already sealed record in place so that
@@ -92,7 +92,6 @@ public class WalEventRewriteCrashTest extends AbstractAdaptiveCrashTest {
     @Parameterized.Parameters(name = "mode={0}, window={1}, roll={2}, stale={3}")
     public static Collection<Object[]> data() {
         final Object[][] modes = {
-                {"async", 0L},
                 {"sync", 0L},
                 {"adaptive", 0L},
                 {"adaptive", 50_000L}
@@ -219,8 +218,7 @@ public class WalEventRewriteCrashTest extends AbstractAdaptiveCrashTest {
 
     /**
      * The kernel writes back everything except the rewritten segment's event files, and journals every
-     * directory entry. In ASYNC nothing else would make the sequencer record or the rolled
-     * segment durable; in the other modes this only repeats what the commit already made durable.
+     * directory entry. This only repeats what the commit already made durable.
      */
     private void promoteEverythingElse(Path tableDir, Path segmentDir) {
         final List<Path> directories = new ArrayList<>();

@@ -579,8 +579,8 @@ class WalEventWriter implements Closeable {
      * the index entry, and rewrites the event so that the updated symbolMapNullFlags
      * are included in the symbol map diffs.
      * <p>
-     * The rewrite is durable when this returns, in every commit mode but NOSYNC. The record must not be
-     * sequenced yet: the caller sequences it afterwards.
+     * The rewrite is durable when this returns, in SYNC and ADAPTIVE. The record must not be sequenced yet:
+     * the caller sequences it afterwards.
      */
     int rewriteLastDataRecord(
             byte txnType,
@@ -621,11 +621,11 @@ class WalEventWriter implements Closeable {
         // power loss that kept the original in one file and the replacement in the other either suspends
         // the table on a record that disagrees with its index entry, or applies the original record without
         // the new column's null flag. Nothing names this record until the caller sequences it, so flushing
-        // both files here, in any order, leaves a sequenced txn only the replacement to meet. NOSYNC
-        // promises nothing across a power loss and skips it. The other modes pay it once per writer per
+        // both files here, in any order, leaves a sequenced txn only the replacement to meet. NOSYNC and
+        // ASYNC promise nothing across a power loss and skip it. SYNC and ADAPTIVE pay it once per writer per
         // concurrent ADD COLUMN ... SYMBOL, next to the fsync that nulling the new column already costs.
         // MS_ASYNC plus the barrier is the pair ADAPTIVE uses for every commit's private files.
-        if (configuration.getCommitMode() != CommitMode.NOSYNC) {
+        if (CommitMode.isPowerLossDurable(configuration.getCommitMode())) {
             eventMem.sync(true);
             eventIndexMem.sync(true);
             barrierFsync();
