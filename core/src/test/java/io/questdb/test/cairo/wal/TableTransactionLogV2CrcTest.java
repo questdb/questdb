@@ -173,10 +173,9 @@ public class TableTransactionLogV2CrcTest extends AbstractCairoTest {
      * <p>
      * That is a deliberate trade, and it is the one detection V2 gives up. A QuestDB that predates the
      * checksum writes a literal zero into this slot, so a zero cannot be told from a checksum a torn write
-     * erased. Treating it as damage suspends the table on records an older binary wrote perfectly well --
-     * see {@code OlderBinaryWriteCompatTest#testV2SequencerLogWrittenByOlderBinaryStillOpens}, which is the
-     * test that forced this change. A file-level "checksummed from txn N" watermark is what used to
-     * distinguish them, and it is exactly what an older binary cannot withdraw.
+     * erased. Treating it as damage suspends the table on records an older binary wrote perfectly well. A
+     * file-level "checksummed from txn N" watermark is what used to distinguish them, and it is exactly what
+     * an older binary cannot withdraw.
      * <p>
      * V1 does not pay this price: its per-entry stamp names the txn its CRC belongs to, so a zeroed CRC
      * beside a live stamp is still detected ({@code TxnLogV1CrcVerifyTest#testStampedButWrongCrcIsStillTorn}).

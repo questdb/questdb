@@ -55,7 +55,7 @@ import java.util.stream.Stream;
  * {@code {columns, _event}} as a set and the SHARED SEQUENCER txn-log record that publishes them?
  *
  * <p><b>Why the question matters.</b> {@code WalWriter.syncIfRequired0} pays one {@code fdatasync} per column
- * plus one for each {@code _event} file ({@code _event}, {@code _event.i}, {@code _event.c}) plus one for the
+ * plus one for each {@code _event} file ({@code _event}, {@code _event.i}) plus one for the
  * sequencer log, on the ingest thread, every commit — each a separate filesystem journal force.
  * {@code TableWriter.syncColumnsBatchedSync} already replaces exactly that shape on the materialized-state
  * path with ONE {@code syncfs}, which journals every inode in a single force. A {@code syncfs} cannot order

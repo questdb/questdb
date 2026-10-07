@@ -67,9 +67,6 @@ public class WalUtils {
     public static final int DROP_TABLE_WAL_ID = -2;
     public static final String EVENT_FILE_NAME = "_event";
     public static final String EVENT_INDEX_FILE_NAME = "_event.i";
-    // Additive checksum sidecar. _event and _event.i retain their legacy byte layout so an older
-    // binary can drain WAL produced by a newer binary without mis-locating optional record footers.
-    public static final String EVENT_CHECKSUM_FILE_NAME = "_event.c";
     public static final CharSequence INITIAL_META_FILE_NAME = "_meta.0";
     public static final int METADATA_WALID = -1;
     public static final int MIN_WAL_ID = DROP_TABLE_WAL_ID;
@@ -105,23 +102,11 @@ public class WalUtils {
     public static final String TXNLOG_FILE_NAME = "_txnlog";
     // Additive per-record CRC sidecar for the V1 sequencer txnlog. V1's RECORD_SIZE has no reserved
     // slot (V2's does), so an in-place CRC would grow the record and stop older binaries reading it.
-    // The ".c" suffix deliberately mirrors _event.c so the two additive sidecars read as one convention.
     public static final String TXNLOG_CRC_FILE_NAME = "_txnlog.c";
     public static final String TXNLOG_FILE_NAME_META_INX = "_txnlog.meta.i";
     public static final String TXNLOG_FILE_NAME_META_VAR = "_txnlog.meta.d";
     public static final String TXNLOG_PARTS_DIR = "_txn_parts";
     public static final int WALE_HEADER_SIZE = Integer.BYTES + Integer.BYTES;
-    // The high half of the existing format word is ignored by old readers and positively declares
-    // that _event.c is mandatory. The sidecar header is followed by fixed-size entries indexed by
-    // segment txn: [recordOffset:long, recordLength:int, seal:int, checksum:long]. Version 1 had no seal.
-    public static final long WALE_CHECKSUM_MAGIC = 0x57414C45434B5331L;
-    public static final int WALE_CHECKSUM_FILE_VERSION = 2;
-    public static final int WALE_CHECKSUM_HEADER_SIZE = 2 * Long.BYTES;
-    public static final int WALE_CHECKSUM_ENTRY_SIZE = 3 * Long.BYTES;
-    public static final int WALE_CHECKSUM_ENTRY_OFFSET_OFFSET = 0;
-    public static final int WALE_CHECKSUM_ENTRY_LENGTH_OFFSET = Long.BYTES;
-    public static final int WALE_CHECKSUM_ENTRY_SEAL_OFFSET = Long.BYTES + Integer.BYTES;
-    public static final int WALE_CHECKSUM_ENTRY_VALUE_OFFSET = 2 * Long.BYTES;
     public static final long WALE_MAX_TXN_OFFSET_32 = 0L;
     // DEFAULT DEDUP mode means following the table definition. If the table has dedup enabled, then
     // the commit will deduplicate the data, otherwise it will not.
@@ -592,33 +577,6 @@ public class WalUtils {
                     .$(", error=").$(e).I$();
             return -1;
         }
-    }
-
-    /**
-     * Seal of one {@code _event.c} entry: a digest of its fields and its txn, kept in the entry's seal int.
-     * <p>
-     * Under NOSYNC and ASYNC, {@code _event.c} reaches disk independently of {@code _event}, so a power cut
-     * can leave an entry zero or half-written beside an intact record. A matching seal proves the entry
-     * landed whole and may judge its record; any other entry is no evidence, and the record reads
-     * unverified. Standalone so the on-disk format cannot drift with {@code Hash}. Never 0, the value of a
-     * slot that never landed.
-     */
-    public static int sealEventChecksumEntry(long txn, long recordOffset, int recordLength, long checksum) {
-        // Odd multiplier: changing any one field changes the pre-image, and fmix64 is a bijection, so a
-        // damaged entry keeps a matching seal only by a 2^-32 accident.
-        final long m = 0x9E3779B97F4A7C15L;
-        long h = txn;
-        h = h * m + recordOffset;
-        h = h * m + recordLength;
-        h = h * m + checksum;
-        // murmur3 fmix64
-        h ^= h >>> 33;
-        h *= 0xff51afd7ed558ccdL;
-        h ^= h >>> 33;
-        h *= 0xc4ceb9fe1a85ec53L;
-        h ^= h >>> 33;
-        final int seal = (int) (h ^ (h >>> 32));
-        return seal != 0 ? seal : 1;
     }
 
     /**
