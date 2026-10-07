@@ -1945,13 +1945,14 @@ public class PropServerConfigurationTest {
         TestUtils.assertMemoryLeak(() -> {
             Properties properties = new Properties();
             properties.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS.getPropertyPath(), "7");
-            properties.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS.getPropertyPath(), "not-a-limit");
             Assert.assertEquals(7, newPropServerConfiguration(properties).getCairoConfiguration().getO3PartitionMaxSplits());
             properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS.getPropertyPath(), "3");
             Assert.assertEquals(3, newPropServerConfiguration(properties).getCairoConfiguration().getO3PartitionMaxSplits());
-            Assert.assertEquals(3, newPropServerConfiguration(properties).getCairoConfiguration().getO3MidPartitionMaxSplits());
+            // The mid cap is independent of the unified cap: it applies only to tables without merge-append.
+            Assert.assertEquals(1, newPropServerConfiguration(properties).getCairoConfiguration().getO3MidPartitionMaxSplits());
             properties.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS.getPropertyPath(), "1000");
             Assert.assertEquals(3, newPropServerConfiguration(properties).getCairoConfiguration().getO3PartitionMaxSplits());
+            Assert.assertEquals(1000, newPropServerConfiguration(properties).getCairoConfiguration().getO3MidPartitionMaxSplits());
         });
     }
 

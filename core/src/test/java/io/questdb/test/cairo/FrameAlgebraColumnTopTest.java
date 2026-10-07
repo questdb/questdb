@@ -378,7 +378,9 @@ public class FrameAlgebraColumnTopTest extends AbstractCairoTest {
      * leaves a composite target composite, which is the whole point.
      */
     private static void foldByHousekeeping() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 1);
+        // Squash only folds cold siblings; the fixture's siblings were written by the last few commits.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
         execute("INSERT INTO x (i, ts) VALUES (999, '2024-01-06T00:00:00.000000Z')");
         drainWalQueue();
     }

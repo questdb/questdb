@@ -10543,7 +10543,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    /** Forecasts and moves tails on the writer before any partition task starts. */
+    /**
+     * Forecasts and moves tails on the writer before any partition task starts.
+     */
     private void compactAheadOfO3(long sortedTimestampsAddr, long rowLo, long rowHi) {
         if (!isMergeAppendTable() || !PartitionBy.isPartitioned(partitionBy)
                 || compositePartitionCount == 0 || txWriter.getLagRowCount() > 0 || isCommitReplaceMode()) {
@@ -17177,6 +17179,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void squashSplitPartitionRange(int lastPartitionCap, int partitionIndexLo, int partitionIndexHi, long lastCommitTxn, long deadlineMicros) {
+        if (isMergeAppendTable()) {
+            squashPartitionRange(lastPartitionCap, partitionIndexLo, partitionIndexHi, lastCommitTxn, deadlineMicros, false);
+            return;
+        }
+        // Without merge-append, compaction never squashes this table, so the commit keeps owning it: no hot
+        // window, a separate cap for days behind the last one, and every split folded into the oldest folder.
+        final int cap = partitionIndexHi == txWriter.getPartitionCount()
+                ? lastPartitionCap
+                : configuration.getO3MidPartitionMaxSplits();
+        squashSplitPartitions(partitionIndexLo, partitionIndexHi, cap, false);
+    }
+
     private void squashSplitPartitions(long timestampMin, long timestampMax, int maxLastSubPartitionCount) {
         if (timestampMin > txWriter.getMaxTimestamp() || txWriter.getPartitionCount() < 2) {
             return;
@@ -17205,7 +17220,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     int splitCount = partitionIndex - partitionIndexLo;
                     if (splitCount > 1) {
                         int partitionCount = txWriter.getPartitionCount();
-                        squashPartitionRange(maxLastSubPartitionCount, partitionIndexLo, partitionIndex, lastCommitTxn, deadline, false);
+                        squashSplitPartitionRange(maxLastSubPartitionCount, partitionIndexLo, partitionIndex, lastCommitTxn, deadline);
                         int partitionReduction = partitionCount - txWriter.getPartitionCount();
                         splitsKept |= partitionReduction < splitCount - 1;
 
@@ -17227,7 +17242,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             if (partitionIndex - partitionIndexLo > 1) {
-                squashPartitionRange(maxLastSubPartitionCount, partitionIndexLo, partitionIndex, lastCommitTxn, deadline, false);
+                squashSplitPartitionRange(maxLastSubPartitionCount, partitionIndexLo, partitionIndex, lastCommitTxn, deadline);
             }
         }
     }
@@ -18722,7 +18737,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    /** A discretionary rewrite must not copy a source the imminent ordinary squash can read directly. */
+    /**
+     * A discretionary rewrite must not copy a source the imminent ordinary squash can read directly.
+     */
     boolean isPendingSquashSource(int partitionIndex) {
         // The caller is about to write this partition, which leaves it hot for the next hot.commits commits.
         // The commit's squash folds cold pairs only, so with a hot window it cannot consume this partition,
@@ -18784,7 +18801,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return breaches;
     }
 
-    /** Uses the same incoming-range, fragmentation and size tests as the writer-side mover. */
+    /**
+     * Uses the same incoming-range, fragmentation and size tests as the writer-side mover.
+     */
     boolean tryAcquirePartitionSplit(long partitionTimestamp) {
         final long logicalTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
         // Several partition jobs for one logical day can split concurrently. Reserve their slots against

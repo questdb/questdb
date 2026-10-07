@@ -600,7 +600,9 @@ public interface CairoConfiguration {
         return 1.5;
     }
 
-    /** @deprecated Use {@link #getO3PartitionMaxSplits()}. */
+    /**
+     * @deprecated Use {@link #getO3PartitionMaxSplits()}.
+     */
     @Deprecated
     int getO3LastPartitionMaxSplits();
 
@@ -620,8 +622,10 @@ public interface CairoConfiguration {
 
     int getO3MemMaxPages();
 
-    /** @deprecated Mid partitions use the same cap as the last logical partition. */
-    @Deprecated
+    /**
+     * Split cap for a logical partition behind the last one, applied by the commit to tables without
+     * merge-append. Merge-append tables use {@link #getO3PartitionMaxSplits()} for every logical partition.
+     */
     int getO3MidPartitionMaxSplits();
 
     long getO3PartitionClusterBinWidth();

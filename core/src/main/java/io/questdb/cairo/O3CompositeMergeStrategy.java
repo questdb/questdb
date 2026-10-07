@@ -276,7 +276,9 @@ public class O3CompositeMergeStrategy {
         return lastAtOrBelow(sortedTimestampsAddr, lo, hi, value - 1) + 1;
     }
 
-    /** Forecasts the nonempty, file-adjacent-coalesced shape of the normal plan. */
+    /**
+     * Forecasts the nonempty, file-adjacent-coalesced shape of the normal plan.
+     */
     public static void forecast(LongList bounds, Plan plan, long extent) {
         long liveRows = 0;
         long previousEnd = -1;
@@ -299,8 +301,14 @@ public class O3CompositeMergeStrategy {
                     offset = getRowOffset(bounds, action.pieceIndex);
                 }
                 case MERGE, NEW_PIECE -> {
-                    rows = action.projectedRows >= 0 ? action.projectedRows : action.getO3RowCount()
-                            + (type == ActionType.MERGE ? getRowCount(bounds, action.pieceIndex) : 0);
+                    if (action.projectedRows >= 0) {
+                        rows = action.projectedRows;
+                    } else {
+                        rows = action.getO3RowCount();
+                        if (type == ActionType.MERGE) {
+                            rows += getRowCount(bounds, action.pieceIndex);
+                        }
+                    }
                     offset = extent;
                     extent += rows;
                 }
@@ -390,7 +398,9 @@ public class O3CompositeMergeStrategy {
         return result;
     }
 
-    /** The highest legal boundary before the incoming range, or zero if moving is not economical. */
+    /**
+     * The highest legal boundary before the incoming range, or zero if moving is not economical.
+     */
     public static int moveTailCut(
             LongList bounds,
             Plan plan,

@@ -296,7 +296,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         );
     }
 
-    /** Resolves dedup output sizes without writing or publishing the plan. */
+    /**
+     * Resolves dedup output sizes without writing or publishing the plan.
+     */
     public static void forecastCompositePlan(
             Path pathToTable,
             int partitionIndex,

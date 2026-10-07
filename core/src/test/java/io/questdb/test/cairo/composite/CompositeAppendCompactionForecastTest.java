@@ -115,7 +115,9 @@ public class CompositeAppendCompactionForecastTest extends AbstractCairoTest {
         });
     }
 
-    /** A general 5% rewrite threshold must not substitute for MOVE-TAIL's separate 10% trigger. */
+    /**
+     * A general 5% rewrite threshold must not substitute for MOVE-TAIL's separate 10% trigger.
+     */
     @Test
     public void testAppendBelowMoveTailFragmentationUsesGeneralRewriteThreshold() throws Exception {
         assertMemoryLeak(() -> {

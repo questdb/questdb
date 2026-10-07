@@ -690,7 +690,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         );
     }
 
-    /** Dispatches writer-owned MOVE-TAIL or budgeted adjacent-pair SQUASH without staging a whole-day copy. */
+    /**
+     * Dispatches writer-owned MOVE-TAIL or budgeted adjacent-pair SQUASH without staging a whole-day copy.
+     */
     private void dispatchMaintenance(TableToken tableToken, long logicalPartitionTimestamp, long partitionTimestamp, long expectedState, boolean isSquash, boolean isSquashResume) {
         final CompositePartitionSwapCommand command = new CompositePartitionSwapCommand();
         final TimestampDriver timestampDriver;

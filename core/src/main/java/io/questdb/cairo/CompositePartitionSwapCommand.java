@@ -228,7 +228,9 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
         this.columnTops.clear();
     }
 
-    /** The budgeted sweep mode: reuse writer-side MOVE-TAIL and ordinary squash, without staging a whole day. */
+    /**
+     * The budgeted sweep mode: reuse writer-side MOVE-TAIL and ordinary squash, without staging a whole day.
+     */
     public void ofMaintenance(
             TableToken tableToken,
             int tableId,
