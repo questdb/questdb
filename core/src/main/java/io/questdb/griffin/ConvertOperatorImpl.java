@@ -463,7 +463,7 @@ public class ConvertOperatorImpl implements Closeable {
                             .$(", partition ").$ts(ColumnType.getTimestampDriver(tableWriter.getTimestampType()), partitionTimestamp)
                             .I$();
                     asyncProcessingErrorCount.incrementAndGet();
-                } else if (tableWriter.getEffectiveCommitMode() != CommitMode.NOSYNC) {
+                } else if (CommitMode.isPowerLossDurable(tableWriter.getEffectiveCommitMode())) {
                     // fsync converted column files before closeFds (data before aux)
                     if (dstVarFd != -1) {
                         ff.fsync(dstVarFd);

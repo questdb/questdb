@@ -375,6 +375,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private Path dirFsyncPath;
     private boolean distressed = false;
     private DropIndexOperator dropIndexOperator;
+    // Wall-clock ms of the last durable epoch attempt by advanceDurableEpochAtInterval(). A failed epoch leaves
+    // lastEpochTs as it was, so this keeps the retry an interval away too.
+    private long durableEpochAttemptMs;
     // An enrolled adaptive WAL table, on the same terms as enrolment: recovery rewinds it to its last durable
     // epoch, so a change no WAL replay can redo must be followed by one. Set once the constructor has settled
     // the commit mode; the table's WAL flag changes only across a restart.
@@ -12833,17 +12836,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             for (long i = 0, n = columnFdAndDataSize.size() / 3; i < n; i++) {
                 final long dstAuxFd = columnFdAndDataSize.get(3L * i);
                 final long dstDataFd = columnFdAndDataSize.get(3L * i + 1);
-                // Apply-path destination-column fsync of the parquet->native conversion result. Gated
-                // on appliesColumnSync: under ADAPTIVE this rebuilt native partition is a cache of the
-                // durable WAL (the convert-partition command is itself WAL-replayed), so it is left
-                // non-durable here (lazy) and made crash-safe by the epoch + recovery roll-forward.
-                // The partition DIRECTORY entry below stays durable (structural). See appliesColumnSync.
+                // Destination-column fsync of the parquet->native conversion result, under SYNC only.
+                // Under ADAPTIVE this rebuilt native partition is a cache of the durable WAL (the
+                // convert-partition command is itself WAL-replayed), so it is left non-durable here
+                // (lazy) and made crash-safe by the epoch + recovery roll-forward; ASYNC promises
+                // nothing on power loss. The partition DIRECTORY entry below is durable under SYNC and
+                // ADAPTIVE (structural).
                 // CLEANUP COMPLETES: these fsyncs are durability barriers on a CLEANUP path, so a failure
                 // here (a genuine EIO, or the crash harness's Error) must not skip the frees below -- the
                 // fd closes, the decoder close and the parquet munmap. Capture and rethrow after everything
                 // is released; fail-stop is preserved, the leak is not.
                 try {
-                    if (appliesColumnSync(effectiveCommitMode)) {
+                    if (effectiveCommitMode == CommitMode.SYNC) {
                         if (dstDataFd != -1) {
                             ff.fsync(dstDataFd);
                         }
@@ -12860,7 +12864,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ff.close(dstDataFd);
                 }
             }
-            if (!Os.isWindows() && effectiveCommitMode != CommitMode.NOSYNC) {
+            if (!Os.isWindows() && CommitMode.isPowerLossDurable(effectiveCommitMode)) {
                 try {
                     final long partDirFd = TableUtils.openRONoCache(ff, other.trimTo(newPartitionDirLen).slash$(), LOG);
                     if (partDirFd != -1) {
@@ -16164,6 +16168,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 partitionRemoveCandidates.addAll(partitionRemovalsAfterSavePoint);
                 partitionRemovalsAfterSavePoint.clear();
                 processPartitionRemoveCandidates();
+            }
+        }
+    }
+
+    /**
+     * Takes a durable epoch after rows written outside the WAL by the UDP line protocol, at most once per epoch
+     * interval. Any change since the last epoch, including rows a column add committed, owes one until then, which
+     * a clean close or the next apply batch also takes; a later call takes it once the interval has passed. With
+     * the interval off, only those take it. Does nothing on a table that is not enrolled.
+     */
+    public void advanceDurableEpochAtInterval(CharSequence operation) {
+        if (enrolledAdaptive && !distressed) {
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+            if (tracker.getPinnedEpochTxn() != getTxn()) {
+                final long intervalMs = configuration.getAdaptiveEpochIntervalMs();
+                final long nowMs = configuration.getMicrosecondClock().getTicks() / 1000L;
+                final long lastEpochTs = tracker.getLastEpochTs();
+                // The apply job's cadence gate: no epoch yet, the interval has passed, or the clock went back.
+                if (intervalMs >= 0
+                        && (lastEpochTs == 0 || nowMs < lastEpochTs || nowMs - lastEpochTs >= intervalMs)
+                        && (nowMs < durableEpochAttemptMs || nowMs - durableEpochAttemptMs >= intervalMs)) {
+                    durableEpochAttemptMs = nowMs;
+                    advanceDurableEpochAfter(operation);
+                } else {
+                    tracker.setDurableEpochOwed(true);
+                }
             }
         }
     }

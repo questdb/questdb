@@ -87,6 +87,9 @@ public final class PostingIndexChainWriter {
     // rather than tripping the appendNewEntry monotonicity assertion.
     private long headSealTxn;
     private boolean isHeadTrimmedOnLastRecovery;
+    // The last recovery walk dropped an entry at or below the committed txn, the last of its orphans: an entry
+    // whose every generation was in flight.
+    private boolean isVisibleEntryDroppedOnLastRecovery;
     private long regionBase;
     private long regionLimit;
 
@@ -402,6 +405,10 @@ public final class PostingIndexChainWriter {
         return isHeadTrimmedOnLastRecovery;
     }
 
+    public boolean isVisibleEntryDroppedOnLastRecovery() {
+        return isVisibleEntryDroppedOnLastRecovery;
+    }
+
     /**
      * Read the current head entry's fields into {@code into}. Cheap: the
      * helper already cached the head pointer, so this is a single entry
@@ -705,6 +712,7 @@ public final class PostingIndexChainWriter {
      */
     public int recoveryDropAbandoned(MemoryARW keyMem, long currentTableTxn, LongList orphanSealTxns) {
         isHeadTrimmedOnLastRecovery = false;
+        isVisibleEntryDroppedOnLastRecovery = false;
         if (headEntryOffset == PostingIndexUtils.V2_NO_HEAD) {
             return 0;
         }
@@ -757,6 +765,7 @@ public final class PostingIndexChainWriter {
                 // them off via per-slot TXN_AT_SEAL.
                 int trimmedTo = trimInFlightTailGens(keyMem, offset, entryScratch.genCount, currentTableTxn, entryScratch.coveringFormat, entryScratch.coverCount);
                 if (trimmedTo == 0) {
+                    isVisibleEntryDroppedOnLastRecovery = true;
                     orphanSealTxns.add(entryScratch.sealTxn);
                     newHead = entryScratch.prevEntryOffset;
                     newEntryCount--;

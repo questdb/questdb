@@ -136,6 +136,11 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                     // These change the table outside the WAL by themselves.
                     case COPY_INTO_EXISTING_TABLE, RESUME_WAL_FROM_TXN, UDP ->
                             params.add(new Object[]{history, operation, OperationPath.OWN});
+                    // The statement-level save point after a part-way failure, through the WAL and directly.
+                    case CONVERT_LIST_SECOND_FAILS, DETACH_LIST_SECOND_FAILS -> {
+                        params.add(new Object[]{history, operation, OperationPath.WAL});
+                        params.add(new Object[]{history, operation, OperationPath.SUSPENDED});
+                    }
                     // The second engine of ENROLLED_ON_WRITER_OPEN cannot create or drop tables.
                     case COPY_INTO_NEW_TABLE -> {
                         if (history != History.ENROLLED_ON_WRITER_OPEN) {
@@ -336,12 +341,14 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                 startOperation();
                 try {
                     if (history.failsSavePoint()) {
-                        // The skip is not durable, so the statement fails and the table stays suspended.
+                        // The skip is not durable, so the statement fails and the table stays suspended, and so does
+                        // a plain RESUME WAL while the save point still fails.
                         assertResumeFails(e, resume);
-                        // Nothing is left to skip, but the repeat takes the save point the skip owes, so a crash
-                        // right after it keeps the skip.
+                        assertResumeFails(e, "ALTER TABLE t RESUME WAL");
+                        // Nothing is left to skip, but a repeat, or a plain RESUME WAL, takes the save point the skip
+                        // owes, so a crash right after it keeps the skip.
                         failSavePointsAfter = -1;
-                        alter(e, resume);
+                        alter(e, history.periodicOff() ? "ALTER TABLE t RESUME WAL" : resume);
                         return crash(e);
                     }
                     alter(e, resume);
@@ -364,7 +371,9 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                 } finally {
                     failSavePointsAfter = -1;
                 }
-                Assert.assertEquals("save points of the UDP commit", history == History.NOSYNC ? 0 : 1, savePoints.get());
+                // Inside the save-point interval the batch owes a save point, which the next apply batch or a clean
+                // close takes.
+                Assert.assertEquals("save points of the UDP commit", 0, savePoints.get());
             }
             default -> applySql(e, sql(e));
         }
@@ -382,12 +391,22 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         if (path == OperationPath.WAL) {
             startOperation();
             try {
-                // A failing statement fails in the apply job, which skips it.
-                alter(e, sql);
+                if (operation == Operation.CONVERT_LIST_SECOND_FAILS) {
+                    // A convert that fails in the apply job suspends the table.
+                    e.execute(sql);
+                    TestUtils.drainWalQueue(e);
+                    Assert.assertTrue("the table must be suspended", e.getTableSequencerAPI().isSuspended(e.verifyTableName("t")));
+                } else {
+                    // A failing attach or detach fails in the apply job, which skips it.
+                    alter(e, sql);
+                }
                 assertSavePointsOfOneStatement();
                 assertSupersededDirsRemoved(e, supersededBefore);
             } finally {
                 failSavePointsAfter = -1;
+            }
+            if (operation == Operation.CONVERT_LIST_SECOND_FAILS) {
+                alter(e, "ALTER TABLE t RESUME WAL");
             }
             return;
         }
@@ -427,9 +446,9 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                 }
                 default -> throw new AssertionError(path);
             }
-            Assert.assertNotEquals("the statement must fail", Operation.ATTACH_LIST_SECOND_FAILS, operation);
+            Assert.assertFalse("the statement must fail", operation.failsPartWay());
         } catch (CairoException | SqlException ex) {
-            if (operation != Operation.ATTACH_LIST_SECOND_FAILS) {
+            if (!operation.failsPartWay()) {
                 throw ex;
             }
         } finally {
@@ -451,7 +470,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
     // its save point.
     private void assertSupersededDirsRemoved(CairoEngine e, long supersededBefore) throws Exception {
         switch (operation) {
-            case CONVERT_TO_NATIVE, CONVERT_TO_PARQUET, DETACH -> {
+            case CONVERT_LIST_SECOND_FAILS, CONVERT_TO_NATIVE, CONVERT_TO_PARQUET, DETACH, DETACH_LIST_SECOND_FAILS -> {
                 if (!history.failsSavePoint()) {
                     Assert.assertTrue("superseded partition directories left behind", supersededPartitionDirs(e) <= supersededBefore);
                 }
@@ -519,6 +538,8 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
             case ATTACH_COPIED_DIR, ATTACH_MOVED_DIR, ATTACH_WITH_COPY_SETTING ->
                     "ALTER TABLE t ATTACH PARTITION LIST '" + PARTITION + "'";
             case ATTACH_LIST_SECOND_FAILS -> "ALTER TABLE t ATTACH PARTITION LIST '" + PARTITION + "', '2024-01-01'";
+            case CONVERT_LIST_SECOND_FAILS ->
+                    "ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-09'";
             // The WHERE form picks its partitions when the WAL applies it; applied directly to a WAL table it
             // matches none.
             case CONVERT_TO_NATIVE -> path == OperationPath.WAL
@@ -526,6 +547,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                     : "ALTER TABLE t CONVERT PARTITION TO NATIVE LIST " + THREE_PARTITIONS;
             case CONVERT_TO_PARQUET -> "ALTER TABLE t CONVERT PARTITION TO PARQUET LIST " + THREE_PARTITIONS;
             case DETACH -> "ALTER TABLE t DETACH PARTITION LIST " + THREE_PARTITIONS;
+            case DETACH_LIST_SECOND_FAILS -> "ALTER TABLE t DETACH PARTITION LIST '2024-01-01', '2024-01-09'";
             case DROP -> "ALTER TABLE t DROP PARTITION LIST '" + PARTITION + "'";
             case FORCE_DROP -> "ALTER TABLE t FORCE DROP PARTITION LIST '" + PARTITION + "'";
             case SQUASH -> {
@@ -604,6 +626,8 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         ATTACH_MOVED_DIR,
         // cairo.attach.partition.copy=true: the attach copies and leaves .attachable in place.
         ATTACH_WITH_COPY_SETTING,
+        // CONVERT of two partitions whose second does not exist: the statement fails after converting the first.
+        CONVERT_LIST_SECOND_FAILS,
         CONVERT_TO_NATIVE,
         CONVERT_TO_PARQUET,
         // COPY into an empty WAL table, which attaches each imported partition outside the WAL.
@@ -611,6 +635,8 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         // COPY into a table the importer creates.
         COPY_INTO_NEW_TABLE,
         DETACH,
+        // DETACH of two partitions whose second does not exist: the statement fails after detaching the first.
+        DETACH_LIST_SECOND_FAILS,
         DROP,
         FORCE_DROP,
         // Skips a transaction by moving the writer's seqTxn past it, outside the WAL.
@@ -619,7 +645,12 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         TRUNCATE,
         TTL,
         // The UDP line protocol writes the table through its writer, outside the WAL.
-        UDP
+        UDP;
+
+        // The statement fails after it changed the table.
+        boolean failsPartWay() {
+            return this == ATTACH_LIST_SECOND_FAILS || this == CONVERT_LIST_SECOND_FAILS || this == DETACH_LIST_SECOND_FAILS;
+        }
     }
 
     public enum OperationPath {
