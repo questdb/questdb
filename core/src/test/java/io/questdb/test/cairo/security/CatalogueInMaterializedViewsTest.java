@@ -42,8 +42,9 @@ import org.junit.Test;
  * object, and every reader of such a view reads what the refresh saw. So they may use the functions
  * and SHOW statements that list objects or read their metadata, see
  * {@link SqlExecutionRequirements#DISCLOSES_OBJECTS}, only where a SYSTEM ADMIN writes them: in their
- * own SQL, never through a regular view, which anyone who may alter it can change after CREATE. The
- * refresh compiles the views anew, so it is where that holds.
+ * own SQL, never through a regular view, which anyone who may alter it can change after CREATE. A
+ * system view, which no user may alter, counts as their own SQL. The refresh compiles the views anew,
+ * so it is where that holds.
  * <p>
  * The open-source security contexts see everything, so the tests run as a principal who may create
  * and alter views, but may not see the objects named secret*, and is no SYSTEM ADMIN.
@@ -70,6 +71,51 @@ public class CatalogueInMaterializedViewsTest extends AbstractCairoTest {
             {"SHOW CREATE DATABASE", "SHOW CREATE DATABASE"}
     };
     private static final String MV_SQL = "SELECT t.ts, n.table_name, count() c FROM visible_t t CROSS JOIN names n SAMPLE BY 1d";
+
+    @Test
+    public void testCatalogueFromSystemViewRequiresSystemAdmin() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            // no user may alter, replace or drop a system view, so what it lists is fixed at CREATE
+            execute("CREATE VIEW 'sys.names' AS (SELECT table_name FROM tables())");
+            execute("CREATE VIEW v_from AS (SELECT table_name FROM tables())");
+            drainWalAndViewQueues();
+            final String sql = "CREATE MATERIALIZED VIEW mv WITH BASE visible_t AS (SELECT t.ts, count() c "
+                    + "FROM visible_t t CROSS JOIN 'sys.names' SAMPLE BY 1d) PARTITION BY DAY";
+            try (SqlExecutionContext nonAdmin = newContext(new NoSystemAdminSecurityContext())) {
+                assertExceptionNoLeakCheck(
+                        sql,
+                        sql.indexOf("'sys.names'"),
+                        "catalogue function from view sys.names cannot be used in materialized view without SYSTEM ADMIN: tables",
+                        nonAdmin
+                );
+                Assert.assertNull(engine.getTableTokenIfExists("mv"));
+            }
+            // a regular view the materialized view reads next to it still rejects the function outright
+            assertFromViewRejected(
+                    "FROM visible_t t CROSS JOIN 'sys.names' CROSS JOIN v_from",
+                    "v_from",
+                    "catalogue function from view v_from",
+                    "tables"
+            );
+
+            // a SYSTEM ADMIN may, and the refresh keeps compiling what CREATE accepted
+            execute(sql);
+            drainWalAndMatViewQueues();
+            assertMatViewStatus("mv", "valid", "");
+            execute("INSERT INTO visible_t VALUES ('2024-01-02', 3, 'b')");
+            drainWalAndMatViewQueues();
+            assertMatViewStatus("mv", "valid", "");
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+            assertMatViewStatus("mv", "valid", "");
+            assertQuery("SELECT count() FROM mv")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n2\n");
+        });
+    }
 
     @Test
     public void testCatalogueFromViewIsRejected() throws Exception {

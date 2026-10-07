@@ -44,6 +44,8 @@ public final class SqlExecutionRequirements implements Mutable {
      * SYSTEM ADMIN, and CREATE and the refresh alike reject the function when it comes from a regular
      * view that the SQL reads, because anyone who may alter that view can change what it reads after
      * CREATE. The refresh compiles the stored SQL and its views anew, so it is where that rule holds.
+     * A system view counts as the view's own SQL: no user may alter, replace or drop it, so what it
+     * reads is fixed when the SYSTEM ADMIN creates the materialized or live view.
      */
     public static final int DISCLOSES_OBJECTS = 1 << 2;
     public static final int NONE = 0;
@@ -56,11 +58,12 @@ public final class SqlExecutionRequirements implements Mutable {
     public static final int REQUIRES_LIVE_WAL_PROGRESS = 1;
     private String disclosingName;
     private int disclosingPosition = -1;
-    private boolean disclosingStatement;
     private String disclosingViewName;
     private String enterpriseSecurityContextFunctionName;
     private int enterpriseSecurityContextPosition = -1;
     private int flags;
+    private boolean isDisclosingStatement;
+    private boolean isDisclosingViewAlterable;
     private int liveWalProgressPosition = -1;
 
     /**
@@ -73,8 +76,8 @@ public final class SqlExecutionRequirements implements Mutable {
      * @param position         where the requirements surface in the compiled SQL
      * @param name             the name of the function, or the SHOW statement
      * @param isStatement      whether name is a SHOW statement rather than a function
-     * @param view             the regular view that the function or statement is written in, or null
-     *                         when the compiled SQL itself writes it
+     * @param view             the view that the function or statement is written in, or null when the
+     *                         compiled SQL itself writes it; a system view counts as the compiled SQL
      * @param executionContext the context compiling the SQL of the materialized or live view
      * @throws SqlException when the view may not store the result
      */
@@ -86,7 +89,7 @@ public final class SqlExecutionRequirements implements Mutable {
             @Nullable SqlExecutionContext.TableFunctionView view,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        checkStoredView0(requirements, position, name, isStatement, viewNameOf(view), executionContext);
+        checkStoredView0(requirements, position, name, isStatement, viewNameOf(view), isAlterable(view), executionContext);
     }
 
     /**
@@ -94,8 +97,8 @@ public final class SqlExecutionRequirements implements Mutable {
      * compile created it, e.g. CREATE MATERIALIZED VIEW checks what the optimiser created, see
      * {@link #checkStoredView(SqlExecutionContext)}.
      *
-     * @param view the regular view that the function or statement is written in, or null when the
-     *             compiled SQL itself writes it
+     * @param view the view that the function or statement is written in, or null when the compiled
+     *             SQL itself writes it; a system view counts as the compiled SQL
      */
     public void add(
             int requirements,
@@ -109,13 +112,16 @@ public final class SqlExecutionRequirements implements Mutable {
             enterpriseSecurityContextFunctionName = Chars.toString(name);
             enterpriseSecurityContextPosition = position;
         }
-        // one that comes from a regular view replaces one the SQL writes: a view rejects it outright
-        if ((requirements & DISCLOSES_OBJECTS) != 0
-                && (disclosingPosition < 0 || (disclosingViewName == null && view != null))) {
-            disclosingName = Chars.toString(name);
-            disclosingPosition = position;
-            disclosingStatement = isStatement;
-            disclosingViewName = viewNameOf(view);
+        // one that comes from a view users may alter replaces any other: such a view rejects it outright
+        if ((requirements & DISCLOSES_OBJECTS) != 0) {
+            final boolean isViewAlterable = isAlterable(view);
+            if (disclosingPosition < 0 || (!isDisclosingViewAlterable && isViewAlterable)) {
+                disclosingName = Chars.toString(name);
+                disclosingPosition = position;
+                disclosingViewName = viewNameOf(view);
+                isDisclosingStatement = isStatement;
+                isDisclosingViewAlterable = isViewAlterable;
+            }
         }
         if ((requirements & REQUIRES_LIVE_WAL_PROGRESS) != 0 && liveWalProgressPosition < 0) {
             liveWalProgressPosition = position;
@@ -134,6 +140,7 @@ public final class SqlExecutionRequirements implements Mutable {
                     enterpriseSecurityContextFunctionName,
                     false,
                     null,
+                    false,
                     executionContext
             );
         }
@@ -142,8 +149,9 @@ public final class SqlExecutionRequirements implements Mutable {
                     DISCLOSES_OBJECTS,
                     disclosingPosition,
                     disclosingName,
-                    disclosingStatement,
+                    isDisclosingStatement,
                     disclosingViewName,
+                    isDisclosingViewAlterable,
                     executionContext
             );
         }
@@ -153,11 +161,12 @@ public final class SqlExecutionRequirements implements Mutable {
     public void clear() {
         disclosingName = null;
         disclosingPosition = -1;
-        disclosingStatement = false;
         disclosingViewName = null;
         enterpriseSecurityContextFunctionName = null;
         enterpriseSecurityContextPosition = -1;
         flags = NONE;
+        isDisclosingStatement = false;
+        isDisclosingViewAlterable = false;
         liveWalProgressPosition = -1;
     }
 
@@ -178,6 +187,7 @@ public final class SqlExecutionRequirements implements Mutable {
             CharSequence name,
             boolean isStatement,
             @Nullable CharSequence viewName,
+            boolean isViewAlterable,
             SqlExecutionContext executionContext
     ) throws SqlException {
         final CharSequence objectKind = executionContext.isLiveViewCompile() ? "live view" : "materialized view";
@@ -192,7 +202,7 @@ public final class SqlExecutionRequirements implements Mutable {
             return;
         }
         final CharSequence what = isStatement ? "catalogue statement" : "catalogue function";
-        if (viewName != null) {
+        if (isViewAlterable) {
             // The definition of a regular view may change after CREATE, by anyone who may alter it,
             // and the refresh would store what the changed definition lists, see DISCLOSES_OBJECTS.
             throw SqlException.functionNotAllowed(position)
@@ -216,13 +226,23 @@ public final class SqlExecutionRequirements implements Mutable {
             if (!e.isAuthorizationError()) {
                 throw e;
             }
-            throw SqlException.functionNotAllowed(position)
-                    .put(what)
+            final SqlException exception = SqlException.functionNotAllowed(position).put(what);
+            if (viewName != null) {
+                // a system view, whose SQL the principal did not write
+                exception.put(" from view ").put(viewName);
+            }
+            throw exception
                     .put(" cannot be used in ")
                     .put(objectKind)
                     .put(" without SYSTEM ADMIN: ")
                     .put(name);
         }
+    }
+
+    // Whether users may alter the view that the function or statement is written in, and so change what it reads
+    // after CREATE. No user may alter, replace or drop a system view, see DISCLOSES_OBJECTS.
+    private static boolean isAlterable(@Nullable SqlExecutionContext.TableFunctionView view) {
+        return view != null && !view.definition().getViewToken().isSystem();
     }
 
     private static @Nullable String viewNameOf(@Nullable SqlExecutionContext.TableFunctionView view) {

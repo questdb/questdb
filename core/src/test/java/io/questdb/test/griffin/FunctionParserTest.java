@@ -29,8 +29,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.IndexType;
-import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Function;
@@ -2508,8 +2508,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         return closeCount;
     }
 
-    // A parent factory that matches on signature but must never have newInstance() invoked, used for
-    // resolution/validation failures that reject arguments before the factory ever runs.
+    // A factory with the given execution requirements that counts the functions it constructs.
     private static FunctionFactory countingFactory(String signature, int executionRequirements, AtomicInteger constructionCount) {
         return new FunctionFactory() {
             @Override
@@ -2536,6 +2535,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         };
     }
 
+    // A parent factory that matches on signature but must never have newInstance() invoked, used for
+    // resolution/validation failures that reject arguments before the factory ever runs.
     private static FunctionFactory neverInvokedFactory(String signature) {
         return new FunctionFactory() {
             @Override
@@ -2574,16 +2575,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                 }
             }
             assertTrue("arg close failure must be preserved as suppressed on the primary error", suppressedFound);
-        }
-    }
-
-    private void assertParseFails(String expression, SqlExecutionContext context, int expectedPos, String expectedMessage) throws SqlException {
-        try {
-            Misc.free(createFunctionParser().parseFunction(expr(expression), new GenericRecordMetadata(), context));
-            fail("expected rejection of " + expression);
-        } catch (SqlException e) {
-            assertEquals(expectedPos, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
         }
     }
 
@@ -2640,6 +2631,16 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         }
     }
 
+    private void assertParseFails(String expression, SqlExecutionContext context, int expectedPos, String expectedMessage) throws SqlException {
+        try {
+            Misc.free(createFunctionParser().parseFunction(expr(expression), new GenericRecordMetadata(), context));
+            fail("expected rejection of " + expression);
+        } catch (SqlException e) {
+            assertEquals(expectedPos, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+        }
+    }
+
     private void assertSignatureFailure(String signature) throws SqlException {
         functions.add(new OrFunctionFactory());
         functions.add(new FunctionFactory() {
@@ -2692,11 +2693,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         assertSame(constant, parseFunction("x()", new GenericRecordMetadata(), createFunctionParser()));
     }
 
-    /**
-     * A non-deterministic function that allocates tracked native memory in its constructor and frees
-     * it in {@link #close()}. Used to prove that FunctionParser closes the returned function when it
-     * rejects a non-deterministic function, rather than leaking the memory the function owns.
-     */
     // compiles like the refresh of a materialized view, see MatViewRefreshSqlExecutionContext
     private static class MatViewRefreshLikeContext extends SqlExecutionContextImpl {
         private MatViewRefreshLikeContext(SecurityContext securityContext) {
@@ -2715,6 +2711,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         }
     }
 
+    /**
+     * A non-deterministic function that allocates tracked native memory in its constructor and frees
+     * it in {@link #close()}. Used to prove that FunctionParser closes the returned function when it
+     * rejects a non-deterministic function, rather than leaking the memory the function owns.
+     */
     private static class NonDeterministicAllocatingFunction extends LongFunction {
         private static final long ALLOC_BYTES = 1024;
         private long addr = Unsafe.malloc(ALLOC_BYTES, MemoryTag.NATIVE_DEFAULT);
