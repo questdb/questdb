@@ -1751,9 +1751,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return true; // Partition is already in Parquet format.
         }
 
+        // squashPartitionForce folds the day's splits back into this partition, which can make it
+        // the last one, so decide whether the last partition is converted after the squash
+        squashPartitionForce(partitionIndex);
         lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
         boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
-        squashPartitionForce(partitionIndex);
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         int newPartitionDirLen = 0;
         try {
@@ -7479,11 +7481,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         //
                         // _txn describes the open files only while it lists this partition as
                         // native under the name txn openPartition used. Otherwise the memories
-                        // hold a superseded version: convertPartitionNativeToParquet leaves them
-                        // open when squashPartitionForce makes the partition last after
-                        // lastPartitionConverted was computed, and _txn then counts the parquet
-                        // rows. Positioning those files at that count reads past their data, so
-                        // close without truncating; the purge removes the superseded version.
+                        // hold a superseded version whose rows _txn no longer counts, and
+                        // positioning them at the _txn count could read past their data, so close
+                        // without truncating; the purge removes the superseded version.
+                        // convertPartitionNativeToParquet used to leave the writer in that state
+                        // when it converted a day whose last partition was a split.
                         drainPendingPostingSealPurgesBeforeIndexerRelease();
                         final int openPartitionRawIndex = txWriter.findAttachedPartitionRawIndexByLoTimestamp(lastOpenPartitionTs);
                         if (openPartitionRawIndex > -1

@@ -37,6 +37,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
@@ -875,6 +876,63 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     .timestamp("designated_ts")
                     .returns("id\tdesignated_ts\n" +
                             "100\t2024-06-15T00:00:00.000000" + (timestampType == TestTimestampType.NANO ? "000Z" : "Z") + "\n");
+        });
+    }
+
+    @Test
+    public void testConvertLastPartitionWalWithSplitReleasesNativeFiles() throws Exception {
+        // Converting a day whose last partition is a split first squashes the split back into the
+        // parent, which makes the parent the last partition and reopens it in the writer. The
+        // conversion must then close the writer's files of that native partition, as it does when
+        // the converted partition is the last one from the start.
+        final String nativeFile = "2022-02-25" + Files.SEPARATOR + "v.d";
+        final LongHashSet openFds = new LongHashSet();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                synchronized (openFds) {
+                    openFds.remove(fd);
+                }
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (fd > -1 && Utf8s.endsWithAscii(name, nativeFile)) {
+                    synchronized (openFds) {
+                        openFds.add(fd);
+                    }
+                }
+                return fd;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            execute("CREATE TABLE x (ts " + timestampType.getTypeName() + ", v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES ('2022-02-25T00:00', 'a'), ('2022-02-25T00:01', 'b'), ('2022-02-25T00:02', 'c'), ('2022-02-25T00:03', 'd')");
+            drainWalQueue();
+            // an O3 row near the tail splits the last partition, and the split becomes the last partition
+            execute("INSERT INTO x VALUES ('2022-02-25T00:02:30', 'e')");
+            drainWalQueue();
+            assertQuery("SELECT count() FROM table_partitions('x')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n2\n");
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2022-02-25'");
+            drainWalQueue();
+
+            synchronized (openFds) {
+                Assert.assertEquals("the writer still holds the converted partition's native files open", 0, openFds.size());
+            }
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n5\n");
         });
     }
 
