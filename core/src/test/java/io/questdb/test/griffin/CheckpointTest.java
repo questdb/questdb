@@ -121,8 +121,11 @@ import java.lang.reflect.Field;
 import java.nio.file.FileVisitResult;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
@@ -3880,6 +3883,97 @@ public class CheckpointTest extends AbstractCairoTest {
                     .returns("count\n2\n");
             Assert.assertEquals(1, readSeqFileLong(tableToken, WalUtils.TXNLOG_CRC_FILE_NAME, TXNLOG_CRC_FIRST_COVERED_TXN_OFFSET));
             engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreLeavesNoRolledBackRecordUnderTheNextAppend() throws Exception {
+        // The restore lowers the V1 tail and leaves the rolled-back record past it. The next append writes over
+        // it; a power loss that persists the header but not that record's sector must show zeros there.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 0);
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id1");
+            execute("CREATE TABLE test (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            for (int i = 0; i < 20; i++) {
+                execute("INSERT INTO test VALUES (" + i + ", " + i + ")");
+            }
+            drainWalQueue();
+            execute("CHECKPOINT CREATE");
+            execute("INSERT INTO test VALUES (100, 100)");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("test");
+            final java.nio.file.Path txnLog = java.nio.file.Paths.get(configuration.getDbRoot(), tableToken.getDirName(), WalUtils.SEQ_DIR, WalUtils.TXNLOG_FILE_NAME);
+
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id2");
+            engine.checkpointRecover();
+            final long keptTxn = readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogFile.MAX_TXN_OFFSET_64);
+            final int recordSize = (int) TableTransactionLogV1.RECORD_SIZE;
+            final int offset = (int) (TableTransactionLogFile.HEADER_SIZE + keptTxn * recordSize);
+            Assert.assertTrue("the record must not share the header's sector", offset >= 512);
+            final byte[] rolledBack = Arrays.copyOfRange(java.nio.file.Files.readAllBytes(txnLog), offset, offset + recordSize);
+            Assert.assertFalse("precondition: the restore leaves the rolled-back record", Arrays.equals(rolledBack, new byte[recordSize]));
+
+            // The record's bytes as of the last flush of the log, which is what a power loss leaves. NOSYNC
+            // flushes the log only with fdatasync here.
+            final byte[][] onDisk = {rolledBack};
+            final FilesFacade ffBefore = AbstractCairoTest.ff;
+            AbstractCairoTest.ff = new TestFilesFacadeImpl() {
+                private final Set<Long> fds = new HashSet<>();
+
+                @Override
+                public boolean close(long fd) {
+                    fds.remove(fd);
+                    return super.close(fd);
+                }
+
+                @Override
+                public void fdatasync(long fd) {
+                    super.fdatasync(fd);
+                    onFlush(fd);
+                }
+
+                @Override
+                public void fsync(long fd) {
+                    super.fsync(fd);
+                    onFlush(fd);
+                }
+
+                @Override
+                public long openRW(LPSZ name, int opts) {
+                    final long fd = super.openRW(name, opts);
+                    if (fd > -1 && Utf8s.containsAscii(name, tableToken.getDirName()) && Utf8s.endsWithAscii(name, WalUtils.TXNLOG_FILE_NAME)) {
+                        fds.add(fd);
+                    }
+                    return fd;
+                }
+
+                private void onFlush(long fd) {
+                    if (fds.contains(fd)) {
+                        try {
+                            onDisk[0] = Arrays.copyOfRange(java.nio.file.Files.readAllBytes(txnLog), offset, offset + recordSize);
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                }
+            };
+            try {
+                // The first open after the restore, and the append over the rolled-back record.
+                execute("INSERT INTO test VALUES (200, 200)");
+                Assert.assertEquals(keptTxn + 1, engine.getTableSequencerAPI().lastTxn(tableToken));
+                engine.releaseInactive();
+                engine.getTableSequencerAPI().releaseAll();
+            } finally {
+                AbstractCairoTest.ff = ffBefore;
+            }
+            engine.checkpointRelease();
+
+            final byte[] image = java.nio.file.Files.readAllBytes(txnLog);
+            System.arraycopy(onDisk[0], 0, image, offset, recordSize);
+            java.nio.file.Files.write(txnLog, image);
+            Assert.assertEquals("the rolled-back record came back after a torn append", keptTxn, engine.getTableSequencerAPI().lastTxn(tableToken));
         });
     }
 

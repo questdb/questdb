@@ -90,6 +90,9 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     private final FilesFacade ff;
     private final AtomicLong maxTxn = new AtomicLong();
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
+    // Set by open(): the first append checks the bytes past the tail. On a replica they are the downloader's
+    // records, written ahead of the tail it publishes, and only a Java append may wipe them.
+    private boolean isPastTailUnchecked;
 
     public TableTransactionLogV1(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -244,6 +247,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         }
 
         final long lastTxn = recoverTail(path, txnMem.getLong(MAX_TXN_OFFSET_64));
+        isPastTailUnchecked = true;
         maxTxn.set(lastTxn);
         txnMem.jumpTo(HEADER_SIZE);
         long maxStructureVersion = txnMem.getLong(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
@@ -314,6 +318,16 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
     // Store order matters: a writeback that catches the record half-stored must show a zero timestamp.
     private void putRecord(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp) {
+        if (isPastTailUnchecked) {
+            // A crashed writer may have left whole records past the tail. Zero them on disk first, in every
+            // mode, so that a torn record shows zeros and not an older record the scan cannot tell apart.
+            isPastTailUnchecked = false;
+            final long tailOffset = HEADER_SIZE + maxTxn.get() * RECORD_SIZE;
+            if (hasNonZeroBytes(tailOffset, txnMem.size())) {
+                zeroFrom(tailOffset);
+                ff.fdatasync(txnMem.getFd());
+            }
+        }
         txnMem.putLong(structureVersion);
         txnMem.putInt(walId);
         txnMem.putInt(segmentId);
@@ -325,8 +339,8 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     /**
      * Drops a torn tail left by a power loss and returns the txn the log ends at. Scans the records from
      * the first one a flush may not have covered, cuts the log before the first torn one, zeroes everything
-     * past the tail, and makes that durable before the hint moves past the records it kept. A clean open
-     * scans nothing and finds only zeros past the tail.
+     * past the new tail, and makes that durable before the hint moves past the records it kept. An open
+     * that cuts nothing leaves the bytes past the tail to the first append.
      */
     private long recoverTail(Path path, long publishedTxn) {
         final long unsyncedFrom = txnMem.getLong(UNSYNCED_FROM_TXN_OFFSET_64);
@@ -339,21 +353,18 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
                 break;
             }
         }
-        final long tailOffset = HEADER_SIZE + tail * RECORD_SIZE;
-        final boolean isDirtyPastTail = hasNonZeroBytes(tailOffset, txnMem.size());
-        if (tail != publishedTxn) {
+        final boolean isCut = tail != publishedTxn;
+        if (isCut) {
             LOG.info().$("dropping torn sequencer txnlog tail [path=").$(path)
                     .$(", publishedTxn=").$(publishedTxn)
                     .$(", keptTxn=").$(tail)
                     .I$();
             txnMem.putLong(MAX_TXN_OFFSET_64, tail);
+            zeroFrom(HEADER_SIZE + tail * RECORD_SIZE);
         }
-        if (isDirtyPastTail) {
-            zeroFrom(tailOffset);
-        }
-        // A cut or zeroed bytes are flushed in every mode: a record written over them must tear over zeros.
-        // The kept records are flushed only where the hint is a durability promise.
-        if (tail != publishedTxn || isDirtyPastTail || (scanFrom <= publishedTxn && isDurableMode())) {
+        // A cut is flushed in every mode: a record written over it must tear over zeros. The kept records are
+        // flushed only where the hint is a durability promise.
+        if (isCut || (scanFrom <= publishedTxn && isDurableMode())) {
             ff.fdatasync(txnMem.getFd());
         }
         txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, tail + 1);
