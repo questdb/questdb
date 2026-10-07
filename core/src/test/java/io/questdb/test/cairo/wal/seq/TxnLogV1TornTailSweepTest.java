@@ -89,6 +89,68 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
     private static final long TS_BASE = 1_759_000_000_000_000L;
 
     @Test
+    public void testCreateOverSurvivingLineageLeavesZerosPastTheTail() throws Exception {
+        // create() over a _txnlog that survived a WAL to non-WAL to WAL round trip writes the new lineage over
+        // the old one's records. A power loss that lands the header publishing the next txns of the new
+        // lineage, but not their records, must leave zeros there to cut at, never an old intact record.
+        assertMemoryLeak(() -> {
+            final int oldTxns = 40;
+            final long[][] modes = {
+                    {CommitMode.NOSYNC, 0},
+                    {CommitMode.ASYNC, 0},
+                    {CommitMode.SYNC, 0},
+                    {CommitMode.ADAPTIVE, 0},
+                    {CommitMode.ADAPTIVE, 1_000}
+            };
+            final SweepConfiguration configuration = new SweepConfiguration(root, null);
+            int scenario = 0;
+            for (long[] mode : modes) {
+                // The first record of the new lineage that is not on disk: in the header's sector, straddling
+                // the second sector, inside it, and the old lineage's last record.
+                for (int newTxns : new int[]{0, 1, 15, 16, oldTxns - 1}) {
+                    final String seqDir = root + "/lineage-" + (scenario++) + "/" + WalUtils.SEQ_DIR;
+                    Files.createDirectories(Paths.get(seqDir));
+                    final String logPath = seqDir + "/" + WalUtils.TXNLOG_FILE_NAME;
+                    try (Path path = new Path().of(seqDir)) {
+                        configuration.commitMode = CommitMode.NOSYNC;
+                        configuration.groupWindowUs = 0;
+                        try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration)) {
+                            log.create(path, TS_BASE);
+                            for (int t = 1; t <= oldTxns; t++) {
+                                log.addEntry(0, 100 + t, 0, t - 1, TS_BASE + t * 1_000L, 0, 0, 0);
+                            }
+                        }
+                        configuration.commitMode = (int) mode[0];
+                        configuration.groupWindowUs = mode[1];
+                        try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration)) {
+                            log.create(path, TS_BASE);
+                            for (int t = 1; t <= newTxns; t++) {
+                                Assert.assertEquals(t, log.addEntry(0, 7, 0, t - 1, TS_BASE + 50_000L + t * 1_000L, 0, 0, 0));
+                            }
+                        }
+                        final byte[] image = readFile(logPath);
+                        for (int publishedTxn = newTxns + 1; publishedTxn <= oldTxns; publishedTxn++) {
+                            ByteBuffer.wrap(image).order(ByteOrder.LITTLE_ENDIAN)
+                                    .putLong((int) TableTransactionLogFile.MAX_TXN_OFFSET_64, publishedTxn);
+                            writeFile(logPath, image);
+                            try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration)) {
+                                log.open(path);
+                                Assert.assertEquals(
+                                        "records that never reached the disk must be cut, not read from the old lineage [mode="
+                                                + CommitMode.toString((int) mode[0]) + ", window=" + mode[1] + ", newTxns=" + newTxns
+                                                + ", publishedTxn=" + publishedTxn + ']',
+                                        newTxns,
+                                        log.lastTxn()
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPowerLossInTheTailKeepsExactlyTheIntactPrefix() throws Exception {
         assertMemoryLeak(() -> {
             final Sweep sweep = new Sweep(root);
