@@ -104,33 +104,6 @@ public class O3ParquetLastPartitionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParquetLastTransitionAfterConvertingSplitLastPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
-            execute("CREATE TABLE x (ts TIMESTAMP, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO x VALUES ('2022-02-25T00:00', 'a'), ('2022-02-25T00:01', 'b'), ('2022-02-25T00:02', 'c'), ('2022-02-25T00:03', 'd')");
-            drainWalQueue();
-            // an O3 row near the tail splits the last partition, and the split becomes the last partition
-            execute("INSERT INTO x VALUES ('2022-02-25T00:02:30', 'e')");
-            drainWalQueue();
-            assertQuery("SELECT count() FROM table_partitions('x')").noRandomAccess().expectSize().returns("count\n2\n");
-
-            // the conversion squashes the split into its parent, converts the parent, and leaves
-            // the writer holding the parent's superseded native files; _txn then counts the
-            // parquet rows, so the transition close must not position those files by _txn
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2022-02-25'");
-            execute("INSERT INTO x VALUES ('2022-02-25T00:04', 'f')");
-            drainWalQueue();
-
-            Assert.assertFalse(
-                    "transition close suspended the table",
-                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
-            );
-            assertQuery("SELECT count() FROM x").noRandomAccess().expectSize().returns("count\n6\n");
-        });
-    }
-
-    @Test
     public void testParquetLastTransitionTrimsNativePartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (ts TIMESTAMP, a LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");

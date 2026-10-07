@@ -884,7 +884,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         // Converting a day whose last partition is a split first squashes the split back into the
         // parent, which makes the parent the last partition and reopens it in the writer. The
         // conversion must then close the writer's files of that native partition, as it does when
-        // the converted partition is the last one from the start.
+        // the converted partition is the last one from the start, and the next commit into the
+        // converted partition must succeed.
         final String nativeFile = "2022-02-25" + Files.SEPARATOR + "v.d";
         final LongHashSet openFds = new LongHashSet();
         final FilesFacade ff = new TestFilesFacadeImpl() {
@@ -928,11 +929,18 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             synchronized (openFds) {
                 Assert.assertEquals("the writer still holds the converted partition's native files open", 0, openFds.size());
             }
+
+            execute("INSERT INTO x VALUES ('2022-02-25T00:04', 'f')");
+            drainWalQueue();
+            Assert.assertFalse(
+                    "the commit after the conversion suspended the table",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
             assertQuery("SELECT count() FROM x")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n5\n");
+                    .returns("count\n6\n");
         });
     }
 
