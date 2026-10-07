@@ -315,9 +315,9 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
                     serverMain.execute("create table fe (s symbol index type " + indexType + ", s2 symbol capacity 65536, v varchar, " +
                             "x long, ts timestamp) timestamp(ts) partition by YEAR BYPASS WAL");
                     // a new long SYMBOL value per row: the dictionary budget splits the batches; the
-                    // filter's implicit cast fails from x = 9001 on
+                    // filter's implicit cast fails on x = 9001 alone
                     serverMain.execute("insert into fe select 'k' || (x % 3), rpad('z' || x, 150, '.'), " +
-                            "case when x > 9000 then 'bad' else '1970-01-01' end, x, (x * 1000000)::timestamp from long_sequence(12000)");
+                            "case when x = 9001 then 'bad' else '1970-01-01' end, x, (x * 1000000)::timestamp from long_sequence(12000)");
                     final String[] sqls = {"select s, s2, x from fe where s = 'k1' and ts > v"};
                     assertPlanContains(serverMain, sqls[0], "Index forward scan on: s");
                     // the row fill ships the batches before the failing row, then the error; the block

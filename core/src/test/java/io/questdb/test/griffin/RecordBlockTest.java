@@ -248,9 +248,9 @@ public class RecordBlockTest extends AbstractCairoTest {
             for (String indexType : new String[]{"posting", "bitmap"}) {
                 execute("drop table if exists fe");
                 execute("create table fe (s symbol index type " + indexType + ", v varchar, x long, ts timestamp) timestamp(ts) partition by DAY");
-                // the filter's implicit cast fails from x = 2421 on: in the second partition, and not
-                // on the first row of a page frame, which hasNext() reads
-                execute("insert into fe select 'k' || (x % 3), case when x > 2420 then 'bad' else '1970-01-01' end, x, " +
+                // the filter's implicit cast fails on x = 2422 alone: in the second partition, and not
+                // on the first row of a page frame, which hasNext() reads; the rows after it are fine
+                execute("insert into fe select 'k' || (x % 3), case when x = 2422 then 'bad' else '1970-01-01' end, x, " +
                         "(x * 60000000)::timestamp from long_sequence(3000)");
                 final String query = "select * from fe where s = 'k1' and ts > v";
                 assertPlanContains(query, "Index forward scan on: s");
@@ -261,6 +261,10 @@ public class RecordBlockTest extends AbstractCairoTest {
                 for (int maxRows : new int[]{1, 7, 100, 5000}) {
                     TestUtils.assertEquals(query + ", maxRows=" + maxRows, expected, readPeekingBeforeEveryRow(query, maxRows));
                 }
+                // the rows read ahead and the error kept for hasNext() go with toTop() and a reopen:
+                // row 801 is x = 2401, the first of the failing row's page frame (64 rows from 2400),
+                // the peek after it reads ahead to the failing row
+                assertReadAheadStateResets(query, expected, 801);
             }
         });
     }
@@ -303,6 +307,7 @@ public class RecordBlockTest extends AbstractCairoTest {
                     for (int k = 0; k < 3; k++) {
                         assertBlocksMatchRows(engine, sqlExecutionContext, query, rnd);
                     }
+                    assertReadAheadStateResets(query, expected, 1);
                 }
             }
         });
@@ -663,6 +668,40 @@ public class RecordBlockTest extends AbstractCairoTest {
     }
 
     /**
+     * Reads the first rows, then peeks, which reads ahead and may keep the error the row cursor
+     * threw; then reads the query again after toTop(), and after closing and reopening the cursor:
+     * neither may see what the first read left behind.
+     */
+    private static void assertReadAheadStateResets(String query, String expected, int rowsFirst) throws Exception {
+        try (RecordCursorFactory factory = select(query)) {
+            final RecordMetadata metadata = factory.getMetadata();
+            for (int open = 0; open < 2; open++) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    for (int i = 0; i < rowsFirst && cursor.hasNext(); i++) {
+                        cursor.peekRecordBlock(10_000);
+                    }
+                    cursor.peekRecordBlock(10_000);
+                    if (open == 0) {
+                        cursor.toTop();
+                        final StringSink actual = new StringSink();
+                        final Record record = cursor.getRecord();
+                        try {
+                            while (cursor.hasNext()) {
+                                CursorPrinter.println(record, metadata, actual);
+                            }
+                        } catch (RuntimeException e) {
+                            actual.put("error: ").put(e.getMessage());
+                        }
+                        TestUtils.assertEquals(query + ", after toTop()", expected, actual);
+                    }
+                }
+            }
+            // the second open's leftovers, read on a third open
+            TestUtils.assertEquals(query + ", reopened", expected, readRowByRow(factory));
+        }
+    }
+
+    /**
      * The query's rows as the egress loop reads them: a peek before every row, every row of a block
      * taken, else one row from hasNext(). Ends with the error the cursor threw, if any.
      */
@@ -703,18 +742,22 @@ public class RecordBlockTest extends AbstractCairoTest {
      * The query's rows through hasNext(), ending with the error the cursor threw, if any.
      */
     private static String readRowByRow(String query) throws Exception {
-        final StringSink expected = new StringSink();
         try (RecordCursorFactory factory = select(query)) {
-            final RecordMetadata metadata = factory.getMetadata();
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                final Record record = cursor.getRecord();
-                try {
-                    while (cursor.hasNext()) {
-                        CursorPrinter.println(record, metadata, expected);
-                    }
-                } catch (RuntimeException e) {
-                    expected.put("error: ").put(e.getMessage());
+            return readRowByRow(factory);
+        }
+    }
+
+    private static String readRowByRow(RecordCursorFactory factory) throws Exception {
+        final StringSink expected = new StringSink();
+        final RecordMetadata metadata = factory.getMetadata();
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            final Record record = cursor.getRecord();
+            try {
+                while (cursor.hasNext()) {
+                    CursorPrinter.println(record, metadata, expected);
                 }
+            } catch (RuntimeException e) {
+                expected.put("error: ").put(e.getMessage());
             }
         }
         return expected.toString();
