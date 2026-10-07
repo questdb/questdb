@@ -572,15 +572,14 @@ public class PostingIndexWriter implements IndexWriter {
                     // full -- precisely what a saturated log under the ENOSPC / OOM
                     // pressure this catch exists for looks like.
                     // The logging sits inside its own swallow: AsyncLogRecord
-                    // .$(Throwable) releases the log ring slot and RETHROWS when
-                    // formatting `e` fails, which an OutOfMemoryError can do in
-                    // exactly the ENOSPC / OOM case this catch exists for -- and
-                    // that throw would otherwise escape close(). $(Object),
-                    // $(Sinkable) and $(Throwable) all self-release; $safe and
-                    // $(CharSequence) do not, so the trailing rec.I$() is what
-                    // returns the slot if one of THOSE throws. I$() no-ops unless
-                    // isLogRecordInProgress, which $() clears on release, so it
-                    // cannot double-release after a self-releasing segment.
+                    // .$(Throwable) publishes the partial message and RETHROWS
+                    // when formatting `e` fails, which an OutOfMemoryError can do
+                    // in exactly the ENOSPC / OOM case this catch exists for --
+                    // and that throw would otherwise escape close(). The chain
+                    // claims its log ring slot only in $(), so a failed segment
+                    // never holds a slot; the trailing rec.I$() publishes what
+                    // was staged. I$() no-ops unless isLogRecordInProgress,
+                    // which $() clears, so it cannot publish twice.
                     try {
                         LogRecord rec = LOG.critical();
                         try {

@@ -1,0 +1,132 @@
+# Triggers the enterprise CI pipeline (questdb-enterprise, definition 23) for an OSS PR or
+# merge-queue build. The enterprise run tests the questdb submodule at the OSS commit and
+# reports a commit status back to it.
+#
+# flavour selects how much of the enterprise pipeline runs:
+#   light - Linux amd64 only. test-pipeline.yml triggers it on every PR build. It reports the
+#           advisory enterprise-ci-light status, which can never satisfy the required check.
+#   full  - every platform and replication store. test-hosted-pipeline.yml (macwin) triggers it,
+#           on demand on a PR and in the merge queue. Only the full run reports enterprise-ci,
+#           the required check, so a PR merges only after a full enterprise run has passed.
+# A light trigger skips merge-queue builds: the macwin pipeline runs there and triggers the full
+# run, which is the one the queue gates on.
+parameters:
+  - name: flavour
+    type: string
+    values:
+      - light
+      - full
+
+jobs:
+  - job: TriggerEnterprise
+    displayName: "Trigger Enterprise Pipeline (${{ parameters.flavour }})"
+    pool: hetzner-incus
+    variables:
+      SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
+    # A PR or merge-queue build triggers enterprise CI even when no source path changed:
+    # enterprise-ci (reported by the full run) is a required check, so GitHub blocks a PR that
+    # never reports it from merging, and ejects a queue entry that never reports it.
+    condition: >-
+      or(eq(variables['SOURCE_CODE_CHANGED'], 'true'),
+      eq(variables['Build.Reason'], 'PullRequest'),
+      startsWith(variables['Build.SourceBranch'], 'refs/heads/gh-readonly-queue/'))
+    steps:
+      - checkout: none
+      - bash: |
+          set -e
+          # Trigger the enterprise CI pipeline via Azure DevOps REST API
+          AUTH_HEADER="Authorization: Basic $(printf ':%s' "$AZURE_DEVOPS_ENT_PAT" | base64 -w0)"
+
+          # Read one field of an OSS pull request. Prints an empty string when the PR does
+          # not exist or the API call fails, so a transient GitHub error can never reach the
+          # payload as the literal string "null".
+          gh_pr_field() {
+            curl -sS --max-time 30 --retry 3 --retry-delay 2 --retry-connrefused \
+              -H "Authorization: token $GH_TOKEN" \
+              "https://api.github.com/repos/questdb/questdb/pulls/$1" \
+              | jq -r "$2 // empty"
+          }
+
+          if [[ "$OSS_PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            # PR build: Azure builds an ephemeral merge commit, not the PR head.
+            # Fetch the real PR head commit from the GitHub API.
+            OSS_COMMIT=$(gh_pr_field "$OSS_PR_NUMBER" '.head.sha')
+            echo "PR build for PR #$OSS_PR_NUMBER; head commit $OSS_COMMIT"
+          elif [[ "$BUILD_SOURCEBRANCH" =~ ^refs/heads/gh-readonly-queue/.*/pr-([0-9]+)- ]]; then
+            # Merge-queue build: branch is refs/heads/gh-readonly-queue/<base>/pr-<n>-<sha>.
+            # Test the merge commit itself (PR merged with latest master); recover the PR
+            # number from the branch name and the PR source branch from the GitHub API.
+            OSS_PR_NUMBER="${BASH_REMATCH[1]}"
+            if [ "$ENT_FLAVOUR" != "full" ]; then
+              echo "Merge-queue build for PR #$OSS_PR_NUMBER: the macwin pipeline triggers the full enterprise run; skipping"
+              exit 0
+            fi
+            OSS_COMMIT="$BUILD_SOURCEVERSION"
+            OSS_BRANCH=$(gh_pr_field "$OSS_PR_NUMBER" '.head.ref')
+            echo "Merge-queue build for PR #$OSS_PR_NUMBER; merge commit $OSS_COMMIT; source branch $OSS_BRANCH"
+          else
+            # Manual or scheduled run: there is no PR to test enterprise against.
+            echo "Neither a PR nor a merge-queue build ($BUILD_SOURCEBRANCH); skipping enterprise CI"
+            exit 0
+          fi
+
+          if [ -z "$OSS_COMMIT" ]; then
+            echo "##vso[task.logissue type=error]Could not resolve the OSS commit for PR #$OSS_PR_NUMBER"
+            exit 1
+          fi
+
+          # Queue the enterprise run. $1: enterprise branch; $2: "with-flavour" to pass ossFlavour.
+          trigger() {
+            curl -s -o response.json -w "%{http_code}" -X POST \
+              -H "$AUTH_HEADER" \
+              -H "Content-Type: application/json" \
+              "https://dev.azure.com/questdb/questdb-enterprise/_apis/pipelines/23/runs?api-version=7.0" \
+              -d "$(jq -n --arg ref "refs/heads/$1" --arg commit "$OSS_COMMIT" \
+                --arg pr "$OSS_PR_NUMBER" --arg flavour "$ENT_FLAVOUR" --arg mode "$2" '
+                {resources: {repositories: {self: {refName: $ref}}},
+                 templateParameters: ({ossCommit: $commit, ossPrNumber: $pr}
+                   + (if $mode == "with-flavour" then {ossFlavour: $flavour} else {} end))}')"
+          }
+
+          # Test against the enterprise branch named like the OSS one, if there is one. Azure
+          # resolves the ref itself through its own GitHub connection, so no GitHub token with
+          # access to the private enterprise repo is needed; a ref it cannot resolve means there
+          # is no such branch, and the run falls back to main.
+          ENT_BRANCH="${OSS_BRANCH:-main}"
+          FLAVOUR_MODE="with-flavour"
+          echo "Triggering $ENT_FLAVOUR enterprise CI for commit $OSS_COMMIT (PR #$OSS_PR_NUMBER) on enterprise branch $ENT_BRANCH"
+          HTTP_CODE=$(trigger "$ENT_BRANCH" "$FLAVOUR_MODE")
+          if [ "$ENT_BRANCH" != "main" ] && grep -q "Unable to resolve the reference" response.json; then
+            echo "Enterprise repo has no branch $ENT_BRANCH; triggering on main"
+            ENT_BRANCH="main"
+            HTTP_CODE=$(trigger "$ENT_BRANCH" "$FLAVOUR_MODE")
+          fi
+          if [ "$HTTP_CODE" = "400" ] && grep -q ossFlavour response.json; then
+            # An enterprise branch that predates the ossFlavour parameter rejects it; run that
+            # branch's pipeline as it is, which is the full run.
+            echo "Enterprise branch $ENT_BRANCH has no ossFlavour parameter; triggering without it"
+            FLAVOUR_MODE="without-flavour"
+            HTTP_CODE=$(trigger "$ENT_BRANCH" "$FLAVOUR_MODE")
+          fi
+
+          # A 2xx without a run id is Azure's sign-in page (HTTP 203), not a queued run.
+          RUN_ID=$(jq -r '.id // empty' response.json 2>/dev/null || true)
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] && [ -n "$RUN_ID" ]; then
+            echo "Triggered enterprise CI on $ENT_BRANCH: https://dev.azure.com/questdb/questdb-enterprise/_build/results?buildId=$RUN_ID"
+          else
+            # 203, 302 and 401 mean AZURE_DEVOPS_ENT_PAT is missing or invalid on this pipeline.
+            echo "Response: $(jq -r '.message // empty' response.json 2>/dev/null || true)"
+            echo "##vso[task.logissue type=warning]Failed to trigger enterprise CI (HTTP $HTTP_CODE); see pipeline logs"
+            rm -f response.json
+            exit 1
+          fi
+          rm -f response.json
+        displayName: "Trigger Enterprise Pipeline"
+        env:
+          AZURE_DEVOPS_ENT_PAT: $(AZURE_DEVOPS_ENT_PAT)
+          ENT_FLAVOUR: ${{ parameters.flavour }}
+          GH_TOKEN: $(GH_TOKEN)
+          OSS_PR_NUMBER: $(System.PullRequest.PullRequestNumber)
+          OSS_BRANCH: $(System.PullRequest.SourceBranch)
+          BUILD_SOURCEBRANCH: $(Build.SourceBranch)
+          BUILD_SOURCEVERSION: $(Build.SourceVersion)
