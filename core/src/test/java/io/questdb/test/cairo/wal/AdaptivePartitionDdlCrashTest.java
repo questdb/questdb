@@ -341,12 +341,14 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                 startOperation();
                 try {
                     if (history.failsSavePoint()) {
-                        // The skip is not durable, so the statement fails and the table stays suspended.
+                        // The skip is not durable, so the statement fails and the table stays suspended, and so does
+                        // a plain RESUME WAL while the save point still fails.
                         assertResumeFails(e, resume);
-                        // Nothing is left to skip, but the repeat takes the save point the skip owes, so a crash
-                        // right after it keeps the skip.
+                        assertResumeFails(e, "ALTER TABLE t RESUME WAL");
+                        // Nothing is left to skip, but a repeat, or a plain RESUME WAL, takes the save point the skip
+                        // owes, so a crash right after it keeps the skip.
                         failSavePointsAfter = -1;
-                        alter(e, resume);
+                        alter(e, history.periodicOff() ? "ALTER TABLE t RESUME WAL" : resume);
                         return crash(e);
                     }
                     alter(e, resume);
