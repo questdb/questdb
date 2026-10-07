@@ -2673,23 +2673,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
-     * Perform the batched shared-sequencer flush for adaptive group commit, then advance
-     * {@code localDurableSeqTxn} to the pending frontier and clear the pending state. Private WAL dependencies
-     * were made durable before sequencing, so this barrier cannot publish volatile data/events.
-     *
-     * <p>{@code localDurableSeqTxn} (the durable-ack frontier) advances ONLY here, AFTER the device flush
-     * completes — so a durable-ack'd txn is always physically on disk.
-     *
-     * <p>Synchronized on the writer monitor: the background flusher ({@link #forceDurableIfPending}) and the
-     * committing thread (commit-driven trigger) both route through this method, so at most one device flush
-     * of a given backlog runs and the pending fields are mutated under one lock. Idempotent: a no-op when
-     * nothing is pending (a second caller that lost the race simply finds pendingDurableSeqTxn == -1).
-     */
-    /**
      * Flushes the sequencer log for the batch of a writer that is being discarded. The batch's private files
      * were flushed before it sequenced, so the log flush makes it durable and moves the frontier past it. Not
-     * after a failed barrier, which no later flush can prove; a failure here is logged, as the writer is
-     * discarded anyway.
+     * after a failed barrier, which no later flush can prove. A failed flush poisons the engine, as on the
+     * commit path, but does not throw: the writer is being torn down.
      */
     private synchronized void flushDiscardedBatch() {
         if (pendingDurableSeqTxn < 0 || sequencer.isDurabilityFailed() || seqTxnTracker.isDurableFrontierFenced()) {
@@ -2704,9 +2691,25 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     .$(", walId=").$(walId)
                     .$(", error=").$(th)
                     .I$();
+            if (CairoException.isDataSyncFailure(th)) {
+                sequencer.poisonOnDataSyncFailure(th);
+            }
         }
     }
 
+    /**
+     * Perform the batched shared-sequencer flush for adaptive group commit, then advance
+     * {@code localDurableSeqTxn} to the pending frontier and clear the pending state. Private WAL dependencies
+     * were made durable before sequencing, so this barrier cannot publish volatile data/events.
+     *
+     * <p>{@code localDurableSeqTxn} (the durable-ack frontier) advances here only AFTER the device flush
+     * completes — so a durable-ack'd txn is always physically on disk.
+     *
+     * <p>Synchronized on the writer monitor: the background flusher ({@link #forceDurableIfPending}) and the
+     * committing thread (commit-driven trigger) both route through this method, so at most one device flush
+     * of a given backlog runs and the pending fields are mutated under one lock. Idempotent: a no-op when
+     * nothing is pending (a second caller that lost the race simply finds pendingDurableSeqTxn == -1).
+     */
     private synchronized void flushPendingDurable() {
         final long flushTo = pendingDurableSeqTxn;
         if (flushTo < 0) {

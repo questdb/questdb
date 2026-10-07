@@ -981,14 +981,6 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * (g) ORDERING across a STRUCTURAL change: a structural ALTER device-flushes the sequencer txn log
-     * ({@code endMetadataChangeEntry -> fullSync}, an MS_SYNC). Under W&gt;0 the prior DATA commits' column
-     * data is only {@code msync(MS_ASYNC)}'d (pending) — so the structural fullSync would make the sequencer
-     * durable AHEAD of those columns (a torn data→events→seq order on crash) unless the pending backlog is
-     * flushed FIRST. This asserts that applying a structural change flushes the pending group commit, so
-     * {@code localDurableSeqTxn} covers every prior data commit before the structural txn is sequenced.
-     */
     @Test
     public void testDropAndViewChangeFlushTheSequencerLogV1() throws Exception {
         assertDropAndViewChangeFlushTheSequencerLog(0);
@@ -1019,6 +1011,14 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
         assertDurableAppendsMoveTheDurableFrontier("sync", "0");
     }
 
+    /**
+     * (g) ORDERING across a STRUCTURAL change: a structural ALTER device-flushes the sequencer txn log
+     * ({@code endMetadataChangeEntry -> fullSync}, an MS_SYNC). Under W&gt;0 the prior DATA commits' column
+     * data is only {@code msync(MS_ASYNC)}'d (pending) — so the structural fullSync would make the sequencer
+     * durable AHEAD of those columns (a torn data→events→seq order on crash) unless the pending backlog is
+     * flushed FIRST. This asserts that applying a structural change flushes the pending group commit, so
+     * {@code localDurableSeqTxn} covers every prior data commit before the structural txn is sequenced.
+     */
     @Test
     public void testStructuralChangeFlushesPendingFirst() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
@@ -1263,6 +1263,44 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDiscardedWriterFlushFailureStopsTheEngine() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "1h");
+        final FailingSeqFdatasyncFacade ff = new FailingSeqFdatasyncFacade();
+        try {
+            assertMemoryLeak(ff, () -> {
+                setCurrentMicros(1_000_000L);
+                execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+                final TableToken tt = engine.verifyTableName("x");
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+                final AtomicInteger fatalCalls = new AtomicInteger();
+                engine.setDurabilityFailureHandler(failure -> fatalCalls.incrementAndGet());
+                try (WalWriter w = engine.getWalWriter(tt)) {
+                    commitRow(w, 0L, 0);
+                    Assert.assertTrue("test setup: the commit must wait for its batch flush", tracker.getLocalDurableSeqTxn() < tracker.getSeqTxn());
+                    ff.failNextSequencerFdatasync();
+                    markDistressed(w);
+                }
+                Assert.assertTrue("test setup: the discarded writer's flush must have failed", ff.injected);
+                // The kernel reports a writeback error once, so no later flush of the log can prove the batch.
+                Assert.assertTrue("a failed flush of the sequencer log must stop the engine", engine.isDurabilityFailed());
+                Assert.assertEquals(1, fatalCalls.get());
+                Assert.assertTrue(tracker.getLocalDurableSeqTxn() < tracker.getSeqTxn());
+                try {
+                    execute("insert into x values (60000000, 1)");
+                    Assert.fail("a poisoned engine must not take a commit");
+                } catch (CairoError expected) {
+                    TestUtils.assertContains(expected.getMessage(), "engine is poisoned");
+                }
+            });
+        } finally {
+            engine.resetDurabilityFailure();
+        }
+    }
+
+    @Test
     public void testDiscardedWriterFlushesItsSequencedBatch() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
@@ -1396,12 +1434,6 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
         w.commit();
     }
 
-    /**
-     * Exposes {@link WalPurgeJob}'s package-cadence {@code runSerially()} so the test can drive the
-     * background-flush pass deterministically against the test microsecond clock (the flush trigger
-     * compares {@code now - pendingSince >= W}; the WalPurgeJob's broad sweep includes the adaptive
-     * group-commit flush of idle writers).
-     */
     private static void markDistressed(WalWriter writer) throws ReflectiveOperationException {
         final Field distressed = WalWriter.class.getSuperclass().getDeclaredField("distressed");
         distressed.setAccessible(true);
@@ -1464,6 +1496,12 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Exposes {@link WalPurgeJob}'s package-cadence {@code runSerially()} so the test can drive the
+     * background-flush pass deterministically against the test microsecond clock (the flush trigger
+     * compares {@code now - pendingSince >= W}; the WalPurgeJob's broad sweep includes the adaptive
+     * group-commit flush of idle writers).
+     */
     static class ExposedWalPurgeJob extends WalPurgeJob {
         ExposedWalPurgeJob(io.questdb.cairo.CairoEngine engine) {
             super(engine);
