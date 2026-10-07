@@ -40,6 +40,10 @@ import io.questdb.std.Numbers;
  *     frame that ends at or before the current row, or on the last k rows ({@code lag}). A task
  *     that continues a key starts {@link #getWarmupRows()} rows early, which rebuilds the frame,
  *     and returns only its own rows.</li>
+ *     <li>{@link #MODE_WARMUP} with prefix columns, for a chain of windows (see
+ *     {@link AsyncWindowChainSplit}): warm-up rows rebuild the stages before a last window of
+ *     running aggregates, which a task computes from scratch over its own rows and the query's
+ *     thread combines as in {@link #MODE_PREFIX}.</li>
  *     <li>{@link #MODE_PREFIX}: every function is a running aggregate from UNBOUNDED PRECEDING to
  *     the current row (sum, count, first_value; min and max of integers only) or
  *     {@code row_number}. A task that
@@ -153,7 +157,12 @@ public class AsyncWindowSplitPlan implements Plannable {
     @Override
     public void toPlan(PlanSink sink) {
         switch (mode) {
-            case MODE_WARMUP -> sink.val("warmup ").val(warmupRows).val(" rows");
+            case MODE_WARMUP -> {
+                sink.val("warmup ").val(warmupRows).val(" rows");
+                if (prefixColumns.size() > 0) {
+                    sink.val(", running carry");
+                }
+            }
             case MODE_PREFIX -> sink.val("running carry");
             default -> sink.val("none");
         }

@@ -59,6 +59,12 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     private final boolean heapCursorUsed;
     private final int orderDirection;
     private AbstractPageFrameRecordCursor cursor;
+    // a single key walked forward keeps the designated timestamp's order, see setKeyMajorTimestampIndex()
+    private boolean isKeyMajorForward;
+    // what followedOrderByAdvice() answers: a key-major walk no ORDER BY asked for orders nothing
+    // the consumer can rely on
+    private boolean isOrderByAdviceFollowed;
+    private int keyMajorTimestampIndex = -1;
     private ObjList<FunctionBasedRowCursorFactory> cursorFactories;
     private Function filter;
     private RowCursorFactory rowCursorFactory;
@@ -125,11 +131,12 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         }
         // the heap cursor merges keys into row order, so it never follows ORDER BY the key column
         this.followedOrderByAdvice = (orderByKeyColumn && !heapCursorUsed) || orderByTimestamp;
+        this.isOrderByAdviceFollowed = followedOrderByAdvice;
     }
 
     @Override
     public boolean followedOrderByAdvice() {
-        return followedOrderByAdvice;
+        return isOrderByAdviceFollowed;
     }
 
     @Override
@@ -143,11 +150,44 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     }
 
     @Override
+    public boolean isKeyMajorAscending() {
+        // the values are sorted so when the cursor opens, see initRecordCursor()
+        return cursor instanceof KeyMajorPageFrameRecordCursor && followedOrderByAdvice && orderDirection == IQueryModel.ORDER_DIRECTION_ASCENDING;
+    }
+
+    @Override
+    public int getKeyMajorTimestampIndex() {
+        return cursor instanceof KeyMajorPageFrameRecordCursor ? keyMajorTimestampIndex : -1;
+    }
+
+    @Override
     public int getScanDirection() {
-        if (partitionFrameCursorFactory.getOrder() == PartitionFrameCursorFactory.ORDER_ASC && heapCursorUsed) {
+        if (partitionFrameCursorFactory.getOrder() == PartitionFrameCursorFactory.ORDER_ASC && (heapCursorUsed || isKeyMajorForward)) {
             return SCAN_DIRECTION_FORWARD;
         }
         return SCAN_DIRECTION_OTHER;
+    }
+
+    /**
+     * Declares the column whose values ascend within each key of a key-major walk that reads
+     * every key's rows forward, see {@link KeyMajorScanFactory#getKeyMajorTimestampIndex()}. With
+     * a single key, which the walk then reads in table order, the scan is also forward as a whole:
+     * the planner keeps the designated timestamp in the metadata.
+     *
+     * @param timestampIndex the designated timestamp's index in this factory's metadata
+     * @param singleKey      whether the scan has a single key
+     */
+    public void setKeyMajorTimestampIndex(int timestampIndex, boolean singleKey) {
+        this.keyMajorTimestampIndex = timestampIndex;
+        this.isKeyMajorForward = singleKey && timestampIndex > -1;
+    }
+
+    /**
+     * Sets what {@link #followedOrderByAdvice()} answers, for a key-major walk the planner chose
+     * for a window rather than for an ORDER BY: the walk then follows no advice the consumer gave.
+     */
+    public void setOrderByAdviceFollowed(boolean followed) {
+        this.isOrderByAdviceFollowed = followed;
     }
 
     @Override

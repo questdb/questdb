@@ -43,7 +43,6 @@ import io.questdb.cairo.sql.async.UnorderedPageFrameReducer;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.table.KeyMajorPageFrameRecordCursor;
 import io.questdb.griffin.engine.table.SelectedRecord;
 import io.questdb.std.DirectLongList;
@@ -139,6 +138,8 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     // the next frame position of the streamed key, -1 once its last frame has been read
     private int headStreamPos;
     private boolean isOpen;
+    // the query's thread streamed rows it has not ended with AsyncWindowAtom.Slot.flush() yet
+    private boolean isOwnerFlushPending;
     private boolean isParallelPhase;
     private boolean isWorkerSlotsOpen;
     // chain memory that returned tasks keep for their next fill, see finishEmitting()
@@ -182,7 +183,9 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         this.carry = new long[splitPlan.getPrefixCount()];
         this.taskRows = configuration.getSqlParallelWindowTaskRows();
         this.maxKeyRows = Math.max(taskRows, configuration.getSqlParallelWindowMaxKeyRows());
-        this.minRows = configuration.getSqlParallelWindowMinRows();
+        // the prefix: no more than min.rows, which also gates the parallel plan, see prefix.rows
+        final long minRows = configuration.getSqlParallelWindowMinRows();
+        this.minRows = minRows > 0 ? Math.min(minRows, configuration.getSqlParallelWindowPrefixRows()) : 0;
         this.roundRows = Math.max(taskRows, configuration.getSqlParallelWindowRoundRows());
         // a few tasks per worker, so that the round's tasks balance across the workers; the
         // round's row budget, not this count, bounds the round's memory
@@ -214,7 +217,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-        if (mode == MODE_UNDECIDED) {
+        if (mode == MODE_UNDECIDED && !atom.hasRowChangingStage()) {
             // the window returns one row per scan row; see WindowRecordCursorFactory
             baseCursor.calculateSize(circuitBreaker, counter);
         } else {
@@ -341,7 +344,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return (SymbolTable) atom.getSlot(-1).getFunctions().getQuick(columnIndex);
+        return atom.getSlot(-1).getOutputSymbols().getSymbolTable(columnIndex);
     }
 
     /**
@@ -372,11 +375,21 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                 // streamed row by row, as the serial window computes it
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 final AsyncWindowAtom.Slot owner = atom.getSlot(-1);
-                owner.streamRow(ownerRows, ownerPos++);
+                final boolean kept = owner.streamRow(ownerRows, ownerPos++);
                 if (ownerPos == ownerRows.size() && carry.length > 0) {
-                    captureCarry(owner.getVirtualRecord());
+                    captureCarry(owner.getOutputRecord());
                 }
-                return true;
+                if (kept) {
+                    return true;
+                }
+                continue;
+            }
+            if (isOwnerFlushPending) {
+                // the streamed rows ended: a GROUP BY step outputs its last group
+                isOwnerFlushPending = false;
+                if (atom.getSlot(-1).flush()) {
+                    return true;
+                }
             }
             if (headKind == SEGMENT_ROUND) {
                 final Round round = headRound;
@@ -401,6 +414,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                     continue;
                 }
                 headKind = SEGMENT_NONE;
+                isOwnerFlushPending = true;
                 continue;
             }
             if (!isParallelPhase) {
@@ -419,7 +433,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        return ((SymbolFunction) atom.getSlot(-1).getFunctions().getQuick(columnIndex)).newSymbolTable();
+        return atom.getSlot(-1).getOutputSymbols().newSymbolTable(columnIndex);
     }
 
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
@@ -508,7 +522,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                 atom.ofWorkerFrames(keyMajorCursor.getFrameAddressCache());
             }
         } else if (mode == MODE_SERIAL) {
-            record.of(atom.getSlot(-1).getVirtualRecord());
+            record.of(atom.getSlot(-1).getOutputRecord());
         }
     }
 
@@ -609,12 +623,13 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                     warmRows = newRowIds(memoryTracker);
                 }
                 atom.getSlot(-1).ofFrames(keyMajorCursor.getFrameAddressCache());
-                record.of(atom.getSlot(-1).getVirtualRecord());
+                record.of(atom.getSlot(-1).getOutputRecord());
                 return;
             }
         }
-        record.of(atom.getSlot(-1).getVirtualRecord());
-        atom.getSlot(-1).getVirtualRecord().of(baseCursor.getRecord());
+        record.of(atom.getSlot(-1).getOutputRecord());
+        atom.getSlot(-1).ofSerial(baseCursor.getRecord());
+        isOwnerFlushPending = true;
     }
 
     // Collects the next round's tasks from the walk and dispatches them, then queues the round.
@@ -782,12 +797,20 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     }
 
     private boolean hasNextSerial() {
-        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-        if (baseCursor.hasNext()) {
-            atom.getSlot(-1).computeNext(baseCursor.getRecord());
-            return true;
+        final AsyncWindowAtom.Slot owner = atom.getSlot(-1);
+        while (true) {
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            if (!baseCursor.hasNext()) {
+                if (isOwnerFlushPending) {
+                    isOwnerFlushPending = false;
+                    return owner.flush();
+                }
+                return false;
+            }
+            if (owner.computeNext(owner.getSerialInput())) {
+                return true;
+            }
         }
-        return false;
     }
 
     private DirectLongList newRowIds(MemoryTracker memoryTracker) {
@@ -885,6 +908,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         while (ownerRows.size() < chunkRows) {
             if (prefixRowsStreamed + ownerRows.size() >= minRows && (splitsKeys || !walkKeyOpen)) {
                 isParallelPhase = true;
+                isOwnerFlushPending = true;
                 break;
             }
             final boolean continued = first && walkKeyOpen;
@@ -900,13 +924,14 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             if (status == KeyMajorPageFrameRecordCursor.COLLECT_EXHAUSTED) {
                 // nothing left for the workers at all
                 isParallelPhase = true;
+                isOwnerFlushPending = true;
                 break;
             }
         }
         prefixRowsStreamed += ownerRows.size();
         atom.getSlot(-1).resetStream();
         // the record may point at the last task returned before a rewind
-        record.of(atom.getSlot(-1).getVirtualRecord());
+        record.of(atom.getSlot(-1).getOutputRecord());
     }
 
     // The streamed key's next chunk, walked apart from the walk, whole frames at a time. Returns
@@ -922,7 +947,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         largeKeyRowsStreamed += ownerRows.size();
         final AsyncWindowAtom.Slot owner = atom.getSlot(-1);
         owner.resetStream();
-        record.of(owner.getVirtualRecord());
+        record.of(owner.getOutputRecord());
         // keep the workers busy with the keys after this one
         produce();
         return ownerRows.size() > 0 || headStreamPos > -1;
@@ -964,6 +989,8 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         segmentHead = 0;
         segmentCount = 0;
         isParallelPhase = minRows <= 0;
+        // the serial mode streams every row, the parallel one its prefix
+        isOwnerFlushPending = mode == MODE_SERIAL;
         walkKeyOpen = false;
         ownerPos = 0;
         nextChunkRows = Math.min(FIRST_CHUNK_ROWS, taskRows);

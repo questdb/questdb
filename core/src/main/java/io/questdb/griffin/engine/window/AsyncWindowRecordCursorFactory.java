@@ -35,11 +35,14 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -54,12 +57,35 @@ import org.jetbrains.annotations.TestOnly;
  * The output is the serial window's, row for row.
  */
 public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final AsyncWindowAtom atom;
+    private final CairoConfiguration configuration;
     private final int keyColumnIndex;
+    // the key-major scan, the base or the one under the base's projection
+    private final RecordCursorFactory scan;
+    // the query thread's copy of the steps after the window, which this factory owns
+    private final ObjList<AsyncWindowStage> ownerStages;
     private final AsyncWindowSplitPlan splitPlan;
-    private final ObjList<WindowFunction> windowFunctions = new ObjList<>();
+    private final ObjList<WindowFunction> windowFunctions;
     private final int workerCount;
+    private AsyncWindowAtom atom;
     private RecordCursorFactory base;
+    // how keys may still split as stages are appended, see AsyncWindowChainSplit
+    private AsyncWindowChainSplit chainSplit;
+    // the output column that is the group key after the scan's key, after a GROUP BY step, -1
+    private int groupOrderIndex = -1;
+    // whether the scan walks its keys in ascending order of their values
+    private boolean isKeyOrderAscending;
+    // the output column that carries the scan's key, -1 when none does
+    private int keyOutputIndex = -1;
+    // per output column: whether its values never decrease within a key of the scan, in walk order
+    private boolean[] nonDecreasingColumns = new boolean[0];
+    // per output column: whether its values are never negative
+    private boolean[] nonNegativeColumns = new boolean[0];
+    // whether the scan walks a single key
+    private boolean singleKey;
+    // while EXPLAIN prints a step: the metadata naming the columns its functions read
+    private RecordMetadata planMetadata;
+    // the output column that carries the column ascending within each key, -1 when none does
+    private int timestampOutputIndex = -1;
     private AsyncWindowRecordCursor cursor;
     private ObjList<Function> functions;
     // one per round that can be alive at a time
@@ -95,13 +121,19 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
             @NotNull AsyncWindowSplitPlan splitPlan,
             int keyColumnIndex,
             boolean partitionedByKeyOnly,
-            int workerCount
+            int workerCount,
+            @Nullable IntList crossIndex
     ) {
         super(metadata);
+        this.configuration = configuration;
+        this.ownerStages = new ObjList<>();
+        this.windowFunctions = new ObjList<>();
         this.base = base;
         this.functions = functions;
         this.windowMapStates = windowMapStates;
         this.keyColumnIndex = keyColumnIndex;
+        // over a projection of the scan, the slots project the scan's own cursor themselves
+        this.scan = crossIndex != null ? base.getBaseFactory() : base;
         this.splitPlan = splitPlan;
         this.workerCount = workerCount;
         AsyncWindowAtom atom = null;
@@ -119,7 +151,8 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
                     windowMapStates,
                     perWorkerFunctions,
                     perWorkerMapStates,
-                    partitionedByKeyOnly ? keyColumnIndex : -1
+                    partitionedByKeyOnly && crossIndex == null ? keyColumnIndex : -1,
+                    crossIndex
             );
             for (int i = 0, n = Math.max(2, configuration.getSqlParallelWindowMaxRounds()); i < n; i++) {
                 // each owns its round atom, never the shared atom
@@ -153,9 +186,51 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
         this.sequences = sequences;
     }
 
+    // Takes over everything the other factory owns, with the output of a step appended to it.
+    private AsyncWindowRecordCursorFactory(
+            AsyncWindowRecordCursorFactory from,
+            GenericRecordMetadata metadata,
+            RecordSink recordSink,
+            AsyncWindowSplitPlan splitPlan
+    ) {
+        super(metadata);
+        // the only allocation that can fail, before anything changes hands
+        this.cursor = new AsyncWindowRecordCursor(from.configuration, from.atom, from.sequences, metadata, recordSink, splitPlan, from.workerCount);
+        this.configuration = from.configuration;
+        this.keyColumnIndex = from.keyColumnIndex;
+        this.scan = from.scan;
+        this.ownerStages = from.ownerStages;
+        this.splitPlan = splitPlan;
+        this.windowFunctions = from.windowFunctions;
+        this.workerCount = from.workerCount;
+        this.atom = from.atom;
+        this.base = from.base;
+        this.functions = from.functions;
+        this.sequences = from.sequences;
+        this.windowMapStates = from.windowMapStates;
+        this.chainSplit = from.chainSplit;
+        this.singleKey = from.singleKey;
+        this.isKeyOrderAscending = from.isKeyOrderAscending;
+        // the other factory's cursor was never opened, and its rounds hold no task yet
+        Misc.free(from.cursor);
+        from.cursor = null;
+        from.atom = null;
+        from.base = null;
+        from.functions = null;
+        from.sequences = null;
+        from.windowMapStates = null;
+    }
+
     @Override
     public boolean followedOrderByAdvice() {
-        return base.followedOrderByAdvice();
+        // a GROUP BY step returns groups, which follow no ORDER BY the scan followed
+        return base.followedOrderByAdvice() && !atom.hasGroupByStage();
+    }
+
+    @Override
+    public String getBaseColumnName(int idx) {
+        final RecordMetadata metadata = planMetadata;
+        return metadata != null ? metadata.getColumnName(idx) : super.getBaseColumnName(idx);
     }
 
     @Override
@@ -170,7 +245,7 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursor baseCursor = base.getCursor(executionContext);
+        final RecordCursor baseCursor = scan.getCursor(executionContext);
         try {
             cursor.of(baseCursor, executionContext);
             return cursor;
@@ -209,6 +284,149 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
         return windowFunctions;
     }
 
+    public AsyncWindowChainSplit getChainSplit() {
+        return chainSplit;
+    }
+
+    /**
+     * The output column that carries the scan's key, -1 when none does.
+     */
+    public int getKeyOutputIndex() {
+        return keyOutputIndex;
+    }
+
+    /**
+     * The output column whose values ascend within each key of the scan, -1 when none does.
+     */
+    public int getTimestampOutputIndex() {
+        return timestampOutputIndex;
+    }
+
+    /**
+     * Whether the scan walks a single key, which a window then partitions by or not alike.
+     */
+    public boolean isSingleKey() {
+        return singleKey;
+    }
+
+    /**
+     * Records where the scan's key and its ascending timestamp land in the output, for the stages
+     * the planner may append.
+     */
+    public void setChainColumns(boolean singleKey, int keyOutputIndex, int timestampOutputIndex) {
+        this.singleKey = singleKey;
+        this.keyOutputIndex = keyOutputIndex;
+        this.timestampOutputIndex = timestampOutputIndex;
+    }
+
+    public void setChainSplit(AsyncWindowChainSplit chainSplit) {
+        this.chainSplit = chainSplit;
+    }
+
+    /**
+     * Records, per output column, whether its values never decrease within a key of the scan in
+     * the walk's order, and whether they are never negative: what the planner proved of them, so
+     * that a GROUP BY on such a column sees each group's rows together.
+     */
+    public void setColumnOrder(boolean[] nonDecreasingColumns, boolean[] nonNegativeColumns) {
+        this.nonDecreasingColumns = nonDecreasingColumns;
+        this.nonNegativeColumns = nonNegativeColumns;
+    }
+
+    public boolean[] getNonDecreasingColumns() {
+        return nonDecreasingColumns;
+    }
+
+    public boolean[] getNonNegativeColumns() {
+        return nonNegativeColumns;
+    }
+
+    /**
+     * After a GROUP BY step: the output column of the group key that orders the groups of one
+     * scan key, -1 when the groups are the scan's keys alone; see {@link #isOrderedByKeyThenGroup}.
+     */
+    public void setGroupOrder(int groupOrderIndex) {
+        this.groupOrderIndex = groupOrderIndex;
+    }
+
+    public void setKeyOrderAscending(boolean isKeyOrderAscending) {
+        this.isKeyOrderAscending = isKeyOrderAscending;
+    }
+
+    /**
+     * Whether, after a GROUP BY step, the output is in ascending order of the scan's key (when
+     * the scan has several keys) and then of the group key: the groups of a key come out in the
+     * order of its rows, along which the group key never decreases.
+     *
+     * @param keyColumn   the output column ordered first, -1 for none
+     * @param groupColumn the output column ordered next, -1 for none
+     */
+    public boolean isOrderedByKeyThenGroup(int keyColumn, int groupColumn) {
+        if (atom == null || !atom.hasGroupByStage()) {
+            return false;
+        }
+        if (groupColumn != groupOrderIndex) {
+            return false;
+        }
+        if (singleKey) {
+            return keyColumn == -1 || keyColumn == keyOutputIndex;
+        }
+        return isKeyOrderAscending && keyColumn > -1 && keyColumn == keyOutputIndex;
+    }
+
+    /**
+     * The query thread's copy of the steps after the window, in order.
+     */
+    public ObjList<AsyncWindowStage> getStages() {
+        return ownerStages;
+    }
+
+    /**
+     * Returns a factory that computes this one's rows, then one more step over them, see
+     * {@link AsyncWindowStage}, and owns everything this one owned; this factory is left empty
+     * and is not to be used or closed. Takes the step's copies also when it throws, and this
+     * factory is then unchanged.
+     *
+     * @param ownerStage  the query thread's copy of the step
+     * @param workerStages one copy per worker slot, see {@link #getWorkerSlotCount()}
+     * @param metadata    the step's output
+     * @param recordSink  copies the step's output into a task's row buffer
+     * @param splitPlan   how keys may split over tasks, now that the step is part of the rows
+     * @param carryStage  see {@link AsyncWindowAtom#setCarryStage(int)}
+     */
+    public AsyncWindowRecordCursorFactory withStage(
+            @NotNull AsyncWindowStage ownerStage,
+            @NotNull ObjList<AsyncWindowStage> workerStages,
+            @NotNull GenericRecordMetadata metadata,
+            @NotNull RecordSink recordSink,
+            @NotNull AsyncWindowSplitPlan splitPlan,
+            int carryStage
+    ) {
+        final AsyncWindowRecordCursorFactory next;
+        try {
+            next = new AsyncWindowRecordCursorFactory(this, metadata, recordSink, splitPlan);
+        } catch (Throwable th) {
+            Misc.free(ownerStage);
+            Misc.freeObjListAndClear(workerStages);
+            throw th;
+        }
+        // the step's functions read this factory's output
+        if (ownerStage.getPlanMetadata() == null) {
+            ownerStage.setPlanMetadata(getMetadata());
+        }
+        next.ownerStages.add(ownerStage);
+        next.atom.addStage(ownerStage, workerStages);
+        next.atom.setCarryStage(carryStage);
+        return next;
+    }
+
+    /**
+     * Worker slots, each with a copy of the window and of the steps after it.
+     */
+    public int getWorkerSlotCount() {
+        return atom.getWorkerSlotCount();
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         // a window value depends on other rows of its partition
@@ -220,13 +438,33 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
         sink.type("Async Window");
         sink.meta("workers").val(workerCount);
         sink.optAttr("functions", windowFunctions, true);
-        sink.attr("keyShards").putBaseColumnName(keyColumnIndex);
+        if (keyColumnIndex > -1) {
+            sink.attr("keyShards").putBaseColumnName(keyColumnIndex);
+        } else {
+            // a single key the window does not read
+            sink.attr("keyShards").val(1);
+        }
         if (atom.isKeyRunEnabled()) {
             sink.attr("keyRuns").val(true);
         }
         if (splitPlan.getMode() != AsyncWindowSplitPlan.MODE_NONE) {
             sink.attr("keySplit").val(splitPlan);
         }
+        for (int i = 0, n = ownerStages.size(); i < n; i++) {
+            final AsyncWindowStage stage = ownerStages.getQuick(i);
+            planMetadata = stage.getPlanMetadata();
+            switch (stage.getKind()) {
+                case AsyncWindowStage.KIND_VIRTUAL -> sink.attr("then").val("project").optAttr("functions", stage.getFunctions(), true);
+                case AsyncWindowStage.KIND_WINDOW -> sink.attr("then").val("window").optAttr("functions", stage.getWindowFunctions(), true);
+                case AsyncWindowStage.KIND_GROUP_BY -> {
+                    sink.attr("then").val("group by");
+                    sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(stage.getFunctions(), getMetadata()));
+                    sink.optAttr("values", ((AsyncWindowGroupByStage) stage).getGroupByFunctions(), true);
+                }
+                default -> sink.attr("then").val("filter").optAttr("filter", stage.getFunctions().getQuick(0), true);
+            }
+        }
+        planMetadata = null;
         sink.child(base);
     }
 
@@ -252,10 +490,16 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
         this.windowMapStates = null;
         final ObjList<Function> functions = this.functions;
         this.functions = null;
+        final AsyncWindowAtom atom = this.atom;
+        this.atom = null;
         Throwable failure = Misc.freeBestEffort(null, cursor);
         failure = Misc.freeObjListBestEffort(failure, sequences);
         // frees the worker copies
         failure = Misc.freeBestEffort(failure, atom);
+        if (atom != null) {
+            // the steps of an emptied factory belong to the factory that took them over
+            failure = Misc.freeObjListBestEffort(failure, ownerStages);
+        }
         failure = Misc.freeBestEffort(failure, base);
         failure = Misc.freeObjListBestEffort(failure, windowMapStates);
         failure = Misc.freeObjListBestEffort(failure, functions);

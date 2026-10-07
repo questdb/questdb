@@ -143,6 +143,16 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
         return functions;
     }
 
+    /**
+     * Gives up the base and the functions, which the caller has taken over, so that closing this
+     * factory frees neither; the factory is not to be used afterwards.
+     */
+    public void detach() {
+        base = null;
+        functions = null;
+        cursor = null;
+    }
+
     public PriorityMetadata getPriorityMetadata() {
         return priorityMetadata;
     }

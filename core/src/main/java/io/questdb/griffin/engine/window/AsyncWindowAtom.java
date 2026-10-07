@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
@@ -48,12 +49,14 @@ import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.QuaternaryFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.table.KeyMajorPageFrameRecordCursor;
 import io.questdb.griffin.engine.table.PageFrameRowToucher;
+import io.questdb.griffin.engine.table.SelectedRecord;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
@@ -100,6 +103,10 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
      * @param keyRunColumnIndex  the scan's key column when every window function is partitioned
      *                           by it alone, so that tasks may compute key runs, see
      *                           {@link KeyRunWindowFunction}; -1 otherwise
+     * @param crossIndex         the scan's columns the functions read as theirs, when the window's
+     *                           base is a projection of the scan's columns, see
+     *                           {@link io.questdb.griffin.engine.table.SelectedRecordCursorFactory};
+     *                           null when the functions read the scan's columns
      */
     public AsyncWindowAtom(
             @NotNull CairoConfiguration configuration,
@@ -107,15 +114,16 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             @Nullable ObjList<WindowMapState> ownerMapStates,
             @NotNull ObjList<ObjList<Function>> perWorkerFunctions,
             @NotNull ObjList<ObjList<WindowMapState>> perWorkerMapStates,
-            int keyRunColumnIndex
+            int keyRunColumnIndex,
+            @Nullable IntList crossIndex
     ) {
         final int workerCount = perWorkerFunctions.size();
         assert perWorkerMapStates.size() == workerCount;
         this.slots = new ObjList<>(workerCount + 1);
         try {
-            slots.add(new Slot(configuration, ownerFunctions, ownerMapStates, false, keyRunColumnIndex));
+            slots.add(new Slot(configuration, ownerFunctions, ownerMapStates, false, keyRunColumnIndex, crossIndex));
             for (int i = 0; i < workerCount; i++) {
-                slots.add(new Slot(configuration, perWorkerFunctions.getQuick(i), perWorkerMapStates.getQuick(i), true, keyRunColumnIndex));
+                slots.add(new Slot(configuration, perWorkerFunctions.getQuick(i), perWorkerMapStates.getQuick(i), true, keyRunColumnIndex, crossIndex));
                 // the slot owns them now
                 perWorkerFunctions.setQuick(i, null);
                 perWorkerMapStates.setQuick(i, null);
@@ -124,6 +132,25 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         } catch (Throwable th) {
             close();
             throw th;
+        }
+    }
+
+    /**
+     * Appends a step after the window and the steps so far: the query thread's copy, which the
+     * factory owns, and one copy per worker slot, which this atom owns once the method returns,
+     * also when it throws. The list holds one entry per worker slot.
+     */
+    public void addStage(@NotNull AsyncWindowStage ownerStage, @NotNull ObjList<AsyncWindowStage> workerStages) {
+        try {
+            assert workerStages.size() == slots.size() - 1;
+            slots.getQuick(0).addStage(ownerStage);
+            for (int i = 1, n = slots.size(); i < n; i++) {
+                slots.getQuick(i).addStage(workerStages.getQuick(i - 1));
+                // the slot owns it now
+                workerStages.setQuick(i - 1, null);
+            }
+        } finally {
+            Misc.freeObjListAndClear(workerStages);
         }
     }
 
@@ -261,11 +288,52 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
     }
 
     /**
+     * Whether a stage after the window may drop rows, so that the output has fewer rows than the
+     * scan.
+     */
+    public boolean hasFilterStage() {
+        return slots.getQuick(0).hasFilterStage();
+    }
+
+    /**
+     * Whether a step after the window outputs other rows than the scan's: a filter, or a GROUP BY.
+     */
+    public boolean hasRowChangingStage() {
+        return !slots.getQuick(0).isRowCountPreserved();
+    }
+
+    /**
+     * Whether the last step is a GROUP BY, after which no other step can come.
+     */
+    public boolean hasGroupByStage() {
+        final Slot owner = slots.getQuick(0);
+        return owner.stageCount > 0 && owner.stages.getQuick(owner.stageCount - 1).getKind() == AsyncWindowStage.KIND_GROUP_BY;
+    }
+
+    /**
      * Whether the tasks of this atom's query compute key runs, see {@link KeyRunWindowFunction}.
      * Decided when the query is compiled.
      */
     public boolean isKeyRunEnabled() {
         return slots.getQuick(0).keyRunFunctions != null;
+    }
+
+    /**
+     * The stage, by index among the steps, whose window functions a task that continues a key
+     * starts afresh at the key's first own row, after the warm-up rows rebuilt the steps before
+     * it; -1 for none.
+     */
+    public void setCarryStage(int carryStage) {
+        for (int i = 0, n = slots.size(); i < n; i++) {
+            slots.getQuick(i).setCarryStage(carryStage);
+        }
+    }
+
+    /**
+     * Steps the rows go through after the window functions.
+     */
+    public int getStageCount() {
+        return slots.getQuick(0).stageCount;
     }
 
     void resetTaskCounts() {
@@ -305,23 +373,39 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         private static final int OUT_SHORT = 14;
         private static final int OUT_TIMESTAMP = 15;
         private final long[] batchRows = new long[BATCH_ROWS];
+        // the steps after the window functions
+        private final ObjList<AsyncWindowStage> stages = new ObjList<>();
+        // the stage whose windows restart at a continued key's first own row, -1 for none
+        private int carryStage = -1;
         private final ObjList<Function> functions;
         // the scan's key column, which key runs read once per run rather than once per row
         private final int keyRunColumnIndex;
         // the window functions as key runs, or null when tasks go through the functions' maps
-        private final KeyRunWindowFunction[] keyRunFunctions;
+        private KeyRunWindowFunction[] keyRunFunctions;
         // the keys of the task's runs so far, kept only while assertions are enabled
         private final IntHashSet keyRunKeys = new IntHashSet();
         // the columns of a frame a key run reads, by column index, or null for all of them
         private final boolean[] keyRunTouchedColumns;
         private final ObjList<WindowMapState> mapStates;
         private final int mapStatesCount;
+        // the record a row is output from: the last stage's, or the window's own
+        private Record outputRecord;
+        // the symbol tables of the output record's columns
+        private SymbolTableSource outputSymbols;
         // per output column: how a key run writes it, OUT_*, and where in the chain's record
         private final int[] outputKinds;
         private final long[] outputOffsets;
         private final boolean ownsFunctions;
         private final PageFrameMemoryPool pool;
         private final PageFrameMemoryRecord record;
+        // what the window functions read: the scan's record, or a projection of it
+        private final Record functionInput;
+        // the projection of the scan's record, null when the functions read it as it is
+        private final SelectedRecord selectedRecord;
+        private final IntList crossIndex;
+        // what the window functions read in the serial mode
+        private Record serialInput;
+        private int stageCount;
         private final PageFrameRowToucher toucher = new PageFrameRowToucher();
         private final VirtualRecord virtualRecord;
         private final ObjList<WindowFunction> windowFunctions = new ObjList<>();
@@ -341,7 +425,8 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 ObjList<Function> functions,
                 @Nullable ObjList<WindowMapState> mapStates,
                 boolean ownsFunctions,
-                int keyRunColumnIndex
+                int keyRunColumnIndex,
+                @Nullable IntList crossIndex
         ) {
             this.functions = functions;
             this.mapStates = mapStates;
@@ -369,7 +454,34 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             }
             this.pool = new PageFrameMemoryPool(configuration);
             this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+            this.crossIndex = crossIndex;
+            if (crossIndex != null) {
+                this.selectedRecord = new SelectedRecord(crossIndex);
+                selectedRecord.of(record);
+                this.functionInput = selectedRecord;
+            } else {
+                this.selectedRecord = null;
+                this.functionInput = record;
+            }
             this.virtualRecord = new VirtualRecord(functions);
+            this.outputRecord = virtualRecord;
+            this.outputSymbols = new FunctionSymbols(functions);
+        }
+
+        /**
+         * Appends a step after the last one, which reads its output. Tasks no longer compute key
+         * runs: those write the window's own output straight into the chain.
+         */
+        void addStage(AsyncWindowStage stage) {
+            stages.add(stage);
+            stageCount++;
+            outputRecord = stage.bind(outputRecord, outputSymbols);
+            outputSymbols = stage;
+            keyRunFunctions = null;
+        }
+
+        void setCarryStage(int carryStage) {
+            this.carryStage = carryStage;
         }
 
         // Adds the columns a function reads to the list, when all it is made of is known to read
@@ -501,6 +613,7 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             failure = Misc.freeBestEffort(failure, pool);
             failure = Misc.freeBestEffort(failure, record);
             if (ownsFunctions) {
+                failure = Misc.freeObjListBestEffort(failure, stages);
                 failure = Misc.freeObjListBestEffort(failure, mapStates);
                 failure = Misc.freeObjListBestEffort(failure, functions);
             }
@@ -528,6 +641,9 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 for (int i = 0; i < mapStatesCount; i++) {
                     mapStates.getQuick(i).reset();
                 }
+            }
+            for (int i = 0; i < stageCount; i++) {
+                stages.getQuick(i).closeCursor();
             }
         }
 
@@ -590,13 +706,29 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 final long batchLo = i - n;
                 for (int j = 0; j < n; j++) {
                     record.setRowIndex(batch[j]);
-                    computeNext(record);
-                    if (batchLo + j >= emitFrom) {
-                        prevOffset = chain.put(virtualRecord, prevOffset);
+                    if (batchLo + j == emitFrom && emitFrom > 0 && carryStage > -1) {
+                        // the warm-up rows rebuilt the stages before the carry stage; its running
+                        // values start at the task's own rows, the cursor adds the key's carry
+                        stages.getQuick(carryStage).toTop();
+                    }
+                    if (computeNext(functionInput) && batchLo + j >= emitFrom) {
+                        prevOffset = chain.put(outputRecord, prevOffset);
                     }
                 }
             }
+            // a GROUP BY step outputs the task's last group now; keys never span tasks then
+            if (flush()) {
+                prevOffset = chain.put(outputRecord, prevOffset);
+            }
             return prevOffset;
+        }
+
+        /**
+         * Ends the rows computed so far, see {@link AsyncWindowStage#flush()}: returns whether the
+         * last step output a row, which {@link #getOutputRecord()} then holds.
+         */
+        boolean flush() {
+            return stageCount > 0 && stages.getQuick(stageCount - 1).flush();
         }
 
         /**
@@ -725,7 +857,11 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             taskCount++;
         }
 
-        void computeNext(Record record) {
+        /**
+         * Computes the window and the stages after it for the row the record stands on. Returns
+         * false when a filter stage drops the row.
+         */
+        boolean computeNext(Record record) {
             // Groups first, as WindowRecordCursorFactory does: a bound function's computeNext is
             // a no-op, and its getters answer with what its group just materialized.
             for (int i = 0; i < mapStatesCount; i++) {
@@ -734,6 +870,12 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             for (int i = 0; i < windowFunctionsCount; i++) {
                 windowFunctions.getQuick(i).computeNext(record);
             }
+            for (int i = 0; i < stageCount; i++) {
+                if (!stages.getQuick(i).computeNext()) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         // Writes the current row's output columns into the record at address, as the chain's
@@ -770,8 +912,60 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             return functions;
         }
 
-        VirtualRecord getVirtualRecord() {
-            return virtualRecord;
+        boolean hasFilterStage() {
+            for (int i = 0; i < stageCount; i++) {
+                if (stages.getQuick(i).getKind() == AsyncWindowStage.KIND_FILTER) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // whether every scan row comes out as one output row
+        boolean isRowCountPreserved() {
+            for (int i = 0; i < stageCount; i++) {
+                final AsyncWindowStage stage = stages.getQuick(i);
+                if (stage.getKind() == AsyncWindowStage.KIND_FILTER || !stage.isRowPreserving()) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /**
+         * The record a row is output from, positioned by {@link #computeNext} or
+         * {@link #streamRow}.
+         */
+        Record getOutputRecord() {
+            return outputRecord;
+        }
+
+        /**
+         * The symbol tables of the output record's columns.
+         */
+        SymbolTableSource getOutputSymbols() {
+            return outputSymbols;
+        }
+
+        /**
+         * What the window functions read in the serial mode, see {@link #ofSerial}.
+         */
+        Record getSerialInput() {
+            return serialInput;
+        }
+
+        /**
+         * Points the functions at the base cursor's record, for the serial mode: the scan's record,
+         * which the slot projects as the functions expect.
+         */
+        void ofSerial(Record baseRecord) {
+            if (selectedRecord != null) {
+                selectedRecord.of(baseRecord);
+                serialInput = selectedRecord;
+            } else {
+                serialInput = baseRecord;
+            }
+            virtualRecord.of(serialInput);
         }
 
         /**
@@ -799,6 +993,10 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 pool.setMemoryTracker(memoryTracker);
             }
             record.of(symbolTableSource);
+            if (crossIndex != null) {
+                // the functions read the projection's columns
+                symbolTableSource = new CrossIndexSymbols(symbolTableSource, crossIndex);
+            }
             if (ownsFunctions) {
                 final boolean current = executionContext.getCloneSymbolTables();
                 executionContext.setCloneSymbolTables(true);
@@ -809,6 +1007,9 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 }
             } else {
                 Function.init(functions, symbolTableSource, executionContext, null);
+            }
+            for (int i = 0; i < stageCount; i++) {
+                stages.getQuick(i).open(executionContext, ownsFunctions || executionContext.getCloneSymbolTables());
             }
         }
 
@@ -824,9 +1025,10 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
          * Computes the window for the row at {@code index} of {@code rows}, which are row ids of a
          * {@link KeyMajorPageFrameRecordCursor} walk, leaving its output in this slot's virtual
          * record. Rows are streamed in order, one call each; the columns of up to a batch of rows
-         * of one frame ahead are loaded together first.
+         * of one frame ahead are loaded together first. Returns false when a filter stage drops
+         * the row.
          */
-        void streamRow(DirectLongList rows, long index) {
+        boolean streamRow(DirectLongList rows, long index) {
             final long rowId = rows.get(index);
             final int frameIndex = KeyMajorPageFrameRecordCursor.toFrameIndex(rowId);
             if (frameIndex != streamFrameIndex) {
@@ -853,7 +1055,7 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 streamTouchedHi = i;
             }
             record.setRowIndex(KeyMajorPageFrameRecordCursor.toFrameRowIndex(rowId));
-            computeNext(record);
+            return computeNext(functionInput);
         }
 
         /**
@@ -868,6 +1070,9 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             for (int i = 0; i < mapStatesCount; i++) {
                 mapStates.getQuick(i).clear();
             }
+            for (int i = 0; i < stageCount; i++) {
+                stages.getQuick(i).toTop();
+            }
         }
 
         void ofFrames(PageFrameAddressCache frameAddressCache) {
@@ -875,7 +1080,55 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             pool.of(frameAddressCache);
             resetStream();
             // the serial mode of an earlier execution may have pointed it at the scan's record
-            virtualRecord.of(record);
+            if (selectedRecord != null) {
+                // the serial mode of an earlier execution may have pointed it at the base's record
+                selectedRecord.of(record);
+            }
+            virtualRecord.of(functionInput);
+        }
+    }
+
+    /**
+     * The symbol tables of a list of output column functions, as a cursor over them serves them.
+     */
+    static class FunctionSymbols implements SymbolTableSource {
+        private final ObjList<Function> functions;
+
+        FunctionSymbols(ObjList<Function> functions) {
+            this.functions = functions;
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return (SymbolTable) functions.getQuick(columnIndex);
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return ((SymbolFunction) functions.getQuick(columnIndex)).newSymbolTable();
+        }
+    }
+
+    /**
+     * The symbol tables of a projection of a cursor's columns.
+     */
+    static class CrossIndexSymbols implements SymbolTableSource {
+        private final IntList crossIndex;
+        private final SymbolTableSource source;
+
+        CrossIndexSymbols(SymbolTableSource source, IntList crossIndex) {
+            this.source = source;
+            this.crossIndex = crossIndex;
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return source.getSymbolTable(crossIndex.getQuick(columnIndex));
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return source.newSymbolTable(crossIndex.getQuick(columnIndex));
         }
     }
 }

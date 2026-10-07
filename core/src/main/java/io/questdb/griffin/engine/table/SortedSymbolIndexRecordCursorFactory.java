@@ -38,7 +38,11 @@ import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
 public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecordCursorFactory implements KeyMajorScanFactory {
+    private final boolean columnOrderAsc;
     private KeyMajorPageFrameRecordCursor cursor;
+    // false for a walk the planner chose for a window rather than for an ORDER BY
+    private boolean isOrderByAdviceFollowed = true;
+    private int keyMajorTimestampIndex = -1;
 
     public SortedSymbolIndexRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -51,6 +55,7 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
             @NotNull IntList columnSizeShifts
     ) {
         super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
+        this.columnOrderAsc = columnOrderAsc;
 
         // walk each symbol key across all page frames, not just within one, so that the
         // output is in symbol order as a whole
@@ -69,13 +74,32 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
 
     @Override
     public boolean followedOrderByAdvice() {
-        // the fact this factory is created means we are following order by advice
-        return true;
+        // the fact this factory is created means we are following order by advice, unless the
+        // planner chose it for a window, see setOrderByAdviceFollowed()
+        return isOrderByAdviceFollowed;
+    }
+
+    /**
+     * Sets what {@link #followedOrderByAdvice()} answers: false for a walk the planner chose for
+     * a window partitioned by the symbol, which follows no ORDER BY.
+     */
+    public void setOrderByAdviceFollowed(boolean followed) {
+        this.isOrderByAdviceFollowed = followed;
     }
 
     @Override
     public int getKeyMajorColumnIndex() {
         return cursor.getRowCursorFactory().getIndexColumnIndex();
+    }
+
+    @Override
+    public boolean isKeyMajorAscending() {
+        return columnOrderAsc;
+    }
+
+    @Override
+    public int getKeyMajorTimestampIndex() {
+        return keyMajorTimestampIndex;
     }
 
     // This factory exists to serve "ORDER BY symbol[, timestamp]". It walks the symbol
@@ -86,6 +110,15 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
     @Override
     public int getScanDirection() {
         return SCAN_DIRECTION_OTHER;
+    }
+
+    /**
+     * Declares the column whose values ascend within each key, see
+     * {@link KeyMajorScanFactory#getKeyMajorTimestampIndex()}: the designated timestamp, when the
+     * index is read forward.
+     */
+    public void setKeyMajorTimestampIndex(int timestampIndex) {
+        this.keyMajorTimestampIndex = timestampIndex;
     }
 
     @Override

@@ -76,6 +76,13 @@ public abstract class BaseWindowFunction implements WindowFunction {
         }
     }
 
+    /**
+     * The function's argument, null for a function without one.
+     */
+    public Function getWindowArgument() {
+        return arg;
+    }
+
     @Override
     public int getColumnIndex() {
         return columnIndex;
