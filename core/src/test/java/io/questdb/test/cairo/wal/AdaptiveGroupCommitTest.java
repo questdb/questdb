@@ -989,6 +989,26 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
      * {@code localDurableSeqTxn} covers every prior data commit before the structural txn is sequenced.
      */
     @Test
+    public void testDurableAppendsMoveTheDurableFrontierAdaptiveW0() throws Exception {
+        assertDurableAppendsMoveTheDurableFrontier("adaptive", "0");
+    }
+
+    @Test
+    public void testDurableAppendsMoveTheDurableFrontierGroupCommit() throws Exception {
+        assertDurableAppendsMoveTheDurableFrontier("adaptive", String.valueOf(WINDOW_US));
+    }
+
+    @Test
+    public void testDurableAppendsMoveTheDurableFrontierNosync() throws Exception {
+        assertDurableAppendsMoveTheDurableFrontier("nosync", "0");
+    }
+
+    @Test
+    public void testDurableAppendsMoveTheDurableFrontierSync() throws Exception {
+        assertDurableAppendsMoveTheDurableFrontier("sync", "0");
+    }
+
+    @Test
     public void testStructuralChangeFlushesPendingFirst() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
@@ -1344,6 +1364,40 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
      * compares {@code now - pendingSince >= W}; the WalPurgeJob's broad sweep includes the adaptive
      * group-commit flush of idle writers).
      */
+    private void assertDurableAppendsMoveTheDurableFrontier(String commitMode, String groupWindow) throws Exception {
+        // In a mode that promises durability, every record is covered by the frontier once its statement returns,
+        // whatever kind of record it is. NOSYNC does not track the frontier.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, groupWindow);
+        final boolean tracked = !"nosync".equals(commitMode);
+        assertMemoryLeak(() -> {
+            final TableSequencerAPI sequencerAPI = engine.getTableSequencerAPI();
+            execute("create table x (ts timestamp, x int, y int) timestamp(ts) partition by day wal");
+            for (String sql : new String[]{
+                    "insert into x values (1, 1, 1)",
+                    "alter table x add column z int",
+                    "update x set y = 2",
+                    "truncate table x",
+                    "create view v as (select ts, x from x)",
+                    "alter view v as (select ts, y from x)"
+            }) {
+                execute(sql);
+                final TableToken token = engine.verifyTableName(sql.contains(" view ") ? "v" : "x");
+                final long frontier = sequencerAPI.getTxnTracker(token).getLocalDurableSeqTxn();
+                final long lastTxn = sequencerAPI.lastTxn(token);
+                if (tracked) {
+                    // Txn 0 is the creation, which is not a record of the log.
+                    Assert.assertTrue(
+                            commitMode + ": " + sql + " left txn " + lastTxn + " past the durable frontier " + frontier,
+                            lastTxn == 0 || frontier >= lastTxn
+                    );
+                } else {
+                    Assert.assertEquals(commitMode + ": " + sql, -1, frontier);
+                }
+            }
+        });
+    }
+
     static class ExposedWalPurgeJob extends WalPurgeJob {
         ExposedWalPurgeJob(io.questdb.cairo.CairoEngine engine) {
             super(engine);

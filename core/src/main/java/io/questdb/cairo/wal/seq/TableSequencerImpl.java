@@ -52,6 +52,7 @@ import java.util.concurrent.locks.ReadWriteLock;
 
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 import static io.questdb.cairo.wal.WalUtils.WAL_INDEX_FILE_NAME;
+import static io.questdb.cairo.wal.seq.TableTransactionLogFile.STRUCTURAL_CHANGE_WAL_ID;
 
 public class TableSequencerImpl implements TableSequencer {
     private static final Log LOG = LogFactory.getLog(TableSequencerImpl.class);
@@ -408,6 +409,10 @@ public class TableSequencerImpl implements TableSequencer {
             // From sequencer perspective metadata version is the same as column structure version
             if (metadata.getMetadataVersion() == expectedStructureVersion) {
                 final long timestamp = microClock.getTicks();
+                final int commitMode = engine.getConfiguration().getCommitMode();
+                final boolean isDurableMode = commitMode == CommitMode.ADAPTIVE || commitMode == CommitMode.SYNC;
+                // Orphaned pins registered by now are covered by the flushes of this change.
+                final long orphanSweepMark = isDurableMode ? seqTxnTracker.snapshotOrphanSweepMark() : 0;
                 tableTransactionLog.beginMetadataChangeEntry(
                         expectedStructureVersion + 1, alterCommandWalFormatter, change, timestamp);
 
@@ -429,6 +434,10 @@ public class TableSequencerImpl implements TableSequencer {
                 // TableToken can become updated as a result of alter.
                 tableToken = metadata.getTableToken();
                 txn = tableTransactionLog.endMetadataChangeEntry();
+                // The change flushed the whole log; under group commit the frontier still waits for earlier pins.
+                if (isDurableMode && !seqTxnTracker.isDurableFrontierFenced()) {
+                    seqTxnTracker.markWriterDurable(STRUCTURAL_CHANGE_WAL_ID, orphanSweepMark, txn);
+                }
 
                 if (!seqTxnTracker.isSuspended()) {
                     notifyTxnCommitted(txn);
@@ -614,6 +623,11 @@ public class TableSequencerImpl implements TableSequencer {
         if (effectiveMode == io.questdb.cairo.CommitMode.ADAPTIVE
                 && engine.getConfiguration().getAdaptiveCommitGroupWindowUs() > 0) {
             seqTxnTracker.registerWriterPending(walId, txn);
+        } else if (effectiveMode == CommitMode.ADAPTIVE || effectiveMode == CommitMode.SYNC) {
+            // The append flushed the log itself, and a writer's private files are flushed before it sequences.
+            if (!seqTxnTracker.isDurableFrontierFenced()) {
+                seqTxnTracker.setLocalDurableSeqTxn(txn);
+            }
         }
         return txn;
     }
