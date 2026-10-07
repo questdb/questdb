@@ -30,6 +30,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.griffin.engine.functions.ColumnwiseFunction;
@@ -47,6 +48,7 @@ import io.questdb.griffin.engine.functions.columns.FloatColumn;
 import io.questdb.griffin.engine.functions.columns.IntColumn;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.griffin.engine.functions.columns.ShortColumn;
+import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
@@ -166,6 +168,8 @@ public final class GroupByBatchKernels implements QuietCloseable, Mutable {
     private final long[] nodeEpochs;
     private final boolean[] nodeOk;
     private final Program program;
+    // the block a projection's batch reads its columns from, see ofBlock(); null for a frame batch
+    private RecordBlock block;
     private long epoch;
     // Batches an aggregate took with its kernel, batches it had to take the row path for, frames
     // the reducer kept wholly on the row path, and rows passed to of(). Plain counters: one
@@ -228,6 +232,58 @@ public final class GroupByBatchKernels implements QuietCloseable, Mutable {
             return null;
         }
         return program;
+    }
+
+    /**
+     * Compiles the computed columns of a projection, evaluated over the rows of a
+     * {@link RecordBlock} (see {@link #ofBlock}): every column whose function returns INT, LONG,
+     * FLOAT or DOUBLE and is a tree this class has loops for, over columns of the projection's base.
+     * Its values are then {@link #prepare(int)}'s single argument, dense, one per block row, each the
+     * value the function's getter returns for that row.
+     *
+     * @param functions      the projection's functions, one per column
+     * @param baseColumnBase the index the functions' column references give the base's first
+     *                       column; a reference below it, to another projected column, keeps the
+     *                       function on the row path
+     * @param capacity       the most rows a block passed to {@link #ofBlock} holds
+     * @return the evaluator, or null when no column has a kernel or its buffers would exceed
+     * {@link #getMaxScratchBytes()}
+     */
+    public static @Nullable GroupByBatchKernels compileProjection(ObjList<Function> functions, int baseColumnBase, int capacity) {
+        final Compiler compiler = new Compiler();
+        compiler.columnBase = baseColumnBase;
+        final int functionCount = functions.size();
+        final Node[][] argNodes = new Node[functionCount][];
+        int kernelCount = 0;
+        for (int i = 0; i < functionCount; i++) {
+            Function f = functions.getQuick(i);
+            // a memoizer returns its argument's value
+            while (f instanceof MemoizerFunction mf) {
+                f = mf.getArg();
+            }
+            final int type = ColumnType.tagOf(f.getType());
+            if (f instanceof ColumnFunction || f.isConstant() || f.isRuntimeConstant()
+                    || (type != ColumnType.INT && type != ColumnType.LONG && type != ColumnType.FLOAT && type != ColumnType.DOUBLE)) {
+                continue;
+            }
+            final Node node = compiler.compileOrDrop(f, type);
+            if (node != null) {
+                argNodes[i] = new Node[]{node};
+                kernelCount++;
+            }
+        }
+        if (kernelCount == 0) {
+            return null;
+        }
+        final Program program = compiler.finish(functions, argNodes, kernelCount, capacity);
+        if (program.scratchBytes > maxScratchBytes) {
+            return null;
+        }
+        final Function[] constants = new Function[compiler.constantCount];
+        for (int i = 0; i < constants.length; i++) {
+            constants[i] = compiler.constantFunctions.getQuick(i);
+        }
+        return new GroupByBatchKernels(program, constants);
     }
 
     /**
@@ -347,6 +403,32 @@ public final class GroupByBatchKernels implements QuietCloseable, Mutable {
         this.rows = mode == MODE_ROWS ? rowsAddr : 0;
         // packed entries are decoded into frame row indexes once per batch, on the first load
         this.rowsDecoded = mode != MODE_PACKED;
+        this.kernelRowCount += rowCount;
+        this.block = null;
+    }
+
+    /**
+     * Starts a batch over a block's rows, for an evaluator made by {@link #compileProjection}.
+     * Column {@code c} of a function is the block's column {@code c - baseColumnBase}; a column the
+     * block does not lay out at its type's size, gathered by the block's own row indexes, makes the
+     * functions reading it take the row path for this batch.
+     *
+     * @param rowCount the block's rows to evaluate, at most {@link #getCapacity()}
+     */
+    public void ofBlock(RecordBlock block, int rowCount) {
+        assert rowCount <= program.capacity;
+        if (scratchAddr == 0) {
+            allocateScratch();
+        }
+        this.epoch++;
+        this.block = block;
+        this.record = null;
+        this.rowsAddr = block.getRowIndexesAddress();
+        this.mode = rowsAddr == 0 ? MODE_RANGE : MODE_ROWS;
+        this.lo = 0;
+        this.rowCount = rowCount;
+        this.rows = rowsAddr;
+        this.rowsDecoded = true;
         this.kernelRowCount += rowCount;
     }
 
@@ -775,7 +857,16 @@ public final class GroupByBatchKernels implements QuietCloseable, Mutable {
     }
 
     private boolean column(Node node, long out) {
-        final long addr = record.getPageAddress(node.columnIndex);
+        final long addr;
+        if (block != null) {
+            // in the block's layout: values at the column type's size, at the batch's rows
+            final long a = block.getColumnAddress(node.columnIndex);
+            addr = a != 0
+                    && block.getColumnStride(node.columnIndex) == ColumnType.sizeOf(node.op)
+                    && block.getColumnRowIndexesAddress(node.columnIndex) == rowsAddr ? a : 0;
+        } else {
+            addr = record.getPageAddress(node.columnIndex);
+        }
         if (addr == 0) {
             // A column top or a converted column: PageFrameMemoryRecord reads these through its
             // typed getters, so the aggregate takes the row path for this batch.
@@ -1452,11 +1543,15 @@ public final class GroupByBatchKernels implements QuietCloseable, Mutable {
     // Builds a Program: compiles the aggregates' argument trees into an interned node graph and
     // records the walk.
     private static final class Compiler {
+        private final ObjList<Function> constantFunctions = new ObjList<>();
         private final ObjList<Node> nodes = new ObjList<>();
         private final IntList visitArity = new IntList();
         private final ObjList<Class<?>> visitClasses = new ObjList<>();
         private final IntList visitColumns = new IntList();
         private final IntList visitConstants = new IntList();
+        // a column reference's index that is the first column the evaluator loads: a reference
+        // below it has no column to load (see compileProjection())
+        private int columnBase;
         private int constantCount;
 
         private @Nullable Node compile(Function f, int getterType) {
@@ -1472,6 +1567,7 @@ public final class GroupByBatchKernels implements QuietCloseable, Mutable {
                     return null;
                 }
                 visitConstants.setQuick(visit, constantCount);
+                constantFunctions.extendAndSet(constantCount, f);
                 final Node node = new Node(KIND_CONSTANT, getterType, 0, -1, constantCount++, null, null);
                 nodes.add(node);
                 return node;
@@ -1484,7 +1580,10 @@ public final class GroupByBatchKernels implements QuietCloseable, Mutable {
             final Node node;
             if (clazz == IntColumn.class || clazz == LongColumn.class || clazz == FloatColumn.class
                     || clazz == DoubleColumn.class || clazz == ShortColumn.class || clazz == ByteColumn.class) {
-                final int columnIndex = ((ColumnFunction) f).getColumnIndex();
+                if (((ColumnFunction) f).getColumnIndex() < columnBase) {
+                    return null;
+                }
+                final int columnIndex = ((ColumnFunction) f).getColumnIndex() - columnBase;
                 visitColumns.setQuick(visit, columnIndex);
                 if (getterType != nativeType
                         && columnConvertSupported(nativeType, getterType)
@@ -1549,6 +1648,23 @@ public final class GroupByBatchKernels implements QuietCloseable, Mutable {
             return intern(KIND_CONVERT, getterType, nativeType, -1, node, null);
         }
 
+        // compile(), dropping what a failed compile added
+        private @Nullable Node compileOrDrop(Function f, int getterType) {
+            final int nodeCount = nodes.size();
+            final int visitCount = visitClasses.size();
+            final int savedConstantCount = constantCount;
+            final Node node = compile(f, getterType);
+            if (node == null) {
+                nodes.setPos(nodeCount);
+                visitClasses.setPos(visitCount);
+                visitConstants.setPos(visitCount);
+                visitColumns.setPos(visitCount);
+                visitArity.setPos(visitCount);
+                constantCount = savedConstantCount;
+            }
+            return node;
+        }
+
         private Node @Nullable [] compileKernel(GroupByFunction function) {
             if (!supportsKernel(function)) {
                 return null;
@@ -1575,7 +1691,7 @@ public final class GroupByBatchKernels implements QuietCloseable, Mutable {
             return argNodes;
         }
 
-        private Program finish(ObjList<GroupByFunction> functions, Node[][] argNodes, int kernelCount, int capacity) {
+        private Program finish(ObjList<? extends Function> functions, Node[][] argNodes, int kernelCount, int capacity) {
             final Node[] nodeArray = new Node[nodes.size()];
             // the head of the block holds the decoded row indexes of a keyed batch
             long offset = (long) capacity << 3;

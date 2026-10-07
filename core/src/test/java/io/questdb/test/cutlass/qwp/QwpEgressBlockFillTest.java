@@ -79,6 +79,20 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
             "avg(asize + bsize) over (partition by sym rows between 4 preceding and current row) size " +
             "from q where sym in ('A', 'B', 'C1', 'C2', 'C3', 'C5', 'C8', 'D') order by sym";
 
+    // idx 3, 9, 18 and 19's shapes over every type: JIT and Java filters, LIMITs, a selective one
+    private static final String[] FILTER_SQLS = {
+            "select * from at where l > 5000",
+            "select * from at where 0 < l and 0 < db and i < 2147483647",
+            "select s, ts, db, f, i, s2, b from at where s in ('k1', 'k7', 'k9') and 20 < i + by",
+            "select * from at where v like '%3%'",
+            "select * from at where l % 97 = 0",
+            "select * from at where l > 5000 limit 3000",
+            "select * from at where l > 5000 limit 13, 7013",
+            "select * from at where l < 0",
+    };
+
+    // whether every query of an exchange must fail, rather than none
+    private boolean errorExpected;
     private QwpEgressMetrics metrics;
 
     @Before
@@ -91,6 +105,7 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
     @After
     public void resetBlockFill() {
         QwpEgressUpgradeProcessor.DEBUG_DISABLE_BLOCK_FILL = false;
+        errorExpected = false;
     }
 
     @Test
@@ -107,6 +122,33 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
                 };
                 assertBlockFillMatchesRowFill(sqls, "?qwp_max_batch_rows=1000", 0, -1);
                 assertBlockFillMatchesRowFill(sqls, "", 0, -1);
+            }
+        });
+    }
+
+    @Test
+    public void testAsyncFilter() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = start(filterEnv())) {
+                createAllTypes(serverMain, 20_000);
+                assertPlanContains(serverMain, "select * from at where l > 5000", "Async JIT Filter");
+                assertPlanContains(serverMain, "select * from at where v like '%3%'", "Async Filter");
+                assertBlockFillMatchesRowFill(FILTER_SQLS, "?qwp_max_batch_rows=1000", 0, -1);
+                assertBlockFillMatchesRowFill(FILTER_SQLS, "", 0, -1);
+            }
+        });
+    }
+
+    @Test
+    public void testAsyncFilterOverParquet() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = start(filterEnv())) {
+                createAllTypes(serverMain, 20_000);
+                // Parquet partitions, the filter's columns decoded first and the rest for the selected
+                // rows only (late materialization), and a native partition left between them
+                serverMain.execute("alter table at convert partition to parquet where ts < '1970-01-04' or (ts >= '1970-01-05' and ts < '1970-01-07')");
+                assertBlockFillMatchesRowFill(FILTER_SQLS, "?qwp_max_batch_rows=1000", 0, -1);
+                assertBlockFillMatchesRowFill(FILTER_SQLS, "", 0, -1);
             }
         });
     }
@@ -131,6 +173,26 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testBudgetStopOnLastRowOfRowByRowWindow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // two SYMBOL columns of all-new keys, padded so that with the smallest send buffer the
+            // dictionary budget stops the row fill on the 512th row of a batch: the last row of a
+            // 64-row row-by-row window of the block fill
+            try (TestServerMain serverMain = start(
+                    "QDB_HTTP_SEND_BUFFER_SIZE", "163840",
+                    PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS.getEnvVarName(), "100000")) {
+                serverMain.execute("create table sy2 (a symbol capacity 262144, b symbol capacity 262144, n long, ts timestamp) " +
+                        "timestamp(ts) partition by YEAR BYPASS WAL");
+                serverMain.execute("insert into sy2 select rpad('a' || x, 95, '.'), rpad('b' || x, 95, '-'), x, " +
+                        "(x * 1000000)::timestamp from long_sequence(60000)");
+                final long splits = metrics.batchOverflowSplitCount();
+                assertBlockFillMatchesRowFill(new String[]{"select a, b, n from sy2 where n % 3 <> 1", "select a, b, n + 1 from sy2"}, "", 0, -1);
+                Assert.assertTrue("the dictionary budget must have split batches", metrics.batchOverflowSplitCount() > splits);
+            }
+        });
+    }
+
+    @Test
     public void testCancelMidStream() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = start(windowEnv())) {
@@ -141,6 +203,12 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
                 assertBlockFillMatchesRowFill(new String[]{WINDOW_SQL, WINDOW_SQL}, "?qwp_max_batch_rows=500", 1, 0);
                 assertBlockFillMatchesRowFill(new String[]{"select * from at limit 4000", "select * from at limit 4000"},
                         "?qwp_max_batch_rows=500", 1, 0);
+                // a filter and a projection over it, cancelled while workers hold frames
+                final String filtered = "select ts, (db + l) / 2 mid, s, l from at where l > 50";
+                assertBlockFillMatchesRowFill(new String[]{filtered, filtered}, "?qwp_max_batch_rows=500", 1, 0);
+                // an index scan, its rows read ahead of the cursor when the cancel lands
+                assertBlockFillMatchesRowFill(new String[]{"select * from q where sym = 'A'", "select * from q where sym = 'A'"},
+                        "?qwp_max_batch_rows=300", 1, 0);
             }
         });
     }
@@ -176,7 +244,8 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
                 createAllTypes(serverMain, 5_000);
                 final long suspensions = metrics.creditSuspensionsCount();
                 // a small initial credit, topped up by each batch's size as the client reads it
-                assertBlockFillMatchesRowFill(new String[]{WINDOW_SQL, "select * from at limit 5000"}, "?qwp_max_batch_rows=300", 4096, -1);
+                assertBlockFillMatchesRowFill(new String[]{WINDOW_SQL, "select * from at limit 5000",
+                        "select * from at where l > 50", "select * from q where sym = 'B'"}, "?qwp_max_batch_rows=300", 4096, -1);
                 Assert.assertTrue("the streams must have parked on credit", metrics.creditSuspensionsCount() > suspensions);
             }
         });
@@ -187,15 +256,131 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = start(smallFrames())) {
                 createAllTypes(serverMain, 5_000);
-                // none of these cursors offers blocks: a filter, a backward scan and a sort, each
-                // also under a LIMIT; they must stream as before, row by row
+                // none of these cursors offers blocks: a backward scan, filtered or not, a sort, a
+                // filter's negative LIMIT and a projection computing a SYMBOL; they must stream as
+                // before, row by row
                 final String[] sqls = {
-                        "select * from at where l > 5000",
-                        "select * from at where l > 5000 limit 1000, 3000",
+                        "select * from at where l > 5000 order by ts desc",
                         "select * from at order by ts desc limit 4000",
                         "select s, l from at order by l limit -3000",
+                        "select * from at where l > 5000 limit -1000",
+                        "select v::symbol vs, l from at where l > 100",
                 };
                 assertBlockFillMatchesRowFill(sqls, "?qwp_max_batch_rows=700", 0, -1, false);
+            }
+        });
+    }
+
+    @Test
+    public void testHashJoinLightAndWindowMinMaxFilter() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = start(filterEnv())) {
+                serverMain.execute("create table t as (select timestamp_sequence(0, 10000000) ts, rnd_symbol('A', 'B', 'C', null) ex, " +
+                        "rnd_symbol(40, 1, 3, 5) sym, rnd_varchar('p', 'q', 'r', null) v, " +
+                        "case when x % 37 = 0 then null else ((x * 7919) % 13)::float / 4 end size, " +
+                        "case when x % 41 = 0 then null else ((x * 31) % 17) / 3.0 end price, x " +
+                        "from long_sequence(20000)) timestamp(ts) partition by day BYPASS WAL");
+                final String c = "ts, ex, sym, v, size, price, x";
+                // idx 59 and 70: Manual Opt's semi-joins, and the plain window forms
+                final String mo59 = "select t.ts, t.ex, t.sym, t.v, t.size, t.price, t.x from t t " +
+                        "join (select ex mex, sym msym, min(size) min_size from t) m on t.ex = m.mex and t.sym = m.msym and t.size = m.min_size";
+                final String mo70 = "select " + c + " from t join (select sym msym, min(price) min_price from t) m on t.sym = m.msym where price = min_price";
+                final String slave = "select t.ts, m.msym, t.price, m.min_price, t.x from t join (select sym msym, min(price) min_price from t) m " +
+                        "on t.sym = m.msym where price = min_price";
+                final String w59 = "select " + c + " from (select " + c + " from (select " + c + ", min(size) over (partition by ex, sym) min_size from t) where size = min_size)";
+                final String w70 = "select " + c + " from (select " + c + " from (select " + c + ", min(price) over (partition by sym) min_price from t) where price = min_price)";
+                final String windowColumns = "select " + c + ", mn, mx from (select " + c + ", min(price) over (partition by sym, v) mn, " +
+                        "max(price) over (partition by sym, v) mx from t) where price = mn or price = mx";
+                for (String sql : new String[]{mo59, mo70, slave}) {
+                    assertPlanContains(serverMain, sql, "Async Hash Join Light");
+                }
+                for (String sql : new String[]{w59, w70, windowColumns}) {
+                    assertPlanContains(serverMain, sql, "Async Window Min/Max Filter");
+                }
+                final String[] sqls = {mo59, mo70, slave, w59, w70, windowColumns, mo59 + " limit 5, 700"};
+                assertBlockFillMatchesRowFill(sqls, "?qwp_max_batch_rows=99", 0, -1);
+                assertBlockFillMatchesRowFill(sqls, "", 0, -1);
+            }
+        });
+    }
+
+    @Test
+    public void testIndexFilterErrorAfterDictionarySplits() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = start(
+                    "QDB_HTTP_SEND_BUFFER_SIZE", "163840",
+                    PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS.getEnvVarName(), "100000")) {
+                for (String indexType : new String[]{"posting", "bitmap"}) {
+                    serverMain.execute("drop table if exists fe");
+                    serverMain.execute("create table fe (s symbol index type " + indexType + ", s2 symbol capacity 65536, v varchar, " +
+                            "x long, ts timestamp) timestamp(ts) partition by YEAR BYPASS WAL");
+                    // a new long SYMBOL value per row: the dictionary budget splits the batches; the
+                    // filter's implicit cast fails on x = 9001 alone
+                    serverMain.execute("insert into fe select 'k' || (x % 3), rpad('z' || x, 150, '.'), " +
+                            "case when x = 9001 then 'bad' else '1970-01-01' end, x, (x * 1000000)::timestamp from long_sequence(12000)");
+                    final String[] sqls = {"select s, s2, x from fe where s = 'k1' and ts > v"};
+                    assertPlanContains(serverMain, sqls[0], "Index forward scan on: s");
+                    // the row fill ships the batches before the failing row, then the error; the block
+                    // fill must not read ahead into the error before them
+                    errorExpected = true;
+                    final long splits = metrics.batchOverflowSplitCount();
+                    assertBlockFillMatchesRowFill(sqls, "", 0, -1);
+                    Assert.assertTrue("the dictionary budget must have split batches", metrics.batchOverflowSplitCount() > splits);
+                    errorExpected = false;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testIndexScans() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = start(smallFrames())) {
+                createIndexedTable(serverMain);
+                final String[] sqls = {
+                        // idx 5, 6, 10, 16's shapes
+                        "select * from ix where s = 'k7' and ts in '1970-01-03'",
+                        "select * from ix where s = 'k7'",
+                        "select ts, (d + l) / 2 mid from ix where s = 'k3'",
+                        "select s, ts, d, f, i, s2, b from ix where s = 'k5'",
+                        "select * from ix where s in ('k1', 'k7', 'k11')",
+                        "select * from ix where s = 'k7' limit 17, 120",
+                        "select * from ix where s = null",
+                };
+                assertPlanContains(serverMain, sqls[1], "Index forward scan on: s");
+                assertBlockFillMatchesRowFill(sqls, "?qwp_max_batch_rows=50", 0, -1);
+                assertBlockFillMatchesRowFill(sqls, "", 0, -1);
+            }
+        });
+    }
+
+    @Test
+    public void testLatestOnIndexedScans() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = start(smallFrames())) {
+                for (String indexType : new String[]{"posting", "bitmap"}) {
+                    serverMain.execute("drop table if exists lb");
+                    serverMain.execute("create table lb (s symbol index type " + indexType + ", s2 symbol, i int, d double, ts timestamp) " +
+                            "timestamp(ts) partition by DAY BYPASS WAL");
+                    serverMain.execute("insert into lb select case when x % 17 = 0 then null else 'k' || (x % 13) end, 'z' || (x % 5), " +
+                            "x::int, x * 1.5, (x * 900000000)::timestamp from long_sequence(1500)");
+                    final String[] sqls = {
+                            // the row cursor of one value's latest row ends the scan with NoMoreFramesException
+                            "select * from lb where s = 'k7' latest on ts partition by s",
+                            "select ts, s, d + i, s2 from lb where s = 'k7' latest on ts partition by s",
+                            "select * from lb latest by s where s = 'k3'",
+                            "select * from lb where s = 'k99' latest on ts partition by s",
+                            "select * from lb where s = 'k7' and i > 10 latest on ts partition by s",
+                            "select * from lb where s in ('k1', 'k7', 'k11') latest on ts partition by s",
+                            "select * from lb latest on ts partition by s",
+                            "select * from lb latest on ts partition by s, s2",
+                            // and an index scan that offers blocks, on the same connection
+                            "select * from lb where s = 'k7'",
+                    };
+                    assertPlanContains(serverMain, sqls[0], "Index backward scan on: s");
+                    assertBlockFillMatchesRowFill(sqls, "?qwp_max_batch_rows=50", 0, -1);
+                    assertBlockFillMatchesRowFill(sqls, "", 0, -1);
+                }
             }
         });
     }
@@ -226,6 +411,38 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
                 final long splits2 = metrics.batchOverflowSplitCount();
                 assertBlockFillMatchesRowFill(new String[]{"select n, a, d from sy limit 100000"}, "", 0, -1);
                 Assert.assertTrue("the dictionary budget must have split batches", metrics.batchOverflowSplitCount() > splits2);
+                // the same over a filter's gathered rows, and a projection over it
+                final long splits3 = metrics.batchOverflowSplitCount();
+                assertBlockFillMatchesRowFill(new String[]{"select * from sy where n % 3 <> 1", "select b, n + 1, a from sy where d > 100"}, "", 0, -1);
+                Assert.assertTrue("the dictionary budget must have split batches", metrics.batchOverflowSplitCount() > splits3);
+                final long splits4 = metrics.batchOverflowSplitCount();
+                assertBlockFillMatchesRowFill(new String[]{"select n, a, d * 2 from sy where n % 5 <> 0"}, "", 0, -1);
+                Assert.assertTrue("the dictionary budget must have split batches", metrics.batchOverflowSplitCount() > splits4);
+            }
+        });
+    }
+
+    @Test
+    public void testProjections() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = start(filterEnv())) {
+                createAllTypes(serverMain, 20_000);
+                final String[] sqls = {
+                        // idx 11 and 13's shapes: an expression over a filter, and over a selection
+                        "select ts, (db + l) / 2 mid from at where s = 'k7'",
+                        "select ts, (db + f) / 2 mid from (select * from at where s = 'k7')",
+                        // idx 17's: a selection over a filter
+                        "select s, ts, db, f, i, s2, ch, ip from at where l > 50",
+                        // memoized aliases, computed columns of other types, a plain scan below
+                        "select l + 1 a, a * 2 a2, a - 3 a3, s, ts from at where l > 100",
+                        "select a, a * 2 a2, a - 3 a3, s from (select l + i a, s, ts from at where l > 100)",
+                        "select s, s2, l256, v, i * 2, g6, dc128 from at where l > 100",
+                        "select case when b then s else s2 end cs, l from at where l > 100",
+                        "select l + 1, s, ts, d from at",
+                        "select ts, (db + l) / 2 mid, s from at where l > 5000 limit 10, 4000",
+                };
+                assertBlockFillMatchesRowFill(sqls, "?qwp_max_batch_rows=1000", 0, -1);
+                assertBlockFillMatchesRowFill(sqls, "", 0, -1);
             }
         });
     }
@@ -366,6 +583,19 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
                 + " from long_sequence(" + rows + ")");
     }
 
+    private static void createIndexedTable(TestServerMain serverMain) {
+        serverMain.execute("create table ix (ts timestamp, x long) timestamp(ts) partition by DAY BYPASS WAL");
+        serverMain.execute("insert into ix select (x * 30000000)::timestamp, x from long_sequence(1000)");
+        // the first rows are column tops of the columns added here
+        serverMain.execute("alter table ix add column s symbol index type posting, b boolean, sh short, i int, " +
+                "f float, d double, l long, s2 symbol, u uuid, v varchar");
+        serverMain.execute("insert into ix select ((x + 1000) * 30000000)::timestamp, x, " +
+                "case when x % 17 = 0 then null else 'k' || (x % 13) end, x % 3 = 0, (x % 999)::short, " +
+                "case when x % 11 = 0 then null else x::int end, case when x % 4 = 0 then null else (x / 3.0)::float end, " +
+                "case when x % 7 = 0 then null else x * 1.5 end, case when x % 5 = 0 then null else x * 1000003 end, " +
+                "'z' || (x % 7), rnd_uuid4(), 'v' || x from long_sequence(15000)");
+    }
+
     private static void createWindowTable(TestServerMain serverMain) {
         // keys A and B above max.key.rows, the C keys small, NULL keys too
         serverMain.execute("create table q (sym symbol index type posting, ex symbol, b boolean, by byte, sh short, ch char, " +
@@ -383,6 +613,14 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
     private static String describe(List<byte[]> frames, int index) {
         final byte[] f = frames.get(index);
         return "frame " + index + " of " + frames.size() + ", kind 0x" + Integer.toHexString(f[QwpConstants.HEADER_SIZE] & 0xFF) + ", " + f.length + " bytes";
+    }
+
+    private static String[] filterEnv() {
+        return new String[]{
+                PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS.getEnvVarName(), "1000",
+                PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS.getEnvVarName(), "64",
+                PropertyKey.SHARED_QUERY_WORKER_COUNT.getEnvVarName(), "2",
+        };
     }
 
     private static String[] smallFrames() {
@@ -490,7 +728,7 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
                     }
                     frames.add(frame);
                     if (kind == QwpEgressMsgKind.RESULT_END || kind == QwpEgressMsgKind.QUERY_ERROR) {
-                        Assert.assertEquals("only a cancelled query may fail", cancel, kind == QwpEgressMsgKind.QUERY_ERROR);
+                        Assert.assertEquals("only a cancelled query may fail", cancel || errorExpected, kind == QwpEgressMsgKind.QUERY_ERROR);
                         break;
                     }
                     if (kind == QwpEgressMsgKind.RESULT_BATCH) {

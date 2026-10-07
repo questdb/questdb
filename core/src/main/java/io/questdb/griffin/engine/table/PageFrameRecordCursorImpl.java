@@ -41,12 +41,22 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.Nullable;
 
 // Final: peekRecordBlock() exposes the frames' column memory as the rows hasNext() returns. A
 // subclass that changed the rows in hasNext() or getRecord() would offer blocks that bypass it.
+//
+// Blocks: a plain forward scan offers the rest of a native frame as consecutive rows. A scan whose
+// row cursor walks an index offers the frame's next rows as a list of row indexes: peekRecordBlock()
+// reads them ahead from the row cursor into pendingRows, and hasNext() returns the rows read ahead
+// before it asks the row cursor for more. What the row cursor throws while read ahead is kept and
+// thrown by hasNext() once it has returned the rows before it: the row-by-row read meets it there.
 public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     private final boolean entityCursor;
     private final Function filter;
@@ -59,6 +69,13 @@ public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCurs
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isExhausted;
     private long maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
+    // index scans: what the row cursor threw while peekRecordBlock() read ahead, after the rows in
+    // pendingRows; hasNext() throws it once it has returned them, or null for none
+    private RuntimeException pendingError;
+    // index scans: the current frame's rows read ahead of hasNext() by peekRecordBlock(), the next
+    // one to return at pendingRowsPos
+    private DirectLongList pendingRows;
+    private long pendingRowsPos;
     private RowCursor rowCursor;
     private long rowsProducedSinceSkip;
 
@@ -111,6 +128,8 @@ public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCurs
     @Override
     public void close() {
         rowCursor = Misc.free(rowCursor);
+        clearPendingRows();
+        pendingRows = Misc.free(pendingRows);
         super.close();
     }
 
@@ -129,6 +148,20 @@ public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCurs
             if (rowsProducedSinceSkip >= maxRowsAfterSkip) {
                 isExhausted = true;
                 return false;
+            }
+            if (pendingRows != null && pendingRowsPos < pendingRows.size()) {
+                // a row peekRecordBlock() read ahead from the row cursor
+                frameMemoryPool.navigateTo(frameCount - 1, recordA);
+                recordA.setRowIndex(pendingRows.get(pendingRowsPos++));
+                rowsProducedSinceSkip++;
+                return true;
+            }
+            if (pendingError != null) {
+                // where the row cursor threw while read ahead: NoMoreFramesException ends the scan
+                // in the catch below, as it does when the row cursor throws it here
+                final RuntimeException e = pendingError;
+                pendingError = null;
+                throw e;
             }
             if (rowCursor != null && rowCursor.hasNext()) {
                 final int frameIndex = frameCount - 1;
@@ -179,32 +212,68 @@ public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCurs
     }
 
     /**
-     * The rest of a native frame of a plain forward scan: its rows are consecutive row indexes
-     * of the frame's column pages, read at the same addresses the record's getters read.
+     * A plain forward scan offers the rest of a native frame: its rows are consecutive row indexes
+     * of the frame's column pages, read at the same addresses the record's getters read. An index
+     * scan offers the frame's next rows, read ahead from its row cursor, as their row indexes.
      */
     @Override
     public RecordBlock peekRecordBlock(int maxRows) {
-        if (isExhausted || !(rowCursor instanceof PageFrameFwdRowCursor fwdCursor)) {
+        if (isExhausted || rowCursor == null) {
             return null;
         }
-        final long rows = Math.min(fwdCursor.remaining(), maxRowsAfterSkip - rowsProducedSinceSkip);
-        if (rows < 1) {
-            return null;
-        }
+        final long budget = maxRowsAfterSkip - rowsProducedSinceSkip;
         final int frameIndex = frameCount - 1;
-        if (frameIndex == blockRefusedFrameIndex) {
+        if (budget < 1 || frameIndex == blockRefusedFrameIndex) {
             return null;
         }
-        // the record's frame is the scan's current one, as hasNext() leaves it
-        frameMemoryPool.navigateTo(frameIndex, recordA);
-        if (recordA.getFrameFormat() != PartitionFormat.NATIVE) {
-            blockRefusedFrameIndex = frameIndex;
+        if (rowCursor instanceof PageFrameFwdRowCursor fwdCursor) {
+            final long rows = Math.min(fwdCursor.remaining(), budget);
+            if (rows < 1 || !isNativeFrame(frameIndex)) {
+                return null;
+            }
+            if (block == null) {
+                block = new FrameBlock();
+            }
+            block.of(fwdCursor.peekNext(), 0, (int) Math.min(rows, maxRows));
+            return block;
+        }
+        if (!rowCursorFactory.isUsingIndex() || !isNativeFrame(frameIndex)) {
+            return null;
+        }
+        // read the frame's next rows ahead, up to the most the consumer may take
+        final long wanted = Math.min(budget, maxRows);
+        if (pendingRows == null) {
+            pendingRows = new DirectLongList(Math.max(wanted, 16), MemoryTag.NATIVE_DEFAULT);
+        }
+        if (pendingRowsPos > 0) {
+            // the rows already returned go, the rest move to the list's start
+            final long left = pendingRows.size() - pendingRowsPos;
+            if (left > 0) {
+                Vect.memmove(pendingRows.getAddress(), pendingRows.getAddress() + pendingRowsPos * Long.BYTES, left * Long.BYTES);
+            }
+            pendingRows.setPos(left);
+            pendingRowsPos = 0;
+        }
+        if (pendingError == null) {
+            try {
+                while (pendingRows.size() < wanted && rowCursor.hasNext()) {
+                    pendingRows.add(rowCursor.next());
+                }
+            } catch (RuntimeException e) {
+                // NoMoreFramesException (a LATEST ON value's row cursor ends the scan with it), or
+                // the error of a filter the row cursor evaluates: either comes after the rows read
+                // so far, so hasNext() throws it once it has returned them, and not before
+                pendingError = e;
+            }
+        }
+        final long rows = Math.min(pendingRows.size(), wanted);
+        if (rows < 1) {
             return null;
         }
         if (block == null) {
             block = new FrameBlock();
         }
-        block.of(fwdCursor.peekNext(), (int) Math.min(rows, maxRows));
+        block.of(0, pendingRows.getAddress(), (int) rows);
         return block;
     }
 
@@ -227,6 +296,7 @@ public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCurs
         areCursorsPrepared = false;
         isExhausted = false;
         rowCursor = Misc.free(rowCursor);
+        clearPendingRows();
         maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
         rowsProducedSinceSkip = 0;
         blockRefusedFrameIndex = -1;
@@ -252,8 +322,12 @@ public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCurs
 
     @Override
     public void skipRecordBlock(int rowCount) {
-        assert rowCursor instanceof PageFrameFwdRowCursor;
-        ((PageFrameFwdRowCursor) rowCursor).skip(rowCount);
+        if (rowCursor instanceof PageFrameFwdRowCursor fwdCursor) {
+            fwdCursor.skip(rowCount);
+        } else {
+            assert pendingRows != null && pendingRowsPos + rowCount <= pendingRows.size();
+            pendingRowsPos += rowCount;
+        }
         rowsProducedSinceSkip += rowCount;
     }
 
@@ -346,12 +420,14 @@ public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCurs
     }
 
     /**
-     * A plain forward scan, the only one {@link #peekRecordBlock(int)} serves: its row cursors are
-     * {@link PageFrameFwdRowCursor}s, and it evaluates no filter.
+     * The scans {@link #peekRecordBlock(int)} serves: a plain forward scan, whose row cursors are
+     * {@link PageFrameFwdRowCursor}s, with no filter; and a scan whose row cursors walk an index,
+     * which apply any filter themselves, so that the rows they return are the ones to return.
      */
     @Override
     public boolean supportsRecordBlocks() {
-        return filter == null && rowCursorFactory instanceof PageFrameRowCursorFactory f && f.isForwardScan();
+        return (filter == null && rowCursorFactory instanceof PageFrameRowCursorFactory f && f.isForwardScan())
+                || rowCursorFactory.isUsingIndex();
     }
 
     @Override
@@ -365,11 +441,34 @@ public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCurs
             filter.toTop();
         }
         rowCursor = Misc.free(rowCursor);
+        clearPendingRows();
         isExhausted = false;
         maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
         rowsProducedSinceSkip = 0;
         blockRefusedFrameIndex = -1;
         super.toTop();
+    }
+
+    private void clearPendingRows() {
+        if (pendingRows != null) {
+            pendingRows.clear();
+        }
+        pendingRowsPos = 0;
+        pendingError = null;
+    }
+
+    /**
+     * Whether a frame is NATIVE, its rows in column pages a block can expose. Positions the record
+     * at the frame, as hasNext() leaves it; a frame found not to be is remembered, so that its rows
+     * do not each pay for a frame navigation.
+     */
+    private boolean isNativeFrame(int frameIndex) {
+        frameMemoryPool.navigateTo(frameIndex, recordA);
+        if (recordA.getFrameFormat() != PartitionFormat.NATIVE) {
+            blockRefusedFrameIndex = frameIndex;
+            return false;
+        }
+        return true;
     }
 
     private void prepareRowCursorFactory() {
@@ -380,8 +479,11 @@ public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCurs
     }
 
     private class FrameBlock implements RecordBlock {
+        // the first row's index, for consecutive rows
         private long firstRow;
         private int rowCount;
+        // the rows' indexes, or 0 for consecutive rows from firstRow
+        private long rowIndexes;
 
         @Override
         public long getColumnAddress(int columnIndex) {
@@ -402,7 +504,7 @@ public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCurs
 
         @Override
         public Record getRecordAt(int row) {
-            recordA.setRowIndex(firstRow + row);
+            recordA.setRowIndex(rowIndexes == 0 ? firstRow + row : Unsafe.getLong(rowIndexes + (long) row * Long.BYTES));
             return recordA;
         }
 
@@ -411,8 +513,14 @@ public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCurs
             return rowCount;
         }
 
-        void of(long firstRow, int rowCount) {
+        @Override
+        public long getRowIndexesAddress() {
+            return rowIndexes;
+        }
+
+        void of(long firstRow, long rowIndexes, int rowCount) {
             this.firstRow = firstRow;
+            this.rowIndexes = rowIndexes;
             this.rowCount = rowCount;
         }
     }

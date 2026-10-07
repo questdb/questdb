@@ -101,28 +101,47 @@ public class QwpResultBatchBufferBlockTest {
     };
 
     @Test
+    public void testGatheredRows() throws Exception {
+        // rows picked by index, as a filter's or an index scan's blocks list them, and a column
+        // laid out one value per block row, as a projection computes it
+        assertBlockFillMatchesRowFill(false, false, true);
+        assertBlockFillMatchesRowFill(true, true, true);
+    }
+
+    @Test
     public void testOneSymbolColumn() throws Exception {
-        assertBlockFillMatchesRowFill(false);
+        assertBlockFillMatchesRowFill(false, false, false);
     }
 
     @Test
     public void testTwoSymbolColumns() throws Exception {
-        assertBlockFillMatchesRowFill(true);
+        assertBlockFillMatchesRowFill(true, false, false);
     }
 
-    private static void assertBlockFillMatchesRowFill(boolean twoSymbols) throws Exception {
+    @Test
+    public void testTwoSymbolColumnsInMemory() throws Exception {
+        // both read from memory: column by column while their keys have connection ids, row by
+        // row from a new key on
+        assertBlockFillMatchesRowFill(true, true, false);
+    }
+
+    private static void assertBlockFillMatchesRowFill(boolean twoSymbols, boolean sym2InMemory, boolean gather) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final Rnd rnd = TestUtils.generateRandom(LOG);
             final ObjList<QwpEgressColumnDef> columns = columns(twoSymbols);
             final long data = Unsafe.malloc((long) ROWS * STRIDE, MemoryTag.NATIVE_DEFAULT);
+            // the data rows the result's rows are, in order
+            final long order = Unsafe.malloc((long) ROWS * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            final long dense = Unsafe.malloc((long) ROWS * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
             final long wireA = Unsafe.malloc(BUF_SIZE, MemoryTag.NATIVE_DEFAULT);
             final long wireB = Unsafe.malloc(BUF_SIZE, MemoryTag.NATIVE_DEFAULT);
             try {
                 final int[] stops = new int[2];
                 for (int iteration = 0; iteration < 200; iteration++) {
                     fill(data, rnd);
-                    final SyntheticRecord record = new SyntheticRecord(data);
-                    final SyntheticBlock block = new SyntheticBlock(data, record, twoSymbols);
+                    final int rows = order(order, gather, rnd);
+                    final SyntheticRecord record = new SyntheticRecord(data, order);
+                    final SyntheticBlock block = new SyntheticBlock(data, order, dense, record, twoSymbols, sym2InMemory, gather);
                     try (
                             QwpResultBatchBuffer rowBuffer = new QwpResultBatchBuffer();
                             QwpResultBatchBuffer blockBuffer = new QwpResultBatchBuffer();
@@ -130,7 +149,7 @@ public class QwpResultBatchBufferBlockTest {
                             QwpEgressConnSymbolDict blockDict = new QwpEgressConnSymbolDict()
                     ) {
                         int row = 0;
-                        for (int batch = 0; batch < 3 && row < ROWS; batch++) {
+                        for (int batch = 0; batch < 3 && row < rows; batch++) {
                             rowBuffer.beginBatch(columns, SYMBOL_TABLES, rowDict);
                             blockBuffer.beginBatch(columns, SYMBOL_TABLES, blockDict);
                             // a budget that new entries often pass, so fills stop all over, or one
@@ -140,9 +159,9 @@ public class QwpResultBatchBufferBlockTest {
                                 case 2 -> rnd.nextInt(3);
                                 default -> rnd.nextInt(400);
                             };
-                            int taken = fill(rowBuffer, blockBuffer, block, record, row, budget, rnd, stops);
+                            int taken = fill(rowBuffer, blockBuffer, block, record, row, rows, budget, rnd, stops);
                             row += taken;
-                            if (rnd.nextBoolean() && rowBuffer.getRowCount() > 1 && row < ROWS) {
+                            if (rnd.nextBoolean() && rowBuffer.getRowCount() > 1 && row < rows) {
                                 // a partial emit, then its suffix carried into the next fill
                                 final int k = 1 + rnd.nextInt(rowBuffer.getRowCount() - 1);
                                 assertEmitsMatch(rowBuffer, blockBuffer, k, batch == 0, wireA, wireB);
@@ -150,7 +169,7 @@ public class QwpResultBatchBufferBlockTest {
                                 blockBuffer.advanceStartRow(k);
                                 rowBuffer.advanceDeltaStart();
                                 blockBuffer.advanceDeltaStart();
-                                row += fill(rowBuffer, blockBuffer, block, record, row, Integer.MAX_VALUE, rnd, stops);
+                                row += fill(rowBuffer, blockBuffer, block, record, row, rows, Integer.MAX_VALUE, rnd, stops);
                             }
                             assertEmitsMatch(rowBuffer, blockBuffer, rowBuffer.getRowCount(), batch == 0, wireA, wireB);
                             rowBuffer.advanceStartRow(rowBuffer.getRowCount());
@@ -162,6 +181,8 @@ public class QwpResultBatchBufferBlockTest {
                 Assert.assertTrue("the budget must have stopped a block at its last row", stops[1] > 0);
             } finally {
                 Unsafe.free(data, (long) ROWS * STRIDE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(order, (long) ROWS * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(dense, (long) ROWS * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(wireA, BUF_SIZE, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(wireB, BUF_SIZE, MemoryTag.NATIVE_DEFAULT);
             }
@@ -221,6 +242,17 @@ public class QwpResultBatchBufferBlockTest {
         columns.add(def);
     }
 
+    // the result's rows: every data row, or, gathered, an ascending subset with gaps
+    private static int order(long order, boolean gather, Rnd rnd) {
+        int n = 0;
+        for (int r = 0; r < ROWS; r++) {
+            if (!gather || rnd.nextInt(5) < 3) {
+                Unsafe.putLong(order + 8L * n++, r);
+            }
+        }
+        return n;
+    }
+
     // random values, NULL in the first and last rows and here and there; symbol keys in runs
     private static void fill(long data, Rnd rnd) {
         int key = rnd.nextInt(SYMBOL_KEYS);
@@ -261,11 +293,12 @@ public class QwpResultBatchBufferBlockTest {
             SyntheticBlock block,
             SyntheticRecord record,
             int from,
+            int rows,
             int budget,
             Rnd rnd,
             int[] stops
     ) {
-        final int maxRows = Math.min(ROWS - from, 1 + rnd.nextInt(1500));
+        final int maxRows = Math.min(rows - from, 1 + rnd.nextInt(1500));
         int rowTaken = 0;
         while (rowTaken < maxRows) {
             rowBuffer.appendRow(record.of(from + rowTaken++));
@@ -297,29 +330,38 @@ public class QwpResultBatchBufferBlockTest {
         return rowTaken;
     }
 
-    // rows [firstRow, firstRow + rowCount) of the data; UUID and the second SYMBOL column are read
-    // through the record
+    // rows [firstRow, firstRow + rowCount) of the result: consecutive data rows, or, gathered, the
+    // data rows the order lists, with the DOUBLE column then copied one value per block row. UUID,
+    // and the second SYMBOL column unless in memory, are read through the record
     private static class SyntheticBlock implements RecordBlock {
         private final long data;
+        private final long dense;
+        private final boolean gather;
+        private final long order;
         private final SyntheticRecord record;
+        private final boolean sym2InMemory;
         private final boolean twoSymbols;
         private int firstRow;
         private int rowCount;
 
-        SyntheticBlock(long data, SyntheticRecord record, boolean twoSymbols) {
+        SyntheticBlock(long data, long order, long dense, SyntheticRecord record, boolean twoSymbols, boolean sym2InMemory, boolean gather) {
             this.data = data;
+            this.order = order;
+            this.dense = dense;
             this.record = record;
             this.twoSymbols = twoSymbols;
+            this.sym2InMemory = sym2InMemory;
+            this.gather = gather;
         }
 
         @Override
         public long getColumnAddress(int columnIndex) {
-            final long p = data + (long) firstRow * STRIDE;
+            final long p = gather ? data : data + Unsafe.getLong(order + 8L * firstRow) * STRIDE;
             return switch (columnIndex) {
                 case 0 -> p + OFF_SYM;
                 case 1 -> p + OFF_LONG;
                 case 2 -> p + OFF_TS;
-                case 3 -> p + OFF_DOUBLE;
+                case 3 -> gather ? dense : p + OFF_DOUBLE;
                 case 4 -> p + OFF_INT;
                 case 5 -> p + OFF_IPV4;
                 case 6 -> p + OFF_FLOAT;
@@ -327,17 +369,26 @@ public class QwpResultBatchBufferBlockTest {
                 case 8 -> p + OFF_CHAR;
                 case 9 -> p + OFF_BYTE;
                 case 10 -> p + OFF_BOOL;
+                case 12 -> {
+                    Assert.assertTrue(twoSymbols);
+                    yield sym2InMemory ? p + OFF_SYM2 : 0;
+                }
                 default -> {
-                    // UUID, and the second SYMBOL column: read through the record
-                    Assert.assertTrue(columnIndex == 11 || (twoSymbols && columnIndex == 12));
+                    // UUID: read through the record
+                    Assert.assertEquals(11, columnIndex);
                     yield 0;
                 }
             };
         }
 
         @Override
+        public long getColumnRowIndexesAddress(int columnIndex) {
+            return gather && columnIndex == 3 ? 0 : getRowIndexesAddress();
+        }
+
+        @Override
         public long getColumnStride(int columnIndex) {
-            return STRIDE;
+            return gather && columnIndex == 3 ? Double.BYTES : STRIDE;
         }
 
         @Override
@@ -351,18 +402,31 @@ public class QwpResultBatchBufferBlockTest {
             return rowCount;
         }
 
+        @Override
+        public long getRowIndexesAddress() {
+            return gather ? order + 8L * firstRow : 0;
+        }
+
         void of(int firstRow, int rowCount) {
             this.firstRow = firstRow;
             this.rowCount = rowCount;
+            if (gather) {
+                for (int r = 0; r < rowCount; r++) {
+                    final long p = data + Unsafe.getLong(order + 8L * (firstRow + r)) * STRIDE;
+                    Unsafe.putDouble(dense + 8L * r, Unsafe.getDouble(p + OFF_DOUBLE));
+                }
+            }
         }
     }
 
     private static class SyntheticRecord implements Record {
         private final long data;
+        private final long order;
         private long p;
 
-        SyntheticRecord(long data) {
+        SyntheticRecord(long data, long order) {
             this.data = data;
+            this.order = order;
         }
 
         @Override
@@ -442,8 +506,9 @@ public class QwpResultBatchBufferBlockTest {
             return Unsafe.getLong(p + OFF_TS);
         }
 
+        // the result's row
         SyntheticRecord of(int row) {
-            p = data + (long) row * STRIDE;
+            p = data + Unsafe.getLong(order + 8L * row) * STRIDE;
             return this;
         }
     }
