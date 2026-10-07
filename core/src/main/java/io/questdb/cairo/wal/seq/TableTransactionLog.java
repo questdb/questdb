@@ -26,6 +26,7 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.MemorySerializer;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.MemoryFCRImpl;
@@ -245,9 +246,12 @@ public class TableTransactionLog implements Closeable {
         fullSync();
         Unsafe.storeFence();
         long txn = lastTxn = txnLogFile.endMetadataChangeEntry();
-        // endMetadataChangeEntry publishes MAX_TXN after the pre-sync above. Flush that commit pointer too;
-        // otherwise an acknowledged idle structural ALTER can disappear on crash.
-        txnLogFile.fullSync();
+        // endMetadataChangeEntry publishes MAX_TXN after the pre-sync above. Under SYNC and ADAPTIVE flush that
+        // commit pointer too; otherwise an acknowledged idle structural ALTER can disappear on a power loss.
+        // NOSYNC and ASYNC promise nothing across a power loss.
+        if (CommitMode.isPowerLossDurable(configuration.getCommitMode())) {
+            txnLogFile.fullSync();
+        }
         maxMetadataVersion.incrementAndGet();
         return txn;
     }

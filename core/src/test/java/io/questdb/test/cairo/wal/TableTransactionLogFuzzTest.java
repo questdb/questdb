@@ -137,7 +137,7 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
 
             if (txnId == 0) {
                 assertEquals(sv, cursor.getStructureVersion());
-                assertEquals(i, cursor.getWalId());
+                assertEquals(i + 1, cursor.getWalId());
                 assertEquals(i + 1, cursor.getSegmentId());
                 assertEquals(i + 2, cursor.getSegmentTxn());
                 assertEquals(i + 123, cursor.getCommitTimestamp());
@@ -174,7 +174,8 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
 
     private void writeTxn(int txnId, int structureVersion, TableTransactionLogFile txnLogFile, int i) {
         if (txnId == 0) {
-            txnLogFile.addEntry(structureVersion, i, i + 1, i + 2, i + 123, 0, 0, 0);
+            // WAL ids start at 1: a V1 open reads a data record with WAL id 0 as a slot never written.
+            txnLogFile.addEntry(structureVersion, i + 1, i + 1, i + 2, i + 123, 0, 0, 0);
         } else {
             txnLogFile.beginMetadataChangeEntry(structureVersion, voidSerializer, null, i + 125);
             txnLogFile.endMetadataChangeEntry();

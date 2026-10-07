@@ -72,11 +72,6 @@ import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
  */
 public class TableTransactionLogV1 implements TableTransactionLogFile {
     /**
-     * The slot {@link #UNSYNCED_FROM_TXN_OFFSET_64} took over. {@code TableSnapshotRestore} still moves it
-     * along when it rolls the tail back, which only ever lowers it.
-     */
-    public static final long CRC_TAIL_OFFSET_64 = HEADER_SEQ_PART_SIZE_32 + Integer.BYTES + 2 * Long.BYTES;
-    /**
      * Header slot, in the reserved area and clear of V2's checksum fields, holding the first txn whose
      * record may not be on disk: every record below it was covered by a completed flush. Negative after an
      * open that scanned records without flushing them (NOSYNC, ASYNC): a later open in such a mode trusts

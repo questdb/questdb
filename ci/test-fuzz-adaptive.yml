@@ -229,7 +229,7 @@ stages:
           # finish inside the budget.
           # 65, not 50. At 50 the crash-sweep iteration NEVER COMPLETED: the template's own test pass
           # eats 16-23m, leaving ~29m against a crash package that now needs more than that (this branch
-          # added ChecksumArtifacts/MetaChecksum/TxnLogCrcSidecar/PartitionChecksum crash classes), so
+          # added crash classes such as ChecksumArtifacts and MetaChecksum), so
           # every phase-1 soak ended "hit the run budget and was stopped cleanly" -- green, and never a
           # finished sweep. Worse, build 263283 used 23m on the pass and then started NO iteration at
           # all (27m needed, ~27m left), fuzzing nothing while reporting success.

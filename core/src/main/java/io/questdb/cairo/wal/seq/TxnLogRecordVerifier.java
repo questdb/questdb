@@ -28,13 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 
 /**
- * The one place that decides whether a sequencer txnlog record is intact, legacy, or torn.
- * <p>
- * V1 and V2 store the CRC in different places -- V2 in a reserved trailing slot inside the record, V1
- * in the additive {@code _txnlog.c} sidecar, because its records have no spare bytes -- but the
- * classification must be identical, so both hand their stored value here rather than re-deriving the
- * rules. Divergence between the two would mean the same torn record is fatal on one format and
- * invisible on the other.
+ * Decides whether a V2 sequencer txnlog record is intact or torn, from the CRC in its reserved slot.
  */
 public final class TxnLogRecordVerifier {
 
@@ -44,16 +38,15 @@ public final class TxnLogRecordVerifier {
     /**
      * Throws when the record is torn or absent; returns silently when it is intact.
      * <p>
-     * The caller decides whether a record was checksummed at all and only calls in when it was: V1
-     * because a sidecar entry's stamp named this txn, V2 because the reserved slot is non-zero. A
-     * legacy record written before the CRC existed therefore never reaches here, so a zero CRC that
+     * The caller decides whether a record was checksummed at all and only calls in when it was, because
+     * the reserved slot is non-zero. A legacy record written before the CRC existed therefore never reaches here, so a zero CRC that
      * does reach here is not legacy -- it is a checksum that was written and has since gone, which is
      * an absent or torn record rather than a backward-compatible read.
      *
      * @param txn            the 1-based txn being read
      * @param recordBaseAddr address of the record
      * @param bodySize       bytes covered by the CRC
-     * @param storedCrc      the CRC as stored (V2: reserved slot; V1: sidecar), 0 when absent
+     * @param storedCrc      the CRC as stored in the reserved slot, 0 when absent
      * @param txnOffset      record offset, for the error message
      */
     public static void verify(
@@ -63,8 +56,7 @@ public final class TxnLogRecordVerifier {
             long storedCrc,
             long txnOffset
     ) {
-        // The CALLER decides whether this record was checksummed at all, and only calls in when it was:
-        // V1 because a sidecar entry's stamp named this txn, V2 because the reserved slot is non-zero. So a
+        // The CALLER decides whether this record was checksummed at all, and only calls in when it was. So a
         // zero reaching here is not a legacy record, it is a checksum that was written and has since gone.
         if (storedCrc == 0L) {
             throw CairoException.critical(CairoException.METADATA_VALIDATION)

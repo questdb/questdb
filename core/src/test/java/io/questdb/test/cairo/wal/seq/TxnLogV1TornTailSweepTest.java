@@ -63,7 +63,7 @@ import java.util.zip.CRC32;
  * Power-loss sweep over the tail of the V1 sequencer txn log.
  * <p>
  * A real {@link TableTransactionLogV1} writes a window of commits. Before every durability call it makes
- * on {@code _txnlog} or {@code _txnlog.c}, and after every commit, the sweep builds every disk image a
+ * on {@code _txnlog}, and after every commit, the sweep builds every disk image a
  * power loss could leave at that moment: each 512-byte sector of each file holds the content it had at
  * its last durability call, or at any later moment the sweep sampled. That covers a page or a sector
  * persisted or not, a record that straddles a sector or a page boundary, and the header sector persisted
@@ -87,6 +87,68 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
     private static final int THROWS = 1;
     private static final int TORN_READ = 2;
     private static final long TS_BASE = 1_759_000_000_000_000L;
+
+    @Test
+    public void testCreateOverSurvivingLineageLeavesZerosPastTheTail() throws Exception {
+        // create() over a _txnlog that survived a WAL to non-WAL to WAL round trip writes the new lineage over
+        // the old one's records. A power loss that lands the header publishing the next txns of the new
+        // lineage, but not their records, must leave zeros there to cut at, never an old intact record.
+        assertMemoryLeak(() -> {
+            final int oldTxns = 40;
+            final long[][] modes = {
+                    {CommitMode.NOSYNC, 0},
+                    {CommitMode.ASYNC, 0},
+                    {CommitMode.SYNC, 0},
+                    {CommitMode.ADAPTIVE, 0},
+                    {CommitMode.ADAPTIVE, 1_000}
+            };
+            final SweepConfiguration configuration = new SweepConfiguration(root, null);
+            int scenario = 0;
+            for (long[] mode : modes) {
+                // The first record of the new lineage that is not on disk: in the header's sector, straddling
+                // the second sector, inside it, and the old lineage's last record.
+                for (int newTxns : new int[]{0, 1, 15, 16, oldTxns - 1}) {
+                    final String seqDir = root + "/lineage-" + (scenario++) + "/" + WalUtils.SEQ_DIR;
+                    Files.createDirectories(Paths.get(seqDir));
+                    final String logPath = seqDir + "/" + WalUtils.TXNLOG_FILE_NAME;
+                    try (Path path = new Path().of(seqDir)) {
+                        configuration.commitMode = CommitMode.NOSYNC;
+                        configuration.groupWindowUs = 0;
+                        try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration)) {
+                            log.create(path, TS_BASE);
+                            for (int t = 1; t <= oldTxns; t++) {
+                                log.addEntry(0, 100 + t, 0, t - 1, TS_BASE + t * 1_000L, 0, 0, 0);
+                            }
+                        }
+                        configuration.commitMode = (int) mode[0];
+                        configuration.groupWindowUs = mode[1];
+                        try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration)) {
+                            log.create(path, TS_BASE);
+                            for (int t = 1; t <= newTxns; t++) {
+                                Assert.assertEquals(t, log.addEntry(0, 7, 0, t - 1, TS_BASE + 50_000L + t * 1_000L, 0, 0, 0));
+                            }
+                        }
+                        final byte[] image = readFile(logPath);
+                        for (int publishedTxn = newTxns + 1; publishedTxn <= oldTxns; publishedTxn++) {
+                            ByteBuffer.wrap(image).order(ByteOrder.LITTLE_ENDIAN)
+                                    .putLong((int) TableTransactionLogFile.MAX_TXN_OFFSET_64, publishedTxn);
+                            writeFile(logPath, image);
+                            try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration)) {
+                                log.open(path);
+                                Assert.assertEquals(
+                                        "records that never reached the disk must be cut, not read from the old lineage [mode="
+                                                + CommitMode.toString((int) mode[0]) + ", window=" + mode[1] + ", newTxns=" + newTxns
+                                                + ", publishedTxn=" + publishedTxn + ']',
+                                        newTxns,
+                                        log.lastTxn()
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     @Test
     public void testPowerLossInTheTailKeepsExactlyTheIntactPrefix() throws Exception {
@@ -119,9 +181,6 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
     }
 
     private static long crc(byte[] bytes) {
-        if (bytes == null) {
-            return 0;
-        }
         final CRC32 crc = new CRC32();
         crc.update(bytes);
         return crc.getValue() * 31 + bytes.length;
@@ -268,7 +327,6 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
         final String verifyDir;
         int acked;
         String activity;
-        FileModel crcModel;
         List<Rec> expected;
         int failureSampleCount;
         int failures;
@@ -319,7 +377,6 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
             final String seqDir = root + "/torn-tail-" + (scenario++) + "/" + WalUtils.SEQ_DIR;
             Files.createDirectories(Paths.get(seqDir));
             final String logPath = seqDir + "/" + WalUtils.TXNLOG_FILE_NAME;
-            final String crcPath = seqDir + "/" + WalUtils.TXNLOG_CRC_FILE_NAME;
             final int first = txn - (window.ops.length() > 1 ? 1 : 0);
             expected = new ArrayList<>();
             try (Path path = new Path().of(seqDir)) {
@@ -353,7 +410,6 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                 configuration.commitMode = window.commitMode;
                 configuration.groupWindowUs = window.groupWindowUs;
                 logModel = new FileModel(logPath);
-                crcModel = Files.exists(Paths.get(crcPath)) ? new FileModel(crcPath) : null;
                 acked = first - 1;
                 ff.sweep = this;
                 log = new TableTransactionLogV1(configuration);
@@ -400,7 +456,9 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                 log.beginMetadataChangeEntry(rec.structureVersion, null, null, ts);
                 log.fullSync();
                 log.endMetadataChangeEntry();
-                log.fullSync();
+                if (CommitMode.isPowerLossDurable(configuration.commitMode)) {
+                    log.fullSync();
+                }
             } else {
                 rec = new Rec(lastStructureVersion(), 1 + txn % 3, txn % 2, txn % 100, ts);
                 expected.add(rec);
@@ -425,7 +483,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
         }
 
         private void crashPoint(String label) {
-            final FileModel[] models = crcModel == null ? new FileModel[]{logModel} : new FileModel[]{logModel, crcModel};
+            final FileModel[] models = {logModel};
             final byte[][] current = new byte[models.length][];
             final List<int[]> choiceAt = new ArrayList<>(); // {model, sector}
             final List<List<byte[]>> choices = new ArrayList<>();
@@ -479,7 +537,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                     final int from = at[1] * SECTOR_SIZE;
                     System.arraycopy(sector, 0, image[at[0]], from, Math.min(SECTOR_SIZE, image[at[0]].length - from));
                 }
-                verify(image[0], models.length > 1 ? image[1] : null, label);
+                verify(image[0], label);
             }
         }
 
@@ -488,9 +546,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
         }
 
         private void onSync(String path, long from, long to) {
-            final FileModel model = logModel != null && logModel.path.equals(path)
-                    ? logModel
-                    : crcModel != null && crcModel.path.equals(path) ? crcModel : null;
+            final FileModel model = logModel != null && logModel.path.equals(path) ? logModel : null;
             if (model == null) {
                 return;
             }
@@ -559,31 +615,21 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
             return "whole record, " + rest + " (" + boundary + " split)";
         }
 
-        private void verify(byte[] log, byte[] crc, String label) {
-            if (!seen.add(crc(log) * 1_000_003L + crc(crc) * 7919L + acked)) {
+        private void verify(byte[] log, String label) {
+            if (!seen.add(crc(log) * 1_000_003L + acked)) {
                 return;
             }
-            verify(log, crc, label, window.verifyMode);
+            verify(log, label, window.verifyMode);
             if (window.commitMode != CommitMode.NOSYNC) {
                 // The commit mode may change between restarts.
-                verify(log, crc, label, CommitMode.NOSYNC);
+                verify(log, label, CommitMode.NOSYNC);
             }
         }
 
-        private void verify(byte[] logImage, byte[] crcImage, String label, int reopenMode) {
+        private void verify(byte[] logImage, String label, int reopenMode) {
             images++;
             final String logPath = verifyDir + "/" + WalUtils.TXNLOG_FILE_NAME;
-            final String crcPath = verifyDir + "/" + WalUtils.TXNLOG_CRC_FILE_NAME;
             writeFile(logPath, logImage);
-            try {
-                if (crcImage != null) {
-                    writeFile(crcPath, crcImage);
-                } else {
-                    Files.deleteIfExists(Paths.get(crcPath));
-                }
-            } catch (IOException e) {
-                throw new UncheckedIOException(e);
-            }
 
             final long published = ByteBuffer.wrap(logImage).order(ByteOrder.LITTLE_ENDIAN)
                     .getLong((int) TableTransactionLogFile.MAX_TXN_OFFSET_64);

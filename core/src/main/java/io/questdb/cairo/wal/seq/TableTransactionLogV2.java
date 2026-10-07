@@ -199,8 +199,9 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
     @Override
     public void fullSync() {
-        // Part file must be durable before the header: same ordering invariant as sync0().
-        if (txnPartMem.isOpen()) {
+        // Part file must be durable before the header: same ordering invariant as sync0(). NOSYNC and ASYNC
+        // promise nothing across a power loss and sync the header alone, as base does.
+        if (txnPartMem.isOpen() && CommitMode.isPowerLossDurable(configuration.getCommitMode())) {
             txnPartMem.sync(false);
         }
         txnMem.sync(false);
@@ -370,7 +371,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         if (commitMode != CommitMode.NOSYNC) {
             // Part file must be durable before the header that points to it.
             // A crash after the header sync but before the part file is written back
-            // would leave maxTxn=N pointing at a zeroed/partial record.
+            // would leave maxTxn=N pointing at a zeroed/partial record. ASYNC promises nothing across a
+            // power loss, and its MS_ASYNC orders nothing, so it syncs the header alone, as base does.
             //
             // Deferred 2 (group commit, W>0): push the sequencer files to the page cache with msync(MS_ASYNC)
             // — writeback-only, NO device flush — and DEFER the fdatasync (the device flush) to the batched
@@ -381,7 +383,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             // device-durable. Other modes (and ADAPTIVE W=0) keep their exact existing sync grade.
             final boolean deferDeviceFlush = isDeviceFlushDeferred();
             final boolean async = commitMode == CommitMode.ASYNC || deferDeviceFlush;
-            if (txnPartMem.isOpen()) {
+            if (txnPartMem.isOpen() && commitMode != CommitMode.ASYNC) {
                 txnPartMem.sync(async);
             }
             txnMem.sync(async);
@@ -554,10 +556,6 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         //   (3) a torn write that zeroed only this slot. The checksum cannot catch it.
         // A non-zero stored CRC that does not match the body means a torn or partially written record.
         private void verifyRecordChecksum() {
-            // The rules live in TxnLogRecordVerifier so V1 -- whose CRC sits in the additive
-            // _txnlog.c sidecar rather than a reserved slot -- reaches the same verdict from the
-            // same code. Divergence would make one format fatal and the other blind on the same
-            // torn record.
             final long recordBase = address + txnOffset;
             final long storedCrc = Unsafe.getLong(recordBase + RESERVED_OFFSET);
             if (storedCrc == 0L) {

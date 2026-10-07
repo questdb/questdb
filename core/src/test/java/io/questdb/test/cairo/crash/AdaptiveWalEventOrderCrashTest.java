@@ -55,7 +55,7 @@ import java.util.stream.Stream;
  * {@code {columns, _event}} as a set and the SHARED SEQUENCER txn-log record that publishes them?
  *
  * <p><b>Why the question matters.</b> {@code WalWriter.syncIfRequired0} pays one {@code fdatasync} per column
- * plus one for each {@code _event} file ({@code _event}, {@code _event.i}, {@code _event.c}) plus one for the
+ * plus one for each {@code _event} file ({@code _event}, {@code _event.i}) plus one for the
  * sequencer log, on the ingest thread, every commit — each a separate filesystem journal force.
  * {@code TableWriter.syncColumnsBatchedSync} already replaces exactly that shape on the materialized-state
  * path with ONE {@code syncfs}, which journals every inode in a single force. A {@code syncfs} cannot order
@@ -312,9 +312,6 @@ public class AdaptiveWalEventOrderCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     private int firstSequencerOp(List<String> phaseOps) {
-        // endsWith, NOT contains: the V1 sequencer's CRC sidecar is "_txnlog.c", whose path CONTAINS
-        // "txn_seq/_txnlog". A contains-match therefore locks onto the sidecar op -- which is ordered
-        // deliberately BEFORE the header -- and identifies the wrong barrier, crashing an op early.
         // The barrier this test is about is the header write that publishes the txn.
         final String marker = WalUtils.SEQ_DIR + "/" + WalUtils.TXNLOG_FILE_NAME;
         for (int i = 0; i < phaseOps.size(); i++) {

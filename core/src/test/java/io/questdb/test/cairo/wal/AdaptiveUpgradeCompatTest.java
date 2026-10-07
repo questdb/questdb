@@ -72,8 +72,6 @@ import org.junit.Test;
  *       {@link #testNosyncBootDoesNotRestoreUnreadableMetaFromStaleAnchor} (NEW).</li>
  *   <li><b>re-enabling adaptive after a downgrade</b> &mdash;
  *       {@link #testReEnablingAdaptiveKeepsRowsWrittenUnderNosync} (NEW).</li>
- *   <li><b>{@code _event} CRC trailer</b> &mdash; magic-gated; cited:
- *       {@code WalEventChecksumTest.testLegacyRecordWithoutTrailerStillReads}.</li>
  *   <li><b>{@code _txn} body checksum</b> &mdash; zero-sentinel; cited:
  *       {@code TxnTest.testOpenOldFormatTxn_noBodyChecksum}.</li>
  *   <li><b>{@code _cv} body checksum</b> &mdash; magic-gated; cited:

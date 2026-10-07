@@ -56,8 +56,7 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
  * <p>
  * The stamp is what a file-level "guaranteed from here on" watermark cannot be: withdrawable. A binary that
  * predates the checksum overwrites a record's body in place and leaves the previous occupant's stamp
- * behind, which no longer names the new record, so the file still opens. See
- * {@code OlderBinaryWriteCompatTest}.
+ * behind, which no longer names the new record, so the file still opens.
  */
 public class TxnChecksumStampTest extends AbstractCairoTest {
 
