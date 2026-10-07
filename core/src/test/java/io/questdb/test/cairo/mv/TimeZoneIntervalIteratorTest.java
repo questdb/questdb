@@ -266,6 +266,45 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     }
 
     @Test
+    public void testMonthNegativeOffset() throws Exception {
+        // a 1M view with a negative offset starts each bucket 1h before its local month;
+        // the local bucket starts stay at 23:00 while the UTC offset moves across the DST gap
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'M', 0);
+        iterator.of(
+                timestampDriver,
+                sampler,
+                timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin"),
+                -timestampDriver.fromHours(1),
+                null,
+                timestampDriver.parseFloorLiteral("2024-01-15T00:00:00.000000Z"),
+                timestampDriver.parseFloorLiteral("2024-05-20T00:00:00.000000Z"),
+                1
+        );
+
+        final LongList expectedBounds = new LongList();
+        expectedBounds.add(timestampDriver.parseFloorLiteral("2023-12-31T22:00:00.000000Z"));
+        expectedBounds.add(timestampDriver.parseFloorLiteral("2024-01-31T22:00:00.000000Z"));
+        expectedBounds.add(timestampDriver.parseFloorLiteral("2024-02-29T22:00:00.000000Z"));
+        expectedBounds.add(timestampDriver.parseFloorLiteral("2024-03-31T21:00:00.000000Z"));
+        expectedBounds.add(timestampDriver.parseFloorLiteral("2024-04-30T21:00:00.000000Z"));
+        expectedBounds.add(timestampDriver.parseFloorLiteral("2024-05-31T21:00:00.000000Z"));
+        final int expectedStepCount = expectedBounds.size() - 1;
+
+        Assert.assertEquals(expectedBounds.getQuick(0), iterator.getMinTimestamp());
+        Assert.assertEquals(expectedBounds.getQuick(expectedStepCount), iterator.getMaxTimestamp());
+        int stepCount = 0;
+        while (iterator.next()) {
+            // fail on the first surplus step, so that an iterator that stops advancing fails instead of hanging
+            Assert.assertTrue("unexpected step " + stepCount, stepCount < expectedStepCount);
+            Assert.assertEquals(expectedBounds.getQuick(stepCount), iterator.getTimestampLo());
+            Assert.assertEquals(expectedBounds.getQuick(stepCount + 1), iterator.getTimestampHi());
+            stepCount++;
+        }
+        Assert.assertEquals(expectedStepCount, stepCount);
+    }
+
+    @Test
     public void testPerClusterStepSnapsAcrossDstFold() throws Exception {
         // Europe/Berlin fall-back: 2021-10-31T01:00:00Z (local clocks roll 03:00 -> 02:00).
         // Two clusters straddle the fold:

@@ -271,8 +271,15 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         topTzOffset = tzOffset;
         topNextDst = nextDstUtc;
         if (from != Long.MIN_VALUE) {
-            // set the top epoch to be the lower limit
-            topLocalEpoch = timestampSampler.round(timestampDriver.from(from, sampleFromFuncType) + tzOffset);
+            // Set the top epoch to the bucket at FROM, in local time. For a stride of a day or longer,
+            // code generation leaves FROM in local time, and the sampler grid starts at FROM. Adding the
+            // offset would read that local FROM as a UTC instant: a zone behind UTC then moved it into the
+            // bucket before FROM, and the month and year samplers, which floor, emitted that extra bucket
+            // (GitHub issue #7763). Only a FROM that code generation converted to UTC takes the offset, see
+            // #7743. Code generation converts FROM whenever it converts TO, so with FROM set, isFromToUtc
+            // means that FROM is in UTC.
+            final long fromTimestamp = timestampDriver.from(from, sampleFromFuncType);
+            topLocalEpoch = timestampSampler.round(isFromToUtc ? fromTimestamp + tzOffset : fromTimestamp);
             // set current epoch to be the floor of the starting timestamp
             localEpoch = timestampSampler.round(timestamp + tzOffset);
         } else {

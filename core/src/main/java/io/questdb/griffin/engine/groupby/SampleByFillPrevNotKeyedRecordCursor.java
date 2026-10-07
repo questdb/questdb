@@ -34,6 +34,7 @@ import io.questdb.std.ObjList;
 
 public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordSampleByCursor {
     private final SimpleMapValue value;
+    private boolean isFirstRun = true;
 
     public SampleByFillPrevNotKeyedRecordCursor(
             CairoConfiguration configuration,
@@ -87,7 +88,19 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
         // the next sample epoch could be different from current sample epoch due to DST transition,
         // e.g. clock going backward
         // we need to ensure we do not fill time transition
-        final long expectedLocalEpoch = timestampSampler.nextTimestamp(nextSampleLocalEpoch);
+        final long expectedLocalEpoch;
+        if (isFirstRun) {
+            // On the first call, nextSampleLocalEpoch holds the bucket at FROM, see initTimestamps(), and
+            // that bucket is the first one to emit, as in SampleByFillValueNotKeyedRecordCursor. Expecting
+            // the bucket after it skipped the bucket at FROM whenever the first row came after it, unlike
+            // the GROUP BY path (GitHub issue #7764). Without FROM, or with the first row at or before the
+            // bucket at FROM, nextSampleLocalEpoch is not before localEpoch, and notKeyedLoop() aggregates the
+            // bucket of the first row.
+            expectedLocalEpoch = nextSampleLocalEpoch;
+            isFirstRun = false;
+        } else {
+            expectedLocalEpoch = timestampSampler.nextTimestamp(nextSampleLocalEpoch);
+        }
         // is data timestamp ahead of next expected timestamp?
         if (expectedLocalEpoch < localEpoch) {
             sampleLocalEpoch = expectedLocalEpoch;
@@ -101,12 +114,14 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
         super.of(baseCursor, executionContext);
+        isFirstRun = true;
         setValueToNull();
     }
 
     @Override
     public void toTop() {
         super.toTop();
+        isFirstRun = true;
         setValueToNull();
     }
 

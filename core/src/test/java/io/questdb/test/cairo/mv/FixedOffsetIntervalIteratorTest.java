@@ -246,6 +246,53 @@ public class FixedOffsetIntervalIteratorTest extends AbstractIntervalIteratorTes
     }
 
     @Test
+    public void testMonthNegativeOffset() throws Exception {
+        // MatViewRefreshJob passes a negative offset for a 1M view in a fixed-offset
+        // zone ahead of UTC, e.g. '+03:00'; each bucket starts 3h before its month
+        final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'M', 0);
+        iterator.of(
+                sampler,
+                -timestampDriver.fromHours(3),
+                null,
+                timestampDriver.parseFloorLiteral("2024-01-15T00:00:00.000000Z"),
+                timestampDriver.parseFloorLiteral("2024-05-20T00:00:00.000000Z"),
+                1
+        );
+
+        final LongList expectedBounds = new LongList();
+        expectedBounds.add(timestampDriver.parseFloorLiteral("2023-12-31T21:00:00.000000Z"));
+        expectedBounds.add(timestampDriver.parseFloorLiteral("2024-01-31T21:00:00.000000Z"));
+        expectedBounds.add(timestampDriver.parseFloorLiteral("2024-02-29T21:00:00.000000Z"));
+        expectedBounds.add(timestampDriver.parseFloorLiteral("2024-03-31T21:00:00.000000Z"));
+        expectedBounds.add(timestampDriver.parseFloorLiteral("2024-04-30T21:00:00.000000Z"));
+        expectedBounds.add(timestampDriver.parseFloorLiteral("2024-05-31T21:00:00.000000Z"));
+        assertSteps(iterator, expectedBounds);
+    }
+
+    @Test
+    public void testMonthNegativeOffsetBigStep() throws Exception {
+        final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'M', 0);
+        iterator.of(
+                sampler,
+                -timestampDriver.fromHours(3),
+                null,
+                timestampDriver.parseFloorLiteral("2024-01-15T00:00:00.000000Z"),
+                timestampDriver.parseFloorLiteral("2024-05-20T00:00:00.000000Z"),
+                2
+        );
+
+        // the last step stops at the upper bound instead of spanning two months
+        final LongList expectedBounds = new LongList();
+        expectedBounds.add(timestampDriver.parseFloorLiteral("2023-12-31T21:00:00.000000Z"));
+        expectedBounds.add(timestampDriver.parseFloorLiteral("2024-02-29T21:00:00.000000Z"));
+        expectedBounds.add(timestampDriver.parseFloorLiteral("2024-04-30T21:00:00.000000Z"));
+        expectedBounds.add(timestampDriver.parseFloorLiteral("2024-05-31T21:00:00.000000Z"));
+        assertSteps(iterator, expectedBounds);
+    }
+
+    @Test
     public void testPerClusterStepSnapsAcrossGap() throws SqlException {
         // Two clusters: a narrow point at day 1 and a wide range at days 5..7.
         // Per-cluster steps: 1 bucket for the narrow cluster, 3 for the wide.
@@ -351,6 +398,29 @@ public class FixedOffsetIntervalIteratorTest extends AbstractIntervalIteratorTes
         Assert.assertFalse(iterator.next());
     }
 
+    @Test
+    public void testYearNegativeOffset() throws Exception {
+        // a 1y view with a negative offset starts each bucket 1h before its year
+        final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'y', 0);
+        iterator.of(
+                sampler,
+                -timestampDriver.fromHours(1),
+                null,
+                timestampDriver.parseFloorLiteral("2021-06-01T00:00:00.000000Z"),
+                timestampDriver.parseFloorLiteral("2024-03-01T00:00:00.000000Z"),
+                1
+        );
+
+        final LongList expectedBounds = new LongList();
+        expectedBounds.add(timestampDriver.parseFloorLiteral("2020-12-31T23:00:00.000000Z"));
+        expectedBounds.add(timestampDriver.parseFloorLiteral("2021-12-31T23:00:00.000000Z"));
+        expectedBounds.add(timestampDriver.parseFloorLiteral("2022-12-31T23:00:00.000000Z"));
+        expectedBounds.add(timestampDriver.parseFloorLiteral("2023-12-31T23:00:00.000000Z"));
+        expectedBounds.add(timestampDriver.parseFloorLiteral("2024-12-31T23:00:00.000000Z"));
+        assertSteps(iterator, expectedBounds);
+    }
+
     @Override
     protected SampleByIntervalIterator createIterator(
             TimestampSampler sampler,
@@ -369,5 +439,20 @@ public class FixedOffsetIntervalIteratorTest extends AbstractIntervalIteratorTes
                 maxTs,
                 step
         );
+    }
+
+    private static void assertSteps(FixedOffsetIntervalIterator iterator, LongList expectedBounds) {
+        final int expectedStepCount = expectedBounds.size() - 1;
+        Assert.assertEquals(expectedBounds.getQuick(0), iterator.getMinTimestamp());
+        Assert.assertEquals(expectedBounds.getQuick(expectedStepCount), iterator.getMaxTimestamp());
+        int stepCount = 0;
+        while (iterator.next()) {
+            // fail on the first surplus step, so that an iterator that stops advancing fails instead of hanging
+            Assert.assertTrue("unexpected step " + stepCount, stepCount < expectedStepCount);
+            Assert.assertEquals(expectedBounds.getQuick(stepCount), iterator.getTimestampLo());
+            Assert.assertEquals(expectedBounds.getQuick(stepCount + 1), iterator.getTimestampHi());
+            stepCount++;
+        }
+        Assert.assertEquals(expectedStepCount, stepCount);
     }
 }

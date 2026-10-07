@@ -54,6 +54,114 @@ public class MonthTimestampSamplerTest {
     }
 
     @Test
+    public void testNegativeOffset() throws Exception {
+        // GitHub issue #7760. A negative offset places each bucket start before its calendar month, on the last
+        // day of the previous month. nextTimestamp() returned the bucket start itself, and round() floored a value
+        // from the last minutes of a month to the bucket a month early.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
+        sampler.setOffset(timestampDriver.fromMinutes(-10));
+        assertRound(sampler, "2024-01-15T10:00:00.000000Z", "2023-12-31T23:50:00.000000Z");
+        assertRound(sampler, "2023-12-31T23:50:00.000000Z", "2023-12-31T23:50:00.000000Z");
+        assertRound(sampler, "2023-12-31T23:49:59.999999Z", "2023-11-30T23:50:00.000000Z");
+        assertRound(sampler, "2024-01-31T23:55:00.000000Z", "2024-01-31T23:50:00.000000Z");
+        assertRound(sampler, "2024-02-29T23:49:59.999999Z", "2024-01-31T23:50:00.000000Z");
+        assertRound(sampler, "2024-02-29T23:50:00.000000Z", "2024-02-29T23:50:00.000000Z");
+        assertRound(sampler, "1969-12-31T23:55:00.000000Z", "1969-12-31T23:50:00.000000Z");
+        assertGrid(
+                sampler,
+                "2023-11-30T23:50:00.000000Z",
+                """
+                        2023-12-31T23:50:00.000000Z
+                        2024-01-31T23:50:00.000000Z
+                        2024-02-29T23:50:00.000000Z
+                        2024-03-31T23:50:00.000000Z
+                        2024-04-30T23:50:00.000000Z
+                        """
+        );
+
+        final TimestampSampler quarterSampler = timestampDriver.getTimestampSampler(3, 'M', 0);
+        quarterSampler.setOffset(timestampDriver.fromMinutes(-10));
+        assertRound(quarterSampler, "2024-02-29T23:55:00.000000Z", "2023-12-31T23:50:00.000000Z");
+        assertRound(quarterSampler, "2024-03-31T23:49:59.999999Z", "2023-12-31T23:50:00.000000Z");
+        assertRound(quarterSampler, "2024-03-31T23:55:00.000000Z", "2024-03-31T23:50:00.000000Z");
+        assertGrid(
+                quarterSampler,
+                "2023-12-31T23:50:00.000000Z",
+                """
+                        2024-03-31T23:50:00.000000Z
+                        2024-06-30T23:50:00.000000Z
+                        2024-09-30T23:50:00.000000Z
+                        2024-12-31T23:50:00.000000Z
+                        2025-03-31T23:50:00.000000Z
+                        """
+        );
+    }
+
+    @Test
+    public void testNegativeOffsetMatchesShiftedCalendarFloor() throws Exception {
+        // With a negative offset, round() returns the calendar floor of the value shifted by the offset, shifted
+        // back, and nextTimestamp() and previousTimestamp() step by whole calendar months on the shifted grid.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final TimestampDriver.TimestampFloorWithStrideMethod floorMethod = timestampDriver.getTimestampFloorWithStrideMethod("month");
+        final long[] offsets = {
+                -1,
+                timestampDriver.fromMinutes(-10),
+                timestampDriver.fromMinutes(-(12 * 60 + 5)),
+                timestampDriver.fromMinutes(-(23 * 60 + 59)),
+        };
+        final int[] strides = {1, 2, 3, 4, 6, 12};
+        final long lo = timestampDriver.parseFloorLiteral("1968-01-01T00:00:00.000000Z");
+        final long hi = timestampDriver.parseFloorLiteral("2030-01-01T00:00:00.000000Z");
+        final long step = timestampDriver.fromMinutes(7 * 60 + 13) + 17;
+        for (int stride : strides) {
+            final TimestampSampler sampler = timestampDriver.getTimestampSampler(stride, 'M', 0);
+            for (long offset : offsets) {
+                sampler.setOffset(offset);
+                for (long value = lo; value < hi; value += step) {
+                    final long expected = floorMethod.floor(value - offset, stride) + offset;
+                    final long rounded = sampler.round(value);
+                    Assert.assertEquals(expected, rounded);
+                    final long next = sampler.nextTimestamp(rounded);
+                    Assert.assertEquals(timestampDriver.addMonths(expected - offset, stride) + offset, next);
+                    Assert.assertTrue(value < next);
+                    Assert.assertEquals(timestampDriver.addMonths(expected - offset, 3 * stride) + offset, sampler.nextTimestamp(rounded, 3));
+                    Assert.assertEquals(rounded, sampler.previousTimestamp(next));
+                    Assert.assertEquals(rounded, sampler.round(next - 1));
+                    Assert.assertEquals(next, sampler.round(next));
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testNegativeOffsetResetsStart() throws Exception {
+        // setOffset() anchors the grid at the calendar month start, also when setStart() anchored the same sampler
+        // at another day of the month before
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
+        sampler.setStart(timestampDriver.parseFloorLiteral("2018-11-16T15:00:00.000000Z"));
+        sampler.setOffset(timestampDriver.fromMinutes(-10));
+        assertRound(sampler, "2024-01-15T10:00:00.000000Z", "2023-12-31T23:50:00.000000Z");
+        assertGrid(
+                sampler,
+                "2023-12-31T23:50:00.000000Z",
+                """
+                        2024-01-31T23:50:00.000000Z
+                        2024-02-29T23:50:00.000000Z
+                        """
+        );
+
+        sampler.setStart(timestampDriver.parseFloorLiteral("2018-11-16T15:00:00.000000Z"));
+        sampler.setOffset(timestampDriver.fromMinutes(10));
+        assertRound(sampler, "2024-01-15T10:00:00.000000Z", "2024-01-01T00:10:00.000000Z");
+        Assert.assertEquals(
+                timestampDriver.parseFloorLiteral("2024-02-01T00:10:00.000000Z"),
+                sampler.nextTimestamp(timestampDriver.parseFloorLiteral("2024-01-01T00:10:00.000000Z"))
+        );
+    }
+
+    @Test
     public void testNextTimestamp() throws Exception {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         final TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
@@ -280,6 +388,37 @@ public class MonthTimestampSamplerTest {
                         timestampType.getTypeName()
                 ),
                 sink
+        );
+    }
+
+    // Walks the grid from a bucket start: nextTimestamp() returns each next bucket start, round() returns each
+    // bucket start for itself and the previous one for the instant before it, and previousTimestamp() and
+    // nextTimestamp(ts, n) agree with the walk.
+    private void assertGrid(TimestampSampler sampler, String first, String expected) throws Exception {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final String expectedGrid = AbstractCairoTest.replaceTimestampSuffix(expected, timestampType.getTypeName());
+        final StringSink sink = new StringSink();
+        final long firstTs = timestampDriver.parseFloorLiteral(first);
+        long ts = firstTs;
+        int steps = 0;
+        while (sink.length() < expectedGrid.length()) {
+            final long next = sampler.nextTimestamp(ts);
+            Assert.assertTrue(next > ts);
+            Assert.assertEquals(ts, sampler.previousTimestamp(next));
+            Assert.assertEquals(next, sampler.round(next));
+            Assert.assertEquals(ts, sampler.round(next - 1));
+            Assert.assertEquals(next, sampler.nextTimestamp(firstTs, ++steps));
+            sink.putISODate(timestampDriver, next).put('\n');
+            ts = next;
+        }
+        TestUtils.assertEquals(expectedGrid, sink);
+    }
+
+    private void assertRound(TimestampSampler sampler, String value, String expected) throws Exception {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        Assert.assertEquals(
+                timestampDriver.parseFloorLiteral(expected),
+                sampler.round(timestampDriver.parseFloorLiteral(value))
         );
     }
 }

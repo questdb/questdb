@@ -32,6 +32,8 @@ import org.jetbrains.annotations.NotNull;
 
 public class YearTimestampMicrosSampler implements TimestampSampler {
     private final int stepYears;
+    // Time of day of the bucket starts. A negative value comes from setOffset() and places each bucket start that
+    // long before the start of its calendar year, on the last day of the previous year.
     private long dayMod;
     private int startDay;
     private int startMonth;
@@ -71,7 +73,9 @@ public class YearTimestampMicrosSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        int y = Micros.getYear(value);
+        // a negative offset moves each bucket start into the previous year, so the bucket of a value
+        // follows the calendar year of the value shifted by the offset
+        int y = Micros.getYear(value - Math.min(dayMod, 0));
         y = Micros.EPOCH_YEAR_0 + ((y - Micros.EPOCH_YEAR_0) / stepYears) * stepYears;
         int month = startMonth > 0 ? startMonth : 1;
         int day = startDay > 0 ? startDay : 1;
@@ -80,6 +84,9 @@ public class YearTimestampMicrosSampler implements TimestampSampler {
 
     @Override
     public void setOffset(long timestamp) {
+        // the offset applies to the calendar grid, which starts on the first day of the year
+        this.startMonth = 0;
+        this.startDay = 0;
         this.dayMod = timestamp;
     }
 
@@ -105,7 +112,8 @@ public class YearTimestampMicrosSampler implements TimestampSampler {
         if (numYears == 0) {
             return timestamp;
         }
-        final int y = Micros.getYear(timestamp);
+        // the calendar year of a bucket start that a negative offset moved into the previous year
+        final int y = Micros.getYear(timestamp - Math.min(dayMod, 0));
         final boolean leap = CommonUtils.isLeapYear(y + numYears);
         int month = startMonth > 0 ? startMonth : 1;
         int day = startDay > 0 ? startDay : 1;

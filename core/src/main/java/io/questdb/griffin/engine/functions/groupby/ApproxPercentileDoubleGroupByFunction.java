@@ -98,11 +98,15 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
 
     @Override
     public double getDouble(Record rec) {
-        if (histograms.size() == 0) {
+        // setNull() writes LONG_NULL for a group with no rows yet, such as a key that keyed SAMPLE BY
+        // FILL(PREV) emits before its first row. The low 32 bits of LONG_NULL read as histogram 0,
+        // which belongs to another group, so check the whole slot.
+        final long index = rec.getLong(valueIndex);
+        if (index == Numbers.LONG_NULL || histograms.size() == 0) {
             return Double.NaN;
         }
 
-        final DoubleHistogram histogram = histograms.getQuick(rec.getInt(valueIndex));
+        final DoubleHistogram histogram = histograms.getQuick((int) index);
         if (histogram.getTotalCount() == 0) {
             return Double.NaN;
         }
