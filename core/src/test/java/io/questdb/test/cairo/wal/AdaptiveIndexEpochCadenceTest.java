@@ -27,12 +27,23 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.Numbers;
+import io.questdb.std.Os;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -42,15 +53,16 @@ import java.util.Collection;
 import java.util.List;
 
 /**
- * Under ADAPTIVE, an apply pass takes an inline save point (durable epoch) for an index only when the
- * pass really published a posting-index reseal purge: the purge is gated behind the save-point pin, and
- * the save point moves the pin past it. A pass that published no purge takes no inline save point. The
- * periodic save point is configured out of reach, so every save point counted here is an inline one.
+ * Under ADAPTIVE, an apply pass takes no inline save point (durable epoch) for an index, not even when it
+ * publishes a posting-index reseal purge. A purge waits only while its window holds the pin of the last save
+ * point, that is for a superseded {@code .pv} the save point still reads; that file stays on disk until the
+ * next periodic save point moves the pin, and the purge job then removes it. Every other purge completes at
+ * once.
  * <p>
  * Covers every index kind a symbol column can carry, with and without DEDUP, for in-order appends that
  * cross partition boundaries, late rows into a native partition, and late rows into a parquet partition.
- * Late rows into a native partition reseal a posting index on every pass, so those runs also check that a
- * published purge does get its save point.
+ * Late rows into a native partition reseal a posting index on every pass, so those runs always publish
+ * purges.
  */
 @RunWith(Parameterized.class)
 public class AdaptiveIndexEpochCadenceTest extends AbstractCairoTest {
@@ -67,6 +79,7 @@ public class AdaptiveIndexEpochCadenceTest extends AbstractCairoTest {
             "POSTING INCLUDE (v)"
     };
     private static final int PASSES = 60;
+    private static final int RECLAIM_PASSES = 5;
     private static final int ROWS_PER_PASS = 10;
     private final boolean dedup;
     private final String indexKind;
@@ -92,33 +105,11 @@ public class AdaptiveIndexEpochCadenceTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSavePointOnlyWhenPurgeQueued() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1_000_000_000L);
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, Long.MAX_VALUE);
+    public void testNoInlineSavePoint() throws Exception {
+        setUpAdaptive();
         assertMemoryLeak(() -> {
-            final String symbol = "NONE".equals(indexKind) ? "s SYMBOL" : "s SYMBOL INDEX TYPE " + indexKind;
-            execute("CREATE TABLE t (ts TIMESTAMP, " + symbol + ", v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL"
-                    + (dedup ? " DEDUP UPSERT KEYS(ts, s)" : ""));
-            final TableToken token = engine.verifyTableName("t");
-
-            // Day 1 is the late-row target, day 2 the append start. The first apply pass always takes a
-            // save point, and so does the parquet conversion; both happen before counting starts.
-            final StringBuilder sql = new StringBuilder("INSERT INTO t VALUES ");
-            for (int i = 0; i < ROWS_PER_PASS; i++) {
-                appendRow(sql.append(i == 0 ? "" : ","), DAY1 + i * HOUR, i);
-            }
-            appendRow(sql.append(','), DAY1 + DAY, -1);
-            execute(sql.toString());
-            drainWalQueue();
-            if (pattern == WritePattern.O3_PARQUET) {
-                execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-                drainWalQueue();
-            }
+            createAndSeed();
             drainPurgeQueue();
-            try (TableWriter w = getWriter(token)) {
-                Assert.assertEquals(CommitMode.ADAPTIVE, w.getEffectiveCommitMode());
-            }
 
             final StringBuilder passLog = new StringBuilder();
             int passesWithPurge = 0;
@@ -135,11 +126,8 @@ public class AdaptiveIndexEpochCadenceTest extends AbstractCairoTest {
                     passesWithPurge++;
                 }
                 savePoints += (int) epochs;
-                if (purges == 0 && epochs != 0) {
-                    Assert.fail("save point without a queued purge at pass " + pass + ':' + passLog);
-                }
-                if (purges > 0 && epochs == 0) {
-                    Assert.fail("queued purge without a save point at pass " + pass + ':' + passLog);
+                if (epochs != 0) {
+                    Assert.fail("inline save point at pass " + pass + ':' + passLog);
                 }
             }
             System.out.println("AdaptiveIndexEpochCadence index=" + indexKind + " dedup=" + dedup
@@ -155,9 +143,79 @@ public class AdaptiveIndexEpochCadenceTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSupersededValueFileReclaimedAtNextSavePoint() throws Exception {
+        Assume.assumeTrue(indexKind.startsWith("POSTING"));
+        setUpAdaptive();
+        // Retry a held purge on every job run, so a released one is removed on the next run.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT, 1);
+        assertMemoryLeak(() -> {
+            createAndSeed();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("t"));
+            try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                runPurgeJob(job);
+                final long pin = tracker.getPinnedEpochTxn();
+                Assert.assertEquals(List.of(), assertOnlyPinHolds(job, purges(job.getLogTableName()), pin));
+                final long epochsBefore = TestUtils.getMetricValue(engine, EPOCH_METRIC);
+                for (int pass = 0; pass < RECLAIM_PASSES; pass++) {
+                    execute(passSql(pass));
+                    drainWalQueue();
+                    runPurgeJob(job);
+                }
+                Assert.assertEquals("inline save point", epochsBefore, TestUtils.getMetricValue(engine, EPOCH_METRIC));
+                Assert.assertEquals(pin, tracker.getPinnedEpochTxn());
+                final List<String> held = assertOnlyPinHolds(job, purges(job.getLogTableName()), pin);
+                // A commit that takes the O3 path and appends to the partition the save point indexed reseals a
+                // covering index in place, superseding the .pv the save point reads: DEDUP sends every commit
+                // there, and so does a late row into the parquet partition. Elsewhere the reseal lands in a new
+                // partition version, whose predecessor goes with the partition purge.
+                if (indexKind.contains("INCLUDE") && (dedup || pattern == WritePattern.O3_PARQUET)) {
+                    Assert.assertFalse("no .pv of the save point superseded", held.isEmpty());
+                }
+
+                // The next periodic save point moves the pin past every held window.
+                node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 1);
+                execute(passSql(RECLAIM_PASSES));
+                drainWalQueue();
+                Assert.assertEquals("periodic save point", epochsBefore + 1, TestUtils.getMetricValue(engine, EPOCH_METRIC));
+                runPurgeJob(job);
+                final long nextPin = tracker.getPinnedEpochTxn();
+                Assert.assertTrue(nextPin > pin);
+                Assert.assertEquals(List.of(), assertOnlyPinHolds(job, purges(job.getLogTableName()), nextPin));
+                for (String file : held) {
+                    Assert.assertFalse("not removed after the save point: " + file, exists(file));
+                }
+            }
+            assertQuery("SELECT count() FROM t").noRandomAccess().expectSize().returns("count\n" + (ROWS_PER_PASS * (RECLAIM_PASSES + 2) + 1) + "\n");
+            // The live index still answers for every value.
+            assertQuery("SELECT count() FROM t WHERE s IN ('a', 'b', 'c', 'd')").noRandomAccess().expectSize()
+                    .returns("count\n" + (ROWS_PER_PASS * (RECLAIM_PASSES + 2) + 1) + "\n");
+        });
+    }
+
     private static void appendRow(StringBuilder sql, long ts, long v) {
         sql.append('(').append(ts).append("::timestamp, '").append((char) ('a' + Math.abs(v % 4))).append("', ")
                 .append(v).append(')');
+    }
+
+    // Asserts that exactly the purges whose window holds the pin wait, with their .pv still on disk, and
+    // that every other purge is done. Returns the held .pv files.
+    private static List<String> assertOnlyPinHolds(PostingSealPurgeJob job, List<Purge> purges, long pin) {
+        final List<String> held = new ArrayList<>();
+        for (int i = 0, n = purges.size(); i < n; i++) {
+            final Purge purge = purges.get(i);
+            if (purge.fromTxn <= pin && pin < purge.toTxn) {
+                Assert.assertFalse("purge done under the pin " + pin + ": " + purge, purge.completed);
+                Assert.assertTrue("removed under the pin " + pin + ": " + purge, exists(purge.file));
+                held.add(purge.file);
+            } else {
+                Assert.assertTrue("purge waits outside the pin " + pin + ": " + purge, purge.completed);
+                Assert.assertFalse("still on disk outside the pin " + pin + ": " + purge, exists(purge.file));
+            }
+        }
+        Assert.assertEquals(held.size(), job.getOutstandingPurgeTasks());
+        return held;
     }
 
     // Consumes the posting seal-purge tasks published so far and returns how many there were. No purge
@@ -175,6 +233,69 @@ public class AdaptiveIndexEpochCadenceTest extends AbstractCairoTest {
             }
             sub.done(cursor);
             n++;
+        }
+    }
+
+    private static boolean exists(String file) {
+        return engine.getConfiguration().getFilesFacade().exists(Path.getThreadLocal(file).$());
+    }
+
+    // The purges of table t in the purge log, in publish order.
+    private static List<Purge> purges(String logTable) throws Exception {
+        final TableToken token = engine.verifyTableName("t");
+        final List<Purge> purges = new ArrayList<>();
+        try (
+                RecordCursorFactory factory = select("SELECT partition_timestamp, partition_name_txn, column_name, "
+                        + "posting_column_name_txn, seal_txn, partition_by, timestamp_type, from_table_txn, to_table_txn, "
+                        + "completed FROM '" + logTable + "' WHERE table_name = '" + token.getDirName() + "'");
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext);
+                Path path = new Path()
+        ) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(token);
+                TableUtils.setPathForNativePartition(path, record.getInt(6), record.getInt(5), record.getTimestamp(0), record.getLong(1));
+                PostingIndexUtils.valueFileName(path, record.getSymA(2), record.getLong(3), record.getLong(4));
+                purges.add(new Purge(path.toString(), record.getLong(7), record.getLong(8), record.getTimestamp(9) != Numbers.LONG_NULL));
+            }
+        }
+        return purges;
+    }
+
+    private static void runPurgeJob(PostingSealPurgeJob job) {
+        for (int i = 0; i < 4; i++) {
+            Os.sleep(1);
+            job.run();
+        }
+    }
+
+    private static void setUpAdaptive() {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1_000_000_000L);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, Long.MAX_VALUE);
+    }
+
+    private void createAndSeed() throws Exception {
+        final String symbol = "NONE".equals(indexKind) ? "s SYMBOL" : "s SYMBOL INDEX TYPE " + indexKind;
+        execute("CREATE TABLE t (ts TIMESTAMP, " + symbol + ", v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL"
+                + (dedup ? " DEDUP UPSERT KEYS(ts, s)" : ""));
+        final TableToken token = engine.verifyTableName("t");
+
+        // Day 1 is the late-row target, day 2 the append start. The first apply pass always takes a save
+        // point, and so does the parquet conversion; both happen before counting starts.
+        final StringBuilder sql = new StringBuilder("INSERT INTO t VALUES ");
+        for (int i = 0; i < ROWS_PER_PASS; i++) {
+            appendRow(sql.append(i == 0 ? "" : ","), DAY1 + i * HOUR, i);
+        }
+        appendRow(sql.append(','), DAY1 + DAY, -1);
+        execute(sql.toString());
+        drainWalQueue();
+        if (pattern == WritePattern.O3_PARQUET) {
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+        }
+        try (TableWriter w = getWriter(token)) {
+            Assert.assertEquals(CommitMode.ADAPTIVE, w.getEffectiveCommitMode());
         }
     }
 
@@ -202,5 +323,8 @@ public class AdaptiveIndexEpochCadenceTest extends AbstractCairoTest {
 
     public enum WritePattern {
         IN_ORDER, O3_NATIVE, O3_PARQUET
+    }
+
+    private record Purge(String file, long fromTxn, long toTxn, boolean completed) {
     }
 }

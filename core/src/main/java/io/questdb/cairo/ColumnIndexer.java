@@ -110,17 +110,13 @@ public interface ColumnIndexer extends QuietCloseable {
     default void mergeTentativeIntoActiveIfAny() {
     }
 
-    /**
-     * See {@link IndexWriter#publishPendingPurges}.
-     */
-    default boolean publishPendingPurges(
+    default void publishPendingPurges(
             MessageBus messageBus,
             TableToken tableToken,
             int partitionBy,
             int timestampType,
             long currentTableTxn
     ) {
-        return false;
     }
 
     default void rebuildSidecars() {

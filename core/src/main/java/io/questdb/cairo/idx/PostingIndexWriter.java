@@ -1506,10 +1506,8 @@ public class PostingIndexWriter implements IndexWriter {
      * <p>
      * Entries that cannot be published (queue full) stay in the outbox and
      * retry on the next commit.
-     *
-     * @return true when at least one purge was published onto the queue
      */
-    public boolean publishPendingPurges(
+    public void publishPendingPurges(
             MessageBus messageBus,
             TableToken tableToken,
             int partitionBy,
@@ -1517,11 +1515,10 @@ public class PostingIndexWriter implements IndexWriter {
             long currentTableTxn
     ) {
         if (pendingPurges.size() == 0 || partitionPath.size() == 0 || tableToken == null || messageBus == null) {
-            return false;
+            return;
         }
         Sequence pubSeq = messageBus.getPostingSealPurgePubSeq();
         RingQueue<PostingSealPurgeTask> queue = messageBus.getPostingSealPurgeQueue();
-        boolean published = false;
         int writePos = 0;
         for (int readPos = 0, n = pendingPurges.size(); readPos < n; readPos++) {
             PendingSealPurge entry = pendingPurges.getQuick(readPos);
@@ -1597,14 +1594,12 @@ public class PostingIndexWriter implements IndexWriter {
             } finally {
                 pubSeq.done(cursor);
             }
-            published = true;
             entry.of(0L, 0L, 0L, 0L, Long.MIN_VALUE, -1L);
             pendingPurgePool.add(entry);
         }
         for (int i = pendingPurges.size() - 1; i >= writePos; i--) {
             pendingPurges.remove(i);
         }
-        return published;
     }
 
     /**

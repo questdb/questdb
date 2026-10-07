@@ -266,20 +266,13 @@ public interface IndexWriter extends Closeable, Mutable {
     default void openFromO3Context(boolean isInit) {
     }
 
-    /**
-     * Publishes the purges recorded for superseded index files that are safe
-     * for {@code currentTableTxn}.
-     *
-     * @return true when at least one purge was published onto the queue
-     */
-    default boolean publishPendingPurges(
+    default void publishPendingPurges(
             MessageBus messageBus,
             TableToken tableToken,
             int partitionBy,
             int timestampType,
             long currentTableTxn
     ) {
-        return false;
     }
 
     default void rebuildSidecars() {

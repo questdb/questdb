@@ -220,14 +220,14 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
-    public boolean publishPendingPurges(
+    public void publishPendingPurges(
             MessageBus messageBus,
             TableToken tableToken,
             int partitionBy,
             int timestampType,
             long currentTableTxn
     ) {
-        return writer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, currentTableTxn);
+        writer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, currentTableTxn);
     }
 
     @Override
