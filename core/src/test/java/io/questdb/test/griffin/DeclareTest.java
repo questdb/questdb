@@ -5116,7 +5116,7 @@ public class DeclareTest extends AbstractSqlParserTest {
             assertDeclaredListMatchesWrittenOut("s", " IN ", "NULL, 'a'", """
                     s
                     a
-
+                    
                     """);
             assertDeclaredListMatchesWrittenOut("s", " NOT IN ", "NULL,", """
                     s
@@ -5133,7 +5133,7 @@ public class DeclareTest extends AbstractSqlParserTest {
                     """);
             assertDeclaredListMatchesWrittenOut("v", " IN ", "NULL, NULL", """
                     v
-
+                    
                     """);
             assertDeclaredListMatchesWrittenOut("v", " NOT IN ", "NULL, 'a'", """
                     v
@@ -5151,7 +5151,7 @@ public class DeclareTest extends AbstractSqlParserTest {
                     """);
             assertDeclaredListMatchesWrittenOut("ts", " IN ", "NULL,", """
                     ts
-
+                    
                     """);
             assertDeclaredListMatchesWrittenOut("ts", " NOT IN ", "NULL, '2024-01-01T00:00:00.000000Z'", """
                     ts
