@@ -186,6 +186,9 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                 }
                 final String expected = snapshot(e);
 
+                if (history == History.SAVE_POINT_FAILS_CLEAN_RESTART_INTO_NOSYNC) {
+                    setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                }
                 e = restart(e);
                 TestUtils.drainWalQueue(e);
                 Assert.assertEquals(expected, snapshot(e));
@@ -451,19 +454,31 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         // The save point after the operation fails, nothing is written after it, and the restart is clean: the
         // writer's close must take the save point, also when the operation did not move the seqTxn.
         SAVE_POINT_FAILS_CLEAN_RESTART,
+        // As SAVE_POINT_FAILS_CLEAN_RESTART with the periodic save point off.
+        SAVE_POINT_FAILS_CLEAN_RESTART_NO_PERIODIC,
+        // As SAVE_POINT_FAILS_CLEAN_RESTART_NO_PERIODIC, restarting in NOSYNC.
+        SAVE_POINT_FAILS_CLEAN_RESTART_INTO_NOSYNC,
         // The control: nothing is rewound after a crash.
         NOSYNC;
 
         boolean cleanRestart() {
-            return this == SAVE_POINT_FAILS_CLEAN_RESTART;
+            return switch (this) {
+                case SAVE_POINT_FAILS_CLEAN_RESTART, SAVE_POINT_FAILS_CLEAN_RESTART_NO_PERIODIC,
+                     SAVE_POINT_FAILS_CLEAN_RESTART_INTO_NOSYNC -> true;
+                default -> false;
+            };
         }
 
         boolean failsSavePoint() {
-            return this == SAVE_POINT_FAILS || this == SAVE_POINT_FAILS_NO_PERIODIC || this == SAVE_POINT_FAILS_CLEAN_RESTART;
+            return this == SAVE_POINT_FAILS || this == SAVE_POINT_FAILS_NO_PERIODIC || cleanRestart();
         }
 
         boolean periodicOff() {
-            return this == INLINE_SAVE_POINTS_ONLY || this == SAVE_POINT_FAILS_NO_PERIODIC;
+            return switch (this) {
+                case INLINE_SAVE_POINTS_ONLY, SAVE_POINT_FAILS_NO_PERIODIC, SAVE_POINT_FAILS_CLEAN_RESTART_NO_PERIODIC,
+                     SAVE_POINT_FAILS_CLEAN_RESTART_INTO_NOSYNC -> true;
+                default -> false;
+            };
         }
     }
 

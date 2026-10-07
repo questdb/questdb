@@ -7652,8 +7652,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // sequencer + scoreboard in CairoEngine.close) sequencer are all live. Gated to a HEALTHY
         // ADAPTIVE WAL writer that actually has a tail: a distressed/rolled-back writer -- including
         // the drop path, which sets distressed before doClose -- must NOT stamp an epoch over
-        // possibly-torn or about-to-be-deleted state; a negative epoch interval is the operator's
-        // opt-out of epochs entirely (honor it here too, since this bypasses the cadence gate).
+        // possibly-torn or about-to-be-deleted state. A negative epoch interval turns the tail epoch off
+        // here too, as in the apply job, but not an owed one: that covers a change no WAL replay can redo.
         // Best effort: a failure just leaves the tail for the next boot's idempotent WAL replay.
         //
         // fullyConstructed keeps this block from ever ENTERING the epoch on a half-built writer. doClose()
@@ -7685,11 +7685,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (fullyConstructed
                 && !distressed
                 && configuration.isAdaptiveEpochFlushOnClose()
-                && enrolledAdaptive
-                && configuration.getAdaptiveEpochIntervalMs() >= 0) {
+                && enrolledAdaptive) {
             try {
                 final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-                if (getSeqTxn() > tracker.getDurableEpochSeqTxn() || tracker.isDurableEpochOwed()) {
+                if (tracker.isDurableEpochOwed()
+                        || (configuration.getAdaptiveEpochIntervalMs() >= 0 && getSeqTxn() > tracker.getDurableEpochSeqTxn())) {
                     advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
                 }
             } catch (Throwable e) {
