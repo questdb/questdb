@@ -242,6 +242,72 @@ public class RecordBlockTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIndexScanFilterErrorComesAfterTheRowsBeforeIt() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String indexType : new String[]{"posting", "bitmap"}) {
+                execute("drop table if exists fe");
+                execute("create table fe (s symbol index type " + indexType + ", v varchar, x long, ts timestamp) timestamp(ts) partition by DAY");
+                // the filter's implicit cast fails from x = 2421 on: in the second partition, and not
+                // on the first row of a page frame, which hasNext() reads
+                execute("insert into fe select 'k' || (x % 3), case when x > 2420 then 'bad' else '1970-01-01' end, x, " +
+                        "(x * 60000000)::timestamp from long_sequence(3000)");
+                final String query = "select * from fe where s = 'k1' and ts > v";
+                assertPlanContains(query, "Index forward scan on: s");
+                // the row fill returns every row before the failing one, then fails; reading ahead
+                // must not fail any earlier
+                final String expected = readRowByRow(query);
+                TestUtils.assertContains(expected, "inconvertible value");
+                for (int maxRows : new int[]{1, 7, 100, 5000}) {
+                    TestUtils.assertEquals(query + ", maxRows=" + maxRows, expected, readPeekingBeforeEveryRow(query, maxRows));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLatestOnIndexedScans() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String indexType : new String[]{"posting", "bitmap"}) {
+                execute("drop table if exists ix");
+                execute("create table ix (s symbol index type " + indexType + ", s2 symbol, i int, d double, ts timestamp) " +
+                        "timestamp(ts) partition by DAY");
+                execute("insert into ix select case when x % 17 = 0 then null else 'k' || (x % 13) end, 'z' || (x % 5), x::int, " +
+                        "x * 1.5, (x * 900000000)::timestamp from long_sequence(1500)");
+                final Rnd rnd = TestUtils.generateRandom(LOG);
+                final String[] queries = {
+                        // the row cursor of one value's latest row ends the scan with NoMoreFramesException
+                        "select * from ix where s = 'k7' latest on ts partition by s",
+                        "select * from ix where s = 'k7' and ts < '1970-01-10' latest on ts partition by s",
+                        "select ts, s, d from ix where s = 'k7' latest on ts partition by s",
+                        "select ts, s, d + i, s2 from ix where s = 'k7' latest on ts partition by s",
+                        "select * from (select * from ix where s = 'k7' latest on ts partition by s) limit 1",
+                        "select * from ix latest by s where s = 'k7'",
+                        // a value the symbol table does not hold yet: the deferred cursor
+                        "select * from ix where s = 'k99' latest on ts partition by s",
+                        "select * from ix where s = 'k7' and i > 10 latest on ts partition by s",
+                        "select * from ix where s in ('k1', 'k7', 'k11') latest on ts partition by s",
+                        "select * from ix where s = null latest on ts partition by s",
+                        "select * from ix latest on ts partition by s",
+                        "select * from ix where i > 10 latest on ts partition by s",
+                        "select * from ix latest on ts partition by s2",
+                        "select * from ix latest on ts partition by s, s2",
+                };
+                assertPlanContains(queries[0], "Index backward scan on: s");
+                for (String query : queries) {
+                    // as the egress loop reads: a peek before every row
+                    final String expected = readRowByRow(query);
+                    for (int maxRows : new int[]{1, 2, 1000}) {
+                        TestUtils.assertEquals(query + ", maxRows=" + maxRows, expected, readPeekingBeforeEveryRow(query, maxRows));
+                    }
+                    for (int k = 0; k < 3; k++) {
+                        assertBlocksMatchRows(engine, sqlExecutionContext, query, rnd);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testParquetFramesOfferNone() throws Exception {
         assertMemoryLeak(() -> {
             createAllTypes();
@@ -565,6 +631,64 @@ public class RecordBlockTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select(query); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             Assert.assertEquals(query, expected, cursor.supportsRecordBlocks());
         }
+    }
+
+    /**
+     * The query's rows as the egress loop reads them: a peek before every row, every row of a block
+     * taken, else one row from hasNext(). Ends with the error the cursor threw, if any.
+     */
+    private static String readPeekingBeforeEveryRow(String query, int maxRows) throws Exception {
+        final StringSink actual = new StringSink();
+        try (RecordCursorFactory factory = select(query)) {
+            final RecordMetadata metadata = factory.getMetadata();
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                final Record record = cursor.getRecord();
+                try {
+                    while (true) {
+                        final RecordBlock block = cursor.peekRecordBlock(maxRows);
+                        if (block != null) {
+                            final int rows = block.getRowCount();
+                            Assert.assertTrue(rows > 0 && rows <= maxRows);
+                            for (int r = 0; r < rows; r++) {
+                                final Record blockRecord = block.getRecordAt(r);
+                                assertAddresses(block, r, blockRecord, metadata);
+                                CursorPrinter.println(blockRecord, metadata, actual);
+                            }
+                            cursor.skipRecordBlock(rows);
+                            continue;
+                        }
+                        if (!cursor.hasNext()) {
+                            break;
+                        }
+                        CursorPrinter.println(record, metadata, actual);
+                    }
+                } catch (RuntimeException e) {
+                    actual.put("error: ").put(e.getMessage());
+                }
+            }
+        }
+        return actual.toString();
+    }
+
+    /**
+     * The query's rows through hasNext(), ending with the error the cursor threw, if any.
+     */
+    private static String readRowByRow(String query) throws Exception {
+        final StringSink expected = new StringSink();
+        try (RecordCursorFactory factory = select(query)) {
+            final RecordMetadata metadata = factory.getMetadata();
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                final Record record = cursor.getRecord();
+                try {
+                    while (cursor.hasNext()) {
+                        CursorPrinter.println(record, metadata, expected);
+                    }
+                } catch (RuntimeException e) {
+                    expected.put("error: ").put(e.getMessage());
+                }
+            }
+        }
+        return expected.toString();
     }
 
     private static void createWindowTable(CairoEngine engine, SqlExecutionContext ctx) throws Exception {

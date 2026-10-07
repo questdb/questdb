@@ -55,7 +55,8 @@ import org.jetbrains.annotations.Nullable;
 // Blocks: a plain forward scan offers the rest of a native frame as consecutive rows. A scan whose
 // row cursor walks an index offers the frame's next rows as a list of row indexes: peekRecordBlock()
 // reads them ahead from the row cursor into pendingRows, and hasNext() returns the rows read ahead
-// before it asks the row cursor for more.
+// before it asks the row cursor for more. What the row cursor throws while read ahead is kept and
+// thrown by hasNext() once it has returned the rows before it: the row-by-row read meets it there.
 public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     private final boolean entityCursor;
     private final Function filter;
@@ -68,6 +69,9 @@ public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCurs
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isExhausted;
     private long maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
+    // index scans: what the row cursor threw while peekRecordBlock() read ahead, after the rows in
+    // pendingRows; hasNext() throws it once it has returned them, or null for none
+    private RuntimeException pendingError;
     // index scans: the current frame's rows read ahead of hasNext() by peekRecordBlock(), the next
     // one to return at pendingRowsPos
     private DirectLongList pendingRows;
@@ -151,6 +155,13 @@ public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCurs
                 recordA.setRowIndex(pendingRows.get(pendingRowsPos++));
                 rowsProducedSinceSkip++;
                 return true;
+            }
+            if (pendingError != null) {
+                // where the row cursor threw while read ahead: NoMoreFramesException ends the scan
+                // in the catch below, as it does when the row cursor throws it here
+                final RuntimeException e = pendingError;
+                pendingError = null;
+                throw e;
             }
             if (rowCursor != null && rowCursor.hasNext()) {
                 final int frameIndex = frameCount - 1;
@@ -243,8 +254,17 @@ public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCurs
             pendingRows.setPos(left);
             pendingRowsPos = 0;
         }
-        while (pendingRows.size() < wanted && rowCursor.hasNext()) {
-            pendingRows.add(rowCursor.next());
+        if (pendingError == null) {
+            try {
+                while (pendingRows.size() < wanted && rowCursor.hasNext()) {
+                    pendingRows.add(rowCursor.next());
+                }
+            } catch (RuntimeException e) {
+                // NoMoreFramesException (a LATEST ON value's row cursor ends the scan with it), or
+                // the error of a filter the row cursor evaluates: either comes after the rows read
+                // so far, so hasNext() throws it once it has returned them, and not before
+                pendingError = e;
+            }
         }
         final long rows = Math.min(pendingRows.size(), wanted);
         if (rows < 1) {
@@ -434,6 +454,7 @@ public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCurs
             pendingRows.clear();
         }
         pendingRowsPos = 0;
+        pendingError = null;
     }
 
     /**

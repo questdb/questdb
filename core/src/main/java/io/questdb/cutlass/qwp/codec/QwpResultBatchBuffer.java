@@ -1008,7 +1008,9 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             if (r0 < rows) {
                 final int hi = Math.min(rows, r0 + SYMBOL_ROWS_AFTER_NEW_KEY);
                 final int taken = appendBlockSymbolRows(block, r0, hi, dictBudgetWireBytes);
-                if (taken < hi) {
+                // a stop on the window's last row also returns hi: the delta is past the budget
+                // then, and only then, as it grows only with the entries the rows add
+                if (taken < hi || currentBatchDeltaWireBytes() > dictBudgetWireBytes) {
                     return taken;
                 }
                 r0 = hi;
