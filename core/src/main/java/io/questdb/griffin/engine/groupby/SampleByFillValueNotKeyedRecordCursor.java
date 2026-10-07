@@ -30,10 +30,13 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.InterpolationGroupByFunction;
 import io.questdb.std.ObjList;
 
 public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillRecordCursor {
     private final SimpleMapValuePeeker peeker;
+    // the group-by functions of the FILL(PREV) columns, see setPrevValuesToNull()
+    private final ObjList<GroupByFunction> prevFunctions = new ObjList<>();
     private final SimpleMapValue value;
     private boolean endFill = false;
     private boolean firstRun = true;
@@ -83,6 +86,14 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
         this.peeker = peeker;
         this.value = value;
         record.of(value);
+        // A FILL(PREV) column uses its group-by function as the placeholder, unlike FILL(NULL), FILL(value)
+        // and FILL(LINEAR), see SampleByFillValueRecordCursorFactory.createPlaceholderFunctions()
+        for (int i = 0, n = placeholderFunctions.size(); i < n; i++) {
+            final Function function = placeholderFunctions.getQuick(i);
+            if (function instanceof GroupByFunction groupByFunction && !(function instanceof InterpolationGroupByFunction)) {
+                prevFunctions.add(groupByFunction);
+            }
+        }
     }
 
     @Override
@@ -143,6 +154,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
         upperBound = Long.MAX_VALUE;
         firstRun = true;
         peeker.clear();
+        setPrevValuesToNull();
         record.setActiveA();
     }
 
@@ -154,6 +166,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
         upperBound = Long.MAX_VALUE;
         firstRun = true;
         peeker.clear();
+        setPrevValuesToNull();
         record.setActiveA();
     }
 
@@ -177,6 +190,18 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
                 record.setInterpolationTarget(peeker.peek());
             }
             gapFill = true;
+        }
+    }
+
+    // hasNext() emits the gap buckets between FROM and the first row from the value before peeker.reset()
+    // copies the first bucket into it, and the FILL(PREV) columns read that value. peeker.clear() zeroes
+    // it, so those buckets showed zero, the first symbol key, or the first histogram of approx_percentile()
+    // where the GROUP BY path shows NULL. Each FILL(PREV) function writes NULL into its own slots, as
+    // SampleByFillPrevNotKeyedRecordCursor does for every function. FILL(LINEAR) columns keep the zeroed
+    // slots: interpolating from a NULL long or int sentinel yields garbage.
+    private void setPrevValuesToNull() {
+        for (int i = 0, n = prevFunctions.size(); i < n; i++) {
+            prevFunctions.getQuick(i).setNull(value);
         }
     }
 }

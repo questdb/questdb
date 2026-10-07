@@ -253,7 +253,8 @@ public class SimpleTimestampSamplerTest {
             );
         }
 
-        // every timestamp from two buckets before the grid start to two buckets after 1970 rounds down to the grid
+        // timestamps sampled every 7 minutes plus one tick, from two buckets before the grid start to two buckets
+        // after 1970, round down to the grid
         final long step = timestampDriver.fromMinutes(7) + 1;
         for (long ts = start - 2 * bucket; ts < 2 * bucket; ts += step) {
             final long roundedTs = sampler.round(ts);

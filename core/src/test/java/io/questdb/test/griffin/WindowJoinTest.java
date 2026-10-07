@@ -4149,6 +4149,56 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonParallelApproxPercentileEmptyWindowReturnsNull() throws Exception {
+        // The double and packed approx_percentile() variants keep their histograms in a list and
+        // store a histogram index in the map value. The serial WINDOW JOIN calls setEmpty() for
+        // every master row and computeFirst() only when the window has rows, so a master row with
+        // an empty window reads whatever setEmpty() wrote. Index 0 belongs to another master row's
+        // histogram, so setEmpty() has to write NULL. The precision-2 LONG variant stores a
+        // histogram pointer instead and serves as the control.
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                    ('2021-01-01T00:00:00.000000Z', 'A', 1),
+                    ('2021-01-01T05:00:00.000000Z', 'A', 2)
+                    """);
+            execute("CREATE TABLE p (ts TIMESTAMP, sym SYMBOL, price DOUBLE, l LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO p VALUES ('2021-01-01T00:00:30.000000Z', 'A', 10.0, 10)");
+            // The plain join runs on the serial Window Join, the symbol-keyed one on the serial
+            // Window Fast Join; approx_percentile() keeps both off the async factories.
+            final String[][] variants = {{"", "Window Join\n"}, {"ON (m.sym = p.sym)", "Window Fast Join\n"}};
+            for (String[] variant : variants) {
+                assertQuery("""
+                        SELECT m.x,
+                            approx_percentile(p.price, 0.5) ap,
+                            approx_percentile(p.price, 0.5, 3) app,
+                            approx_percentile(p.l, 0.5, 3) alp,
+                            approx_percentile(p.l, 0.5, 2) al,
+                            count() c
+                        FROM m
+                        WINDOW JOIN p
+                        %s
+                        RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                        EXCLUDE PREVAILING
+                        """.formatted(variant[0]))
+                        .withPlanContaining(variant[1])
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                x\tap\tapp\talp\tal\tc
+                                1\t10.0\t10.0\t10.0\t10.0\t1
+                                2\tnull\tnull\tnull\tnull\t0
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testNonParallelWindowJoinFilterStaysAsync() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();

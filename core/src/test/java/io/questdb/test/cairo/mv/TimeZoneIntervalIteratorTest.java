@@ -289,19 +289,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         expectedBounds.add(timestampDriver.parseFloorLiteral("2024-03-31T21:00:00.000000Z"));
         expectedBounds.add(timestampDriver.parseFloorLiteral("2024-04-30T21:00:00.000000Z"));
         expectedBounds.add(timestampDriver.parseFloorLiteral("2024-05-31T21:00:00.000000Z"));
-        final int expectedStepCount = expectedBounds.size() - 1;
-
-        Assert.assertEquals(expectedBounds.getQuick(0), iterator.getMinTimestamp());
-        Assert.assertEquals(expectedBounds.getQuick(expectedStepCount), iterator.getMaxTimestamp());
-        int stepCount = 0;
-        while (iterator.next()) {
-            // fail on the first surplus step, so that an iterator that stops advancing fails instead of hanging
-            Assert.assertTrue("unexpected step " + stepCount, stepCount < expectedStepCount);
-            Assert.assertEquals(expectedBounds.getQuick(stepCount), iterator.getTimestampLo());
-            Assert.assertEquals(expectedBounds.getQuick(stepCount + 1), iterator.getTimestampHi());
-            stepCount++;
-        }
-        Assert.assertEquals(expectedStepCount, stepCount);
+        assertSteps(iterator, expectedBounds);
     }
 
     @Test

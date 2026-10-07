@@ -526,6 +526,8 @@ public class SampleByTest extends AbstractCairoTest {
 
             // todo: return values for "prev" function are incorrect. This is a bug.
             // [nwoolmer] I think I've fixed this now, dirty state in SimpleMapValuePeeker
+            // Before the first row, the FILL(PREV) column shows NULL, as on the GROUP BY path, see
+            // testSampleFillValueNotKeyedFromBeforeFirstRow()
             assertQuery("""
                     select created, avg(latency) avg, last(latency) latency
                       from telem
@@ -538,18 +540,18 @@ public class SampleByTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             created\tavg\tlatency
-                            2025-01-20T13:56:50.000000Z\t0.0\t0.0
-                            2025-01-20T13:56:52.000000Z\t0.0\t0.0
-                            2025-01-20T13:56:54.000000Z\t0.0\t0.0
-                            2025-01-20T13:56:56.000000Z\t0.0\t0.0
-                            2025-01-20T13:56:58.000000Z\t0.0\t0.0
-                            2025-01-20T13:57:00.000000Z\t0.0\t0.0
-                            2025-01-20T13:57:02.000000Z\t0.0\t0.0
-                            2025-01-20T13:57:04.000000Z\t0.0\t0.0
-                            2025-01-20T13:57:06.000000Z\t0.0\t0.0
-                            2025-01-20T13:57:08.000000Z\t0.0\t0.0
-                            2025-01-20T13:57:10.000000Z\t0.0\t0.0
-                            2025-01-20T13:57:12.000000Z\t0.0\t0.0
+                            2025-01-20T13:56:50.000000Z\t0.0\tnull
+                            2025-01-20T13:56:52.000000Z\t0.0\tnull
+                            2025-01-20T13:56:54.000000Z\t0.0\tnull
+                            2025-01-20T13:56:56.000000Z\t0.0\tnull
+                            2025-01-20T13:56:58.000000Z\t0.0\tnull
+                            2025-01-20T13:57:00.000000Z\t0.0\tnull
+                            2025-01-20T13:57:02.000000Z\t0.0\tnull
+                            2025-01-20T13:57:04.000000Z\t0.0\tnull
+                            2025-01-20T13:57:06.000000Z\t0.0\tnull
+                            2025-01-20T13:57:08.000000Z\t0.0\tnull
+                            2025-01-20T13:57:10.000000Z\t0.0\tnull
+                            2025-01-20T13:57:12.000000Z\t0.0\tnull
                             2025-01-20T13:57:14.000000Z\t0.4851638802935891\t0.4846019644078461
                             2025-01-20T13:57:16.000000Z\t0.5040684715238979\t0.0014510055926236776
                             2025-01-20T13:57:18.000000Z\t0.4855058436740148\t0.760595244599882
@@ -9804,7 +9806,6 @@ public class SampleByTest extends AbstractCairoTest {
             final String offset = " ALIGN TO CALENDAR WITH OFFSET '-00:10'";
             assertSampleByNegativeOffset(
                     notKeyed,
-                    "t",
                     sampleBy + offset,
                     "timestamp_floor_utc(",
                     """
@@ -9816,7 +9817,6 @@ public class SampleByTest extends AbstractCairoTest {
             );
             assertSampleByNegativeOffset(
                     notKeyed,
-                    "t",
                     sampleBy + " FILL(NULL)" + offset,
                     "Sample By Fill\n",
                     """
@@ -9829,7 +9829,6 @@ public class SampleByTest extends AbstractCairoTest {
             );
             assertSampleByNegativeOffset(
                     notKeyed,
-                    "t",
                     sampleBy + " FILL(PREV)" + offset,
                     "Sample By Fill\n",
                     """
@@ -9842,7 +9841,6 @@ public class SampleByTest extends AbstractCairoTest {
             );
             assertSampleByNegativeOffset(
                     notKeyed,
-                    "t",
                     sampleBy + " FILL(10, 100)" + offset,
                     "Sample By Fill\n",
                     """
@@ -9855,7 +9853,6 @@ public class SampleByTest extends AbstractCairoTest {
             );
             assertSampleByNegativeOffset(
                     keyed,
-                    "t",
                     sampleBy + offset,
                     "timestamp_floor_utc(",
                     """
@@ -9868,7 +9865,6 @@ public class SampleByTest extends AbstractCairoTest {
             );
             assertSampleByNegativeOffset(
                     keyed,
-                    "t",
                     sampleBy + " FILL(NULL)" + offset,
                     "Sample By Fill\n",
                     // the GROUP BY path emits the data rows of a bucket before its fill rows
@@ -9897,7 +9893,6 @@ public class SampleByTest extends AbstractCairoTest {
             );
             assertSampleByNegativeOffset(
                     keyed,
-                    "t",
                     sampleBy + " FILL(PREV)" + offset,
                     "Sample By Fill\n",
                     """
@@ -9925,7 +9920,6 @@ public class SampleByTest extends AbstractCairoTest {
             );
             assertSampleByNegativeOffset(
                     keyed,
-                    "t",
                     sampleBy + " FILL(10, 100)" + offset,
                     "Sample By Fill\n",
                     """
@@ -9954,7 +9948,6 @@ public class SampleByTest extends AbstractCairoTest {
             // a zero and a positive offset keep the buckets at the month start and 10 minutes after it
             assertSampleByNegativeOffset(
                     notKeyed,
-                    "t",
                     sampleBy + " FILL(NULL) ALIGN TO CALENDAR",
                     "Sample By Fill\n",
                     """
@@ -9967,7 +9960,6 @@ public class SampleByTest extends AbstractCairoTest {
             );
             assertSampleByNegativeOffset(
                     notKeyed,
-                    "t",
                     sampleBy + " FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '00:10'",
                     "Sample By Fill\n",
                     """
@@ -9999,7 +9991,6 @@ public class SampleByTest extends AbstractCairoTest {
                     """);
             assertSampleByNegativeOffset(
                     "SELECT ts, count() c, sum(v) s",
-                    "t",
                     " SAMPLE BY 1M FILL(LINEAR) ALIGN TO CALENDAR WITH OFFSET '-00:10'",
                     "fill: linear\n",
                     """
@@ -10018,7 +10009,6 @@ public class SampleByTest extends AbstractCairoTest {
             );
             assertSampleByNegativeOffset(
                     "SELECT ts, sym, count() c, sum(v) s",
-                    "t",
                     " SAMPLE BY 1M FILL(LINEAR) ALIGN TO CALENDAR WITH OFFSET '-00:10'",
                     "fill: linear\n",
                     """
@@ -10047,7 +10037,6 @@ public class SampleByTest extends AbstractCairoTest {
             );
             assertSampleByNegativeOffset(
                     "SELECT ts, count() c, sum(v) s",
-                    "t",
                     " SAMPLE BY 3M FILL(LINEAR) ALIGN TO CALENDAR WITH OFFSET '-00:10'",
                     "fill: linear\n",
                     """
@@ -10081,7 +10070,6 @@ public class SampleByTest extends AbstractCairoTest {
             final String offset = " ALIGN TO CALENDAR WITH OFFSET '-00:10'";
             assertSampleByNegativeOffset(
                     notKeyed,
-                    "t",
                     " SAMPLE BY 3M" + offset,
                     "timestamp_floor_utc(",
                     """
@@ -10093,7 +10081,6 @@ public class SampleByTest extends AbstractCairoTest {
             );
             assertSampleByNegativeOffset(
                     notKeyed,
-                    "t",
                     " SAMPLE BY 3M FILL(NULL)" + offset,
                     "Sample By Fill\n",
                     """
@@ -10111,7 +10098,6 @@ public class SampleByTest extends AbstractCairoTest {
             );
             assertSampleByNegativeOffset(
                     notKeyed,
-                    "t",
                     " SAMPLE BY 3M FILL(PREV)" + offset,
                     "Sample By Fill\n",
                     """
@@ -10129,7 +10115,6 @@ public class SampleByTest extends AbstractCairoTest {
             );
             assertSampleByNegativeOffset(
                     keyed,
-                    "t",
                     " SAMPLE BY 3M FILL(NULL)" + offset,
                     "Sample By Fill\n",
                     """
@@ -10177,7 +10162,6 @@ public class SampleByTest extends AbstractCairoTest {
             );
             assertSampleByNegativeOffset(
                     notKeyed,
-                    "t",
                     " SAMPLE BY 1y" + offset,
                     "timestamp_floor_utc(",
                     """
@@ -10188,7 +10172,6 @@ public class SampleByTest extends AbstractCairoTest {
             );
             assertSampleByNegativeOffset(
                     notKeyed,
-                    "t",
                     " SAMPLE BY 1y FILL(NULL)" + offset,
                     "Sample By Fill\n",
                     """
@@ -10200,7 +10183,6 @@ public class SampleByTest extends AbstractCairoTest {
             );
             assertSampleByNegativeOffset(
                     keyed,
-                    "t",
                     " SAMPLE BY 1y FILL(NULL)" + offset,
                     "Sample By Fill\n",
                     """
@@ -10224,7 +10206,6 @@ public class SampleByTest extends AbstractCairoTest {
             );
             assertSampleByNegativeOffset(
                     keyed,
-                    "t",
                     " SAMPLE BY 1y FILL(PREV)" + offset,
                     "Sample By Fill\n",
                     """
@@ -10266,7 +10247,6 @@ public class SampleByTest extends AbstractCairoTest {
             final String timeZone = " ALIGN TO CALENDAR TIME ZONE 'Asia/Tokyo' WITH OFFSET '-00:10'";
             assertSampleByNegativeOffset(
                     "SELECT ts, count() c, sum(v) s",
-                    "t",
                     " SAMPLE BY 1M" + timeZone,
                     "timestamp_floor_utc(",
                     """
@@ -10278,7 +10258,6 @@ public class SampleByTest extends AbstractCairoTest {
             );
             assertSampleByNegativeOffset(
                     "SELECT ts, count() c, sum(v) s",
-                    "t",
                     " SAMPLE BY 1M FILL(NULL)" + timeZone,
                     "Sample By Fill\n",
                     """
@@ -10291,7 +10270,6 @@ public class SampleByTest extends AbstractCairoTest {
             );
             assertSampleByNegativeOffset(
                     "SELECT ts, sym, count() c, sum(v) s",
-                    "t",
                     " SAMPLE BY 1M FILL(PREV)" + timeZone,
                     "Sample By Fill\n",
                     """
@@ -20246,6 +20224,149 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleFillValueNegative() throws Exception {
+        // The parser turns FILL(-1) into a unary minus over the literal 1. The SAMPLE BY cursor used to
+        // parse the minus sign alone and reject the statement with "invalid fill value: -". It now
+        // returns the rows that the GROUP BY path returns, not keyed and keyed, alone and next to PREV.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (ts TIMESTAMP, k SYMBOL, i INT, l LONG, d DOUBLE, f FLOAT, s SHORT, b BYTE)
+                    TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 10, 100, 1.25, 2.5, 3, 4),
+                    ('2024-01-01T00:30:00.000000Z', 'b', 20, 200, 2.25, 3.5, 5, 6),
+                    ('2024-01-01T03:00:00.000000Z', 'a', 30, 300, 3.25, 4.5, 7, 8)
+                    """);
+            assertSampleByFillNegative(
+                    "SELECT ts, sum(i) s",
+                    " SAMPLE BY 1h FILL(-1)",
+                    """
+                            ts\ts
+                            2024-01-01T00:00:00.000000Z\t30
+                            2024-01-01T01:00:00.000000Z\t-1
+                            2024-01-01T02:00:00.000000Z\t-1
+                            2024-01-01T03:00:00.000000Z\t30
+                            """
+            );
+            assertSampleByFillNegative(
+                    "SELECT ts, avg(d) a",
+                    " SAMPLE BY 1h FILL(-1.5)",
+                    """
+                            ts\ta
+                            2024-01-01T00:00:00.000000Z\t1.75
+                            2024-01-01T01:00:00.000000Z\t-1.5
+                            2024-01-01T02:00:00.000000Z\t-1.5
+                            2024-01-01T03:00:00.000000Z\t3.25
+                            """
+            );
+            final String notKeyed = "SELECT ts, first(i) i, first(l) l, first(d) d, first(f) f, first(s) s, first(b) b";
+            assertSampleByFillNegative(
+                    notKeyed,
+                    " SAMPLE BY 1h FILL(-1, -2, -1.5, -2.5, -3, -4)",
+                    """
+                            ts\ti\tl\td\tf\ts\tb
+                            2024-01-01T00:00:00.000000Z\t10\t100\t1.25\t2.5\t3\t4
+                            2024-01-01T01:00:00.000000Z\t-1\t-2\t-1.5\t-2.5\t-3\t-4
+                            2024-01-01T02:00:00.000000Z\t-1\t-2\t-1.5\t-2.5\t-3\t-4
+                            2024-01-01T03:00:00.000000Z\t30\t300\t3.25\t4.5\t7\t8
+                            """
+            );
+            assertSampleByFillNegative(
+                    notKeyed,
+                    " SAMPLE BY 1h FILL(PREV, -1, -1.5, PREV, -2, -3)",
+                    """
+                            ts\ti\tl\td\tf\ts\tb
+                            2024-01-01T00:00:00.000000Z\t10\t100\t1.25\t2.5\t3\t4
+                            2024-01-01T01:00:00.000000Z\t10\t-1\t-1.5\t2.5\t-2\t-3
+                            2024-01-01T02:00:00.000000Z\t10\t-1\t-1.5\t2.5\t-2\t-3
+                            2024-01-01T03:00:00.000000Z\t30\t300\t3.25\t4.5\t7\t8
+                            """
+            );
+            final String keyed = "SELECT ts, k, first(i) i, first(l) l, first(d) d, first(f) f, first(s) s, first(b) b";
+            assertSampleByFillNegative(
+                    keyed,
+                    " SAMPLE BY 1h FILL(-1, -2, -1.5, -2.5, -3, -4)",
+                    """
+                            ts\tk\ti\tl\td\tf\ts\tb
+                            2024-01-01T00:00:00.000000Z\ta\t10\t100\t1.25\t2.5\t3\t4
+                            2024-01-01T00:00:00.000000Z\tb\t20\t200\t2.25\t3.5\t5\t6
+                            2024-01-01T01:00:00.000000Z\ta\t-1\t-2\t-1.5\t-2.5\t-3\t-4
+                            2024-01-01T01:00:00.000000Z\tb\t-1\t-2\t-1.5\t-2.5\t-3\t-4
+                            2024-01-01T02:00:00.000000Z\ta\t-1\t-2\t-1.5\t-2.5\t-3\t-4
+                            2024-01-01T02:00:00.000000Z\tb\t-1\t-2\t-1.5\t-2.5\t-3\t-4
+                            2024-01-01T03:00:00.000000Z\ta\t30\t300\t3.25\t4.5\t7\t8
+                            2024-01-01T03:00:00.000000Z\tb\t-1\t-2\t-1.5\t-2.5\t-3\t-4
+                            """
+            );
+            assertSampleByFillNegative(
+                    keyed,
+                    " SAMPLE BY 1h FILL(PREV, -1, -1.5, PREV, -2, -3)",
+                    """
+                            ts\tk\ti\tl\td\tf\ts\tb
+                            2024-01-01T00:00:00.000000Z\ta\t10\t100\t1.25\t2.5\t3\t4
+                            2024-01-01T00:00:00.000000Z\tb\t20\t200\t2.25\t3.5\t5\t6
+                            2024-01-01T01:00:00.000000Z\ta\t10\t-1\t-1.5\t2.5\t-2\t-3
+                            2024-01-01T01:00:00.000000Z\tb\t20\t-1\t-1.5\t3.5\t-2\t-3
+                            2024-01-01T02:00:00.000000Z\ta\t10\t-1\t-1.5\t2.5\t-2\t-3
+                            2024-01-01T02:00:00.000000Z\tb\t20\t-1\t-1.5\t3.5\t-2\t-3
+                            2024-01-01T03:00:00.000000Z\ta\t30\t300\t3.25\t4.5\t7\t8
+                            2024-01-01T03:00:00.000000Z\tb\t20\t-1\t-1.5\t3.5\t-2\t-3
+                            """
+            );
+            assertSampleByFillNegative(
+                    "SELECT ts, first(i) i, first(l) l",
+                    " SAMPLE BY 1h FILL(-2_147_483_647, -9_223_372_036_854_775_807)",
+                    """
+                            ts\ti\tl
+                            2024-01-01T00:00:00.000000Z\t10\t100
+                            2024-01-01T01:00:00.000000Z\t-2147483647\t-9223372036854775807
+                            2024-01-01T02:00:00.000000Z\t-2147483647\t-9223372036854775807
+                            2024-01-01T03:00:00.000000Z\t30\t300
+                            """
+            );
+            // The lowest INT and LONG literals are the NULL sentinels of their types, so they fill NULL.
+            assertSampleByCursorFrom(
+                    """
+                            SELECT ts, first(i) i, first(l) l FROM (SELECT * FROM t WHERE i > 0)
+                            SAMPLE BY 1h FILL(-2_147_483_648, -9_223_372_036_854_775_808)
+                            """,
+                    "fill: value\n",
+                    """
+                            ts\ti\tl
+                            2024-01-01T00:00:00.000000Z\t10\t100
+                            2024-01-01T01:00:00.000000Z\tnull\tnull
+                            2024-01-01T02:00:00.000000Z\tnull\tnull
+                            2024-01-01T03:00:00.000000Z\t30\t300
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleFillValueNegativeInvalid() throws Exception {
+        // The SAMPLE BY cursor accepts a minus sign only over a literal and parses the signed literal, so
+        // a value out of range for the column type, or a minus sign over anything else, keeps failing at
+        // the minus sign.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, i INT) TIMESTAMP(ts) PARTITION BY DAY");
+            assertQuery("SELECT ts, sum(i) s FROM (SELECT * FROM t WHERE i > 0) SAMPLE BY 1h FILL(-abc)")
+                    .noLeakCheck()
+                    .fails(73, "invalid fill value: -");
+            assertQuery("SELECT ts, first(i) i FROM (SELECT * FROM t WHERE i > 0) SAMPLE BY 1h FILL(-1.5)")
+                    .noLeakCheck()
+                    .fails(75, "invalid fill value: -1.5");
+            assertQuery("SELECT ts, first(i) i FROM (SELECT * FROM t WHERE i > 0) SAMPLE BY 1h FILL(-2_147_483_649)")
+                    .noLeakCheck()
+                    .fails(75, "invalid fill value: -2_147_483_649");
+            assertQuery("SELECT ts, first(ts) fts FROM (SELECT * FROM t WHERE i > 0) SAMPLE BY 1h FILL(-'2019-01-01')")
+                    .noLeakCheck()
+                    .fails(78, "Invalid fill value: '-'. Timestamp fill value must be in quotes.");
+        });
+    }
+
+    @Test
     public void testSampleFillValueNotEnough() throws Exception {
         // Per-column fill values must cover every non-key aggregate; 5 fill
         // values for 6 aggregates (b is a symbol key, not an aggregate) must
@@ -21008,6 +21129,66 @@ public class SampleByTest extends AbstractCairoTest {
                         20.56\t1970-01-03T08:01:06.000000Z
                         84.45258177211063\t1970-01-03T08:31:06.000000Z
                         """);
+    }
+
+    @Test
+    public void testSampleFillValueNotKeyedFromBeforeFirstRow() throws Exception {
+        // The not-keyed FILL(value) cursor emits the buckets between FROM and the first row before it
+        // aggregates a row. The FILL(PREV) columns of a mixed fill list read those buckets from a value that
+        // the cursor zeroes, so they showed 0.0, 0, the first symbol and the percentile of histogram 0, where
+        // the GROUP BY path shows NULL. The FILL(value) and FILL(NULL) columns keep their fill. The CROSS JOIN
+        // rewinds the sample for the second row of long_sequence(2).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v DOUBLE, l LONG, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2021-01-01T00:10:00.000000Z', 'A', 10.0, 10, 'x1'),
+                        ('2021-01-01T01:10:00.000000Z', 'B', 20.0, 20, 'x2'),
+                        ('2021-01-01T02:10:00.000000Z', 'B', 30.0, 30, 'x3'),
+                        ('2021-01-01T02:20:00.000000Z', 'A', 40.0, 40, 'x4')
+                    """);
+            final String select = """
+                    SELECT ts, sum(v) sv, last(v) lv, max(l) ml, last(sym) ls, last(s) lvc, approx_percentile(v, 0.5) pv,
+                        min(l) mnl, count() c
+                    FROM\s""";
+            final String sampleBy = " SAMPLE BY 1h FROM '2020-12-31T22:00' FILL(PREV, PREV, PREV, PREV, PREV, PREV, 7, NULL)";
+            final String expected = """
+                    ts\tsv\tlv\tml\tls\tlvc\tpv\tmnl\tc
+                    2020-12-31T22:00:00.000000Z\tnull\tnull\tnull\t\t\tnull\t7\tnull
+                    2020-12-31T23:00:00.000000Z\tnull\tnull\tnull\t\t\tnull\t7\tnull
+                    2021-01-01T00:00:00.000000Z\t10.0\t10.0\t10\tA\tx1\t10.0\t10\t1
+                    2021-01-01T01:00:00.000000Z\t20.0\t20.0\t20\tB\tx2\t20.0\t20\t1
+                    2021-01-01T02:00:00.000000Z\t70.0\t40.0\t40\tA\tx4\t30.0\t30\t2
+                    """;
+            // the table alone takes the GROUP BY path
+            assertQuery(select + "t" + sampleBy)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .withPlanContaining("Sample By Fill\n")
+                    .returns(expected);
+            // the sub-query keeps the statement on the SAMPLE BY cursor
+            final String cursorSql = select + "(SELECT * FROM t WHERE v > 0)" + sampleBy;
+            assertSampleByCursorFrom(cursorSql, "fill: value\n", expected);
+            assertQuery("SELECT * FROM long_sequence(2) CROSS JOIN (" + cursorSql + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n", "fill: value\n")
+                    .returns("""
+                            x\tts\tsv\tlv\tml\tls\tlvc\tpv\tmnl\tc
+                            1\t2020-12-31T22:00:00.000000Z\tnull\tnull\tnull\t\t\tnull\t7\tnull
+                            1\t2020-12-31T23:00:00.000000Z\tnull\tnull\tnull\t\t\tnull\t7\tnull
+                            1\t2021-01-01T00:00:00.000000Z\t10.0\t10.0\t10\tA\tx1\t10.0\t10\t1
+                            1\t2021-01-01T01:00:00.000000Z\t20.0\t20.0\t20\tB\tx2\t20.0\t20\t1
+                            1\t2021-01-01T02:00:00.000000Z\t70.0\t40.0\t40\tA\tx4\t30.0\t30\t2
+                            2\t2020-12-31T22:00:00.000000Z\tnull\tnull\tnull\t\t\tnull\t7\tnull
+                            2\t2020-12-31T23:00:00.000000Z\tnull\tnull\tnull\t\t\tnull\t7\tnull
+                            2\t2021-01-01T00:00:00.000000Z\t10.0\t10.0\t10\tA\tx1\t10.0\t10\t1
+                            2\t2021-01-01T01:00:00.000000Z\t20.0\t20.0\t20\tB\tx2\t20.0\t20\t1
+                            2\t2021-01-01T02:00:00.000000Z\t70.0\t40.0\t40\tA\tx4\t30.0\t30\t2
+                            """);
+        });
     }
 
     @Test
@@ -22105,12 +22286,7 @@ public class SampleByTest extends AbstractCairoTest {
     // Asserts a statement on the SAMPLE BY cursor path. LIMIT bounds the statements that a change of the
     // time zone offset at a bucket boundary used to keep in an endless loop, see GitHub issue #7752.
     private void assertSampleByCursorDst(String sql, String planFill, String expected) throws Exception {
-        assertQuery(sql + " LIMIT 100")
-                .noLeakCheck()
-                .timestamp("ts")
-                .noRandomAccess()
-                .withPlanContaining("Sample By\n", planFill)
-                .returns(expected);
+        assertSampleByCursorFrom(sql + " LIMIT 100", planFill, expected);
     }
 
     private void assertSampleByCursorFrom(String sql, String planFill, String expected) throws Exception {
@@ -22120,6 +22296,19 @@ public class SampleByTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .withPlanContaining("Sample By\n", planFill)
                 .returns(expected);
+    }
+
+    // Asserts a negative FILL value on both SAMPLE BY paths with the same rows: the table alone takes the GROUP BY
+    // path, and the filtered sub-query keeps the statement on the SAMPLE BY cursor.
+    private void assertSampleByFillNegative(String select, String sampleBy, String expected) throws Exception {
+        assertQuery(select + " FROM t" + sampleBy)
+                .noLeakCheck()
+                .timestamp("ts")
+                .inferRandomAccess()
+                .sizeMayVary()
+                .withPlanContaining("Sample By Fill\n")
+                .returns(expected);
+        assertSampleByCursorFrom(select + " FROM (SELECT * FROM t WHERE i > 0)" + sampleBy, "fill: value\n", expected);
     }
 
     private void assertSampleByFlavours(String expected, String sql) throws Exception {
@@ -22170,26 +22359,25 @@ public class SampleByTest extends AbstractCairoTest {
     // except with FILL(LINEAR), and the filtered sub-query keeps the statement on the SAMPLE BY cursor. LIMIT
     // bounds the statements that emitted fill rows without end before the fix; each statement returns fewer rows,
     // so the LIMIT hides no extra row.
-    private void assertSampleByNegativeOffset(String select, String table, String sampleBy, String groupByPlan, String expected) throws Exception {
-        assertSampleByNegativeOffset(select, table, sampleBy, groupByPlan, expected, expected);
+    private void assertSampleByNegativeOffset(String select, String sampleBy, String groupByPlan, String expected) throws Exception {
+        assertSampleByNegativeOffset(select, sampleBy, groupByPlan, expected, expected);
     }
 
     private void assertSampleByNegativeOffset(
             String select,
-            String table,
             String sampleBy,
             String groupByPlan,
             String expectedGroupBy,
             String expectedCursor
     ) throws Exception {
-        assertQuery(select + " FROM " + table + sampleBy + " LIMIT 100")
+        assertQuery(select + " FROM t" + sampleBy + " LIMIT 100")
                 .noLeakCheck()
                 .timestamp("ts")
                 .inferRandomAccess()
                 .sizeMayVary()
                 .withPlanContaining(groupByPlan)
                 .returns(expectedGroupBy);
-        assertQuery(select + " FROM (SELECT * FROM " + table + " WHERE v > 0)" + sampleBy + " LIMIT 100")
+        assertQuery(select + " FROM (SELECT * FROM t WHERE v > 0)" + sampleBy + " LIMIT 100")
                 .noLeakCheck()
                 .timestamp("ts")
                 .inferRandomAccess()

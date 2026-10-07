@@ -83,9 +83,10 @@ public class SimpleTimestampSampler implements TimestampSampler {
         long q = (value - start) / bucket;
         // The division truncates towards zero. Below the grid start, the decrement floors a value that falls between
         // two grid points. At or above the grid start, the quotient is the floor already, also for a value before
-        // 1970 on a grid with a negative start. A value in [0, start) keeps the grid point above it:
-        // AbstractNoRecordSampleByCursor.initTimestamps() rounds FROM shifted by a zone behind UTC and relies on
-        // landing back on FROM.
+        // 1970 on a grid with a negative start. A value in [0, start) that falls between two grid points keeps the
+        // grid point above it. AbstractNoRecordSampleByCursor.initTimestamps() can round such a value for a stride
+        // shorter than a day, when it adds a zone behind UTC to a FROM that code generation converted to UTC: the
+        // round-up keeps the first bucket at or after that shifted FROM.
         if (value < 0 && value < start && q * bucket != value - start) {
             q = q - 1;
         }
