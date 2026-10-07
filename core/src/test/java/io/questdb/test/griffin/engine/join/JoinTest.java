@@ -8468,6 +8468,52 @@ public class JoinTest extends AbstractCairoTest {
             assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter() AND pa.id > 3", 6, 4);
             assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter() AND pa.id + rnd_int(0, 1, 0) > 0", 10, 9);
             assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter() AND pb.v + pa.id > 0", 10, 9);
+            // A function with three or more parameters keeps them in args rather than lhs and rhs. A
+            // master-only IN list runs once per master row; an IN list, CASE or coalesce that reads a
+            // slave column runs once per chain entry.
+            assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter() AND pa.id IN (1, 2, 5)", 10, 4);
+            assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter() AND pb.v IN (pa.id * 10, 11, 21)", 6, 9);
+            assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter() AND CASE WHEN pb.v > 11 THEN false ELSE true END", 7, 9);
+            assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter() AND coalesce(pb.v, pa.id, 0) > 11", 6, 9);
+            // BETWEEN is a SET_OPERATION node, which never counts as master-only
+            assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter() AND pb.v NOT BETWEEN pa.id * 10 AND 11", 5, 9);
+
+            final String inListQuery = "SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND pb.v IN (pa.id * 10, 11, 21) ORDER BY pa.id, pb.v";
+            final String inListExpected = """
+                    id\tv
+                    1\t10
+                    1\t11
+                    2\t11
+                    3\t30
+                    4\tnull
+                    5\t21
+                    """;
+            assertQuery(inListQuery)
+                    .noLeakCheck()
+                    .returns(inListExpected);
+            assertQuery(inListQuery)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .returns(inListExpected);
+
+            final String caseQuery = "SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND CASE WHEN pb.v > 11 THEN false ELSE true END ORDER BY pa.id, pb.v";
+            final String caseExpected = """
+                    id\tv
+                    1\t10
+                    1\t11
+                    2\t10
+                    2\t11
+                    3\tnull
+                    4\tnull
+                    5\tnull
+                    """;
+            assertQuery(caseQuery)
+                    .noLeakCheck()
+                    .returns(caseExpected);
+            assertQuery(caseQuery)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .returns(caseExpected);
         });
     }
 
