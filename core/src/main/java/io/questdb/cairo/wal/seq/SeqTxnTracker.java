@@ -58,6 +58,10 @@ public class SeqTxnTracker {
     // (counts rollbacks since process start). Exposed via wal_tables() as an operator signal that
     // recovery was required for this table in the current process lifetime.
     private volatile long recoveryIncarnation = 0;
+    // Set when an inline durable epoch after a change no WAL replay can redo failed or was skipped: the next
+    // apply batch or a clean close takes an epoch regardless of the cadence. Cleared when an epoch publishes.
+    // Read and written only by the thread that holds the table writer, like lastEpochTs.
+    private boolean durableEpochOwed;
     // Wall-clock ms of the last durable epoch fired for this table (adaptive cadence gate). 0 => none
     // yet (so the first apply batch under adaptive is eligible to epoch). Read+written ONLY by the
     // apply worker that holds the table writer (single-threaded per table) -> no CAS needed.
@@ -195,6 +199,13 @@ public class SeqTxnTracker {
 
     public long getDurableEpochSeqTxn() {
         return durableEpochSeqTxn;
+    }
+
+    /**
+     * True while a durable epoch is owed after a change no WAL replay can redo; see {@link #setDurableEpochOwed}.
+     */
+    public boolean isDurableEpochOwed() {
+        return durableEpochOwed;
     }
 
     /**
@@ -707,6 +718,13 @@ public class SeqTxnTracker {
      */
     public void setLastEpochTs(long lastEpochTs) {
         this.lastEpochTs = lastEpochTs;
+    }
+
+    /**
+     * Marks or clears a durable epoch owed after a change no WAL replay can redo. Writer-holder only.
+     */
+    public void setDurableEpochOwed(boolean durableEpochOwed) {
+        this.durableEpochOwed = durableEpochOwed;
     }
 
     /**

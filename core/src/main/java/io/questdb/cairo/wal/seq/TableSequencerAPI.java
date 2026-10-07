@@ -40,6 +40,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
@@ -542,32 +543,61 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public void resumeTable(TableToken tableToken, long resumeFromTxn) {
-        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
-            try {
-                if (!isSuspended(tableToken)) {
-                    // Even if the table already unsuspended, send ApplyWal2TableJob notification anyway
-                    // as a way to resume table which is not moving even if it's marked as not suspended.
-                    sequencer.resumeTable();
-                    return;
-                }
-                final long nextTxn = sequencer.lastTxn() + 1;
-                if (resumeFromTxn > nextTxn) {
-                    throw CairoException.nonCritical().put("resume txn is higher than next available transaction [resumeFromTxn=").put(resumeFromTxn).put(", nextTxn=").put(nextTxn).put(']');
-                }
-                // resume from the latest on negative value
-                if (resumeFromTxn > 0) {
-                    try (TableWriter tableWriter = engine.getWriter(tableToken, WAL_2_TABLE_RESUME_REASON)) {
-                        long seqTxn = tableWriter.getAppliedSeqTxn();
-                        if (resumeFromTxn - 1 > seqTxn) {
-                            // including resumeFromTxn
-                            tableWriter.commitSeqTxn(resumeFromTxn - 1);
+        // Holds the writer of an adaptive table whose skip still needs a durable epoch.
+        TableWriter skipWriter = null;
+        try {
+            try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+                try {
+                    if (!isSuspended(tableToken)) {
+                        // Even if the table already unsuspended, send ApplyWal2TableJob notification anyway
+                        // as a way to resume table which is not moving even if it's marked as not suspended.
+                        sequencer.resumeTable();
+                        return;
+                    }
+                    final long nextTxn = sequencer.lastTxn() + 1;
+                    if (resumeFromTxn > nextTxn) {
+                        throw CairoException.nonCritical().put("resume txn is higher than next available transaction [resumeFromTxn=").put(resumeFromTxn).put(", nextTxn=").put(nextTxn).put(']');
+                    }
+                    // resume from the latest on negative value
+                    if (resumeFromTxn > 0) {
+                        final TableWriter tableWriter = engine.getWriter(tableToken, WAL_2_TABLE_RESUME_REASON);
+                        try {
+                            long seqTxn = tableWriter.getAppliedSeqTxn();
+                            if (resumeFromTxn - 1 > seqTxn) {
+                                // including resumeFromTxn
+                                tableWriter.commitSeqTxn(resumeFromTxn - 1);
+                                if (tableWriter.isEnrolledAdaptive()) {
+                                    skipWriter = tableWriter;
+                                }
+                            }
+                        } finally {
+                            if (skipWriter == null) {
+                                tableWriter.close();
+                            }
                         }
                     }
+                    if (skipWriter == null) {
+                        sequencer.resumeTable();
+                        return;
+                    }
+                } finally {
+                    sequencer.unlockWrite();
                 }
-                sequencer.resumeTable();
-            } finally {
-                sequencer.unlockWrite();
             }
+            // The skip is not in the WAL, so the table needs a durable epoch before it resumes, or a crash would
+            // replay the skipped transactions. The epoch may take the sequencer lock itself, so it is taken with
+            // the lock released; the table stays suspended meanwhile.
+            skipWriter.advanceDurableEpochAfter("resume wal from txn");
+            skipWriter = Misc.free(skipWriter);
+            try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+                try {
+                    sequencer.resumeTable();
+                } finally {
+                    sequencer.unlockWrite();
+                }
+            }
+        } finally {
+            Misc.free(skipWriter);
         }
     }
 

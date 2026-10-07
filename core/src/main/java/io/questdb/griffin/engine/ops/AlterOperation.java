@@ -493,18 +493,28 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     private void applyAttachPartition(MetadataService svc) {
-        for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
-            final long partitionTimestamp = extraInfo.getQuick(i * 2);
-            AttachDetachStatus attachDetachStatus = svc.attachPartition(partitionTimestamp);
-            if (AttachDetachStatus.OK != attachDetachStatus) {
-                throw attachDetachStatus.getException(
-                        (int) extraInfo.getQuick(i * 2 + 1),
-                        attachDetachStatus,
-                        tableToken,
-                        svc.getTimestampType(),
-                        svc.getPartitionBy(),
-                        partitionTimestamp
-                );
+        boolean attached = false;
+        try {
+            for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
+                final long partitionTimestamp = extraInfo.getQuick(i * 2);
+                AttachDetachStatus attachDetachStatus = svc.attachPartition(partitionTimestamp);
+                if (AttachDetachStatus.OK != attachDetachStatus) {
+                    throw attachDetachStatus.getException(
+                            (int) extraInfo.getQuick(i * 2 + 1),
+                            attachDetachStatus,
+                            tableToken,
+                            svc.getTimestampType(),
+                            svc.getPartitionBy(),
+                            partitionTimestamp
+                    );
+                }
+                attached = true;
+            }
+        } finally {
+            // An attach consumes its .attachable directory, so no WAL replay can redo it. One durable epoch covers
+            // the whole list, including the partitions attached before a failure.
+            if (attached) {
+                svc.advanceDurableEpochAfter("attach partition");
             }
         }
     }

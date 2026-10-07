@@ -734,6 +734,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                         .put('[').put(e.getErrno()).put("] ").put(e.getFlyweightMessage()).put(']');
             }
         }
+        // The attaches consumed the imported partition directories, so one durable epoch covers them all. On
+        // failure there is none: cleanUp() truncates or drops the table, which the previous epoch describes.
+        writer.advanceDurableEpochAfter("attach partition");
 
         phaseEpilogue(CopyImportTask.PHASE_ATTACH_PARTITIONS);
     }
