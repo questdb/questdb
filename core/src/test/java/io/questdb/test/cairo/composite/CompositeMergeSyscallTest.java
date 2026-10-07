@@ -487,13 +487,6 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean allocate(long fd, long allocatedSize, long size) {
-            count(ALLOCATE, fd);
-            noteAllocation(fd, size);
-            return super.allocate(fd, allocatedSize, size);
-        }
-
-        @Override
         public long append(long fd, long buf, long len) {
             checkPositionedWrite(fd, super.length(fd) + len);
             return super.append(fd, buf, len);

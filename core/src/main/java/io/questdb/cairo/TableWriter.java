@@ -17291,7 +17291,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     partitionRemoveCandidates.add(targetPartition, targetPartitionNameTxn);
                     targetPartitionNameTxn = txWriter.txn;
                 } finally {
-                    Misc.free(firstPartitionFrame);
+                    firstPartitionFrame = Misc.free(firstPartitionFrame);
                 }
             } else {
                 targetFrame = firstPartitionFrame;
@@ -17493,6 +17493,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 targetFrame.publishColumnTops(sink);
             }
         } finally {
+            // Until it is handed over as the target, or copied and freed, the first partition's frame is ours to
+            // free: the reservation pass ahead of that can throw.
+            if (firstPartitionFrame != targetFrame) {
+                Misc.free(firstPartitionFrame);
+            }
             Misc.free(targetFrame);
             path.trimTo(pathSize);
             other.trimTo(pathSize);

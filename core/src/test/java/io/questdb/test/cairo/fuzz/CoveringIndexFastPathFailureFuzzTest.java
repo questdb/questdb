@@ -317,15 +317,6 @@ public class CoveringIndexFastPathFailureFuzzTest extends AbstractFuzzTest {
         }
 
         @Override
-        public boolean allocate(long fd, long allocatedSize, long size) {
-            if (armed && mode == MODE_ALLOC && fd == targetFd && targetFd >= 0) {
-                disarm();
-                return false;
-            }
-            return super.allocate(fd, allocatedSize, size);
-        }
-
-        @Override
         public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
             if (armed && mode == MODE_MMAP && fd == targetFd && targetFd >= 0) {
                 disarm();

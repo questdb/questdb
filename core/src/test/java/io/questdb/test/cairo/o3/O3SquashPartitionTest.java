@@ -56,6 +56,9 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -1665,6 +1668,55 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSquashPartitionsFailsToAllocateTarget() throws Exception {
+        // The squash grows the target's column files through the frame columns' ranged allocate. A facade that
+        // injects ENOSPC through allocate(fd, size) alone must still see that call.
+        final AtomicBoolean armed = new AtomicBoolean();
+        final Set<Long> targetFds = ConcurrentHashMap.newKeySet();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean allocate(long fd, long size) {
+                if (armed.get() && targetFds.contains(fd)) {
+                    return false;
+                }
+                return super.allocate(fd, size);
+            }
+
+            @Override
+            public boolean close(long fd) {
+                targetFds.remove(fd);
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (armed.get() && Utf8s.containsAscii(name, Files.SEPARATOR + "2020-02-04" + Files.SEPARATOR)) {
+                    targetFds.add(fd);
+                }
+                return fd;
+            }
+        };
+        testSquashPartitionsFails(ff, armed, "No space left");
+    }
+
+    @Test
+    public void testSquashPartitionsFailsToOpenSource() throws Exception {
+        final AtomicBoolean armed = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (armed.get() && Utf8s.containsAscii(name, "2020-02-04T200000")
+                        && Utf8s.endsWithAscii(name, Files.SEPARATOR + "str.i")) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        testSquashPartitionsFails(ff, armed, "could not open");
+    }
+
+    @Test
     public void testSquashPartitionsNoLogicalPartition() throws Exception {
         assertMemoryLeak(() -> {
             // 4kb prefix split threshold
@@ -1791,6 +1843,71 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         } catch (NumericException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private void testSquashPartitionsFails(FilesFacade ff, AtomicBoolean armed, String expectedError) throws Exception {
+        assertMemoryLeak(ff, () -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
+            engine.resetFrameFactory();
+
+            execute(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " -x j," +
+                            " rnd_str(5,16,2) as str," +
+                            " timestamp_sequence('2020-02-04T00', 60*1000000L)::" + timestampType.getTypeName() + " ts" +
+                            " from long_sequence(60*36)" +
+                            ") timestamp (ts) partition by DAY"
+            );
+            // A reader on the partition keeps the commit from squashing the split straight back.
+            try (TableReader ignore = getReader("x")) {
+                execute(
+                        "insert into x select" +
+                                " cast(x as int) * 1000000 i," +
+                                " -x - 1000000L as j," +
+                                " rnd_str(5,16,2) as str," +
+                                " timestamp_sequence('2020-02-04T20:01', 1000000L) ts" +
+                                " from long_sequence(200)"
+                );
+            }
+
+            final String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
+            final String splitPartitions = replaceTimestampSuffix1("""
+                    minTimestamp\tnumRows\tname
+                    2020-02-04T00:00:00.000000Z\t1201\t2020-02-04
+                    2020-02-04T20:01:00.000000Z\t439\t2020-02-04T200000-000001
+                    2020-02-05T00:00:00.000000Z\t720\t2020-02-05
+                    """, timestampType.getTypeName());
+            assertQuery(partitionsSql).noLeakCheck().expectSize().noRandomAccess().returns(splitPartitions);
+            execute("create table before_squash as (select * from x)");
+
+            armed.set(true);
+            try {
+                execute("alter table x squash partitions");
+                Assert.fail("squash should have failed");
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), expectedError);
+            } finally {
+                armed.set(false);
+            }
+
+            assertQuery(partitionsSql).noLeakCheck().expectSize().noRandomAccess().returns(splitPartitions);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "before_squash", "x", LOG);
+
+            execute("alter table x squash partitions");
+            assertQuery(partitionsSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(replaceTimestampSuffix1("""
+                            minTimestamp\tnumRows\tname
+                            2020-02-04T00:00:00.000000Z\t1640\t2020-02-04
+                            2020-02-05T00:00:00.000000Z\t720\t2020-02-05
+                            """, timestampType.getTypeName()));
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "before_squash", "x", LOG);
+        });
     }
 
     private void testSquashPartitionsOnEmptyTable(String wal) throws Exception {
