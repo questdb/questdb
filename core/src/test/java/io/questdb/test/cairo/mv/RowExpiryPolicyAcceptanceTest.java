@@ -54,8 +54,14 @@ import org.junit.Test;
  *     <li>{@link #ANY_VERDICT} - a policy the grammar allows to be written. Either verdict is
  *     correct, and the test does not prescribe which: a mode may legitimately refuse a column type it
  *     cannot rank. What it may not do is accept the policy and leave a view that throws when read.
- *     Accepted means readable.</li>
+ *     Accepted means readable. CREATE and ALTER must also reach the same verdict. CREATE probes the
+ *     defining SELECT with every column selected, while ALTER probes the view selecting only the
+ *     policy's own output, so that the caller needs SELECT on the policy's columns alone. Agreement
+ *     shows the narrower ALTER probe refuses nothing CREATE accepts, and the read check shows it
+ *     accepts nothing that leaves {@code SELECT *} unreadable.</li>
  * </ul>
+ * The base table carries a column of every type, so every policy here runs with each type as a column
+ * it does not read, and the read check carries each one through the policy's generated query.
  * Adding a mode, a keep-column type or a new field to the policy encoding means adding a line here,
  * and both rules then apply to it without anyone having to decide in advance how it might break.
  * <p>
@@ -106,6 +112,8 @@ public class RowExpiryPolicyAcceptanceTest extends AbstractCairoTest {
             "KEEP LATEST PARTITION BY k",
             "KEEP LATEST ON ts PARTITION BY k",
             "KEEP LATEST PARTITION BY k, sym",
+            // a repeated key, which the ALTER probe's SELECT list repeats as written
+            "KEEP LATEST PARTITION BY k, k",
             // key types the generated LATEST ON may not take
             "KEEP LATEST PARTITION BY d",
             "KEEP LATEST PARTITION BY bin",
@@ -224,22 +232,39 @@ public class RowExpiryPolicyAcceptanceTest extends AbstractCairoTest {
     public void testEveryAcceptedPolicyLeavesAReadableView() throws Exception {
         assertMemoryLeak(() -> {
             createBase();
+            execute("CREATE MATERIALIZED VIEW mv_alter AS (SELECT * FROM base) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
             for (String clause : ANY_VERDICT) {
-                final String rejection = createViewWith("mv_ok", clause);
-                if (rejection != null) {
-                    // refusing a policy is always allowed, but the message must say what it is about
-                    Assert.assertTrue(
-                            "rejected without naming EXPIRE ROWS: " + clause + "\n  " + rejection,
-                            rejection.contains("EXPIRE ROWS")
-                    );
-                    continue;
+                final String createRejection = createViewWith("mv_ok", clause);
+                if (createRejection == null) {
+                    assertReadable("mv_ok", "CREATE", clause);
+                    execute("DROP MATERIALIZED VIEW mv_ok");
+                    drainWalAndMatViewQueues();
+                } else {
+                    assertNamesExpireRows("CREATE", clause, createRejection);
                 }
-                // accepted, so every read of the view has to work
-                final String readError = readError("mv_ok");
-                Assert.assertNull("accepted a policy that leaves an unreadable view: " + clause
-                        + "\n  " + readError, readError);
-                execute("DROP MATERIALIZED VIEW mv_ok");
-                drainWalAndMatViewQueues();
+
+                String alterRejection = null;
+                try {
+                    execute("ALTER MATERIALIZED VIEW mv_alter SET EXPIRE ROWS " + clause);
+                } catch (Throwable e) {
+                    alterRejection = message(e);
+                }
+                if (alterRejection == null) {
+                    drainWalAndMatViewQueues();
+                    assertReadable("mv_alter", "ALTER", clause);
+                    execute("ALTER MATERIALIZED VIEW mv_alter DROP EXPIRE");
+                    drainWalAndMatViewQueues();
+                } else {
+                    assertNamesExpireRows("ALTER", clause, alterRejection);
+                }
+
+                Assert.assertEquals(
+                        "CREATE and ALTER disagree on: " + clause + "\n  CREATE: " + createRejection
+                                + "\n  ALTER: " + alterRejection,
+                        createRejection == null,
+                        alterRejection == null
+                );
             }
         });
     }
@@ -265,6 +290,14 @@ public class RowExpiryPolicyAcceptanceTest extends AbstractCairoTest {
         });
     }
 
+    private static void assertNamesExpireRows(String statement, String clause, String rejection) {
+        // refusing a policy is always allowed, but the message must say what it is about
+        Assert.assertTrue(
+                statement + " rejected without naming EXPIRE ROWS: " + clause + "\n  " + rejection,
+                rejection.contains("EXPIRE ROWS")
+        );
+    }
+
     private void assertPolicy(String view, Policy policy) throws Exception {
         assertQuery("SELECT count() FROM " + view)
                 .noRandomAccess()
@@ -277,26 +310,38 @@ public class RowExpiryPolicyAcceptanceTest extends AbstractCairoTest {
                 ddl.contains("EXPIRE ROWS " + policy.clause()));
     }
 
+    private static void assertReadable(String view, String statement, String clause) {
+        // accepted, so every read of the view has to work
+        final String readError = readError(view);
+        Assert.assertNull(statement + " accepted a policy that leaves an unreadable view: " + clause
+                + "\n  " + readError, readError);
+    }
+
     private static void createBase() throws Exception {
         execute("""
                 CREATE TABLE base (
                     k SYMBOL, sym SYMBOL, v DOUBLE, i INT, l LONG, s STRING, vc VARCHAR, c CHAR,
                     l256 LONG256, b BOOLEAN, u UUID, dt DATE, "my val" DOUBLE, d DECIMAL(10, 2),
-                    bin BINARY, arr DOUBLE[], "end" SYMBOL, ts2 TIMESTAMP, ts TIMESTAMP
+                    bin BINARY, arr DOUBLE[], "end" SYMBOL, f FLOAT, sh SHORT, by BYTE, ip IPV4,
+                    g GEOHASH(4c), tsn TIMESTAMP_NS, arr2 DOUBLE[][], ts2 TIMESTAMP, ts TIMESTAMP
                 ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
         execute("""
                 INSERT INTO base VALUES
                 ('A', 'X', 1.0, 1, 1, 'a', 'a', 'a', '0x01', true, '11111111-1111-1111-1111-111111111111',
-                 '2024-01-01', 1.0, 1.5::DECIMAL(10, 2), null, ARRAY[1.0, 2.0], 'E1',
+                 '2024-01-01', 1.0, 1.5::DECIMAL(10, 2), null, ARRAY[1.0, 2.0], 'E1', 1.0, 1::SHORT, 1::BYTE,
+                 '1.1.1.1', #sp05, '2024-01-01T00:00:00.000000000Z', ARRAY[[1.0], [2.0]],
                  '2024-01-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
                 ('A', 'X', 3.0, 3, 3, 'c', 'c', 'c', '0x03', false, '33333333-3333-3333-3333-333333333333',
-                 '2024-01-03', 3.0, 3.5::DECIMAL(10, 2), null, ARRAY[3.0, 4.0], 'E3',
+                 '2024-01-03', 3.0, 3.5::DECIMAL(10, 2), null, ARRAY[3.0, 4.0], 'E3', 3.0, 3::SHORT, 3::BYTE,
+                 '3.3.3.3', #u33d, '2024-01-03T00:00:00.000000000Z', ARRAY[[3.0], [4.0]],
                  '2024-01-03T00:00:00.000000Z', '2024-01-02T00:00:00.000000Z'),
                 ('B', 'Y', 2.0, 2, 2, 'b', 'b', 'b', '0x02', true, '22222222-2222-2222-2222-222222222222',
-                 '2024-01-02', 2.0, 2.5::DECIMAL(10, 2), null, ARRAY[2.0, 3.0], 'E2',
+                 '2024-01-02', 2.0, 2.5::DECIMAL(10, 2), null, ARRAY[2.0, 3.0], 'E2', 2.0, 2::SHORT, 2::BYTE,
+                 '2.2.2.2', #ezs4, '2024-01-02T00:00:00.000000000Z', ARRAY[[2.0], [3.0]],
                  '2024-01-02T00:00:00.000000Z', '2024-01-03T00:00:00.000000Z'),
                 ('C', 'Z', null, null, null, null, null, null, null, false, null, null, null, null,
-                 null, null, null, null, '2024-01-04T00:00:00.000000Z')""");
+                 null, null, null, null, 0::SHORT, 0::BYTE, null, null, null, null, null,
+                 '2024-01-04T00:00:00.000000Z')""");
         drainWalAndMatViewQueues();
     }
 

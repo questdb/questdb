@@ -7281,12 +7281,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         final ExpiryValidationResult validationResult;
         if (RowExpiryUtil.isStructuralPolicy(predicate)) {
-            // The view does not exist yet, so the probe reads its defining SELECT.
+            // The view does not exist yet, so the probe reads its defining SELECT and selects every column.
             validationResult = validateStructuralExpiryPolicy(
                     executionContext,
                     "(" + createTableOp.getSelectText() + ")",
                     selectMetadata,
                     predicate,
+                    false,
                     pos
             );
         } else {
@@ -7335,6 +7336,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 RowExpiryUtil.quoteIdentifier(tableToken.getTableName()),
                 tableMetadata,
                 predicate,
+                true,
                 position
         );
     }
@@ -7473,14 +7475,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * passes DDL and then fails to compile leaves the view unreadable for every query, {@code count()}
      * included, until {@code DROP EXPIRE}, and reports an error naming a clause its author never wrote.
      *
-     * @param source what the probe selects from: the view's defining SELECT, parenthesised, at CREATE (the
-     *               view does not exist yet); the quoted view name at ALTER
+     * @param source             what the probe selects from: the view's defining SELECT, parenthesised, at
+     *                           CREATE (the view does not exist yet); the quoted view name at ALTER
+     * @param isNarrowProjection true when the probe selects only the policy's own output instead of every
+     *                           column, which ALTER needs; see {@link #probeExpiryPolicyRead}
      */
     private ExpiryValidationResult validateStructuralExpiryPolicy(
             SqlExecutionContext executionContext,
             String source,
             RecordMetadata metadata,
             String predicate,
+            boolean isNarrowProjection,
             int position
     ) throws SqlException {
         if (RowExpiryUtil.isKeepLatest(predicate)) {
@@ -7497,7 +7502,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // can fail only for reasons unrelated to the policy: the probe borrows a compiler and a view reader
         // and opens the view's files, and any of these can fail when the server is under load.
         if (!executionContext.isWalApplication()) {
-            probeExpiryPolicyRead(executionContext, source, tsName(metadata), predicate, position);
+            probeExpiryPolicyRead(executionContext, source, tsName(metadata), predicate, isNarrowProjection, position);
         }
         return RowExpiryUtil.isWindow(predicate)
                 ? ExpiryValidationResult.NON_MONOTONIC
@@ -7519,23 +7524,39 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * <p>
      * No row is evaluated, so a per-row implicit cast cannot surface here - the keep column's type is
      * checked up front instead, by {@link #validateKeepByColumn}.
+     * <p>
+     * The probe compiles under the caller's context, so it also asks for the caller's SELECT on every column
+     * it uses: {@code SqlOptimiser.authorizeColumnAccess} runs after the optimiser drops the columns a query
+     * does not use. A narrow projection selects only the policy's own output - the PARTITION BY keys for
+     * KEEP LATEST, the keep column for the other modes - so the optimiser keeps only the columns the policy
+     * reads, and the probe asks for SELECT on exactly those. A read through the policy asks for the same
+     * columns, so a caller who can read the view through a policy can also set it. ALTER needs the narrow
+     * projection, because it probes the existing view under the caller's column grants. CREATE selects every
+     * column: it probes the view's defining SELECT, whose columns CREATE requires anyway, and a narrow
+     * projection would let the optimiser drop columns inside that query too.
+     * <p>
+     * A narrow probe does not carry the view's other columns through {@code LATEST ON} or the keep
+     * projection. {@code RowExpiryPolicyAcceptanceTest} covers that: it sets each policy of its matrix
+     * through ALTER on a view with a column of each type, and reads the view back with {@code SELECT *}.
      */
     private void probeExpiryPolicyRead(
             SqlExecutionContext executionContext,
             String source,
             CharSequence designatedTs,
             String predicate,
+            boolean isNarrowProjection,
             int position
     ) throws SqlException {
         final String sql;
         if (RowExpiryUtil.isKeepLatest(predicate)) {
-            sql = "SELECT * FROM (SELECT * FROM " + source + " LATEST ON "
-                    + RowExpiryUtil.quoteIdentifier(designatedTs) + " PARTITION BY "
-                    + RowExpiryUtil.keepLatestKeys(predicate) + ") LIMIT 0";
+            final CharSequence keys = RowExpiryUtil.keepLatestKeys(predicate);
+            sql = "SELECT " + (isNarrowProjection ? keys : "*") + " FROM (SELECT * FROM " + source + " LATEST ON "
+                    + RowExpiryUtil.quoteIdentifier(designatedTs) + " PARTITION BY " + keys + ") LIMIT 0";
         } else {
             final String windowPred = RowExpiryUtil.windowPredicate(predicate, designatedTs);
-            sql = "SELECT * FROM (SELECT *, CASE WHEN (" + windowPred + ") THEN false ELSE true END "
-                    + RowExpiryUtil.KEEP_COLUMN + " FROM " + source + ") WHERE " + RowExpiryUtil.KEEP_COLUMN + " LIMIT 0";
+            sql = "SELECT " + (isNarrowProjection ? RowExpiryUtil.KEEP_COLUMN : "*") + " FROM (SELECT *, CASE WHEN ("
+                    + windowPred + ") THEN false ELSE true END " + RowExpiryUtil.KEEP_COLUMN + " FROM " + source
+                    + ") WHERE " + RowExpiryUtil.KEEP_COLUMN + " LIMIT 0";
         }
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             try (RecordCursorFactory factory = compiler.compile(sql, executionContext).getRecordCursorFactory()) {
