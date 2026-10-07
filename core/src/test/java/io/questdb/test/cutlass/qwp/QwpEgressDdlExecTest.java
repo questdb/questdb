@@ -30,6 +30,7 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.std.Os;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -288,7 +289,12 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
                     Assert.assertEquals(CompiledQuery.COMMIT, executeDdl(client, "COMMIT"));
                     Assert.assertEquals(CompiledQuery.ROLLBACK, executeDdl(client, "ROLLBACK"));
                     Assert.assertEquals(CompiledQuery.DEALLOCATE, executeDdl(client, "DEALLOCATE qwp_stmt"));
-                    Assert.assertEquals(CompiledQuery.CHECKPOINT_CREATE, executeDdl(client, "CHECKPOINT CREATE"));
+                    // The server rejects CHECKPOINT CREATE on Windows, which lacks the sync()
+                    // system call it relies on. CHECKPOINT RELEASE needs no prior CREATE, so it
+                    // runs on every platform.
+                    if (!Os.isWindows()) {
+                        Assert.assertEquals(CompiledQuery.CHECKPOINT_CREATE, executeDdl(client, "CHECKPOINT CREATE"));
+                    }
                     Assert.assertEquals(CompiledQuery.CHECKPOINT_RELEASE, executeDdl(client, "CHECKPOINT RELEASE"));
                     Assert.assertEquals(
                             CompiledQuery.REFRESH_MAT_VIEW,
