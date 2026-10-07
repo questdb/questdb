@@ -684,11 +684,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     protected final void cleanupBeforeClose() {
         // If distressed, no need to rollback, WalWriter will not be used any more.
         if (isDistressed()) {
-            // A distressed writer is discarded; its un-flushed group-commit tail (if any) never advanced
-            // localDurableSeqTxn, so no false durability is claimed. Clear the pending fields AND deregister
-            // under the writer monitor BEFORE doClose closes any fd, so a background flusher that captured
-            // this writer reference before the deregister (weakly-consistent iterator) cannot fdatasync a
-            // closed fd (use-after-close). dropPendingDurable() restores the invariant on the distressed path.
+            // A distressed writer is discarded, but the group-commit batch it already sequenced is still owed its
+            // flush, or nothing moves the frontier past it. Then clear the pending fields AND deregister under
+            // the writer monitor BEFORE doClose closes any fd, so a background flusher that captured this writer
+            // reference before the deregister (weakly-consistent iterator) cannot fdatasync a closed fd
+            // (use-after-close). dropPendingDurable() restores the invariant on the distressed path.
+            flushDiscardedBatch();
             dropPendingDurable();
             return;
         }
@@ -2672,11 +2673,36 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
+     * Flushes the sequencer log for the batch of a writer that is being discarded. The batch's private files
+     * were flushed before it sequenced, so the log flush makes it durable and moves the frontier past it. Not
+     * after a failed barrier, which no later flush can prove. A failed flush poisons the engine, as on the
+     * commit path, but does not throw: the writer is being torn down.
+     */
+    private synchronized void flushDiscardedBatch() {
+        if (pendingDurableSeqTxn < 0 || sequencer.isDurabilityFailed() || seqTxnTracker.isDurableFrontierFenced()) {
+            return;
+        }
+        try {
+            final long orphanSweepMark = seqTxnTracker.snapshotOrphanSweepMark();
+            final long coveredSeqTxn = sequencer.fdatasyncTxnLog(tableToken);
+            seqTxnTracker.markWriterDurable(walId, orphanSweepMark, coveredSeqTxn);
+        } catch (Throwable th) {
+            LOG.error().$("could not flush the sequencer log for a discarded WAL writer [table=").$(tableToken)
+                    .$(", walId=").$(walId)
+                    .$(", error=").$(th)
+                    .I$();
+            if (CairoException.isDataSyncFailure(th)) {
+                sequencer.poisonOnDataSyncFailure(th);
+            }
+        }
+    }
+
+    /**
      * Perform the batched shared-sequencer flush for adaptive group commit, then advance
      * {@code localDurableSeqTxn} to the pending frontier and clear the pending state. Private WAL dependencies
      * were made durable before sequencing, so this barrier cannot publish volatile data/events.
      *
-     * <p>{@code localDurableSeqTxn} (the durable-ack frontier) advances ONLY here, AFTER the device flush
+     * <p>{@code localDurableSeqTxn} (the durable-ack frontier) advances here only AFTER the device flush
      * completes — so a durable-ack'd txn is always physically on disk.
      *
      * <p>Synchronized on the writer monitor: the background flusher ({@link #forceDurableIfPending}) and the

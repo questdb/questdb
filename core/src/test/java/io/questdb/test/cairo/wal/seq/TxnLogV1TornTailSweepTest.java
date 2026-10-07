@@ -189,20 +189,31 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
         ADAPTIVE_DATA("ADAPTIVE W=0, data commit", CommitMode.ADAPTIVE, 0, "D", false),
         ADAPTIVE_STRUCTURE("ADAPTIVE W=0, structure change", CommitMode.ADAPTIVE, 0, "S", false),
         ADAPTIVE_GROUP("ADAPTIVE W>0, batch of three", CommitMode.ADAPTIVE, 1_000, "DDD", true),
-        NOSYNC_BATCH("NOSYNC, three commits", CommitMode.NOSYNC, 0, "DDD", false);
+        NOSYNC_BATCH("NOSYNC, three commits", CommitMode.NOSYNC, 0, "DDD", false),
+        // The commit mode changes between restarts: a NOSYNC open scans records no flush covered, and the next
+        // start is ADAPTIVE.
+        NOSYNC_REOPEN_THEN_ADAPTIVE("NOSYNC, three commits and a reopen, reopened ADAPTIVE", CommitMode.NOSYNC, 0, "DDD", false, true, CommitMode.ADAPTIVE);
 
         final int commitMode;
         final boolean flushAtEnd;
         final long groupWindowUs;
         final String label;
         final String ops;
+        final boolean reopenAtEnd;
+        final int verifyMode;
 
         Window(String label, int commitMode, long groupWindowUs, String ops, boolean flushAtEnd) {
+            this(label, commitMode, groupWindowUs, ops, flushAtEnd, false, commitMode);
+        }
+
+        Window(String label, int commitMode, long groupWindowUs, String ops, boolean flushAtEnd, boolean reopenAtEnd, int verifyMode) {
             this.label = label;
             this.commitMode = commitMode;
             this.groupWindowUs = groupWindowUs;
             this.ops = ops;
             this.flushAtEnd = flushAtEnd;
+            this.reopenAtEnd = reopenAtEnd;
+            this.verifyMode = verifyMode;
         }
 
         boolean isAckedPerCommit() {
@@ -363,6 +374,13 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                         log.fdatasyncTxnLog();
                         acked = first + window.ops.length() - 1;
                         crashPoint("after batch flush");
+                    }
+                    if (window.reopenAtEnd) {
+                        activity = "reopen";
+                        log.close();
+                        log = new TableTransactionLogV1(configuration);
+                        log.open(path);
+                        crashPoint("after reopen");
                     }
                 } finally {
                     ff.sweep = null;
@@ -545,7 +563,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
             if (!seen.add(crc(log) * 1_000_003L + crc(crc) * 7919L + acked)) {
                 return;
             }
-            verify(log, crc, label, window.commitMode);
+            verify(log, crc, label, window.verifyMode);
             if (window.commitMode != CommitMode.NOSYNC) {
                 // The commit mode may change between restarts.
                 verify(log, crc, label, CommitMode.NOSYNC);
@@ -614,7 +632,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
             }
 
             final String key = window.label
-                    + (reopenMode != window.commitMode ? ", reopened NOSYNC" : "")
+                    + (reopenMode != window.verifyMode ? ", reopened NOSYNC" : "")
                     + " | " + (staleTail ? "stale records" : "zeros")
                     + " | " + shape;
             rows.computeIfAbsent(key, k -> new int[OUTCOME_NAMES.length])[outcome]++;
