@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpException;
@@ -63,6 +64,7 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SqlTimeoutException;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -252,6 +254,22 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     // status mapping (QwpEgressCancelTest). No production callers outside
     // this class.
     public static byte mapErrorStatus(Throwable e) {
+        return mapErrorStatus(e, false);
+    }
+
+    /**
+     * Maps a query failure to its {@code QUERY_ERROR} status. {@code hasQueryTimeout}
+     * tells whether the query carried a per-query timeout
+     * ({@link QwpEgressMsgKind#QUERY_FLAG_TIMEOUT}). Only such a client knows
+     * {@link QwpConstants#STATUS_QUERY_TIMEOUT}, so a timeout of any other query
+     * keeps {@link QwpConstants#STATUS_LIMIT_EXCEEDED}.
+     */
+    public static byte mapErrorStatus(Throwable e, boolean hasQueryTimeout) {
+        // A statement that ran out of time waiting for the table writer. It extends
+        // SqlException, but a time limit is not a parse error.
+        if (e instanceof SqlTimeoutException) {
+            return hasQueryTimeout ? QwpConstants.STATUS_QUERY_TIMEOUT : QwpConstants.STATUS_LIMIT_EXCEEDED;
+        }
         // SqlException covers both syntax errors and semantic errors (e.g., table not found).
         // Its getMessage() already embeds the "[position] text" form.
         if (e instanceof SqlException) {
@@ -277,6 +295,13 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // Explicit cancellation (setCancellation=true) surfaces as STATUS_CANCELLED.
             if (ce.isCancellation()) {
                 return QwpConstants.STATUS_CANCELLED;
+            }
+            // The query ran past its own timeout, as opposed to other interruptions
+            // such as a dropped connection.
+            if (hasQueryTimeout
+                    && ce.isInterruption()
+                    && ce.getInterruptionReason() == SqlExecutionCircuitBreaker.STATE_TIMEOUT) {
+                return QwpConstants.STATUS_QUERY_TIMEOUT;
             }
             // Non-cancellation interruptions (query timeout, circuit breaker) and
             // out-of-memory both map to STATUS_LIMIT_EXCEEDED -- the client can
@@ -379,7 +404,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         long bodyStart = QwpEgressFrameWriter.writeMessageHeader(
                 qwpStart, qwpVersion, (byte) 0, 0, 0);
         int bodyCap = bufSize - 2 - QwpConstants.HEADER_SIZE - compressionTrailerSize;
+        // This processor implements the per-query timeout, so it advertises
+        // CAP_QUERY_TIMEOUT itself; CAP_COMPRESSION follows this connection's
+        // negotiation. Neither depends on the provider.
         int capabilities = (provider.getCapabilities() & ~QwpEgressMsgKind.CAP_COMPRESSION)
+                | QwpEgressMsgKind.CAP_QUERY_TIMEOUT
                 | (advertiseCompression ? QwpEgressMsgKind.CAP_COMPRESSION : 0);
         long bodyEnd = QwpEgressFrameWriter.writeServerInfo(
                 bodyStart,
@@ -769,7 +798,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // error. Mirrors the catch in {@link #handleQueryRequest}.
             state.getBatchBuffer().rollbackCurrentBatch();
             state.endStreaming();
-            byte status = mapErrorStatusAndMark(t);
+            byte status = mapErrorStatusAndMark(t, state);
             try {
                 sendQueryError(context, state, failedRequestId, status,
                         t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage());
@@ -778,6 +807,40 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             } catch (Throwable ignored) {
             }
         }
+    }
+
+    /**
+     * Waits for the async writer operation of a non-SELECT statement. A query
+     * that carried a per-query timeout waits at most what is left of it -- its
+     * circuit breaker holds the timeout -- and fails with a timeout once it runs
+     * out. Like {@code /exec} with {@code Statement-Timeout}, that does not
+     * withdraw the operation: the writer may still apply it. Without a per-query
+     * timeout this is {@link OperationFuture#await()} with its server-side limits.
+     */
+    private static void awaitOperation(
+            OperationFuture fut,
+            SqlExecutionContextImpl sqlCtx,
+            QwpEgressProcessorState state
+    ) throws SqlException {
+        final long remainingMillis = state.hasQueryTimeout()
+                ? sqlCtx.getCircuitBreaker().getRemainingTimeoutMillis()
+                : Long.MAX_VALUE;
+        if (remainingMillis == Long.MAX_VALUE) {
+            // No per-query timeout, or a breaker without a deadline: the
+            // server-side writer limits apply.
+            fut.await();
+            return;
+        }
+        // await(timeout) treats a non-positive timeout as "use the default", so a
+        // spent budget must not reach it.
+        if (remainingMillis > 0 && fut.await(remainingMillis) == OperationFuture.QUERY_COMPLETE) {
+            return;
+        }
+        throw CairoException.nonCritical()
+                .put("timeout, statement did not complete in time and may still be applied [timeout=")
+                .put(sqlCtx.getCircuitBreaker().getTimeout())
+                .put("ms]")
+                .setInterruptionReason(SqlExecutionCircuitBreaker.STATE_TIMEOUT);
     }
 
     /**
@@ -983,7 +1046,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * {@code EXEC_DONE}. The HTTP worker blocks until the operation future
      * completes -- same shape that {@code JsonQueryProcessor} uses, minus its
      * async-retry dance (egress doesn't have an HTTP-level retry hook so a
-     * bounded await is pointless). Throws so the caller's catch maps it to a
+     * bounded await is pointless). A per-query timeout bounds the wait (see
+     * {@link #awaitOperation}). Throws so the caller's catch maps it to a
      * {@code QUERY_ERROR}.
      */
     private void executeNonSelect(
@@ -1000,7 +1064,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             case CompiledQuery.INSERT_AS_SELECT: {
                 try (InsertOperation op = cq.popInsertOperation()) {
                     try (OperationFuture fut = op.execute(sqlCtx)) {
-                        fut.await();
+                        awaitOperation(fut, sqlCtx, state);
                         rowsAffected = fut.getAffectedRowsCount();
                     }
                 }
@@ -1008,14 +1072,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             }
             case CompiledQuery.UPDATE: {
                 try (OperationFuture fut = cq.execute(sqlCtx, state.getEventSubSequence(), true)) {
-                    fut.await();
+                    awaitOperation(fut, sqlCtx, state);
                     rowsAffected = fut.getAffectedRowsCount();
                 }
                 break;
             }
             case CompiledQuery.ALTER: {
                 try (OperationFuture fut = cq.execute(state.getEventSubSequence())) {
-                    fut.await();
+                    awaitOperation(fut, sqlCtx, state);
                 }
                 break;
             }
@@ -1029,7 +1093,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                         Operation op = cq.getOperation();
                         OperationFuture fut = op.execute(sqlCtx, state.getEventSubSequence())
                 ) {
-                    fut.await();
+                    awaitOperation(fut, sqlCtx, state);
                 }
                 break;
             }
@@ -1208,7 +1272,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 // client's next delta symbol section fails to decode.
                 state.getBatchBuffer().rollbackCurrentBatch();
                 state.endStreaming();
-                byte status = mapErrorStatusAndMark(t);
+                byte status = mapErrorStatusAndMark(t, state);
                 try {
                     sendQueryError(context, state, targetRequestId, status,
                             t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage());
@@ -1279,8 +1343,13 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             if (length >= 9) {
                 requestId = Unsafe.getLong(payload + 1);
             }
+            // Cleared first, so a request that fails to decode does not inherit the
+            // previous query's timeout. The streaming check above returned before
+            // this point, so no query of this connection is still running.
+            state.setHasQueryTimeout(false);
             decoder.decodeQueryRequest(payload, length, state.getBindVariableService());
             requestId = decoder.requestId;
+            state.setHasQueryTimeout(decoder.timeoutMs > 0);
             boolean forceDictReset = (decoder.queryFlags & QwpEgressMsgKind.QUERY_FLAG_RESET_DICT) != 0;
             metrics.markQueryStarted();
             // Check connection-scoped cache caps BEFORE processing the new
@@ -1312,6 +1381,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // connection before the upgrade; /exec and /exp set per-statement timeouts on it,
             // so reset to the default, matching JsonQueryProcessor.
             circuitBreaker.resetMaxTimeToDefault();
+            if (decoder.timeoutMs > 0) {
+                // The client's per-query timeout replaces query.timeout for this
+                // query, like the Statement-Timeout header of /exec. The reset above
+                // restores the default for the next query on this connection.
+                circuitBreaker.setTimeout(decoder.timeoutMs);
+            }
 
             // Bounded retry loop: a cached SELECT factory or compiled INSERT can
             // become stale after a concurrent schema change. Cursor acquisition or
@@ -1476,7 +1551,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 Misc.free(pageFrameCursor);
                 Misc.free(factory);
             }
-            byte status = mapErrorStatusAndMark(e);
+            byte status = mapErrorStatusAndMark(e, state);
             try {
                 sendQueryError(context, state, requestId, status,
                         e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
@@ -1526,8 +1601,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         }
     }
 
-    private byte mapErrorStatusAndMark(Throwable e) {
-        byte status = mapErrorStatus(e);
+    private byte mapErrorStatusAndMark(Throwable e, QwpEgressProcessorState state) {
+        byte status = mapErrorStatus(e, state.hasQueryTimeout());
         if (status == QwpConstants.STATUS_CANCELLED) {
             metrics.markQueryCancelled();
         } else {

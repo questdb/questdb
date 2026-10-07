@@ -56,7 +56,10 @@ public interface QwpServerInfoProvider {
      * bits: {@link QwpEgressMsgKind#CAP_ZONE} (set when {@link #getZoneId()}
      * returns non-null) and {@link QwpEgressMsgKind#CAP_QUERY_FLAGS} (the egress
      * processor parses the {@code QUERY_REQUEST} query_flags trailer; every
-     * implementation should advertise it). Remaining bits are reserved.
+     * implementation should advertise it). {@code QwpEgressUpgradeProcessor}
+     * sets {@link QwpEgressMsgKind#CAP_QUERY_TIMEOUT} and
+     * {@link QwpEgressMsgKind#CAP_COMPRESSION} on the wire itself, whatever the
+     * implementation returns for them. Remaining bits are reserved.
      */
     int getCapabilities();
 
