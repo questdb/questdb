@@ -1924,6 +1924,61 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinAfterFullJoinRunsAfterKeyedJoin() throws Exception {
+        // The RIGHT JOIN pins the CROSS JOIN ahead of it, which also makes the CROSS JOIN a consumer of the
+        // non-equi FULL JOIN before it. The CROSS JOIN runs after that FULL JOIN and after the keyed join
+        // written after it, ahead of the RIGHT JOIN.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, d.k dk, c.y, b.k bk, f.k fk FROM a FULL JOIN d ON a.x < d.k CROSS JOIN c JOIN b ON b.k = a.k RIGHT JOIN f ON f.k = b.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Right Outer Join Light
+                                  condition: f.k=b.k
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            Nested Loop Full Join
+                                              filter: a.x<d.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: d
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: f
+                            """)
+                    .returns("""
+                            k\tdk\ty\tbk\tfk
+                            2\t7\t1\t2\t2
+                            2\t7\t2\t2\t2
+                            2\t7\t3\t2\t2
+                            2\t100\t1\t2\t2
+                            2\t100\t2\t2\t2
+                            2\t100\t3\t2\t2
+                            4\t100\t1\t4\t4
+                            4\t100\t2\t4\t4
+                            4\t100\t3\t4\t4
+                            6\t100\t1\t6\t6
+                            6\t100\t2\t6\t6
+                            6\t100\t3\t6\t6
+                            """);
+        });
+    }
+
+    @Test
     public void testCrossJoinAfterReorderedInnerJoinKeepsMovedKey() throws Exception {
         // reorderTables tries another root for the cross-joined tables, moves cid = x from c onto a and
         // rejects that order. It kept the earlier order without undoing the move, so the join of c lost
@@ -2848,9 +2903,10 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCrossJoinFirstBeforeRightJoinStaysFirst() throws Exception {
-        // The key-less first table stays at the head of the order, although running c joined to b first
-        // would probe fewer rows: the join takes its timestamp and its row order from the first table.
+    public void testCrossJoinFirstBeforeRightJoinRunsAfterKeyedJoin() throws Exception {
+        // The first table has no key, so the RIGHT/FULL join only pins it ahead of the outer join, and it runs
+        // after the keyed join as on master. A level with a RIGHT/FULL join has no designated timestamp, so
+        // nothing reads the timestamp of the first table. The FULL JOIN keyed on a still runs after it.
         assertMemoryLeak(() -> {
             createTablesForCrossJoinBeforeRightJoin();
             assertQuery("SELECT a.k, c.y, b.k bk, d.k dk FROM a CROSS JOIN c JOIN b ON c.y = b.k RIGHT JOIN d ON a.x >= d.k")
@@ -2860,19 +2916,19 @@ public class JoinTest extends AbstractCairoTest {
                             SelectedRecord
                                 Nested Loop Right Join
                                   filter: a.x>=d.k
-                                    Hash Join Light
-                                      condition: b.k=c.y
-                                        Cross Join
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: b.k=c.y
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: c
-                                        Hash
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: b
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: d
@@ -2884,6 +2940,87 @@ public class JoinTest extends AbstractCairoTest {
                             5\t2\t2\t7
                             6\t2\t2\t7
                             null\tnull\tnull\t100
+                            """);
+            assertQuery("SELECT a.k, c.y, b.k bk, d.k dk FROM a CROSS JOIN c JOIN b ON c.y = b.k FULL JOIN d ON a.x = d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Full Outer Join Light
+                                  condition: d.k=a.x
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: b.k=c.y
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tdk
+                            1\t2\t2\tnull
+                            2\t2\t2\tnull
+                            3\t2\t2\tnull
+                            4\t2\t2\tnull
+                            5\t2\t2\tnull
+                            6\t2\t2\tnull
+                            null\tnull\tnull\t100
+                            null\tnull\tnull\t7
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinFirstBeforeRightJoinStaysFirstBeforeTimeSeriesJoin() throws Exception {
+        // The ASOF JOIN reads the designated timestamp of its master, which the first table of the order gives,
+        // so the first table keeps its place although it has no key.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoinWithTimeSeriesJoin();
+            assertQuery("SELECT a.k, c.y, b.k bk, q.v, d.k dk FROM a CROSS JOIN c JOIN b ON c.y = b.k ASOF JOIN q RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    AsOf Join Fast
+                                        Hash Join Light
+                                          condition: b.k=c.y
+                                            Cross Join
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: q
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tv\tdk
+                            3\t2\t2\t2\t7
+                            4\t2\t2\t3\t7
+                            5\t2\t2\t4\t7
+                            6\t2\t2\t5\t7
+                            null\tnull\tnull\tnull\t100
                             """);
         });
     }
@@ -10213,6 +10350,47 @@ public class JoinTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: dim_apTemperature
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftJoinWithoutKeyBeforeRightJoinRunsAfterKeyedJoin() throws Exception {
+        // A LEFT JOIN without a key gets an ordering edge from the RIGHT JOIN that pins it ahead of it, like a
+        // CROSS JOIN, and it runs after the keyed join written after it, as on master.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, b.k bk, e.k ek, d.k dk FROM a LEFT JOIN e ON e.k > a.k JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Nested Loop Left Join
+                                      filter: a.k<e.k
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: e
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\tbk\tek\tdk
+                            4\t4\t5\t7
+                            4\t4\t6\t7
+                            6\t6\tnull\t7
+                            null\tnull\tnull\t100
                             """);
         });
     }

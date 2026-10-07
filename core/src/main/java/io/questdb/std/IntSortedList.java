@@ -61,6 +61,11 @@ public class IntSortedList implements Mutable {
         return size > 0;
     }
 
+    // returns the lowest value without removing it, the list must not be empty
+    public int peek() {
+        return buffer[0];
+    }
+
     public int poll() {
         int v = buffer[0];
         if (size > 0) {

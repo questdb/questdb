@@ -147,6 +147,10 @@ public class SqlOptimiser implements Mutable {
     public static final int REWRITE_STATUS_USE_WINDOW_MODEL = 2;
     static final String LATERAL_COUNT_MARKER_PREFIX = "__qdb_count_marker__";
     static final String NULL_REJECTING_PROBE_COLUMN = "__qdb_null_probe";
+    // states of a join model in deferralStates, see isDeferredJoinModel
+    private static final int DEFERRAL_NONE = 0;
+    private static final int DEFERRAL_PENDING = 1;
+    private static final int DEFERRAL_RAN = 2;
     private static final int JOIN_OP_AND = 2;
     private static final int JOIN_OP_EQUAL = 1;
     private static final int JOIN_OP_OR = 3;
@@ -210,6 +214,14 @@ public class SqlOptimiser implements Mutable {
     private final CharSequenceObjHashMap<ExpressionNode> constNameToNode = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<CharSequence> constNameToToken = new CharSequenceObjHashMap<>();
     private final ObjectPool<JoinContext> contextPool;
+    // Scratch state of doReorderTables, see isDeferredJoinModel: by join model index, 1 when a model with a
+    // higher priority than the deferred model ran or is next since the deferred model can run, the priority
+    // that ends the run of the deferred model (see crossCommutingJoinRunEnd, or -1 until computed) and its
+    // DEFERRAL_* state, and the deferred models that can run
+    private final IntList deferralOverdue = new IntList();
+    private final IntList deferralRunEnds = new IntList();
+    private final IntList deferralStates = new IntList();
+    private final IntList deferredModels = new IntList();
     // (parent, child) model index pairs. analyseEquals and addFilterOrEmitJoin turn an INNER key of child
     // that reads parent into a filter, and constrainDeferredInnerKeyParents restores the ordering edge
     // the key would have given. swapJoinOrder0 reverses a pair when it moves the clauses between the two
@@ -239,6 +251,9 @@ public class SqlOptimiser implements Mutable {
     // (reader model index, next link) pairs of the lists that joinModelReaderHeads starts; -1 ends a list
     private final IntList joinModelReaderLinks = new IntList();
     private final JoinModelReferenceCollector joinModelReferenceCollector = new JoinModelReferenceCollector();
+    // Scratch state of doReorderTables, by join model index: the number of deferred models that have not run
+    // yet that the ON clause of the model reads, see canRunBeforeDeferredModels
+    private final IntList joinModelUnrunDeferredReads = new IntList();
     // priority -> join model index, the inverse of joinModelPriorities
     private final IntList joinModelsByPriority = new IntList();
     // isJoinedAfter answers of the current reorderTables pass, keyed by from * n + to: 1 when "from" is
@@ -293,8 +308,6 @@ public class SqlOptimiser implements Mutable {
     private final IntList nullingAnchorByModelPos = new IntList();
     // Inverse permutation of getOrderedJoinModels(): model index -> execution-order position.
     private final IntList nullingExecPosByModel = new IntList();
-    // Scratch of isCrossJoinMovableAfter: the join models that an ON clause reads.
-    private final IntHashSet onClauseRefs = new IntHashSet();
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntSortedList orderingStack = new IntSortedList();
     // (parent, outer join) model index pairs. addFilterOrEmitJoin moves an equality between two ON
@@ -357,6 +370,9 @@ public class SqlOptimiser implements Mutable {
     private final IntObjHashMap<ObjList<QueryColumn>> windowFunctionHashMap = new IntObjHashMap<>();
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
+    // True when joinModelMaxRefs, joinModelReaderHeads and joinModelReaderLinks hold what every ON clause of
+    // the level that optimiseJoins orders reads: constrainRightAndFullJoinsAfterPrefix resolved them all.
+    private boolean hasJoinModelReaders;
     // True when, on a level with a non-equi RIGHT/FULL join, linkLoneEmittedClauses linked an emitted
     // clause that no other edge links, or addFilterOrEmitJoin replaced such a clause with a filter.
     // Left unlinked, the clause leaves doReorderTables unable to order the level, so optimiseJoins
@@ -856,34 +872,6 @@ public class SqlOptimiser implements Mutable {
             case ExpressionNode.OPERATION -> isCompileTimeConstant(node.lhs) && isCompileTimeConstant(node.rhs);
             default -> false;
         };
-    }
-
-    // Returns true when the model at index is a CROSS JOIN without a key on which only RIGHT/FULL joins
-    // depend, see deferPinnedCrossJoins. Such a join depends on the CROSS JOIN when it pins its prefix
-    // ahead of it, or when its key reads the CROSS JOIN.
-    private static boolean isDeferrableCrossJoin(ObjList<IQueryModel> joinModels, int index) {
-        final IQueryModel model = joinModels.getQuick(index);
-        if (model.getJoinType() != IQueryModel.JOIN_CROSS) {
-            return false;
-        }
-        final JoinContext context = model.getJoinContext();
-        if (context != null && context.parents.size() > 0) {
-            return false;
-        }
-        final IntHashSet dependencies = model.getDependencies();
-        if (dependencies.size() == 0) {
-            return false;
-        }
-        for (int i = 0, n = dependencies.size(); i < n; i++) {
-            final int joinType = joinModels.getQuick(dependencies.get(i)).getJoinType();
-            if (joinType != IQueryModel.JOIN_RIGHT_OUTER
-                    && joinType != IQueryModel.JOIN_FULL_OUTER
-                    && joinType != IQueryModel.JOIN_CROSS_RIGHT
-                    && joinType != IQueryModel.JOIN_CROSS_FULL) {
-                return false;
-            }
-        }
-        return true;
     }
 
     // Returns true when the INNER join of the later of the two models has the key ai.an = bi.bn, and no
@@ -2166,6 +2154,17 @@ public class SqlOptimiser implements Mutable {
         model.setPostJoinWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, model.getPostJoinWhereClause(), node));
     }
 
+    // Queues a model that has no join-context parent left to run: a deferred model, see isDeferredJoinModel,
+    // goes to deferredModels and any other model to orderingStack.
+    private void addRunnableModel(int index) {
+        if (deferralStates.getQuick(index) == DEFERRAL_PENDING) {
+            deferredModels.add(index);
+            deferralOverdue.setQuick(index, 0);
+        } else {
+            orderingStack.add(getJoinModelPriority(index));
+        }
+    }
+
     private void addTimestampToProjection(
             CharSequence columnName,
             ExpressionNode columnAst,
@@ -2912,6 +2911,21 @@ public class SqlOptimiser implements Mutable {
         }
 
         return true;
+    }
+
+    // Returns true when the model at modelIndex returns the same rows whether the deferred models that have
+    // not run yet run before or after it: an INNER or CROSS join, or a LEFT, ASOF or LT join whose ON clause
+    // reads none of these models. An INNER join key that reads a deferred model makes the INNER join wait
+    // for it, and assignFilters runs the other INNER conjuncts after both models. A LEFT, ASOF or LT join
+    // keeps every row of its master, and a CROSS or LEFT join keeps the designated timestamp of its master,
+    // so either order pairs the same rows.
+    private boolean canRunBeforeDeferredModels(ObjList<IQueryModel> joinModels, int modelIndex) {
+        final int joinType = joinModels.getQuick(modelIndex).getJoinType();
+        if (joinType == IQueryModel.JOIN_INNER || joinType == IQueryModel.JOIN_CROSS) {
+            return true;
+        }
+        return (isLeftJoin(joinType) || joinType == IQueryModel.JOIN_ASOF || joinType == IQueryModel.JOIN_LT)
+                && hasJoinModelReaders && joinModelUnrunDeferredReads.getQuick(modelIndex) == 0;
     }
 
     private QueryColumn chaseLateralOrigin(IQueryModel joinModel, QueryColumn column) {
@@ -3767,6 +3781,7 @@ public class SqlOptimiser implements Mutable {
             }
             recordJoinModelRefs(i, refs);
         }
+        hasJoinModelReaders = true;
         boolean isModel0Recorded = false;
         final IntHashSet unpinned = intHashSetPool.next();
         final IntHashSet timeSeriesJoinsAhead = intHashSetPool.next();
@@ -4425,34 +4440,21 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
-    // doReorderTables appends a CROSS JOIN that has no key and no dependency after every model it orders,
-    // so the keyed joins probe their rows before the cross product multiplies them. A RIGHT/FULL join pins
-    // the models written before it ahead of it, see constrainRightAndFullJoinsAfterPrefix and
-    // recordNullingJoinPrefix. The pin gives such a CROSS JOIN a dependency, and doReorderTables then runs
-    // it at its written position, so the keyed joins written after it probe the cross product instead.
-    // This method moves each CROSS JOIN on which only RIGHT/FULL joins depend back towards the end of the
-    // order: past each later model that the cross product commutes with, see isCrossJoinMovableAfter, up
-    // to the first model that it does not commute with. That model is at the latest the first RIGHT/FULL
-    // join that depends on the CROSS JOIN. Only the CROSS JOIN moves, so the other models keep their order,
-    // including a model that doReorderTables runs after a RIGHT/FULL join without an ordering edge. The
-    // first model of the order keeps its place: the join takes its timestamp and its row order from it.
-    private void deferPinnedCrossJoins(IQueryModel parent) throws SqlException {
-        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
-        final IntList ordered = parent.getOrderedJoinModels();
-        final int n = ordered.size();
-        // from the end of the order back, so that a CROSS JOIN moves up to a later one that moved already,
-        // and the CROSS JOINs keep their order
-        for (int pos = n - 2; pos > 0; pos--) {
-            final int crossIndex = ordered.getQuick(pos);
-            if (!isDeferrableCrossJoin(joinModels, crossIndex)) {
-                continue;
+    // Returns the priority of the first model after the given priority, in priority order, that is not an
+    // INNER, CROSS, LEFT, ASOF or LT join, or the number of join models when there is no such model. A
+    // keyless CROSS or LEFT join commutes with these joins unless their ON clause reads it, see
+    // canRunBeforeDeferredModels. The time-series joins that prioritiseTimeSeriesJoinsAhead runs ahead of
+    // a non-equi RIGHT/FULL join come before that join in priority order, and read only its prefix.
+    private int crossCommutingJoinRunEnd(ObjList<IQueryModel> joinModels, int priority, boolean isPrioritised) {
+        int p = priority + 1;
+        for (int n = joinModels.size(); p < n; p++) {
+            final int joinType = joinModels.getQuick(isPrioritised ? joinModelsByPriority.getQuick(p) : p).getJoinType();
+            if (joinType != IQueryModel.JOIN_INNER && joinType != IQueryModel.JOIN_CROSS && !isLeftJoin(joinType)
+                    && joinType != IQueryModel.JOIN_ASOF && joinType != IQueryModel.JOIN_LT) {
+                break;
             }
-            int next = pos + 1;
-            for (; next < n && isCrossJoinMovableAfter(parent, crossIndex, ordered.getQuick(next)); next++) {
-                ordered.setQuick(next - 1, ordered.getQuick(next));
-            }
-            ordered.setQuick(next - 1, crossIndex);
         }
+        return p;
     }
 
     /**
@@ -4833,21 +4835,27 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private int doReorderTables(IQueryModel parent, IntList ordered) {
+    // Orders the join models of the level into ordered and returns the cost of the order, or
+    // Integer.MAX_VALUE when the ordering edges leave a model out. With isDeferring, it defers the models
+    // that isDeferredJoinModel accepts. The cost does not depend on the order, so reorderTables compares
+    // the candidate roots without deferring and defers only the order it keeps.
+    private int doReorderTables(IQueryModel parent, IntList ordered, boolean isDeferring) {
         tempCrossIndexes.clear();
         ordered.clear();
         this.orderingStack.clear();
         ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        final int n = joinModels.size();
         // orderingStack holds the priorities of the models, see joinModelPriorities
         final boolean isPrioritised = joinModelsByPriority.size() > 0;
+        prepareDeferredModels(parent, isDeferring);
 
         int cost = 0;
 
-        for (int i = 0, n = joinModels.size(); i < n; i++) {
+        for (int i = 0; i < n; i++) {
             IQueryModel q = joinModels.getQuick(i);
             if (q.getJoinContext() == null || q.getJoinContext().parents.size() == 0) {
                 if (q.getDependencies().size() > 0) {
-                    orderingStack.add(getJoinModelPriority(i));
+                    addRunnableModel(i);
                 } else {
                     tempCrossIndexes.add(i);
                 }
@@ -4856,10 +4864,18 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
-        while (orderingStack.notEmpty()) {
-            // remove the node with the lowest priority from orderingStack
-            final int priority = orderingStack.poll();
-            final int index = isPrioritised ? joinModelsByPriority.getQuick(priority) : priority;
+        while (true) {
+            final int index = nextModelToRun(joinModels, isPrioritised);
+            if (index == -1) {
+                break;
+            }
+            final int priority = getJoinModelPriority(index);
+            for (int i = 0, k = deferredModels.size(); i < k; i++) {
+                final int deferredIndex = deferredModels.getQuick(i);
+                if (getJoinModelPriority(deferredIndex) < priority) {
+                    deferralOverdue.setQuick(deferredIndex, 1);
+                }
+            }
 
             ordered.add(index);
 
@@ -4878,13 +4894,13 @@ public class SqlOptimiser implements Mutable {
                 int depIndex = dependencies.get(i);
                 JoinContext jc = joinModels.getQuick(depIndex).getJoinContext();
                 if (jc != null && --jc.inCount == 0) {
-                    orderingStack.add(getJoinModelPriority(depIndex));
+                    addRunnableModel(depIndex);
                 }
             }
         }
 
         //Check to see if all edges are removed
-        for (int i = 0, n = joinModels.size(); i < n; i++) {
+        for (int i = 0; i < n; i++) {
             IQueryModel m = joinModels.getQuick(i);
             if (m.getJoinContext() != null && m.getJoinContext().inCount > 0) {
                 return Integer.MAX_VALUE;
@@ -4892,7 +4908,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         // add pure crosses at the end of ordered table list
-        for (int i = 0, n = tempCrossIndexes.size(); i < n; i++) {
+        for (int i = 0, k = tempCrossIndexes.size(); i < k; i++) {
             ordered.add(tempCrossIndexes.getQuick(i));
         }
 
@@ -6781,46 +6797,42 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
-    // Returns true when the CROSS JOIN at crossIndex can run after the model at index without changing the
-    // rows: the model does not depend on the CROSS JOIN, and the cross product commutes with its join.
-    // - INNER and CROSS joins: assignFilters places an ON conjunct that is not a key after every model it
-    //   reads, in execution order.
-    // - LEFT, ASOF and LT joins whose ON clause does not read the CROSS JOIN: they match each row on the
-    //   columns of the other models, so each row of the CROSS JOIN repeats the same matches. An ASOF or LT
-    //   join reads the timestamp of the first model, which keeps its place.
-    // The CROSS JOIN stays ahead of a RIGHT/FULL join, which NULL-extends rows that the cross product would
-    // repeat, and of the other join types. It also stays ahead of a model whose ON clause has a name that
-    // does not resolve to one model, and of another CROSS JOIN that deferPinnedCrossJoins moves, so that the
-    // two keep their order.
-    private boolean isCrossJoinMovableAfter(IQueryModel parent, int crossIndex, int index) throws SqlException {
-        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+    // Returns true for a CROSS or LEFT join without join keys, or for the model that the query selects
+    // from when it has none, whose every dependency is a later RIGHT or FULL join that counts it as a
+    // parent. constrainRightAndFullJoinsAfterPrefix and recordNullingJoinPrefix give it these edges to keep
+    // it ahead of the outer join, and they make a CROSS join that an outer join's prefix holds a consumer
+    // of an earlier non-equi RIGHT/FULL join, see isNullingJoinConsumer. Without these edges,
+    // doReorderTables would append the model after every keyed join, so it defers the model: the model runs
+    // after the joins next to it that return the same rows either way, see canRunBeforeDeferredModels. The
+    // first model to run gives the joins their designated timestamp, so the model that the query selects
+    // from defers only on a level without a join that reads the designated timestamp of its master, see
+    // prepareDeferredModels.
+    private boolean isDeferredJoinModel(ObjList<IQueryModel> joinModels, int index, boolean isFromModelDeferrable) {
         final IQueryModel model = joinModels.getQuick(index);
         final int joinType = model.getJoinType();
-        final boolean isInner = joinType == IQueryModel.JOIN_INNER || joinType == IQueryModel.JOIN_CROSS;
-        if (!isInner
-                && joinType != IQueryModel.JOIN_LEFT_OUTER
-                && joinType != IQueryModel.JOIN_CROSS_LEFT
-                && joinType != IQueryModel.JOIN_ASOF
-                && joinType != IQueryModel.JOIN_LT) {
+        if (index == 0 ? !isFromModelDeferrable : joinType != IQueryModel.JOIN_CROSS && joinType != IQueryModel.JOIN_CROSS_LEFT) {
             return false;
         }
-        if (joinModels.getQuick(crossIndex).getDependencies().contains(index)
-                || isDeferrableCrossJoin(joinModels, index)) {
+        if (model.getJoinContext() != null && !model.getJoinContext().isEmpty()) {
             return false;
         }
-        final JoinContext context = model.getJoinContext();
-        if (context != null
-                && (context.parents.contains(crossIndex)
-                || context.aIndexes.contains(crossIndex)
-                || context.bIndexes.contains(crossIndex))) {
+        final IntHashSet dependencies = model.getDependencies();
+        if (dependencies.size() == 0) {
             return false;
         }
-        onClauseRefs.clear();
-        if (!collectReferencedJoinModels(parent, model.getJoinCriteria(), onClauseRefs)
-                || !collectReferencedJoinModels(parent, model.getOuterJoinExpressionClause(), onClauseRefs)) {
-            return false;
+        for (int i = 0, n = dependencies.size(); i < n; i++) {
+            final int dependentIndex = dependencies.get(i);
+            final IQueryModel dependent = joinModels.getQuick(dependentIndex);
+            final int dependentJoinType = dependent.getJoinType();
+            final JoinContext context = dependent.getJoinContext();
+            if (dependentIndex < index
+                    || (dependentJoinType != IQueryModel.JOIN_RIGHT_OUTER && dependentJoinType != IQueryModel.JOIN_FULL_OUTER
+                    && dependentJoinType != IQueryModel.JOIN_CROSS_RIGHT && dependentJoinType != IQueryModel.JOIN_CROSS_FULL)
+                    || context == null || context.parents.excludes(index)) {
+                return false;
+            }
         }
-        return isInner || onClauseRefs.excludes(crossIndex);
+        return true;
     }
 
     /**
@@ -8467,6 +8479,55 @@ public class SqlOptimiser implements Mutable {
         return nextLiteral(token, 0);
     }
 
+    // Returns the index of the model that doReorderTables runs next, or -1 when no model can run. A deferred
+    // model runs where the priority order would run it, unless the next model of orderingStack comes
+    // before the deferred model's run end and returns the same rows with the deferred model after it, see
+    // canRunBeforeDeferredModels: that model runs first. The priority order would run the deferred model once
+    // a model with a higher priority runs or is next, and from then on only such a model runs before it.
+    private int nextModelToRun(ObjList<IQueryModel> joinModels, boolean isPrioritised) {
+        if (deferredModels.size() > 0) {
+            // the deferred model with the lowest priority
+            int deferredPos = 0;
+            int deferredIndex = deferredModels.getQuick(0);
+            for (int i = 1, k = deferredModels.size(); i < k; i++) {
+                final int candidateIndex = deferredModels.getQuick(i);
+                if (getJoinModelPriority(candidateIndex) < getJoinModelPriority(deferredIndex)) {
+                    deferredIndex = candidateIndex;
+                    deferredPos = i;
+                }
+            }
+            boolean isDeferredNext = !orderingStack.notEmpty();
+            if (!isDeferredNext) {
+                final int nextPriority = orderingStack.peek();
+                if (nextPriority > getJoinModelPriority(deferredIndex) || deferralOverdue.getQuick(deferredIndex) == 1) {
+                    int runEnd = deferralRunEnds.getQuick(deferredIndex);
+                    if (runEnd == -1) {
+                        runEnd = crossCommutingJoinRunEnd(joinModels, getJoinModelPriority(deferredIndex), isPrioritised);
+                        deferralRunEnds.setQuick(deferredIndex, runEnd);
+                    }
+                    final int nextIndex = isPrioritised ? joinModelsByPriority.getQuick(nextPriority) : nextPriority;
+                    isDeferredNext = nextPriority >= runEnd || !canRunBeforeDeferredModels(joinModels, nextIndex);
+                }
+            }
+            if (isDeferredNext) {
+                deferredModels.removeIndex(deferredPos);
+                deferralStates.setQuick(deferredIndex, DEFERRAL_RAN);
+                if (hasJoinModelReaders) {
+                    for (int link = joinModelReaderHeads.getQuick(deferredIndex); link != -1; link = joinModelReaderLinks.getQuick(link + 1)) {
+                        final int readerIndex = joinModelReaderLinks.getQuick(link);
+                        joinModelUnrunDeferredReads.setQuick(readerIndex, joinModelUnrunDeferredReads.getQuick(readerIndex) - 1);
+                    }
+                }
+                return deferredIndex;
+            }
+        } else if (!orderingStack.notEmpty()) {
+            return -1;
+        }
+        // remove the node with the lowest priority from orderingStack
+        final int priority = orderingStack.poll();
+        return isPrioritised ? joinModelsByPriority.getQuick(priority) : priority;
+    }
+
     private boolean nonAggregateFunctionDependsOn(ExpressionNode node, ExpressionNode timestampNode) {
         if (timestampNode == null) {
             return false;
@@ -8802,6 +8863,7 @@ public class SqlOptimiser implements Mutable {
             timeSeriesModelOnPredicates.clear();
             timeSeriesModelOnPredicateIndexes.clear();
             hasLinkedLoneEmittedClause = false;
+            hasJoinModelReaders = false;
             loneEmittedClauseEdges.clear();
             loneDeferredEmittedKeySlaves.clear();
 
@@ -9185,6 +9247,52 @@ public class SqlOptimiser implements Mutable {
                     nearestNullingModel = modelIndex;
                     if (outermostNullingModel < 0) {
                         outermostNullingModel = modelIndex;
+                    }
+                }
+            }
+        }
+    }
+
+    // Marks the deferred models of the level for doReorderTables when isDeferring, see isDeferredJoinModel,
+    // and counts for each model the deferred models that its ON clause reads. SqlCodeGenerator turns a CROSS
+    // join that the markout_horizon hint names into a markout join that needs the master it is written
+    // after, so a level with the hint defers no model.
+    private void prepareDeferredModels(IQueryModel parent, boolean isDeferring) {
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        final int n = joinModels.size();
+        deferredModels.clear();
+        deferralStates.setAll(n, DEFERRAL_NONE);
+        if (!isDeferring || parent.getHints().keyIndex(SqlHints.MARKOUT_HORIZON_HINT) < 0) {
+            return;
+        }
+        // a time-series join reads the designated timestamp of its master, which the first model to run
+        // gives, and a LATERAL or UNNEST join reads its master's rows, so neither lets the model that the
+        // query selects from run later
+        boolean isFromModelDeferrable = true;
+        for (int i = 1; i < n && isFromModelDeferrable; i++) {
+            final int joinType = joinModels.getQuick(i).getJoinType();
+            isFromModelDeferrable = joinType == IQueryModel.JOIN_INNER || joinType == IQueryModel.JOIN_CROSS
+                    || isLeftJoin(joinType) || joinType == IQueryModel.JOIN_RIGHT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER
+                    || joinType == IQueryModel.JOIN_CROSS_RIGHT || joinType == IQueryModel.JOIN_CROSS_FULL;
+        }
+        boolean hasDeferredModel = false;
+        for (int i = 0; i < n; i++) {
+            if (isDeferredJoinModel(joinModels, i, isFromModelDeferrable)) {
+                deferralStates.setQuick(i, DEFERRAL_PENDING);
+                hasDeferredModel = true;
+            }
+        }
+        if (hasDeferredModel) {
+            deferralOverdue.setAll(n, 0);
+            deferralRunEnds.setAll(n, -1);
+            if (hasJoinModelReaders) {
+                joinModelUnrunDeferredReads.setAll(n, 0);
+                for (int i = 0; i < n; i++) {
+                    if (deferralStates.getQuick(i) == DEFERRAL_PENDING) {
+                        for (int link = joinModelReaderHeads.getQuick(i); link != -1; link = joinModelReaderLinks.getQuick(link + 1)) {
+                            final int readerIndex = joinModelReaderLinks.getQuick(link);
+                            joinModelUnrunDeferredReads.setQuick(readerIndex, joinModelUnrunDeferredReads.getQuick(readerIndex) + 1);
+                        }
                     }
                 }
             }
@@ -10231,7 +10339,7 @@ public class SqlOptimiser implements Mutable {
 
             applyModelOnOrderingConstraints(model);
             IntList ordered = model.nextOrderedJoinModels();
-            int thisCost = doReorderTables(model, ordered);
+            int thisCost = doReorderTables(model, ordered, false);
 
             // we have to have root, even if it is expensive
             // so the first iteration sets the root regardless
@@ -10239,6 +10347,10 @@ public class SqlOptimiser implements Mutable {
             if (thisCost < cost || root == -1) {
                 root = z;
                 cost = thisCost;
+                if (thisCost != Integer.MAX_VALUE) {
+                    // orders the same models again, deferring the pinned models without join keys
+                    doReorderTables(model, ordered, true);
+                }
                 model.setOrderedJoinModels(ordered);
                 if (z < zc - 1) {
                     saveJoinContexts(joinModels);
@@ -10262,7 +10374,6 @@ public class SqlOptimiser implements Mutable {
                 }
             }
         }
-        deferPinnedCrossJoins(model);
     }
 
     private ExpressionNode replaceColumnWithAlias(ExpressionNode node, IQueryModel model) throws SqlException {
