@@ -59,7 +59,7 @@ public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
             final OutputSchema input = new OutputSchema().add(70, "ts", ColumnType.TIMESTAMP_MICRO, true);
             input.setTimestampIndex(0);
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                 FunctionBindingHarness binder = new FunctionBindingHarness(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
+                 FunctionBindingHarness binder = new FunctionBindingHarness(engine, new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
                 for (String sql : new String[]{"ts BETWEEN '1970-01-01' AND '1970-01-02'",
                         "ts NOT BETWEEN '1970-01-01' AND '1970-01-02'",
                         "ts IN '1970-01-01'", "ts NOT IN '1970-01-01'",
@@ -88,7 +88,7 @@ public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final OutputSchema input = new OutputSchema().add(70, "ts", ColumnType.TIMESTAMP_MICRO, true);
             input.setTimestampIndex(0);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
                 for (int variant = 0; variant < 4; variant++) {
                     final ExpressionNode predicate = call("in", literal("ts"), variant == 0 ? cast(constant("0"), "long") : constant("0"));
                     final BoundExpression expression = variant < 2 ? binder.bindPredicate(predicate, input, null, sqlExecutionContext)
@@ -109,7 +109,7 @@ public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final OutputSchema input = new OutputSchema().add(70, "ts", ColumnType.TIMESTAMP_MICRO, true);
             input.setTimestampIndex(0);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
                 for (int variant = 0; variant < 6; variant++) {
                     final boolean explicit = variant == 4;
                     ExpressionNode predicate = call("between", literal("ts"),
@@ -157,7 +157,7 @@ public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
                 final OutputSchema original = wideSchema(type);
                 final OutputSchema pruned = new OutputSchema().add(70, "ts", type, true);
                 final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-                try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                     final BoundExpression expression = binder.bindPredicate(call("between", literal("ts"), parameter("$1"), parameter("$2")),
                             original, null, sqlExecutionContext);
                     try (Function owner = binder.instantiate(expression, pruned, sqlExecutionContext);
@@ -191,7 +191,7 @@ public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema original = wideSchema(ColumnType.TIMESTAMP_MICRO);
             final OutputSchema pruned = new OutputSchema().add(70, "ts", ColumnType.TIMESTAMP_MICRO, true);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bindPredicate(call("in", literal("ts"),
                                 text("1969-12-31T23:59:59.999999999Z"),
                                 cast(text("1969-12-31T23:59:59.999999999Z"), "timestamp_ns"), constant("null")),
@@ -223,7 +223,7 @@ public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
                 final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
                 final OutputSchema original = wideSchema(type);
                 final OutputSchema pruned = new OutputSchema().add(70, "ts", type, true);
-                try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                     final BoundExpression expression = binder.bindPredicate(call("in", literal("ts"), parameter("$1")),
                             original, null, sqlExecutionContext);
                     try (Function owner = binder.instantiate(expression, pruned, sqlExecutionContext);
@@ -260,7 +260,7 @@ public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema original = wideSchema(ColumnType.TIMESTAMP_MICRO);
             final OutputSchema pruned = new OutputSchema().add(70, "ts", ColumnType.TIMESTAMP_MICRO, true);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final BoundExpression expression = binder.bindPredicate(call("in", literal("ts"), parameter("$1"), parameter("$2"), constant("null")),
                         original, null, sqlExecutionContext);
                 try (Function owner = binder.instantiate(expression, pruned, sqlExecutionContext);
@@ -306,7 +306,7 @@ public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
                 }
             };
             final OutputSchema input = new OutputSchema().add(70, "id", ColumnType.LONG, true);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final ExpressionNode value = cast(cast(call("in", literal("id"), constant("1"), constant("2"), constant("3")), "long"), "timestamp");
                 final BoundExpression expression = binder.bind(call("between", value, constant("null"), cast(constant("1"), "timestamp")),
                         input, null, sqlExecutionContext);
@@ -356,7 +356,7 @@ public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
     public void testTextAndIntervalBoundsBindOverNanoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             final OutputSchema input = new OutputSchema().add(70, "ts", ColumnType.TIMESTAMP_NANO, true);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
                 for (ExpressionNode predicate : new ExpressionNode[]{call("in", literal("ts"), text("2020-01")),
                         call("between", literal("ts"), text("2020-01"), text("2020-02")),
                         call("in", literal("ts"), call("interval", cast(text("2020-01-01"), "timestamp"), cast(text("2020-01-02"), "timestamp")))}) {

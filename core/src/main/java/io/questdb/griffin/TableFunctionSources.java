@@ -149,7 +149,7 @@ final class TableFunctionSources implements Closeable, Mutable {
             }
             return function.getRecordCursorFactory();
         }
-        final Function function = resources.detachFunction(slot);
+        final Function function = (Function) resources.detach(slot);
         return function.getRecordCursorFactory();
     }
 
@@ -272,7 +272,7 @@ final class TableFunctionSources implements Closeable, Mutable {
     }
 
     Throwable closePrepared(Throwable primary) {
-        return resources.closeOwned(-1, primary);
+        return resources.closeOwned(primary);
     }
 
     /**

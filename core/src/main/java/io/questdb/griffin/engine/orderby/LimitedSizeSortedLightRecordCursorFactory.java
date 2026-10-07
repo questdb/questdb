@@ -83,7 +83,12 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         this.comparator = comparator;
         this.sortColumnFilter = sortColumnFilter;
         this.timestampIndex = timestampIndex;
-        this.rankMaps = SortKeyEncoder.createRankMaps(metadata, sortColumnFilter);
+        try {
+            this.rankMaps = SortKeyEncoder.createRankMaps(metadata, sortColumnFilter);
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override

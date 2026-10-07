@@ -47,48 +47,52 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 
 /**
- * The compile layer of one query level: owns the level's {@link SqlBinder} and the lifecycle of the sub-queries
- * the level binds. Each sub-query is a nested level with its own instance, pooled across statements up to
- * {@link #MAX_RETAINED_SUBQUERY_DEPTH} levels deep. A sub-query is completed (its own sub-queries completed, then
- * optimised, authorized and generated) once every level is bound, or early where binding consumes its rows
- * (PIVOT IN, table-function arguments) or its errors (arguments of a call that failed to resolve). The first
- * consumer takes the generated factory; later consumers regenerate one.
+ * The compile layer of one query level, the statement's top level or a sub-query: owns the level's {@link SqlBinder}
+ * and the lifecycle of the sub-queries the level binds. Each sub-query is a nested level borrowed from the free levels
+ * every level of the compiler shares, which retain at most {@link #MAX_RETAINED_LEVELS} levels. A sub-query is
+ * completed (its own sub-queries completed, then optimised, authorized and generated) once every level is bound, or
+ * early where binding consumes its rows (PIVOT IN, table-function arguments) or its errors (arguments of a call that
+ * failed to resolve). The first consumer takes the generated factory; later consumers regenerate one.
  */
-final class SubqueryCompiler implements Closeable, Mutable {
-    private static final Log LOG = LogFactory.getLog(SubqueryCompiler.class);
-    private static final int MAX_RETAINED_SUBQUERY_DEPTH = 8;
+final class QueryLevelCompiler implements Closeable, Mutable {
+    private static final Log LOG = LogFactory.getLog(QueryLevelCompiler.class);
+    private static final int MAX_RETAINED_LEVELS = 32;
     private final SqlBinder binder;
     private final SqlCompilerImpl compiler;
     private final CairoConfiguration configuration;
+    private final BoolList failedSubqueries = new BoolList();
+    private final ObjList<QueryLevelCompiler> freeLevels;
     private final FunctionParser functionParser;
     private final SubqueryMetadataFactory metadata = new SubqueryMetadataFactory();
     private final BoolList pendingSubqueries = new BoolList();
     private final ObjList<RecordCursorFactory> subqueryFactories = new ObjList<>();
-    private final ObjList<SubqueryCompiler> subqueryLevels = new ObjList<>();
+    private final ObjList<QueryLevelCompiler> subqueryLevels = new ObjList<>();
     private final IntList subqueryPositions = new IntList();
     private int depth;
-    private int subqueryCount;
 
-    SubqueryCompiler(CairoConfiguration configuration, FunctionParser functionParser, SqlCompilerImpl compiler) {
+    QueryLevelCompiler(CairoConfiguration configuration, FunctionParser functionParser, SqlCompilerImpl compiler, ObjList<QueryLevelCompiler> freeLevels) {
         this.compiler = compiler;
         this.configuration = configuration;
         this.functionParser = functionParser;
+        this.freeLevels = freeLevels;
         this.binder = new SqlBinder(configuration, functionParser, compiler, this);
     }
 
     @Override
     public void clear() {
-        binder.clear();
-        final Throwable failure = clearSubqueries(null);
-        if (failure != null) {
-            LOG.error().$("could not free subquery resources [error=").$(failure).I$();
+        try {
+            binder.clear();
+        } finally {
+            final Throwable failure = clearSubqueries(null);
+            if (failure != null) {
+                LOG.error().$("could not free subquery resources [error=").$(failure).I$();
+            }
         }
     }
 
     @Override
     public void close() {
         clear();
-        Misc.freeObjListAndClear(subqueryLevels);
     }
 
     private static boolean hasSchema(RecordMetadata metadata, OutputSchema output) {
@@ -103,23 +107,34 @@ final class SubqueryCompiler implements Closeable, Mutable {
         return true;
     }
 
-    private Throwable clearSubqueries(Throwable primary) {
-        for (int i = 0; i < subqueryCount; i++) {
-            primary = Misc.freeBestEffort(primary, subqueryFactories.getQuick(i));
-            try {
-                subqueryLevels.getQuick(i).clear();
-            } catch (Throwable th) {
-                primary = Misc.foldCleanupFailure(primary, th);
-            }
+    private QueryLevelCompiler borrowLevel() {
+        if (freeLevels.size() == 0) {
+            return new QueryLevelCompiler(configuration, functionParser, compiler, freeLevels);
         }
+        return freeLevels.popLast();
+    }
+
+    private Throwable clearSubqueries(Throwable primary) {
+        for (int i = 0, n = subqueryLevels.size(); i < n; i++) {
+            primary = Misc.freeBestEffort(primary, subqueryFactories.getQuick(i));
+            primary = releaseLevel(primary, subqueryLevels.getQuick(i));
+        }
+        subqueryLevels.clear();
         subqueryFactories.clear();
+        failedSubqueries.clear();
         pendingSubqueries.clear();
         subqueryPositions.clear();
-        subqueryCount = 0;
-        if (depth >= MAX_RETAINED_SUBQUERY_DEPTH - 1 && subqueryLevels.size() > 0) {
-            // One deeply nested query must not pin a level per nesting level for the compiler lifetime.
-            primary = Misc.freeObjListBestEffort(primary, subqueryLevels);
-            subqueryLevels.clear();
+        return primary;
+    }
+
+    private Throwable releaseLevel(Throwable primary, QueryLevelCompiler level) {
+        try {
+            level.clear();
+        } catch (Throwable th) {
+            return Misc.foldCleanupFailure(primary, th);
+        }
+        if (freeLevels.size() < MAX_RETAINED_LEVELS) {
+            freeLevels.add(level);
         }
         return primary;
     }
@@ -130,12 +145,12 @@ final class SubqueryCompiler implements Closeable, Mutable {
      */
     void bind(QueryModel model, SqlParserCallback parserCallback, SqlExecutionContext executionContext) throws SqlException {
         clear();
-        final SubqueryCompiler previous = functionParser.swapSubqueryCompiler(this);
+        final QueryLevelCompiler previous = functionParser.swapQueryLevel(this);
         final LogicalPlan plan;
         try {
             plan = binder.bind(model, parserCallback, executionContext);
         } finally {
-            functionParser.swapSubqueryCompiler(previous);
+            functionParser.swapQueryLevel(previous);
         }
         binder.setRoot(plan);
     }
@@ -178,14 +193,13 @@ final class SubqueryCompiler implements Closeable, Mutable {
      * it is completed.
      */
     int compileSubquery(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
-        if (subqueryLevels.size() == subqueryCount) {
-            subqueryLevels.add(new SubqueryCompiler(configuration, functionParser, compiler));
-        }
-        final int index = subqueryCount++;
-        subqueryFactories.extendAndSet(index, null);
-        pendingSubqueries.extendAndSet(index, false);
-        subqueryPositions.extendAndSet(index, position);
-        final SubqueryCompiler subquery = subqueryLevels.getQuick(index);
+        final QueryLevelCompiler subquery = borrowLevel();
+        final int index = subqueryLevels.size();
+        subqueryLevels.add(subquery);
+        subqueryFactories.add(null);
+        failedSubqueries.add(false);
+        pendingSubqueries.add(false);
+        subqueryPositions.add(position);
         subquery.depth = depth + 1;
         final boolean isWindowContextPushed = !executionContext.getWindowContext().isEmpty();
         if (isWindowContextPushed) {
@@ -194,7 +208,7 @@ final class SubqueryCompiler implements Closeable, Mutable {
         try {
             subquery.bind(model, binder.getParserCallback(), executionContext);
         } catch (Throwable th) {
-            binder.ctx.isSubqueryFailed = true;
+            failedSubqueries.set(index, true);
             throw th;
         } finally {
             if (isWindowContextPushed) {
@@ -224,7 +238,7 @@ final class SubqueryCompiler implements Closeable, Mutable {
      * optimised, so its optimiser sees the stability the generated factories prove.
      */
     void completeSubqueries(SqlExecutionContext executionContext) throws SqlException {
-        for (int i = 0; i < subqueryCount; i++) {
+        for (int i = 0; i < subqueryLevels.size(); i++) {
             completeSubquery(i, executionContext);
         }
     }
@@ -238,7 +252,7 @@ final class SubqueryCompiler implements Closeable, Mutable {
             return;
         }
         pendingSubqueries.set(index, false);
-        final SubqueryCompiler subquery = subqueryLevels.getQuick(index);
+        final QueryLevelCompiler subquery = subqueryLevels.getQuick(index);
         final RecordCursorFactory factory;
         try {
             subquery.completeSubqueries(executionContext);
@@ -246,7 +260,7 @@ final class SubqueryCompiler implements Closeable, Mutable {
             assert hasSchema(subquery.metadata.getMetadata(), subquery.binder.getRoot().getOutput()) : "optimised sub-query output differs from its bound output";
             factory = generateSubquery(index, executionContext);
         } catch (Throwable th) {
-            binder.ctx.isSubqueryFailed = true;
+            failedSubqueries.set(index, true);
             throw th;
         }
         subqueryFactories.setQuick(index, factory);
@@ -305,12 +319,16 @@ final class SubqueryCompiler implements Closeable, Mutable {
         return binder;
     }
 
-    int getScalarBoundDepth() {
+    int getDepth() {
         return depth;
     }
 
     int getSubqueryFirstColumnPosition(int index) {
         return subqueryLevels.getQuick(index).binder.getOutputColumnPosition(0);
+    }
+
+    int getSubqueryCount() {
+        return subqueryLevels.size();
     }
 
     RecordCursorFactory getSubqueryMetadata(int index) {
@@ -319,6 +337,19 @@ final class SubqueryCompiler implements Closeable, Mutable {
 
     LogicalPlan getSubqueryPlan(int index) {
         return subqueryLevels.getQuick(index).binder.getRoot();
+    }
+
+    /**
+     * Whether a sub-query this level registered at or after the mark, a sub-query count read earlier, failed to bind
+     * or generate.
+     */
+    boolean hasFailedSubquery(int mark) {
+        for (int i = mark, n = subqueryLevels.size(); i < n; i++) {
+            if (failedSubqueries.get(i)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

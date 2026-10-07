@@ -58,7 +58,12 @@ public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         this.columnIndex = columnIndex;
         this.lo = lo;
         this.ascending = ascending;
-        this.cursor = new LongTopKRecordCursor(columnIndex, lo, ascending);
+        try {
+            this.cursor = new LongTopKRecordCursor(columnIndex, lo, ascending);
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override

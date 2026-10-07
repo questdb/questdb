@@ -82,7 +82,7 @@ final class PivotBinder implements Mutable {
     private final IntList pivotKeyIndexes;
     private final CharSequenceHashSet pivotValues = new CharSequenceHashSet();
     private final StringSink pivotValueSink;
-    private final SubqueryCompiler subqueries;
+    private final QueryLevelCompiler level;
     private final TemporalJoinBinder temporalJoinBinder;
     private final WindowBinder windowBinder;
     private final ObjectPool<WindowJoinPivotAggregate> windowJoinPivotAggregatePool = new ObjectPool<>(WindowJoinPivotAggregate::new, 4);
@@ -91,7 +91,7 @@ final class PivotBinder implements Mutable {
     PivotBinder(
             BindContext ctx,
             SqlBinder binder,
-            SubqueryCompiler subqueries,
+            QueryLevelCompiler level,
             CairoConfiguration configuration,
             WindowBinder windowBinder,
             TemporalJoinBinder temporalJoinBinder,
@@ -101,7 +101,7 @@ final class PivotBinder implements Mutable {
     ) {
         this.ctx = ctx;
         this.binder = binder;
-        this.subqueries = subqueries;
+        this.level = level;
         this.configuration = configuration;
         this.windowBinder = windowBinder;
         this.temporalJoinBinder = temporalJoinBinder;
@@ -224,8 +224,8 @@ final class PivotBinder implements Mutable {
         final ExpressionNode subquery = column.getSelectSubqueryExpr();
         final int position = subquery.position;
         // The values of the sub-query become output columns, so it is generated and run while binding.
-        final int index = subqueries.compileSubquery(subquery.queryModel, position, executionContext);
-        try (RecordCursorFactory factory = subqueries.takeSubquery(index, executionContext)) {
+        final int index = level.compileSubquery(subquery.queryModel, position, executionContext);
+        try (RecordCursorFactory factory = level.takeSubquery(index, executionContext)) {
             final RecordMetadata metadata = factory.getMetadata();
             if (metadata.getColumnCount() != 1) {
                 throw SqlException.$(position, "PIVOT IN subquery must return exactly one column, got ").put(metadata.getColumnCount());

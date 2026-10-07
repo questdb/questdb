@@ -57,7 +57,7 @@ public class FunctionBinderSymbolTest extends AbstractCairoTest {
             final FunctionParser parser = parser(constructed);
             try (RecordCursorFactory original = select("SELECT unused,s,t FROM fb_symbol");
                  RecordCursorFactory narrowed = select("SELECT s,t FROM fb_symbol");
-                 FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                 FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final OutputSchema full = schema(original.getMetadata(), 100);
                 final OutputSchema pruned = schema(narrowed.getMetadata(), 101);
                 final BoundExpression expression = binder.bind(binary("=", literal("s"), literal("t")), full, null, sqlExecutionContext);
@@ -100,7 +100,7 @@ public class FunctionBinderSymbolTest extends AbstractCairoTest {
             final ObjList<Function> constructed = new ObjList<>();
             final FunctionParser parser = parser(constructed);
             try (RecordCursorFactory dynamic = select("SELECT s,t FROM fb_symbol UNION ALL SELECT t,s FROM fb_symbol");
-                 FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                 FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 Assert.assertFalse(dynamic.getMetadata().isSymbolTableStatic(0));
                 final OutputSchema boundInput = schema(dynamic.getMetadata(), 100);
                 boundInput.setSymbolTableStatic(0, true);
@@ -151,7 +151,7 @@ public class FunctionBinderSymbolTest extends AbstractCairoTest {
                     return text;
                 }
             };
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser);
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser);
                  Function integer = binder.instantiate(binder.bind(literal("i"), input, null, sqlExecutionContext), input);
                  Function string = binder.instantiate(binder.bind(literal("s"), input, null, sqlExecutionContext), input);
                  Function varchar = binder.instantiate(binder.bind(literal("v"), input, null, sqlExecutionContext), input)) {
@@ -201,7 +201,7 @@ public class FunctionBinderSymbolTest extends AbstractCairoTest {
                          RecordCursorFactory narrowed = select(isDynamic
                                  ? "SELECT s FROM fb_symbol UNION ALL SELECT s FROM fb_symbol"
                                  : "SELECT s FROM fb_symbol");
-                         FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                         FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                         final OutputSchema full = schema(original.getMetadata(), 100);
                         final OutputSchema pruned = schema(narrowed.getMetadata(), 101);
                         final ObjList<ExpressionNode> args = new ObjList<>(literal("s"), constant("'alpha'"), constant("10"), constant("-1"));

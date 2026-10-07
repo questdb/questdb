@@ -113,49 +113,45 @@ final class FilterFactoryGenerator {
             boolean enablePreTouch,
             boolean isConstantFolded
     ) throws SqlException {
-        ObjList<Function> workerFilters = null;
-        Function limit = null;
-        boolean isAdopted = false;
+        if (filter.isConstant() && isConstantFolded) {
+            return generateConstantFilter(base, filter);
+        }
+        if (filter.isRuntimeConstant()) {
+            return new RuntimeConstGateRecordCursorFactory(base, filter);
+        }
+        if (!canUseParallelFilter(base, executionContext)) {
+            return generateJavaFilter(base, filter, false, null, null, null, 0, false, executionContext);
+        }
+        final IntHashSet columns = new IntHashSet();
         try {
-            if (filter.isConstant() && isConstantFolded) {
-                isAdopted = true;
-                return generateConstantFilter(base, filter);
-            }
-            if (filter.isRuntimeConstant()) {
-                final RecordCursorFactory result = new RuntimeConstGateRecordCursorFactory(base, filter);
-                isAdopted = true;
-                return result;
-            }
-            if (!canUseParallelFilter(base, executionContext)) {
-                isAdopted = true;
-                return generateJavaFilter(base, filter, false, null, null, null, 0, false, executionContext);
-            }
-            final IntHashSet columns = new IntHashSet();
             collectColumnIndexes(predicate, input, columns);
-            final RecordCursorFactory jitFactory = tryGenerateJitFilter(
-                    base, filter, columns, executionContext,
-                    predicate, input, instantiator, isUpdate, enablePreTouch, limitAdvice
-            );
-            if (jitFactory != null) {
-                isAdopted = true;
-                return addParallel(frame, jitFactory, predicate);
-            }
+        } catch (Throwable th) {
+            Misc.free(filter, th);
+            Misc.free(base, th);
+            throw th;
+        }
+        final RecordCursorFactory jitFactory = tryGenerateJitFilter(
+                base, filter, columns, executionContext,
+                predicate, input, instantiator, isUpdate, enablePreTouch, limitAdvice
+        );
+        if (jitFactory != null) {
+            return addParallel(frame, jitFactory, predicate);
+        }
+        Function limit = null;
+        final ObjList<Function> workerFilters;
+        try {
             if (limitAdvice != null && limitAdvice.getHi() == null) {
                 limit = instantiator.instantiate(limitAdvice.getLo(), input, executionContext);
             }
             workerFilters = compileWorkers(predicate, input, base.getMetadata(), filter, instantiator, executionContext);
-            isAdopted = true;
-            return addParallel(frame, generateJavaFilter(base, filter, true, columns, workerFilters, limit,
-                    limitAdvice == null ? 0 : limitAdvice.getLo().getPosition(), enablePreTouch, executionContext), predicate);
         } catch (Throwable th) {
-            if (!isAdopted) {
-                Misc.freeObjList(workerFilters, th);
-                Misc.free(limit, th);
-                Misc.free(filter, th);
-                Misc.free(base, th);
-            }
+            Misc.free(limit, th);
+            Misc.free(filter, th);
+            Misc.free(base, th);
             throw th;
         }
+        return addParallel(frame, generateJavaFilter(base, filter, true, columns, workerFilters, limit,
+                limitAdvice == null ? 0 : limitAdvice.getLo().getPosition(), enablePreTouch, executionContext), predicate);
     }
 
     static boolean canUseParallelFilter(RecordCursorFactory base, SqlExecutionContext executionContext) {
@@ -351,28 +347,23 @@ final class FilterFactoryGenerator {
             boolean enablePreTouch,
             SqlExecutionContext executionContext
     ) {
+        if (isParallel) {
+            assert columns != null;
+            return new AsyncFilteredRecordCursorFactory(
+                    executionContext.getCairoEngine(), configuration, executionContext.getMessageBus(),
+                    base, filter, columns, reduceTaskFactory, workers, limit, limitPosition,
+                    executionContext.getSharedQueryWorkerCount(), enablePreTouch
+            );
+        }
+        assert workers == null;
         try {
-            if (isParallel) {
-                assert columns != null;
-                return new AsyncFilteredRecordCursorFactory(
-                        executionContext.getCairoEngine(), configuration, executionContext.getMessageBus(),
-                        base, filter, columns, reduceTaskFactory, workers, limit, limitPosition,
-                        executionContext.getSharedQueryWorkerCount(), enablePreTouch
-                );
-            }
-            assert workers == null;
-            final Function unusedLimit = limit;
-            limit = null;
-            Misc.free(unusedLimit);
-            return new FilteredRecordCursorFactory(base, filter);
+            Misc.free(limit);
         } catch (Throwable th) {
-            // Async construction nulls the worker slots it closes; the remaining slots stay ours.
-            Misc.freeObjList(workers, th);
-            Misc.free(limit, th);
             Misc.free(filter, th);
             Misc.free(base, th);
             throw th;
         }
+        return new FilteredRecordCursorFactory(base, filter);
     }
 
     /**
@@ -410,8 +401,8 @@ final class FilterFactoryGenerator {
     }
 
     /**
-     * Adopts base and filter on success; leaves them with the caller on decline or failure.
-     * Limit advice is borrowed; an instantiated limit belongs here until factory adoption.
+     * Returns null, leaving base and filter with the caller, when the JIT declines the predicate;
+     * otherwise consumes them, including on failure. Limit advice is borrowed.
      */
     @Nullable RecordCursorFactory tryGenerateJitFilter(
             RecordCursorFactory base,
@@ -436,6 +427,7 @@ final class FilterFactoryGenerator {
         final ObjList<Function> bindVarFunctions = new ObjList<>();
         ObjList<Function> workers = null;
         Function limit = null;
+        final int limitPosition;
         try {
             final int jitOptions;
             Throwable cleanupFailure = null;
@@ -465,7 +457,6 @@ final class FilterFactoryGenerator {
                 }
             }
 
-            final int limitPosition;
             if (limitAdvice != null && limitAdvice.getHi() == null) {
                 limit = instantiator.instantiate(limitAdvice.getLo(), input, executionContext);
                 limitPosition = limitAdvice.getLo().getPosition();
@@ -474,12 +465,6 @@ final class FilterFactoryGenerator {
             }
             LOG.debug().$("JIT enabled for (sub)query [fd=").$(executionContext.getRequestFd()).I$();
             workers = FilterFactoryGenerator.compileWorkers(predicate, input, base.getMetadata(), filter, instantiator, executionContext);
-            return new AsyncJitFilteredRecordCursorFactory(
-                    executionContext.getCairoEngine(), configuration, executionContext.getMessageBus(),
-                    base, bindVarFunctions, compiledFilter, compiledCountOnlyFilter, filter, columns,
-                    reduceTaskFactory, workers, limit, limitPosition,
-                    executionContext.getSharedQueryWorkerCount(), enablePreTouch
-            );
         } catch (SqlException | LimitOverflowException decline) {
             Throwable cleanup = Misc.freeBestEffort(null, compiledFilter);
             cleanup = Misc.freeBestEffort(cleanup, compiledCountOnlyFilter);
@@ -488,6 +473,8 @@ final class FilterFactoryGenerator {
             cleanup = Misc.freeObjListBestEffort(cleanup, workers);
             if (cleanup != null) {
                 decline.addSuppressed(cleanup);
+                Misc.free(filter, decline);
+                Misc.free(base, decline);
                 throw decline;
             }
             LOG.debug()
@@ -495,13 +482,20 @@ final class FilterFactoryGenerator {
                     .$(", fd=").$(executionContext.getRequestFd()).I$();
             return null;
         } catch (Throwable th) {
-            // Failed async construction nulls any worker slots it has already released.
             Misc.freeObjList(workers, th);
             Misc.free(limit, th);
             Misc.free(compiledFilter, th);
             Misc.free(compiledCountOnlyFilter, th);
             Misc.freeObjList(bindVarFunctions, th);
+            Misc.free(filter, th);
+            Misc.free(base, th);
             throw th;
         }
+        return new AsyncJitFilteredRecordCursorFactory(
+                executionContext.getCairoEngine(), configuration, executionContext.getMessageBus(),
+                base, bindVarFunctions, compiledFilter, compiledCountOnlyFilter, filter, columns,
+                reduceTaskFactory, workers, limit, limitPosition,
+                executionContext.getSharedQueryWorkerCount(), enablePreTouch
+        );
     }
 }

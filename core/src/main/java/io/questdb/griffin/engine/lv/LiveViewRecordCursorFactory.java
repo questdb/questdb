@@ -134,7 +134,12 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
         this.liveViewToken = liveViewToken;
         this.base = base;
         this.timestampColumnIndex = base.getMetadata().getTimestampIndex();
-        this.inMemRoutable = isInMemRoutable(base);
+        try {
+            this.inMemRoutable = isInMemRoutable(base);
+        } catch (Throwable th) {
+            Misc.free(base, th);
+            throw th;
+        }
     }
 
     @Override

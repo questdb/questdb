@@ -71,6 +71,8 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         try {
+            this.recordCursorFactory = recordCursorFactory;
+            this.filter = filter;
             // this instance is shared between factory and cursor
             // factory will be resolving symbols for cursor and if successful
             // symbol keys will be added to this hash set
@@ -91,8 +93,6 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
                 }
             }
             this.cursor = new PageFrameRecordCursorWrapper(cursor);
-            this.recordCursorFactory = recordCursorFactory;
-            this.filter = filter;
             this.columnIndex = columnIndex;
             this.func = func;
         } catch (Throwable th) {

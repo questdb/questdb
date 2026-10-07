@@ -83,15 +83,20 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
 
         this.configuration = configuration;
         this.rowCursorFactory = rowCursorFactory;
-        this.cursor = new PageFrameRecordCursorImpl(
-                configuration,
-                metadata,
-                rowCursorFactory,
-                rowCursorFactory.isEntity(),
-                filter
-        );
-        this.followsOrderByAdvice = followsOrderByAdvice;
         this.filter = filter;
+        try {
+            this.cursor = new PageFrameRecordCursorImpl(
+                    configuration,
+                    metadata,
+                    rowCursorFactory,
+                    rowCursorFactory.isEntity(),
+                    filter
+            );
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
+        this.followsOrderByAdvice = followsOrderByAdvice;
         this.framingSupported = framingSupported;
         this.supportsRandomAccess = supportsRandomAccess;
         this.singleRowFactory = singleRowFactory;

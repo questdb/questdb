@@ -28,6 +28,7 @@ import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
@@ -498,9 +499,9 @@ final class JoinFactoryGenerator {
         return innerMetadata;
     }
 
-    private void addSharedSource(GenerationFrame frame, JoinInput input, int slot) {
+    private void addSharedSource(GenerationFrame frame, JoinInput input, RecordCursorFactory factory) {
         frame.sharedSources.add(input);
-        frame.sharedFactories.add(frame.resources.factory(slot));
+        frame.sharedFactories.add(factory);
         frame.sharedConsumerCounts.add(1);
     }
 
@@ -1124,8 +1125,12 @@ final class JoinFactoryGenerator {
                 metadata.add(raw.getColumnMetadata(indexes.getQuick(i)));
             }
             metadata.setTimestampIndex(raw.getTimestampIndex());
-            return SelectedRecordCursorFactory.isCrossedIndex(indexes) || raw.getColumnCount() != columnCount
-                    ? new SelectedRecordCursorFactory(metadata, indexes, base) : base;
+            if (!SelectedRecordCursorFactory.isCrossedIndex(indexes) && raw.getColumnCount() == columnCount) {
+                return base;
+            }
+            final RecordCursorFactory ownedBase = base;
+            base = null;
+            return new SelectedRecordCursorFactory(metadata, indexes, ownedBase);
         } catch (Throwable th) {
             Misc.freeObjList(functions, th);
             Misc.free(base, th);
@@ -1389,17 +1394,18 @@ final class JoinFactoryGenerator {
             int masterTimestampIndex,
             int slaveSequenceIndex
     ) {
+        final RecordSink slaveSink;
         try {
             entityColumnFilter.of(slave.getMetadata().getColumnCount());
-            final RecordSink slaveSink = RecordSinkFactory.getInstance(configuration, asm, slave.getMetadata(), entityColumnFilter);
-            return new MarkoutHorizonRecordCursorFactory(configuration, metadata, master, slave,
-                    master.getMetadata().getColumnCount(), masterTimestampIndex, slaveSequenceIndex, slaveSink);
+            slaveSink = RecordSinkFactory.getInstance(configuration, asm, slave.getMetadata(), entityColumnFilter);
         } catch (Throwable th) {
             Misc.free(metadata, th);
             Misc.free(master, th);
             Misc.free(slave, th);
             throw th;
         }
+        return new MarkoutHorizonRecordCursorFactory(configuration, metadata, master, slave,
+                master.getMetadata().getColumnCount(), masterTimestampIndex, slaveSequenceIndex, slaveSink);
     }
 
     /**
@@ -1421,23 +1427,25 @@ final class JoinFactoryGenerator {
                     if (filter != null) {
                         throw new IllegalArgumentException("non-outer nested loop join cannot own an ON filter");
                     }
+                    isTransferred = true;
                     return new CrossJoinRecordCursorFactory(metadata, master, slave, columnSplit);
                 }
                 case LEFT_OUTER -> {
                     filter = filter != null ? filter : BooleanConstant.TRUE;
-                    return new NestedLoopLeftJoinRecordCursorFactory(metadata, master, slave, columnSplit,
-                            filter, NullRecordFactory.getInstance(slave.getMetadata()));
+                    final Record slaveNull = NullRecordFactory.getInstance(slave.getMetadata());
+                    isTransferred = true;
+                    return new NestedLoopLeftJoinRecordCursorFactory(metadata, master, slave, columnSplit, filter, slaveNull);
                 }
                 case RIGHT_OUTER -> {
                     filter = filter != null ? filter : BooleanConstant.TRUE;
-                    return new NestedLoopRightJoinRecordCursorFactory(metadata, master, slave, columnSplit,
-                            filter, NullRecordFactory.getInstance(master.getMetadata()));
+                    final Record masterNull = NullRecordFactory.getInstance(master.getMetadata());
+                    isTransferred = true;
+                    return new NestedLoopRightJoinRecordCursorFactory(metadata, master, slave, columnSplit, filter, masterNull);
                 }
                 case FULL_OUTER -> {
                     filter = filter != null ? filter : BooleanConstant.TRUE;
                     final Record masterNull = NullRecordFactory.getInstance(master.getMetadata());
                     final Record slaveNull = NullRecordFactory.getInstance(slave.getMetadata());
-                    // FULL owns its inputs if map construction fails; the other constructors borrow on failure.
                     isTransferred = true;
                     return new NestedLoopFullJoinRecordCursorFactory(configuration, metadata, master, slave,
                             columnSplit, filter, masterNull, slaveNull);
@@ -1593,7 +1601,7 @@ final class JoinFactoryGenerator {
         }
     }
 
-    int generateJoin(
+    RecordCursorFactory generateJoin(
             GenerationFrame frame, JoinPlan join, int requiredOrderColumnId, int requiredScanDirection, SortPlan orderAdvice,
             int orderByMnemonic, SqlExecutionContext executionContext
     ) throws SqlException {
@@ -1605,40 +1613,41 @@ final class JoinFactoryGenerator {
         }
         final boolean isMasterOrderPreserved = SortFactoryGenerator.isMasterOrderPreserved(join);
         final OutputSchema firstOutput = first.getInput().getOutput();
-        int masterSlot;
+        RecordCursorFactory master;
         if (isMasterOrderPreserved && requiredOrderColumnId >= 0 && firstOutput.getColumnIndexById(requiredOrderColumnId) >= 0) {
-            masterSlot = codeGenerator.generateJoinInput(frame, first.getInput(), executionContext, false, orderByMnemonic, requiredOrderColumnId,
+            master = codeGenerator.generateJoinInput(frame, first.getInput(), executionContext, false, orderByMnemonic, requiredOrderColumnId,
                     requiredScanDirection, SqlCodeGenerator.hasColumns(firstOutput, orderAdvice) ? orderAdvice : null);
         } else if (isMasterOrderPreserved && SqlCodeGenerator.hasColumns(firstOutput, orderAdvice)) {
-            masterSlot = codeGenerator.generateJoinInput(frame, first.getInput(), executionContext, false, orderByMnemonic, -1,
+            master = codeGenerator.generateJoinInput(frame, first.getInput(), executionContext, false, orderByMnemonic, -1,
                     RecordCursorFactory.SCAN_DIRECTION_OTHER, orderAdvice);
         } else {
-            masterSlot = codeGenerator.generateJoinInput(frame, first.getInput(), executionContext, isMasterTimestampRequired, orderByMnemonic);
+            master = codeGenerator.generateJoinInput(frame, first.getInput(), executionContext, isMasterTimestampRequired, orderByMnemonic);
         }
-        addSharedSource(frame, first, masterSlot);
         CharSequence masterAlias = first.getBindingAlias();
         OutputSchema masterOutput = first.getOutput();
+        try {
+            addSharedSource(frame, first, master);
+        } catch (Throwable th) {
+            Misc.free(master, th);
+            throw th;
+        }
         for (int i = 1, n = ordered.size(); i < n; i++) {
             final JoinInput step = ordered.getQuick(i);
             if (step.getJoinType() == JoinKind.UNNEST) {
-                int slot = frame.resources.reserve();
-                final RecordCursorFactory master = frame.resources.detachFactory(masterSlot);
-                frame.resources.own(slot, generateUnnest(step.getUnnest(), masterOutput, master,
-                        masterAlias, step.getBindingAlias(), frame.functionInstantiator, executionContext));
+                master = generateUnnest(step.getUnnest(), masterOutput, master,
+                        masterAlias, step.getBindingAlias(), frame.functionInstantiator, executionContext);
                 final BoundExpression predicate = step.getPostJoinFilter();
                 if (predicate != null) {
-                    final RecordCursorFactory base = frame.resources.factory(slot);
-                    final int filterSlot = frame.resources.reserve();
-                    final Function filter = frame.functionInstantiator.instantiate(predicate, step.getOutput(), base.getMetadata(), executionContext);
-                    frame.resources.own(filterSlot, filter);
-                    final int filteredSlot = frame.resources.reserve();
-                    frame.resources.detach(slot);
-                    frame.resources.detach(filterSlot);
-                    frame.resources.own(filteredSlot, filterGenerator.generate(frame, predicate, step.getOutput(), base, filter,
-                            frame.functionInstantiator, executionContext, SqlCodeGenerator.hasUpdateScan(join)));
-                    slot = filteredSlot;
+                    final Function filter;
+                    try {
+                        filter = frame.functionInstantiator.instantiate(predicate, step.getOutput(), master.getMetadata(), executionContext);
+                    } catch (Throwable th) {
+                        Misc.free(master, th);
+                        throw th;
+                    }
+                    master = filterGenerator.generate(frame, predicate, step.getOutput(), master, filter,
+                            frame.functionInstantiator, executionContext, SqlCodeGenerator.hasUpdateScan(join));
                 }
-                masterSlot = slot;
                 masterOutput = step.getOutput();
                 masterAlias = null;
                 continue;
@@ -1647,18 +1656,24 @@ final class JoinFactoryGenerator {
             final boolean wasJoinSlaveInput = frame.isJoinSlaveInput;
             frame.isJoinIntervalCapture = false;
             frame.isJoinSlaveInput = true;
-            final int slaveSlot;
+            final RecordCursorFactory slave;
             try {
-                slaveSlot = codeGenerator.generateJoinInput(frame, step.getInput(), executionContext, step.getJoinType().isTemporal(), orderByMnemonic);
+                slave = codeGenerator.generateJoinInput(frame, step.getInput(), executionContext, step.getJoinType().isTemporal(), orderByMnemonic);
+            } catch (Throwable th) {
+                Misc.free(master, th);
+                throw th;
             } finally {
                 frame.isJoinIntervalCapture = wasJoinIntervalCapture;
                 frame.isJoinSlaveInput = wasJoinSlaveInput;
             }
-            addSharedSource(frame, step, slaveSlot);
-            final int slot = frame.resources.reserve();
-            final RecordCursorFactory master = frame.resources.detachFactory(masterSlot);
-            final RecordCursorFactory slave = frame.resources.detachFactory(slaveSlot);
-            frame.resources.own(slot, switch (step.getJoinType()) {
+            try {
+                addSharedSource(frame, step, slave);
+            } catch (Throwable th) {
+                Misc.free(slave, th);
+                Misc.free(master, th);
+                throw th;
+            }
+            master = switch (step.getJoinType()) {
                 case ASOF, LT ->
                         generateTemporal(frame, step, masterOutput, masterAlias, master, slave, frame.functionInstantiator, executionContext,
                                 (step.getHints() & JoinInput.HINT_ASOF_LINEAR) != 0,
@@ -1670,12 +1685,11 @@ final class JoinFactoryGenerator {
                         generateSplice(frame, step, masterOutput, masterAlias, master, slave, frame.functionInstantiator, executionContext);
                 default ->
                         generate(frame, step, masterOutput, masterAlias, master, slave, frame.functionInstantiator, executionContext);
-            });
-            masterSlot = slot;
+            };
             masterOutput = step.getOutput();
             masterAlias = null;
         }
-        return masterSlot;
+        return master;
     }
 
     /**
@@ -1765,6 +1779,7 @@ final class JoinFactoryGenerator {
                             SymbolJoinKeyMapping symbolJoinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
                             int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                             if (hasIndexHint && slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex)) {
+                                isTransferred = true;
                                 return new AsOfJoinIndexedRecordCursorFactory(
                                         configuration,
                                         joinMetadata,
@@ -1797,13 +1812,16 @@ final class JoinFactoryGenerator {
                             // join key equality check. Instead of comparing symbols as strings, compare symbol keys.
                             // For that to work, we need code that maps master symbol key to slave symbol key.
                             writeSymbolAsStringA.unset(slaveSymbolColumnIndex);
+                            final RecordSink masterKeyCopier = new SymbolKeyMappingRecordCopier((SymbolJoinKeyMapping) symbolShortCircuit);
+                            final RecordSink slaveKeyCopier = createRecordCopierSlave(slaveMetadata);
+                            isTransferred = true;
                             return new AsOfJoinFastRecordCursorFactory(
                                     configuration,
                                     joinMetadata,
                                     master,
-                                    new SymbolKeyMappingRecordCopier((SymbolJoinKeyMapping) symbolShortCircuit),
+                                    masterKeyCopier,
                                     slave,
-                                    createRecordCopierSlave(slaveMetadata),
+                                    slaveKeyCopier,
                                     joinColumnSplit,
                                     symbolShortCircuit,
                                     condition,
@@ -1813,13 +1831,16 @@ final class JoinFactoryGenerator {
                             );
                         } else {
                             int[][] fastSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
+                            final RecordSink masterKeyCopier = createRecordCopierMaster(masterMetadata);
+                            final RecordSink slaveKeyCopier = createRecordCopierSlave(slaveMetadata);
+                            isTransferred = true;
                             return new AsOfJoinFastRecordCursorFactory(
                                     configuration,
                                     joinMetadata,
                                     master,
-                                    createRecordCopierMaster(masterMetadata),
+                                    masterKeyCopier,
                                     slave,
-                                    createRecordCopierSlave(slaveMetadata),
+                                    slaveKeyCopier,
                                     joinColumnSplit,
                                     fastSymbolKeyIndices != null ? NoopSymbolShortCircuit.INSTANCE : symbolShortCircuit,
                                     condition,
@@ -1843,16 +1864,20 @@ final class JoinFactoryGenerator {
                         ownedStolenFilter = stolenFilter;
 
                         int[][] filteredSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
+                        final RecordSink masterKeyCopier = createRecordCopierMaster(masterMetadata);
+                        final RecordSink slaveKeyCopier = createRecordCopierSlave(slaveMetadata);
+                        final Record slaveNull = NullRecordFactory.getInstance(slaveMetadata);
+                        isTransferred = true;
                         return new FilteredAsOfJoinFastRecordCursorFactory(
                                 configuration,
                                 joinMetadata,
                                 master,
-                                createRecordCopierMaster(masterMetadata),
+                                masterKeyCopier,
                                 slaveBase,
-                                createRecordCopierSlave(slaveMetadata),
+                                slaveKeyCopier,
                                 stolenFilter,
                                 masterMetadata.getColumnCount(),
-                                NullRecordFactory.getInstance(slaveMetadata),
+                                slaveNull,
                                 null,
                                 slaveTimestampIndex,
                                 toleranceInterval,
@@ -1887,16 +1912,20 @@ final class JoinFactoryGenerator {
                                 ownedStolenFilter = stolenFilter;
 
                                 int[][] projFilteredSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
+                                final RecordSink masterKeyCopier = createRecordCopierMaster(masterMetadata);
+                                final RecordSink slaveKeyCopier = createRecordCopierSlave(slaveMetadata);
+                                final Record slaveNull = NullRecordFactory.getInstance(slaveMetadata);
+                                isTransferred = true;
                                 return new FilteredAsOfJoinFastRecordCursorFactory(
                                         configuration,
                                         joinMetadata,
                                         master,
-                                        createRecordCopierMaster(masterMetadata),
+                                        masterKeyCopier,
                                         filterStealingBase,
-                                        createRecordCopierSlave(slaveMetadata),
+                                        slaveKeyCopier,
                                         stolenFilter,
                                         masterMetadata.getColumnCount(),
-                                        NullRecordFactory.getInstance(slaveMetadata),
+                                        slaveNull,
                                         stolenCrossIndex,
                                         slaveTimestampIndex,
                                         toleranceInterval,
@@ -1962,6 +1991,7 @@ final class JoinFactoryGenerator {
             // reaching this point means the join is non-keyed
             if (!hasLinearHint) {
                 if (slave.supportsTimeFrameCursor()) {
+                    isTransferred = true;
                     return new AsOfJoinNoKeyFastRecordCursorFactory(
                             configuration,
                             joinMetadata,
@@ -1988,6 +2018,8 @@ final class JoinFactoryGenerator {
                     slave.halfClose();
                     slave = slaveBase;
                     ownedStolenFilter = stolenFilter;
+                    final Record slaveNull = NullRecordFactory.getInstance(slaveMetadata);
+                    isTransferred = true;
                     return new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
                             configuration,
                             joinMetadata,
@@ -1995,7 +2027,7 @@ final class JoinFactoryGenerator {
                             slaveBase,
                             stolenFilter,
                             masterMetadata.getColumnCount(),
-                            NullRecordFactory.getInstance(slaveMetadata),
+                            slaveNull,
                             null,
                             slaveTimestampIndex,
                             toleranceInterval
@@ -2028,6 +2060,8 @@ final class JoinFactoryGenerator {
                             slave = filterStealingBase;
                             ownedStolenFilter = stolenFilter;
 
+                            final Record slaveNull = NullRecordFactory.getInstance(slaveMetadata);
+                            isTransferred = true;
                             return new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
                                     configuration,
                                     joinMetadata,
@@ -2035,7 +2069,7 @@ final class JoinFactoryGenerator {
                                     filterStealingBase,
                                     stolenFilter,
                                     masterMetadata.getColumnCount(),
-                                    NullRecordFactory.getInstance(slaveMetadata),
+                                    slaveNull,
                                     stolenCrossIndex,
                                     slaveTimestampIndex,
                                     toleranceInterval
@@ -2045,6 +2079,7 @@ final class JoinFactoryGenerator {
                 }
             }
             // fallback for non-keyed join when no optimizations are applicable, or the asof_linear hint is used:
+            isTransferred = true;
             return new AsOfJoinLightNoKeyRecordCursorFactory(
                     joinMetadata,
                     master,
@@ -2125,6 +2160,7 @@ final class JoinFactoryGenerator {
             }
 
             if (!hasLinearHint && slave.supportsTimeFrameCursor()) {
+                isTransferred = true;
                 return new LtJoinNoKeyFastRecordCursorFactory(
                         configuration,
                         joinMetadata,
@@ -2135,6 +2171,7 @@ final class JoinFactoryGenerator {
                 );
             }
 
+            isTransferred = true;
             return new LtJoinNoKeyRecordCursorFactory(
                     joinMetadata,
                     master,
@@ -2362,6 +2399,8 @@ final class JoinFactoryGenerator {
     ) throws SqlException {
         JoinRecordMetadata outputMetadata = null;
         final ObjList<UnnestSource> sources = new ObjList<>(functions.size());
+        final int columnSplit;
+        final ObjList<CharSequence> columnNames;
         try {
             final int exprCount = functions.size();
             int outputCount = 0;
@@ -2371,13 +2410,13 @@ final class JoinFactoryGenerator {
             }
             final int totalUnnestColumns = outputCount + (hasOrdinality ? 1 : 0);
             final RecordMetadata masterMetadata = masterFactory.getMetadata();
-            final int columnSplit = isStandalone ? 0 : masterMetadata.getColumnCount();
+            columnSplit = isStandalone ? 0 : masterMetadata.getColumnCount();
             outputMetadata = new JoinRecordMetadata(configuration, columnSplit + totalUnnestColumns);
             if (!isStandalone) {
                 outputMetadata.copyColumnMetadataFrom(masterAlias, masterMetadata);
                 outputMetadata.setTimestampIndex(masterMetadata.getTimestampIndex());
             }
-            final ObjList<CharSequence> columnNames = new ObjList<>(totalUnnestColumns);
+            columnNames = new ObjList<>(totalUnnestColumns);
             int aliasIndex = 0;
             for (int i = 0; i < exprCount; i++) {
                 final Function function = functions.getQuick(i);
@@ -2418,9 +2457,6 @@ final class JoinFactoryGenerator {
                 columnNames.add(name);
                 outputMetadata.add(unnestAlias, name, ColumnType.LONG, IndexType.NONE, 0, false, null);
             }
-            // This constructor borrows its children if construction fails.
-            return new UnnestRecordCursorFactory(outputMetadata, masterFactory, functions, sources,
-                    columnSplit, hasOrdinality, columnNames);
         } catch (Throwable th) {
             Misc.free(outputMetadata, th);
             Misc.freeObjList(functions, th);
@@ -2428,6 +2464,8 @@ final class JoinFactoryGenerator {
             Misc.free(masterFactory, th);
             throw th;
         }
+        return new UnnestRecordCursorFactory(outputMetadata, masterFactory, functions, sources,
+                columnSplit, hasOrdinality, columnNames);
     }
 
     /**
@@ -2464,37 +2502,40 @@ final class JoinFactoryGenerator {
         }
     }
 
-    int generateWindowJoin(GenerationFrame frame, WindowJoinPlan windowJoin, ProjectPlan projection, SqlExecutionContext executionContext, int orderByMnemonic) throws SqlException {
+    RecordCursorFactory generateWindowJoin(GenerationFrame frame, WindowJoinPlan windowJoin, ProjectPlan projection, SqlExecutionContext executionContext,
+                                           int orderByMnemonic) throws SqlException {
         final boolean wasJoinIntervalCapture = frame.isJoinIntervalCapture;
         final RuntimeIntrinsicIntervalModel previousJoinIntervals = frame.joinIntervals;
         frame.isJoinIntervalCapture = true;
         frame.joinIntervals = null;
         try {
-            int masterSlot = codeGenerator.generateJoinInput(frame, windowJoin.getMaster(), executionContext, true, orderByMnemonic);
+            RecordCursorFactory master = codeGenerator.generateJoinInput(frame, windowJoin.getMaster(), executionContext, true, orderByMnemonic);
             frame.isJoinIntervalCapture = false;
             for (int i = 0, n = windowJoin.getSteps().size(); i < n; i++) {
                 final WindowJoinStep step = windowJoin.getSteps().getQuick(i);
                 frame.joinIntervalStep = frame.joinIntervals != null && step.isTableSource() && !step.isDynamic() ? step : null;
-                final int slaveSlot = codeGenerator.generateJoinInput(frame, step.getSlave(), executionContext, true, orderByMnemonic);
+                final RecordCursorFactory slave;
+                try {
+                    slave = codeGenerator.generateJoinInput(frame, step.getSlave(), executionContext, true, orderByMnemonic);
+                } catch (Throwable th) {
+                    Misc.free(master, th);
+                    throw th;
+                }
                 frame.joinIntervalStep = null;
-                final int slot = frame.resources.reserve();
-                final RecordCursorFactory master = frame.resources.detachFactory(masterSlot);
-                final RecordCursorFactory slave = frame.resources.detachFactory(slaveSlot);
-                frame.resources.own(slot, generateWindowJoin(windowJoin, i, i == n - 1 ? projection : null, master, slave,
-                        i == 0 ? AggregateFactoryGenerator.findFilterPlan(windowJoin.getMaster()) : null, frame.functionInstantiator, frame.expressionRewriter, executionContext));
-                masterSlot = slot;
+                master = generateWindowJoin(windowJoin, i, i == n - 1 ? projection : null, master, slave,
+                        i == 0 ? AggregateFactoryGenerator.findFilterPlan(windowJoin.getMaster()) : null, frame.functionInstantiator, frame.expressionRewriter, executionContext);
             }
             if (windowJoin.isEmpty()) {
-                final RecordCursorFactory factory = frame.resources.detachFactory(masterSlot);
-                final int slot = frame.resources.reserve();
+                final RecordCursorFactory empty;
                 try {
-                    frame.resources.own(slot, new EmptyTableRecordCursorFactory(GenericRecordMetadata.copyOfNew(factory.getMetadata())));
-                } finally {
-                    Misc.free(factory);
+                    empty = new EmptyTableRecordCursorFactory(GenericRecordMetadata.copyOfNew(master.getMetadata()));
+                } catch (Throwable th) {
+                    Misc.free(master, th);
+                    throw th;
                 }
-                return slot;
+                return SqlCodeGenerator.closeAfter(master, empty);
             }
-            return masterSlot;
+            return master;
         } finally {
             frame.isJoinIntervalCapture = wasJoinIntervalCapture;
             frame.joinIntervals = previousJoinIntervals;
@@ -2581,15 +2622,27 @@ final class JoinFactoryGenerator {
                 if (joinFilter.isConstant()) {
                     joinFilter.init(null, executionContext);
                     if (!joinFilter.getBool(null)) {
+                        final RecordCursorFactory nullExtended = master;
+                        master = null;
                         final RecordCursorFactory factory = columnIndex == null
-                                ? new ExtraNullColumnCursorFactory(outerMetadata, splitIndex, master)
-                                : new SelectedRecordCursorFactory(outerMetadata, columnIndex, new ExtraNullColumnCursorFactory(innerMetadata, splitIndex, master));
-                        Misc.free(slave);
-                        Misc.free(joinMetadata);
-                        Misc.free(joinFilter);
-                        Misc.free(windowLoFunc);
-                        Misc.free(windowHiFunc);
-                        Misc.freeObjList(groupByFunctions);
+                                ? new ExtraNullColumnCursorFactory(outerMetadata, splitIndex, nullExtended)
+                                : new SelectedRecordCursorFactory(outerMetadata, columnIndex, new ExtraNullColumnCursorFactory(innerMetadata, splitIndex, nullExtended));
+                        Throwable failure = Misc.freeBestEffort(null, slave);
+                        failure = Misc.freeBestEffort(failure, joinMetadata);
+                        failure = Misc.freeBestEffort(failure, joinFilter);
+                        failure = Misc.freeBestEffort(failure, windowLoFunc);
+                        failure = Misc.freeBestEffort(failure, windowHiFunc);
+                        failure = Misc.freeObjListBestEffort(failure, groupByFunctions);
+                        slave = null;
+                        joinMetadata = null;
+                        joinFilter = null;
+                        windowLoFunc = null;
+                        windowHiFunc = null;
+                        groupByFunctions = null;
+                        if (failure != null) {
+                            Misc.free(factory, failure);
+                            CairoException.rethrowCleanupFailure(failure);
+                        }
                         return factory;
                     }
                     joinFilter = Misc.free(joinFilter);
@@ -2613,6 +2666,8 @@ final class JoinFactoryGenerator {
                 Function masterFilter = null;
                 IntHashSet masterFilterUsedColumnIndexes = null;
                 ObjList<Function> workerMasterFilters = null;
+                ObjList<Function> workerJoinFilters = null;
+                ObjList<ObjList<GroupByFunction>> workerGroupByFunctions = null;
                 boolean isFilterStolen = false;
                 boolean isStolenFilterAdopted = false;
                 try {
@@ -2637,49 +2692,57 @@ final class JoinFactoryGenerator {
                         isFilterStolen = true;
                     }
                     master.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
-                    final ObjList<Function> workerJoinFilters = joinFilter == null || joinFilter.isThreadSafe() ? null
+                    workerJoinFilters = joinFilter == null || joinFilter.isThreadSafe() ? null
                             : instantiateWorkers(filter, scope, joinMetadata, workerCount, instantiator, executionContext);
-                    final ObjList<ObjList<GroupByFunction>> workerGroupByFunctions = instantiateWorkerAggregates(
+                    workerGroupByFunctions = instantiateWorkerAggregates(
                             aggregates, groupByFunctions, scope, joinMetadata, workerCount, instantiator, executionContext);
-                    final Function ownedJoinFilter = joinFilter;
-                    final ObjList<GroupByFunction> ownedGroupByFunctions = groupByFunctions;
-                    joinFilter = null;
-                    groupByFunctions = null;
-                    isStolenFilterAdopted = true;
-                    if (leftSymbolIndex != -1) {
-                        master = new AsyncWindowJoinFastRecordCursorFactory(
-                                executionContext.getCairoEngine(), configuration, asm, executionContext.getMessageBus(),
-                                joinMetadata, outerMetadata, columnIndex, master, slave, ownedJoinFilter, workerJoinFilters,
-                                step.isIncludePrevailing(), leftSymbolIndex, rightSymbolIndex, lo, hi, valueTypes,
-                                ownedGroupByFunctions, workerGroupByFunctions, compiledFilter, bindVarMemory, bindVarFunctions,
-                                masterFilter, workerMasterFilters, masterFilterUsedColumnIndexes, isVectorized,
-                                reduceTaskFactory, workerCount
-                        );
-                    } else {
+                    if (leftSymbolIndex == -1) {
                         workerLoFuncs = windowLoFunc == null || windowLoFunc.isThreadSafe() ? null
                                 : instantiateWorkers(step.getLoExpression(), step.getMasterScope(), master.getMetadata(), workerCount, instantiator, executionContext);
                         workerHiFuncs = windowHiFunc == null || windowHiFunc.isThreadSafe() ? null
                                 : instantiateWorkers(step.getHiExpression(), step.getMasterScope(), master.getMetadata(), workerCount, instantiator, executionContext);
-                        final Function ownedLo = windowLoFunc;
-                        final Function ownedHi = windowHiFunc;
-                        final ObjList<Function> ownedWorkerLo = workerLoFuncs;
-                        final ObjList<Function> ownedWorkerHi = workerHiFuncs;
-                        windowLoFunc = null;
-                        windowHiFunc = null;
-                        workerLoFuncs = null;
-                        workerHiFuncs = null;
-                        master = new AsyncWindowJoinRecordCursorFactory(
-                                executionContext.getCairoEngine(), configuration, asm, executionContext.getMessageBus(),
-                                joinMetadata, outerMetadata, columnIndex, master, slave, step.isIncludePrevailing(),
-                                ownedJoinFilter, workerJoinFilters, lo, hi, ownedLo, ownedHi, ownedWorkerLo, ownedWorkerHi,
-                                step.getLoSign(), step.getHiSign(), step.getLoTimeUnit(), step.getHiTimeUnit(),
-                                isDynamicWindow ? timestampDriver : null, valueTypes, ownedGroupByFunctions, workerGroupByFunctions,
-                                compiledFilter, bindVarMemory, bindVarFunctions, masterFilter, workerMasterFilters,
-                                masterFilterUsedColumnIndexes, isVectorized, reduceTaskFactory, workerCount
-                        );
                     }
+                    final Function ownedJoinFilter = joinFilter;
+                    final ObjList<GroupByFunction> ownedGroupByFunctions = groupByFunctions;
+                    final JoinRecordMetadata ownedJoinMetadata = joinMetadata;
+                    final RecordCursorFactory ownedMaster = master;
+                    final RecordCursorFactory ownedSlave = slave;
+                    final Function ownedLo = windowLoFunc;
+                    final Function ownedHi = windowHiFunc;
+                    final ObjList<Function> ownedWorkerLo = workerLoFuncs;
+                    final ObjList<Function> ownedWorkerHi = workerHiFuncs;
+                    joinFilter = null;
+                    groupByFunctions = null;
+                    joinMetadata = null;
+                    master = null;
+                    slave = null;
+                    windowLoFunc = null;
+                    windowHiFunc = null;
+                    workerLoFuncs = null;
+                    workerHiFuncs = null;
+                    isStolenFilterAdopted = true;
+                    master = leftSymbolIndex != -1
+                            ? new AsyncWindowJoinFastRecordCursorFactory(
+                            executionContext.getCairoEngine(), configuration, asm, executionContext.getMessageBus(),
+                            ownedJoinMetadata, outerMetadata, columnIndex, ownedMaster, ownedSlave, ownedJoinFilter, workerJoinFilters,
+                            step.isIncludePrevailing(), leftSymbolIndex, rightSymbolIndex, lo, hi, valueTypes,
+                            ownedGroupByFunctions, workerGroupByFunctions, compiledFilter, bindVarMemory, bindVarFunctions,
+                            masterFilter, workerMasterFilters, masterFilterUsedColumnIndexes, isVectorized,
+                            reduceTaskFactory, workerCount
+                    )
+                            : new AsyncWindowJoinRecordCursorFactory(
+                            executionContext.getCairoEngine(), configuration, asm, executionContext.getMessageBus(),
+                            ownedJoinMetadata, outerMetadata, columnIndex, ownedMaster, ownedSlave, step.isIncludePrevailing(),
+                            ownedJoinFilter, workerJoinFilters, lo, hi, ownedLo, ownedHi, ownedWorkerLo, ownedWorkerHi,
+                            step.getLoSign(), step.getHiSign(), step.getLoTimeUnit(), step.getHiTimeUnit(),
+                            isDynamicWindow ? timestampDriver : null, valueTypes, ownedGroupByFunctions, workerGroupByFunctions,
+                            compiledFilter, bindVarMemory, bindVarFunctions, masterFilter, workerMasterFilters,
+                            masterFilterUsedColumnIndexes, isVectorized, reduceTaskFactory, workerCount
+                    );
                 } catch (Throwable th) {
                     if (!isStolenFilterAdopted) {
+                        Misc.freeObjList(workerJoinFilters, th);
+                        AggregateFactoryGenerator.closeWorkers(workerGroupByFunctions, th);
                         Misc.freeObjList(workerMasterFilters, th);
                         if (isFilterStolen) {
                             Misc.free(masterFilter, th);
@@ -2698,25 +2761,28 @@ final class JoinFactoryGenerator {
             }
             final Function ownedJoinFilter = joinFilter;
             final ObjList<GroupByFunction> ownedGroupByFunctions = groupByFunctions;
+            final JoinRecordMetadata ownedJoinMetadata = joinMetadata;
+            final RecordCursorFactory ownedMaster = master;
+            final RecordCursorFactory ownedSlave = slave;
+            final Function ownedLo = windowLoFunc;
+            final Function ownedHi = windowHiFunc;
             joinFilter = null;
             groupByFunctions = null;
-            final RecordCursorFactory factory;
-            if (leftSymbolIndex != -1) {
-                factory = new WindowJoinFastRecordCursorFactory(asm, configuration, outerMetadata, joinMetadata, master, slave, columnIndex,
-                        step.isIncludePrevailing(), lo, hi, ownedGroupByFunctions, valueTypes, rightSymbolIndex, leftSymbolIndex,
-                        ownedJoinFilter, isVectorized);
-            } else {
-                final Function ownedLo = windowLoFunc;
-                final Function ownedHi = windowHiFunc;
-                windowLoFunc = null;
-                windowHiFunc = null;
-                factory = new WindowJoinRecordCursorFactory(asm, configuration, outerMetadata, joinMetadata, master, slave,
-                        step.isIncludePrevailing(), columnIndex, lo, hi, ownedLo, ownedHi, step.getLoSign(), step.getHiSign(),
-                        step.getLoTimeUnit(), step.getHiTimeUnit(), isDynamicWindow ? timestampDriver : null,
-                        ownedGroupByFunctions, valueTypes, ownedJoinFilter);
-            }
+            joinMetadata = null;
+            master = null;
+            slave = null;
+            windowLoFunc = null;
+            windowHiFunc = null;
+            master = leftSymbolIndex != -1
+                    ? new WindowJoinFastRecordCursorFactory(asm, configuration, outerMetadata, ownedJoinMetadata, ownedMaster, ownedSlave,
+                    columnIndex, step.isIncludePrevailing(), lo, hi, ownedGroupByFunctions, valueTypes, rightSymbolIndex, leftSymbolIndex,
+                    ownedJoinFilter, isVectorized)
+                    : new WindowJoinRecordCursorFactory(asm, configuration, outerMetadata, ownedJoinMetadata, ownedMaster, ownedSlave,
+                    step.isIncludePrevailing(), columnIndex, lo, hi, ownedLo, ownedHi, step.getLoSign(), step.getHiSign(),
+                    step.getLoTimeUnit(), step.getHiTimeUnit(), isDynamicWindow ? timestampDriver : null,
+                    ownedGroupByFunctions, valueTypes, ownedJoinFilter);
             executionContext.storeTelemetry(TelemetryEvent.SINGLE_THREAD_WINDOW_JOIN, TelemetryOrigin.NO_MATTERS);
-            return factory;
+            return master;
         } catch (Throwable th) {
             Misc.free(joinFilter, th);
             Misc.free(windowLoFunc, th);

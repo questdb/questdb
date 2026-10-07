@@ -49,7 +49,7 @@ public class FunctionBinderMathTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema input = new OutputSchema();
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final ObjList<ExpressionNode> calls = new ObjList<>(
                         function("pi", null, null),
                         function("degrees", null, constant("0.5")),
@@ -95,7 +95,7 @@ public class FunctionBinderMathTest extends AbstractCairoTest {
                     .add(70, "x", ColumnType.DOUBLE, true);
             final OutputSchema secondLayout = new OutputSchema().add(70, "x", ColumnType.DOUBLE, true)
                     .add(80, "y", ColumnType.DOUBLE, true);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bind(
                         function("atan2", function("sin", null, literal("y")), function("cos", null, literal("x"))),
                         original, null, sqlExecutionContext
@@ -135,7 +135,7 @@ public class FunctionBinderMathTest extends AbstractCairoTest {
                     .add(8, "f", ColumnType.FLOAT, true).add(9, "d", ColumnType.DOUBLE, true);
             final OutputSchema pruned = new OutputSchema().add(9, "d", ColumnType.DOUBLE, true)
                     .add(8, "f", ColumnType.FLOAT, true);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final FunctionExpression floatSign = (FunctionExpression) binder.bind(function("sign", null, literal("f")), input, null, sqlExecutionContext);
                 final FunctionExpression doubleSign = (FunctionExpression) binder.bind(function("sign", null, literal("d")), input, null, sqlExecutionContext);
                 TestUtils.assertEquals("sign(F)", floatSign.getSignature());

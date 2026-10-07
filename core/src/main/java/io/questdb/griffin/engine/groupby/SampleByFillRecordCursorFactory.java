@@ -204,11 +204,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         Map keysMap = null;
         SimpleMapValue localNonKeyedPrevCache = null;
         SampleByFillCursor cursorLocal;
-        final SampleByFillGrid grid = new SampleByFillGrid(
-                timestampSampler, timestampType, fromFunc, toFunc, toFuncPos,
-                offsetFunc, offsetFuncPos, tzFunc, tzFuncPos, samplingIntervalUnit
-        );
+        final SampleByFillGrid grid;
         try {
+            grid = new SampleByFillGrid(
+                    timestampSampler, timestampType, fromFunc, toFunc, toFuncPos,
+                    offsetFunc, offsetFuncPos, tzFunc, tzFuncPos, samplingIntervalUnit
+            );
             if (keyColIndices.size() > 0 && !isSampleBySource) {
                 // Lazy variant (openOnInit=false): the native backing is allocated by the
                 // first reopen() in the cursor's of(), after the per-query MemoryTracker is
@@ -246,10 +247,20 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 cursorLocal = null;
             }
         } catch (Throwable th) {
-            // Free what this constructor allocated. Caller still owns its inputs
-            // (base, fromFunc, toFunc, constantFills, offsetFunc, tzFunc).
             Misc.free(keysMap, th);
             Misc.free(localNonKeyedPrevCache, th);
+            Misc.free(base, th);
+            Misc.free(fromFunc, th);
+            if (toFunc != fromFunc) {
+                Misc.free(toFunc, th);
+            }
+            if (offsetFunc != fromFunc && offsetFunc != toFunc) {
+                Misc.free(offsetFunc, th);
+            }
+            if (tzFunc != fromFunc && tzFunc != toFunc && tzFunc != offsetFunc) {
+                Misc.free(tzFunc, th);
+            }
+            Misc.freeObjList(constantFills, th);
             throw th;
         }
         this.nonKeyedPrevCache = localNonKeyedPrevCache;

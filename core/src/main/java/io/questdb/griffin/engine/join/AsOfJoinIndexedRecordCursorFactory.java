@@ -72,18 +72,23 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
         assert slaveFactory.supportsTimeFrameCursor();
         this.symbolJoinKeyMapping = symbolJoinKeyMapping;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
+        this.toleranceInterval = toleranceInterval;
         RecordMetadata masterMeta = masterFactory.getMetadata();
         RecordMetadata slaveMeta = slaveFactory.getMetadata();
-        this.cursor = new AsOfJoinIndexedRecordCursor(
-                columnSplit,
-                NullRecordFactory.getInstance(slaveMeta),
-                masterMeta.getTimestampIndex(),
-                masterMeta.getTimestampType(),
-                slaveMeta.getTimestampIndex(),
-                slaveMeta.getTimestampType(),
-                configuration.getSqlAsOfJoinLookAhead()
-        );
-        this.toleranceInterval = toleranceInterval;
+        try {
+            this.cursor = new AsOfJoinIndexedRecordCursor(
+                    columnSplit,
+                    NullRecordFactory.getInstance(slaveMeta),
+                    masterMeta.getTimestampIndex(),
+                    masterMeta.getTimestampType(),
+                    slaveMeta.getTimestampIndex(),
+                    slaveMeta.getTimestampType(),
+                    configuration.getSqlAsOfJoinLookAhead()
+            );
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override

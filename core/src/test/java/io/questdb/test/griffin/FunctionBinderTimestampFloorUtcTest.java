@@ -57,7 +57,7 @@ public class FunctionBinderTimestampFloorUtcTest extends AbstractCairoTest {
                 final String typeName = type == ColumnType.TIMESTAMP_MICRO ? "timestamp" : "timestamp_ns";
                 final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
                 final OutputSchema empty = new OutputSchema();
-                try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                     final BoundExpression expression = binder.bind(floor(constant("'1s'"),
                             cast(constant("123456789L"), typeName), cast(constant("123L"), typeName),
                             constant("null"), constant("null")), empty, null, sqlExecutionContext);
@@ -108,7 +108,7 @@ public class FunctionBinderTimestampFloorUtcTest extends AbstractCairoTest {
                 Function first = null;
                 Function second = null;
                 try {
-                    try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                    try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                         final FunctionExpression expression = (FunctionExpression) binder.bind(
                                 floor(constant("'15m'"), literal("ts"), constant("null"),
                                         constant("'+00:05'"), constant("null")), input, null, sqlExecutionContext);
@@ -182,7 +182,7 @@ public class FunctionBinderTimestampFloorUtcTest extends AbstractCairoTest {
             bindVariableService.setStr("tz", "Europe/Berlin");
             final OutputSchema input = new OutputSchema().add(70, "ts", ColumnType.TIMESTAMP_NANO, true);
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bind(
                         floor(constant("'1h'"), literal("ts"), constant("null"), variable(":offset"), variable(":tz")),
                         input, null, sqlExecutionContext);
@@ -216,7 +216,7 @@ public class FunctionBinderTimestampFloorUtcTest extends AbstractCairoTest {
         final TimestampDriver driver = ColumnType.getTimestampDriver(type);
         final OutputSchema input = new OutputSchema().add(70, "ts", type, true);
         final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-        try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+        try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
             final FunctionExpression expression = (FunctionExpression) binder.bind(
                     floor(constant("'" + unit + "'"), literal("ts"), constant("null"),
                             constant("'" + offset + "'"), constant("'" + timezone + "'")), input, null, sqlExecutionContext);

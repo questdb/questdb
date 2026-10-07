@@ -172,10 +172,10 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
         // Construction is leak-safe: the atom frees every resource it was handed on its own ctor
         // failure, the frame sequence frees the atom it adopts on its ctor failure, and the cursor
-        // frees its own state on its ctor failure. Building the cursor LAST means this catch only
-        // has to release the frame sequence - which cascades to the atom and every atom-bound
-        // resource - when the cursor ctor is what fails. masterFactory / slaveFactory / joinMetadata
-        // stay the caller's responsibility on a ctor throw.
+        // frees its own state on its ctor failure. Building the cursor LAST means this catch
+        // releases the frame sequence - which cascades to the atom and every atom-bound resource -
+        // only when the cursor ctor is what fails; it always releases the consumed masterFactory,
+        // slaveFactory and joinMetadata.
         PageFrameSequence<AsyncWindowJoinAtom> frameSequence0 = null;
         try {
             final AsyncWindowJoinAtom atom = new AsyncWindowJoinAtom(
@@ -259,6 +259,11 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             );
         } catch (Throwable th) {
             Misc.free(frameSequence0, th);
+            Misc.free(masterFactory, th);
+            if (slaveFactory != masterFactory) {
+                Misc.free(slaveFactory, th);
+            }
+            Misc.free(joinMetadata, th);
             throw th;
         }
         this.frameSequence = frameSequence0;

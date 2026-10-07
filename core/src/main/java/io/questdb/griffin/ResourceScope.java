@@ -26,8 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PartitionFrameCursorFactory;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -38,15 +36,15 @@ import java.io.Closeable;
 import java.util.Objects;
 
 /**
- * Owns executable roots until cleanup or transfer. Slots stay stable until reset;
- * callers must discard preparation entries and other slot borrows before reset.
+ * Owns resources by slot until they are detached or closed. Slots stay stable until reset;
+ * callers must discard slot borrows before reset.
  */
 public final class ResourceScope implements Closeable, Mutable {
     private final ObjList<Closeable> resources = new ObjList<>();
 
     @Override
     public void clear() {
-        final Throwable failure = closeOwned(-1, null);
+        final Throwable failure = closeOwned(null);
         resources.clear();
         CairoException.rethrowCleanupFailure(failure);
     }
@@ -57,38 +55,22 @@ public final class ResourceScope implements Closeable, Mutable {
     }
 
     /**
-     * Closes owned roots in reverse reservation order, clearing each slot before its
-     * close attempt. Callers arrange scopes/reservations so dependents close before
-     * providers. The retained slot remains owned; use -1 to retain nothing.
+     * Closes every owned resource in reverse reservation order, clearing each slot before its close
+     * attempt. Callers arrange reservations so dependents close before providers. Close failures
+     * become suppressed exceptions of {@code primary}; with no primary, the first close failure is
+     * returned with the later ones suppressed.
      */
-    public @Nullable Throwable closeOwned(int retainedSlot, @Nullable Throwable primary) {
-        if (retainedSlot != -1) {
-            checkSlot(retainedSlot);
-        }
+    public @Nullable Throwable closeOwned(@Nullable Throwable primary) {
         for (int i = resources.size() - 1; i >= 0; i--) {
-            if (i != retainedSlot) {
-                final Closeable resource = resources.getQuick(i);
-                resources.setQuick(i, null);
-                primary = Misc.freeBestEffort(primary, resource);
-            }
+            final Closeable resource = resources.getQuick(i);
+            resources.setQuick(i, null);
+            primary = Misc.freeBestEffort(primary, resource);
         }
         return primary;
     }
 
     /**
-     * Closes every owned root on a failure path, in reverse reservation order; close failures
-     * become suppressed exceptions of the primary.
-     */
-    public void closeOwned(@NotNull Throwable primary) {
-        for (int i = resources.size() - 1; i >= 0; i--) {
-            final Closeable resource = resources.getQuick(i);
-            resources.setQuick(i, null);
-            Misc.free(resource, primary);
-        }
-    }
-
-    /**
-     * Transfers one owned root to the caller without closing it. Empty slots cannot
+     * Transfers one owned resource to the caller without closing it. Empty slots cannot
      * be claimed again, including slots whose close attempt failed.
      */
     public @NotNull Closeable detach(int slot) {
@@ -99,32 +81,6 @@ public final class ResourceScope implements Closeable, Mutable {
         }
         resources.setQuick(slot, null);
         return resource;
-    }
-
-    public @NotNull RecordCursorFactory detachFactory(int slot) {
-        return (RecordCursorFactory) detach(slot);
-    }
-
-    public @NotNull PartitionFrameCursorFactory detachFrames(int slot) {
-        return (PartitionFrameCursorFactory) detach(slot);
-    }
-
-    public @NotNull Function detachFunction(int slot) {
-        return (Function) detach(slot);
-    }
-
-    /**
-     * Borrows the factory a slot owns; ownership stays with the scope.
-     */
-    public RecordCursorFactory factory(int slot) {
-        return (RecordCursorFactory) resources.getQuick(slot);
-    }
-
-    /**
-     * Borrows the partition frames a slot owns; ownership stays with the scope.
-     */
-    public PartitionFrameCursorFactory frames(int slot) {
-        return (PartitionFrameCursorFactory) resources.getQuick(slot);
     }
 
     /**
@@ -139,16 +95,8 @@ public final class ResourceScope implements Closeable, Mutable {
     }
 
     /**
-     * The slot the next {@link #reserve()} returns.
-     */
-    public int nextSlot() {
-        return resources.size();
-    }
-
-    /**
      * Initializes a fresh reservation without allocation. The caller must initialize
-     * it exactly once and never refill a detached/closed slot. A composite's adopted
-     * children must already have been detached from their previous owners.
+     * it exactly once and never refill a detached/closed slot.
      */
     public void own(int slot, @NotNull Closeable resource) {
         checkSlot(slot);

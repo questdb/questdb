@@ -728,19 +728,21 @@ final class SetOperationFactoryGenerator {
     /**
      * Sorts a later UNION ALL branch that neither follows the requested timestamp order nor has its own ORDER BY.
      */
-    private int sortUnionBranch(GenerationFrame frame, int branchSlot, LogicalPlan branch, int orderIndex, int direction) throws SqlException {
-        final RecordCursorFactory base = frame.resources.factory(branchSlot);
-        if (LogicalPlans.skipProjects(branch) instanceof SortPlan || base.getMetadata().getTimestampIndex() != orderIndex
-                || base.getScanDirection() == direction) {
-            return branchSlot;
+    private RecordCursorFactory sortUnionBranch(RecordCursorFactory branch, LogicalPlan plan, int orderIndex, int direction) throws SqlException {
+        if (LogicalPlans.skipProjects(plan) instanceof SortPlan || branch.getMetadata().getTimestampIndex() != orderIndex
+                || branch.getScanDirection() == direction) {
+            return branch;
         }
-        branchSortKeys.clear();
-        branchSortKeys.add(direction == RecordCursorFactory.SCAN_DIRECTION_BACKWARD ? -orderIndex - 1 : orderIndex + 1);
-        final GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(base.getMetadata());
-        final int slot = frame.resources.reserve();
-        frame.resources.detach(branchSlot);
-        frame.resources.own(slot, sortGenerator.generateSort(metadata, base, branchSortKeys, null, null, -1));
-        return slot;
+        final GenericRecordMetadata metadata;
+        try {
+            branchSortKeys.clear();
+            branchSortKeys.add(direction == RecordCursorFactory.SCAN_DIRECTION_BACKWARD ? -orderIndex - 1 : orderIndex + 1);
+            metadata = GenericRecordMetadata.copyOfNew(branch.getMetadata());
+        } catch (Throwable th) {
+            Misc.free(branch, th);
+            throw th;
+        }
+        return sortGenerator.generateSort(metadata, branch, branchSortKeys, null, null, -1);
     }
 
     // Casts back to SYMBOL every union result column that was SYMBOL on all branches (tracked in
@@ -762,6 +764,8 @@ final class SetOperationFactoryGenerator {
         // all throw (an OutOfMemoryError, say), and for a distinct UNION unionFactory already holds a
         // native OrderedMap, so the catch must free it on every failure path, not just a build-loop throw.
         ObjList<Function> functions = null;
+        final GenericRecordMetadata virtualMetadata;
+        final IntList columnToFunctionIndex;
         try {
             // The re-symbolising CastStrToSymbol function builds its dictionary lazily and is not
             // thread-safe (Func.isThreadSafe() == false). That is safe only because a union base is
@@ -773,8 +777,8 @@ final class SetOperationFactoryGenerator {
             if (unionFactory.supportsPageFrameCursor() || unionFactory.supportsTimeFrameCursor()) {
                 throw CairoException.critical(0).put("union symbol projection requires a serial base cursor");
             }
-            final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
-            final IntList columnToFunctionIndex = new IntList(columnCount);
+            virtualMetadata = new GenericRecordMetadata();
+            columnToFunctionIndex = new IntList(columnCount);
             functions = new ObjList<>();
             int symbolColumnIndex = 0;
             int nextSymbolColumn = symbolUnionColumns.getQuick(0);
@@ -812,20 +816,20 @@ final class SetOperationFactoryGenerator {
                 }
             }
             virtualMetadata.setTimestampIndex(baseMetadata.getTimestampIndex());
-            return new UnionSymbolCastRecordCursorFactory(
-                    virtualMetadata,
-                    unionFactory,
-                    columnToFunctionIndex,
-                    functions
-            );
         } catch (Throwable e) {
-            Misc.freeObjList(functions);
-            Misc.free(unionFactory);
+            Misc.freeObjList(functions, e);
+            Misc.free(unionFactory, e);
             throw e;
         }
+        return new UnionSymbolCastRecordCursorFactory(
+                virtualMetadata,
+                unionFactory,
+                columnToFunctionIndex,
+                functions
+        );
     }
 
-    int generate(
+    RecordCursorFactory generate(
             GenerationFrame frame, SetOperationPlan operation, int requiredOrderColumnId, int requiredScanDirection,
             int orderByMnemonic, SqlExecutionContext executionContext
     ) throws SqlException {
@@ -833,20 +837,22 @@ final class SetOperationFactoryGenerator {
                 ? operation.getOutput().getColumnIndexById(requiredOrderColumnId) : -1;
         final int leftOrderId = orderIndex < 0 ? -1 : operation.getLeft().getOutput().getColumnId(orderIndex);
         final int rightOrderId = orderIndex < 0 ? -1 : operation.getRight().getOutput().getColumnId(orderIndex);
-        final int leftSlot = codeGenerator.generate(frame, operation.getLeft(), executionContext, leftOrderId, requiredScanDirection, null, null, orderByMnemonic);
-        final LogicalPlan leftBranch = SqlCodeGenerator.unwrapColumnProjections(operation.getLeft());
-        final int leftHead = leftBranch instanceof SetOperationPlan ? frame.setOperationPlans.indexOf(leftBranch) : -1;
-        frame.setOperationPlans.add(operation);
-        frame.setOperationHeads.add(leftHead >= 0 ? frame.setOperationHeads.getQuick(leftHead) : frame.resources.factory(leftSlot));
-        int rightSlot = codeGenerator.generate(frame, operation.getRight(), executionContext, rightOrderId, requiredScanDirection, null, null, orderByMnemonic);
-        if (orderIndex >= 0 && requiredScanDirection != RecordCursorFactory.SCAN_DIRECTION_OTHER
-                && isTimestampOrderPushable(operation, orderIndex)) {
-            rightSlot = sortUnionBranch(frame, rightSlot, operation.getRight(), orderIndex, requiredScanDirection);
+        final RecordCursorFactory left = codeGenerator.generate(frame, operation.getLeft(), executionContext, leftOrderId, requiredScanDirection, null, null, orderByMnemonic);
+        RecordCursorFactory right;
+        try {
+            final LogicalPlan leftBranch = SqlCodeGenerator.unwrapColumnProjections(operation.getLeft());
+            final int leftHead = leftBranch instanceof SetOperationPlan ? frame.setOperationPlans.indexOf(leftBranch) : -1;
+            frame.setOperationPlans.add(operation);
+            frame.setOperationHeads.add(leftHead >= 0 ? frame.setOperationHeads.getQuick(leftHead) : left);
+            right = codeGenerator.generate(frame, operation.getRight(), executionContext, rightOrderId, requiredScanDirection, null, null, orderByMnemonic);
+            if (orderIndex >= 0 && requiredScanDirection != RecordCursorFactory.SCAN_DIRECTION_OTHER
+                    && isTimestampOrderPushable(operation, orderIndex)) {
+                right = sortUnionBranch(right, operation.getRight(), orderIndex, requiredScanDirection);
+            }
+        } catch (Throwable th) {
+            Misc.free(left, th);
+            throw th;
         }
-        final int slot = frame.resources.reserve();
-        final RecordCursorFactory left = frame.resources.detachFactory(leftSlot);
-        final RecordCursorFactory right = frame.resources.detachFactory(rightSlot);
-        frame.resources.own(slot, generateOperation(operation, left, right, executionContext, orderIndex, requiredScanDirection));
-        return slot;
+        return generateOperation(operation, left, right, executionContext, orderIndex, requiredScanDirection);
     }
 }

@@ -105,29 +105,34 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
         this.slaveRecordFilter = slaveRecordFilter;
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
-        long maxSinkTargetHeapSize = (long) configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
-        this.cursor = new FilteredAsOfJoinKeyedFastRecordCursor(
-                columnSplit,
-                slaveNullRecord,
-                masterFactory.getMetadata().getTimestampIndex(),
-                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
-                        SingleRecordSink.CONFIG_KEYS_ASOF_JOIN),
-                slaveTimestampIndex,
-                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
-                        SingleRecordSink.CONFIG_KEYS_ASOF_JOIN),
-                masterFactory.getMetadata().getTimestampType(),
-                slaveFactory.getMetadata().getTimestampType(),
-                configuration.getSqlAsOfJoinLookAhead()
-        );
-        if (slaveColumnCrossIndex != null && SelectedRecordCursorFactory.isCrossedIndex(slaveColumnCrossIndex)) {
-            this.selectedTimeFrameCursor = new SelectedRecordCursorFactory.SelectedTimeFrameCursor(slaveColumnCrossIndex, slaveFactory.recordCursorSupportsRandomAccess(), slaveTimestampIndex);
-        } else {
-            this.selectedTimeFrameCursor = null;
+        try {
+            long maxSinkTargetHeapSize = (long) configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
+            this.cursor = new FilteredAsOfJoinKeyedFastRecordCursor(
+                    columnSplit,
+                    slaveNullRecord,
+                    masterFactory.getMetadata().getTimestampIndex(),
+                    new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
+                            SingleRecordSink.CONFIG_KEYS_ASOF_JOIN),
+                    slaveTimestampIndex,
+                    new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
+                            SingleRecordSink.CONFIG_KEYS_ASOF_JOIN),
+                    masterFactory.getMetadata().getTimestampType(),
+                    slaveFactory.getMetadata().getTimestampType(),
+                    configuration.getSqlAsOfJoinLookAhead()
+            );
+            if (slaveColumnCrossIndex != null && SelectedRecordCursorFactory.isCrossedIndex(slaveColumnCrossIndex)) {
+                this.selectedTimeFrameCursor = new SelectedRecordCursorFactory.SelectedTimeFrameCursor(slaveColumnCrossIndex, slaveFactory.recordCursorSupportsRandomAccess(), slaveTimestampIndex);
+            } else {
+                this.selectedTimeFrameCursor = null;
+            }
+            this.toleranceInterval = toleranceInterval;
+            this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
+                    ? new SymbolTranslatingRecord(configuration, masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
+                    : null;
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
         }
-        this.toleranceInterval = toleranceInterval;
-        this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
-                ? new SymbolTranslatingRecord(configuration, masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
-                : null;
     }
 
     @Override

@@ -105,25 +105,24 @@ public final class FunctionBinder implements Mutable {
     private int nestedWindowPosition;
     private ObjList<? extends BoundExpression> replacementExpressions;
     private ObjList<ExpressionNode> replacementNodes;
-    private final SubqueryCompiler subqueries;
+    private final QueryLevelCompiler level;
     private ExpressionNode windowRoot;
 
     /**
-     * Allocates descriptions from the context's pools and hands built roots to its prepared functions; the
-     * sub-query compiler is null where no sub-query can occur.
+     * Allocates descriptions from the context's pools and hands built roots to its prepared functions.
      */
-    FunctionBinder(BindContext ctx, FunctionParser parser, SubqueryCompiler subqueries) {
+    FunctionBinder(BindContext ctx, FunctionParser parser, QueryLevelCompiler level) {
         this.ctx = ctx;
         this.parser = parser;
-        this.subqueries = subqueries;
+        this.level = level;
     }
 
     /**
-     * A binder over its own stand-alone context, with no sub-query support.
+     * A binder over the context of a stand-alone level of the compiler, which must outlive it.
      */
     @TestOnly
-    public static FunctionBinder newStandalone(FunctionParser parser) {
-        return new BindContext(parser, new ObjectPool<>(ExpressionNode.FACTORY, 32), new CharacterStore(1024, 16), null).functionBinder;
+    public static FunctionBinder newStandalone(SqlCompilerImpl compiler, FunctionParser parser) {
+        return new QueryLevelCompiler(compiler.getEngine().getConfiguration(), parser, compiler, new ObjList<>()).getBinder().ctx.functionBinder;
     }
 
     /**
@@ -842,9 +841,6 @@ public final class FunctionBinder implements Mutable {
      * Timestamp interval analysis compiles a sub-query BETWEEN bound pair low bound first.
      */
     private void compileTimestampBetweenLowerBound(SqlExecutionContext executionContext) throws SqlException {
-        if (subqueries == null) {
-            return;
-        }
         for (int i = 0, n = predicateConjuncts.size(); i < n; i++) {
             final ExpressionNode conjunct = unwrapNot(predicateConjuncts.getQuick(i));
             if (conjunct.paramCount == 3 && SqlKeywords.isBetweenKeyword(conjunct.token)
@@ -854,7 +850,7 @@ public final class FunctionBinder implements Mutable {
                 final int columnIndex = findColumn(conjunct.args.getQuick(2), input, inputAlias);
                 if (columnIndex >= 0 && isNativeTimestampColumn(input.getColumnId(columnIndex))) {
                     final ExpressionNode lo = conjunct.args.getQuick(1);
-                    compiledLowerBoundIndex = subqueries.compileSubquery(lo.queryModel, lo.position, executionContext);
+                    compiledLowerBoundIndex = level.compileSubquery(lo.queryModel, lo.position, executionContext);
                     compiledLowerBoundNode = lo;
                     return;
                 }
@@ -1330,7 +1326,7 @@ public final class FunctionBinder implements Mutable {
         switch (ColumnType.tagOf(type)) {
             case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR -> {
             }
-            default -> throw SqlException.position(subqueries.getSubqueryFirstColumnPosition(cursor.getSubqueryIndex()))
+            default -> throw SqlException.position(level.getSubqueryFirstColumnPosition(cursor.getSubqueryIndex()))
                     .put("unsupported column type: ")
                     .put(output.getColumnName(0))
                     .put(": ")
@@ -1546,13 +1542,13 @@ public final class FunctionBinder implements Mutable {
             index = compiledLowerBoundIndex;
             compiledLowerBoundNode = null;
         } else {
-            index = subqueries.compileSubquery(node.queryModel, node.position, executionContext);
+            index = level.compileSubquery(node.queryModel, node.position, executionContext);
         }
-        final LogicalPlan plan = subqueries.getSubqueryPlan(index);
+        final LogicalPlan plan = level.getSubqueryPlan(index);
         final int flags = LogicalPlans.isResultStable(plan, executionContext) ? BoundExpression.STABLE_WITHIN_EXECUTION : 0;
         currentPreparation.isRebuildRequired = true;
         push(cursors.next().of(plan, index, flags, node.position), leafMark());
-        return new SubqueryCursorFunction(subqueries.getSubqueryMetadata(index), true);
+        return new SubqueryCursorFunction(level.getSubqueryMetadata(index), true);
     }
 
     Function createFunction(
@@ -1703,9 +1699,7 @@ public final class FunctionBinder implements Mutable {
     }
 
     void completeArgumentSubqueries(SqlExecutionContext executionContext) throws SqlException {
-        if (subqueries != null) {
-            subqueries.completeArgumentSubqueries(arguments, executionContext);
-        }
+        level.completeArgumentSubqueries(arguments, executionContext);
     }
 
     IntHashSet getKeySubqueryColumnIds() {
@@ -1899,7 +1893,7 @@ public final class FunctionBinder implements Mutable {
     }
 
     void validateNode(ExpressionNode node) {
-        if (node.type == ExpressionNode.QUERY && subqueries != null) {
+        if (node.type == ExpressionNode.QUERY) {
             return;
         }
         if (node.windowExpression != null && node != windowRoot

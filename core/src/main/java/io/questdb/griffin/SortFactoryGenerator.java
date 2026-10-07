@@ -210,12 +210,16 @@ final class SortFactoryGenerator {
                 base = null;
                 base = generateSort(metadata, ownedBase, keys, null, null, -1);
             }
-            if (lo != null) {
-                base = new LimitRecordCursorFactory(base, lo, hi, limitPosition);
-                lo = null;
-                hi = null;
+            if (lo == null) {
+                return base;
             }
-            return base;
+            final RecordCursorFactory limited = base;
+            final Function ownedLo = lo;
+            final Function ownedHi = hi;
+            base = null;
+            lo = null;
+            hi = null;
+            return new LimitRecordCursorFactory(limited, ownedLo, ownedHi, limitPosition);
         } catch (Throwable th) {
             Misc.free(base, th);
             Misc.free(lo, th);
@@ -237,27 +241,24 @@ final class SortFactoryGenerator {
             @Nullable Function hi,
             int preSortedTimestampIndex
     ) throws SqlException {
+        final ListColumnFilter retainedKeys;
+        final boolean isEncoded;
+        RecordComparator comparator = null;
+        RecordSink sink = null;
+        IntList indexes = null;
+        IntList types = null;
         try {
             final RecordMetadata metadata = base.getMetadata();
-            final ListColumnFilter retainedKeys = keys.copy();
-            final boolean isEncoded = configuration.isSqlOrderBySortEnabled() && SortKeyEncoder.isSupported(metadata, keys);
+            retainedKeys = keys.copy();
+            isEncoded = configuration.isSqlOrderBySortEnabled() && SortKeyEncoder.isSupported(metadata, keys);
             if (lo != null) {
                 assert base.recordCursorSupportsRandomAccess();
-                if (isEncoded) {
-                    return new EncodedSortLimitedLightRecordCursorFactory(configuration, orderedMetadata, base,
-                            lo, hi, retainedKeys, preSortedTimestampIndex);
-                }
-                return new LimitedSizeSortedLightRecordCursorFactory(configuration, orderedMetadata, base,
-                        recordComparatorCompiler.newInstance(metadata, keys), lo, hi, retainedKeys, preSortedTimestampIndex);
-            }
-            assert hi == null;
-            if (base.recordCursorSupportsRandomAccess()) {
-                if (isEncoded) {
-                    return new EncodedSortLightRecordCursorFactory(configuration, orderedMetadata, base, retainedKeys);
-                }
-                if (base instanceof VirtualRecordCursorFactory virtual) {
-                    IntList indexes = null;
-                    IntList types = null;
+            } else {
+                assert hi == null;
+                if (!base.recordCursorSupportsRandomAccess()) {
+                    entityColumnFilter.of(orderedMetadata.getColumnCount());
+                    sink = RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter);
+                } else if (!isEncoded && base instanceof VirtualRecordCursorFactory virtual) {
                     final int threshold = configuration.getSqlSortKeyMaterializationThreshold();
                     for (int i = 0, n = keys.size(); i < n; i++) {
                         final int index = Math.abs(keys.getQuick(i)) - 1;
@@ -274,25 +275,11 @@ final class SortFactoryGenerator {
                             types.add(type);
                         }
                     }
-                    if (indexes != null) {
-                        base = new SortKeyMaterializingRecordCursorFactory(configuration, orderedMetadata, base, indexes, types);
-                    }
                 }
-                final RecordComparator comparator = recordComparatorCompiler.newInstance(metadata, keys);
-                final RecordCursorFactory ownedBase = base;
-                base = null;
-                // Comparator-backed unbounded constructors consume base on failure.
-                return new SortedLightRecordCursorFactory(configuration, orderedMetadata, ownedBase, comparator, retainedKeys);
             }
-            entityColumnFilter.of(orderedMetadata.getColumnCount());
-            final RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter);
-            if (isEncoded) {
-                return new EncodedSortRecordCursorFactory(configuration, orderedMetadata, base, sink, retainedKeys);
+            if (!isEncoded) {
+                comparator = recordComparatorCompiler.newInstance(metadata, keys);
             }
-            final RecordComparator comparator = recordComparatorCompiler.newInstance(metadata, keys);
-            final RecordCursorFactory ownedBase = base;
-            base = null;
-            return new SortedRecordCursorFactory(configuration, orderedMetadata, ownedBase, sink, comparator, retainedKeys);
         } catch (Throwable th) {
             Misc.free(base, th);
             Misc.free(lo, th);
@@ -301,10 +288,26 @@ final class SortFactoryGenerator {
             }
             throw th;
         }
+        if (lo != null) {
+            return isEncoded
+                    ? new EncodedSortLimitedLightRecordCursorFactory(configuration, orderedMetadata, base, lo, hi, retainedKeys, preSortedTimestampIndex)
+                    : new LimitedSizeSortedLightRecordCursorFactory(configuration, orderedMetadata, base, comparator, lo, hi, retainedKeys, preSortedTimestampIndex);
+        }
+        if (sink != null) {
+            return isEncoded
+                    ? new EncodedSortRecordCursorFactory(configuration, orderedMetadata, base, sink, retainedKeys)
+                    : new SortedRecordCursorFactory(configuration, orderedMetadata, base, sink, comparator, retainedKeys);
+        }
+        if (isEncoded) {
+            return new EncodedSortLightRecordCursorFactory(configuration, orderedMetadata, base, retainedKeys);
+        }
+        return new SortedLightRecordCursorFactory(configuration, orderedMetadata,
+                indexes == null ? base : new SortKeyMaterializingRecordCursorFactory(configuration, orderedMetadata, base, indexes, types),
+                comparator, retainedKeys);
     }
 
-    int generateSortInput(GenerationFrame frame, SortPlan sort, SqlExecutionContext executionContext, int requiredOrderColumnId,
-                          int requiredScanDirection, LimitPlan limitAdvice) throws SqlException {
+    RecordCursorFactory generateSortInput(GenerationFrame frame, SortPlan sort, SqlExecutionContext executionContext, int requiredOrderColumnId,
+                                          int requiredScanDirection, LimitPlan limitAdvice) throws SqlException {
         executionContext.pushTimestampRequiredFlag(false);
         try {
             if (frame.isJoinSlaveInput && requiredScanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD && !sort.isReversal()) {
@@ -316,10 +319,10 @@ final class SortFactoryGenerator {
         }
     }
 
-    int generateSortedLimit(GenerationFrame frame, LogicalPlan plan, LimitPlan limit, SqlExecutionContext executionContext) throws SqlException {
+    RecordCursorFactory generateSortedLimit(GenerationFrame frame, LogicalPlan plan, LimitPlan limit, SqlExecutionContext executionContext) throws SqlException {
         if (plan instanceof ProjectPlan project) {
-            final int inputSlot = generateSortedLimit(frame, project.getInput(), limit, executionContext);
-            return projectionGenerator.generateProjection(frame, project, inputSlot, frame.resources.reserve(), project.getOutput().getTimestampIndex(), executionContext);
+            final RecordCursorFactory base = generateSortedLimit(frame, project.getInput(), limit, executionContext);
+            return projectionGenerator.generateProjection(frame, project, base, project.getOutput().getTimestampIndex(), executionContext);
         }
         if (!(plan instanceof SortPlan sort)) {
             throw new IllegalStateException("sorted limit requires a sort under stable projections");
@@ -328,29 +331,21 @@ final class SortFactoryGenerator {
                 && !(limit.getLo() instanceof ConstantExpression lo && lo.getLongValue() < 0) ? sort.getColumnIds().getQuick(0) : -1;
         final int direction = sort.getDirections().getQuick(0) == SortDirection.DESCENDING
                 ? RecordCursorFactory.SCAN_DIRECTION_BACKWARD : RecordCursorFactory.SCAN_DIRECTION_FORWARD;
-        final int inputSlot = generateSortInput(frame, sort, executionContext, requiredOrderId, direction, limit);
-        final int slot = frame.resources.reserve();
-        if (frame.resources.factory(inputSlot).implementsLimit()
-                && hasNativeFilterInput(sort.getInput())) {
-            final RecordCursorFactory base = frame.resources.detachFactory(inputSlot);
-            frame.resources.own(slot, generate(sort, base, null, null, limit.getPosition(), executionContext, frame.functionInstantiator));
-            return slot;
+        final RecordCursorFactory base = generateSortInput(frame, sort, executionContext, requiredOrderId, direction, limit);
+        if (base.implementsLimit() && hasNativeFilterInput(sort.getInput())) {
+            return generate(sort, base, null, null, limit.getPosition(), executionContext, frame.functionInstantiator);
         }
-        final int loSlot = frame.resources.reserve();
-        final int hiSlot = frame.resources.reserve();
-        final Function lo = frame.functionInstantiator.instantiate(limit.getLo(), emptySchema, executionContext);
-        frame.resources.own(loSlot, lo);
-        final Function hi = limit.getHi() == null ? null : frame.functionInstantiator.instantiate(limit.getHi(), emptySchema, executionContext);
-        if (hi != null) {
-            frame.resources.own(hiSlot, hi);
+        Function lo = null;
+        final Function hi;
+        try {
+            lo = frame.functionInstantiator.instantiate(limit.getLo(), emptySchema, executionContext);
+            hi = limit.getHi() == null ? null : frame.functionInstantiator.instantiate(limit.getHi(), emptySchema, executionContext);
+        } catch (Throwable th) {
+            Misc.free(lo, th);
+            Misc.free(base, th);
+            throw th;
         }
-        final RecordCursorFactory base = frame.resources.detachFactory(inputSlot);
-        frame.resources.detach(loSlot);
-        if (hi != null) {
-            frame.resources.detach(hiSlot);
-        }
-        frame.resources.own(slot, generate(sort, base, lo, hi, limit.getPosition(), executionContext, frame.functionInstantiator));
-        return slot;
+        return generate(sort, base, lo, hi, limit.getPosition(), executionContext, frame.functionInstantiator);
     }
 
     SortPlan remapOrderAdvice(GenerationFrame frame, ProjectPlan project, SortPlan advice) {
@@ -389,6 +384,7 @@ final class SortFactoryGenerator {
                 final int key = keys.getQuick(0);
                 final int index = Math.abs(key) - 1;
                 if (base.recordCursorSupportsLongTopK(index)) {
+                    isTransferred = true;
                     return new LongTopKRecordCursorFactory(orderedMetadata, base, index, (int) count, key > 0);
                 }
             }
@@ -462,18 +458,7 @@ final class SortFactoryGenerator {
                 }
                 throw th;
             }
-            if (projection == null) {
-                return topK;
-            }
-            try {
-                return projection.rewrapOverTopK(topK, orderedMetadata);
-            } catch (Throwable th) {
-                // VirtualRecord consumes on constructor failure; SelectedRecord leaves topK owned here.
-                if (!(projection instanceof VirtualRecordCursorFactory)) {
-                    Misc.free(topK, th);
-                }
-                throw th;
-            }
+            return projection == null ? topK : projection.rewrapOverTopK(topK, orderedMetadata);
         } catch (Throwable th) {
             if (!isTransferred) {
                 Misc.freeObjList(workerFilters, th);

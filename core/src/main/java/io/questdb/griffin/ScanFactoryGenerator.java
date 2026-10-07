@@ -360,18 +360,17 @@ final class ScanFactoryGenerator {
         }
     }
 
-    private int filterScan(GenerationFrame frame, int scanSlot, ScanPlan scan, BoundExpression residual, int order, SortPlan orderAdvice,
-                           LimitPlan limitAdvice, SqlExecutionContext executionContext) throws SqlException {
-        final int slot = frame.resources.reserve();
-        final int filterSlot = frame.resources.reserve();
-        final RecordCursorFactory base = frame.resources.factory(scanSlot);
-        final Function filter = frame.functionInstantiator.instantiate(residual, scan.getOutput(), base.getMetadata(), executionContext);
-        frame.resources.own(filterSlot, filter);
-        frame.resources.detach(scanSlot);
-        frame.resources.detach(filterSlot);
-        frame.resources.own(slot, filterGenerator.generate(frame, residual, scan.getOutput(), base, filter, frame.functionInstantiator, executionContext,
-                scan.isUpdate(), isLimitOrderPreserved(scan, order, orderAdvice) ? limitAdvice : null, scan.hasHint(ScanPlan.HINT_PRE_TOUCH)));
-        return slot;
+    private RecordCursorFactory filterScan(GenerationFrame frame, RecordCursorFactory base, ScanPlan scan, BoundExpression residual, int order,
+                                           SortPlan orderAdvice, LimitPlan limitAdvice, SqlExecutionContext executionContext) throws SqlException {
+        final Function filter;
+        try {
+            filter = frame.functionInstantiator.instantiate(residual, scan.getOutput(), base.getMetadata(), executionContext);
+        } catch (Throwable th) {
+            Misc.free(base, th);
+            throw th;
+        }
+        return filterGenerator.generate(frame, residual, scan.getOutput(), base, filter, frame.functionInstantiator, executionContext,
+                scan.isUpdate(), isLimitOrderPreserved(scan, order, orderAdvice) ? limitAdvice : null, scan.hasHint(ScanPlan.HINT_PRE_TOUCH));
     }
 
     private BoundExpression foldSelfComparisons(GenerationFrame frame, BoundExpression predicate) {
@@ -403,199 +402,161 @@ final class ScanFactoryGenerator {
         return predicate;
     }
 
-    private int generateIndexedScan(
-            GenerationFrame frame, int slot, ScanPlan scan, SqlExecutionContext executionContext, int order, IntervalExtractor scanIntervals,
+    private RecordCursorFactory generateIndexedScan(
+            GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, int order, IntervalExtractor scanIntervals,
             BoundExpression residual, GenericRecordMetadata metadata, RecordMetadata readerMetadata, TableReader reader,
             IntList indexes, IntList shifts, SortPlan orderAdvice, LimitPlan limitAdvice, int orderByMnemonic
     ) throws SqlException {
         final int keyIndex = scan.getOutput().getColumnIndexById(frame.symbols.getColumnId());
         final int readerKeyIndex = indexes.getQuick(keyIndex);
         final int keyCount = frame.symbols.getValues().size();
-        final int intervalSlot = frame.resources.reserve();
-        final var intervalModel = buildIntervals(frame, scanIntervals, reader);
-        if (intervalModel != null) {
-            frame.resources.own(intervalSlot, intervalModel);
-        }
-        final boolean isSinglePartition = intervalModel == null ? reader.getPartitionedBy() == PartitionBy.NONE
-                : intervalModel.allIntervalsHitOnePartition();
+        final ObjList<Function> keys = new ObjList<>(keyCount == 0 ? frame.symbols.getExcludedValues().size() : keyCount);
+        RuntimeIntrinsicIntervalModel intervalModel = buildIntervals(frame, scanIntervals, reader);
+        Function filter = null;
+        PartitionFrameCursorFactory frames = null;
         final int orderCount = orderAdvice == null ? 0 : orderAdvice.getColumnIds().size();
         int indexDirection = IndexReader.DIR_FORWARD;
         boolean isOrderByKey = false;
         boolean isOrderByTimestamp = false;
         final int timestampId = scan.getOutput().getTimestampColumnId();
-        if (isSinglePartition && !executionContext.isTimestampRequired() && orderCount > 0 && orderCount < 3
-                && orderAdvice.getColumnIds().getQuick(0) == frame.symbols.getColumnId()) {
-            metadata.setTimestampIndex(-1);
-            if (orderCount == 1) {
-                isOrderByKey = true;
-            } else if (orderAdvice.getColumnIds().getQuick(1) == timestampId) {
-                isOrderByKey = true;
-                if (orderAdvice.getDirections().getQuick(1) == SortDirection.DESCENDING) {
+        int symbolKey = SymbolTable.VALUE_NOT_FOUND;
+        int[] coveringMapping = null;
+        try {
+            final boolean isSinglePartition = intervalModel == null ? reader.getPartitionedBy() == PartitionBy.NONE
+                    : intervalModel.allIntervalsHitOnePartition();
+            if (isSinglePartition && !executionContext.isTimestampRequired() && orderCount > 0 && orderCount < 3
+                    && orderAdvice.getColumnIds().getQuick(0) == frame.symbols.getColumnId()) {
+                metadata.setTimestampIndex(-1);
+                if (orderCount == 1) {
+                    isOrderByKey = true;
+                } else if (orderAdvice.getColumnIds().getQuick(1) == timestampId) {
+                    isOrderByKey = true;
+                    if (orderAdvice.getDirections().getQuick(1) == SortDirection.DESCENDING) {
+                        indexDirection = IndexReader.DIR_BACKWARD;
+                    }
+                }
+            }
+            if (!isOrderByKey && orderCount == 1 && orderAdvice.getColumnIds().getQuick(0) == timestampId) {
+                final boolean isDescending = orderAdvice.getDirections().getQuick(0) == SortDirection.DESCENDING;
+                isOrderByTimestamp = keyCount == 1 || !isDescending;
+                if (isOrderByTimestamp && isDescending) {
                     indexDirection = IndexReader.DIR_BACKWARD;
                 }
             }
-        }
-        if (!isOrderByKey && orderCount == 1 && orderAdvice.getColumnIds().getQuick(0) == timestampId) {
-            final boolean isDescending = orderAdvice.getDirections().getQuick(0) == SortDirection.DESCENDING;
-            isOrderByTimestamp = keyCount == 1 || !isDescending;
-            if (isOrderByTimestamp && isDescending) {
-                indexDirection = IndexReader.DIR_BACKWARD;
-            }
-        }
-        final int filterSlot = frame.resources.reserve();
-        Function filter = residual == null ? null : frame.functionInstantiator.instantiate(residual, scan.getOutput(), metadata, executionContext);
-        if (filter != null) {
-            frame.resources.own(filterSlot, filter);
-            if (filter.isConstant()) {
+            filter = residual == null ? null : frame.functionInstantiator.instantiate(residual, scan.getOutput(), metadata, executionContext);
+            if (filter != null && filter.isConstant()) {
                 final boolean isTrue = filter.getBool(null);
-                frame.resources.detach(filterSlot);
-                Misc.free(filter);
+                final Function constant = filter;
                 filter = null;
+                Misc.free(constant);
                 if (!isTrue) {
-                    if (intervalModel != null) {
-                        Misc.free(frame.resources.detach(intervalSlot));
-                    }
-                    frame.resources.own(slot, new EmptyTableRecordCursorFactory(metadata));
-                    return slot;
+                    final RuntimeIntrinsicIntervalModel unused = intervalModel;
+                    intervalModel = null;
+                    Misc.free(unused);
+                    return new EmptyTableRecordCursorFactory(metadata);
                 }
             }
+            if (keyCount == 0) {
+                instantiateKeys(frame, frame.symbols.getExcludedValues(), keys, scan, metadata, executionContext);
+            } else {
+                instantiateKeys(frame, frame.symbols.getValues(), keys, scan, metadata, executionContext);
+                final Function firstKey = keys.getQuick(0);
+                symbolKey = keyCount > 1 || firstKey.isRuntimeConstant() ? SymbolTable.VALUE_NOT_FOUND
+                        : reader.getSymbolMapReader(readerKeyIndex).keyOf(firstKey.getStrA(null));
+                coveringMapping = executionContext.isCoveringIndexEnabled() && !scan.isUpdate() && (keyCount == 1 || !isOrderByKey)
+                        && !scan.hasHint(ScanPlan.HINT_NO_COVERING)
+                        ? buildCoveringIndexMapping(reader, readerKeyIndex, indexes, metadata) : null;
+            }
+            final RuntimeIntrinsicIntervalModel frameIntervals = intervalModel;
+            intervalModel = null;
+            frames = newFrames(scan, frameIntervals, readerMetadata, order);
+            configurePushdown(frame, frames, residual, scan, metadata, indexes, reader, executionContext);
+        } catch (Throwable th) {
+            Misc.free(frames, th);
+            Misc.freeObjList(keys, th);
+            Misc.free(filter, th);
+            Misc.free(intervalModel, th);
+            throw th;
         }
         if (keyCount == 0) {
-            final ObjList<Function> excludedKeys = new ObjList<>(frame.symbols.getExcludedValues().size());
-            final IntList excludedSlots = frame.symbolKeySlots;
-            excludedSlots.clear();
-            instantiateKeys(frame, frame.symbols.getExcludedValues(), excludedKeys, excludedSlots, scan, metadata, executionContext);
-            final int frameSlot = frame.resources.reserve();
-            frame.resources.own(frameSlot, newFrames(scan, intervalModel, readerMetadata, order));
-            configurePushdown(frame, frame.resources.frames(frameSlot), residual, scan, metadata, indexes, reader, executionContext);
-            if (intervalModel != null) {
-                frame.resources.detach(intervalSlot);
-            }
-            final PartitionFrameCursorFactory frames = frame.resources.detachFrames(frameSlot);
-            for (int i = 0, n = excludedSlots.size(); i < n; i++) {
-                frame.resources.detach(excludedSlots.getQuick(i));
-            }
-            if (filter != null) {
-                frame.resources.detach(filterSlot);
-            }
-            frame.resources.own(slot, new FilterOnExcludedValuesRecordCursorFactory(configuration, metadata, frames, excludedKeys,
+            return new FilterOnExcludedValuesRecordCursorFactory(configuration, metadata, frames, keys,
                     keyIndex, filter, orderByMnemonic, isOrderByKey, isOrderByTimestamp,
                     SqlCodeGenerator.queryModelDirection(orderCount == 0 ? SortDirection.ASCENDING : orderAdvice.getDirections().getQuick(0)),
-                    indexDirection, indexes, shifts, configuration.getMaxSymbolNotEqualsCount()));
-            return slot;
+                    indexDirection, indexes, shifts, configuration.getMaxSymbolNotEqualsCount());
         }
-        final ObjList<Function> keys = new ObjList<>(keyCount);
-        final IntList keySlots = frame.symbolKeySlots;
-        keySlots.clear();
-        for (int i = 0; i < keyCount; i++) {
-            final int keySlot = frame.resources.reserve();
-            keySlots.add(keySlot);
-            final Function key = SymbolKeyExtractor.instantiateValue(frame.symbols.getValues().getQuick(i), scan.getOutput(), metadata, frame.functionInstantiator, executionContext);
-            frame.resources.own(keySlot, key);
-            keys.add(key);
+        final Function coveredFilter = coveringMapping == null ? null : filter;
+        final RecordCursorFactory factory;
+        try {
+            if (keyCount == 1) {
+                factory = generateSingleSymbolIndexScan(metadata, frames, keyIndex, symbolKey, keys.getQuick(0),
+                        coveringMapping == null ? filter : null, indexDirection, isOrderByKey || isOrderByTimestamp,
+                        indexes, shifts, coveringMapping, scan.hasHint(ScanPlan.HINT_FORCE_USE_COVERING));
+            } else {
+                factory = generateSymbolValuesIndexScan(metadata, frames, keys, keyIndex, reader,
+                        coveringMapping == null ? filter : null, orderByMnemonic, isOrderByKey, isOrderByTimestamp,
+                        SqlCodeGenerator.queryModelDirection(orderCount == 0 ? SortDirection.ASCENDING : orderAdvice.getDirections().getQuick(0)),
+                        indexDirection, indexes, shifts, coveringMapping, scan.hasHint(ScanPlan.HINT_FORCE_USE_COVERING));
+            }
+        } catch (Throwable th) {
+            Misc.free(coveredFilter, th);
+            throw th;
         }
-        final Function firstKey = keys.getQuick(0);
-        final int symbolKey = keyCount > 1 || firstKey.isRuntimeConstant() ? SymbolTable.VALUE_NOT_FOUND
-                : reader.getSymbolMapReader(readerKeyIndex).keyOf(firstKey.getStrA(null));
-        final int[] coveringMapping = executionContext.isCoveringIndexEnabled() && !scan.isUpdate() && (keyCount == 1 || !isOrderByKey)
-                && !scan.hasHint(ScanPlan.HINT_NO_COVERING)
-                ? buildCoveringIndexMapping(reader, readerKeyIndex, indexes, metadata) : null;
-        final int frameSlot = frame.resources.reserve();
-        final PartitionFrameCursorFactory frames = newFrames(scan, intervalModel, readerMetadata, order);
-        frame.resources.own(frameSlot, frames);
-        configurePushdown(frame, frames, residual, scan, metadata, indexes, reader, executionContext);
-        if (intervalModel != null) {
-            frame.resources.detach(intervalSlot);
+        if (coveredFilter == null) {
+            return factory;
         }
-        frame.resources.detach(frameSlot);
-        for (int i = 0; i < keyCount; i++) {
-            frame.resources.detach(keySlots.getQuick(i));
-        }
-        if (filter != null && coveringMapping == null) {
-            frame.resources.detach(filterSlot);
-        }
-        if (keyCount == 1) {
-            frame.resources.own(slot, generateSingleSymbolIndexScan(metadata, frames, keyIndex, symbolKey, firstKey,
-                    coveringMapping == null ? filter : null, indexDirection, isOrderByKey || isOrderByTimestamp,
-                    indexes, shifts, coveringMapping, scan.hasHint(ScanPlan.HINT_FORCE_USE_COVERING)));
-        } else {
-            frame.resources.own(slot, generateSymbolValuesIndexScan(metadata, frames, keys, keyIndex, reader,
-                    coveringMapping == null ? filter : null, orderByMnemonic, isOrderByKey, isOrderByTimestamp,
-                    SqlCodeGenerator.queryModelDirection(orderCount == 0 ? SortDirection.ASCENDING : orderAdvice.getDirections().getQuick(0)),
-                    indexDirection, indexes, shifts, coveringMapping, scan.hasHint(ScanPlan.HINT_FORCE_USE_COVERING)));
-        }
-        if (filter != null && coveringMapping != null) {
-            final int filteredSlot = frame.resources.reserve();
-            final CoveringIndexRecordCursorFactory base = (CoveringIndexRecordCursorFactory) frame.resources.detachFactory(slot);
-            frame.resources.detach(filterSlot);
-            final boolean isLimitOrderPreserved = orderCount == 0 || orderCount == 1
-                    && orderAdvice.getColumnIds().getQuick(0) == timestampId
-                    && orderAdvice.getDirections().getQuick(0) == SortDirection.ASCENDING;
-            frame.resources.own(filteredSlot, filterGenerator.generateCovering(residual, scan.getOutput(), base, filter,
-                    frame.functionInstantiator, executionContext, isLimitOrderPreserved ? limitAdvice : null, scan.hasHint(ScanPlan.HINT_PRE_TOUCH)));
-            return filteredSlot;
-        }
-        return slot;
+        final boolean isLimitOrderPreserved = orderCount == 0 || orderCount == 1
+                && orderAdvice.getColumnIds().getQuick(0) == timestampId
+                && orderAdvice.getDirections().getQuick(0) == SortDirection.ASCENDING;
+        return filterGenerator.generateCovering(residual, scan.getOutput(), (CoveringIndexRecordCursorFactory) factory, coveredFilter,
+                frame.functionInstantiator, executionContext, isLimitOrderPreserved ? limitAdvice : null, scan.hasHint(ScanPlan.HINT_PRE_TOUCH));
     }
 
-    private int generateScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, int order, IntervalExtractor scanIntervals,
-                             LatestByPlan latest, BoundExpression latestResidual, SymbolKeyExtractor latestKeys) throws SqlException {
+    private RecordCursorFactory generateScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, int order, IntervalExtractor scanIntervals,
+                                             LatestByPlan latest, BoundExpression latestResidual, SymbolKeyExtractor latestKeys) throws SqlException {
         return generateScan(frame, scan, executionContext, order, scanIntervals, latest, latestResidual, latestKeys, null, null, OrderByMnemonic.ORDER_BY_REQUIRED);
     }
 
-    private int generateScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, int order, IntervalExtractor scanIntervals,
-                             LatestByPlan latest, BoundExpression latestResidual, SymbolKeyExtractor latestKeys,
-                             SortPlan orderAdvice, LimitPlan limitAdvice, int orderByMnemonic) throws SqlException {
-        final int slot = generateTableScan(frame, scan, executionContext, order, scanIntervals, latest, latestResidual, latestKeys,
+    private RecordCursorFactory generateScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, int order, IntervalExtractor scanIntervals,
+                                             LatestByPlan latest, BoundExpression latestResidual, SymbolKeyExtractor latestKeys,
+                                             SortPlan orderAdvice, LimitPlan limitAdvice, int orderByMnemonic) throws SqlException {
+        final RecordCursorFactory factory = generateTableScan(frame, scan, executionContext, order, scanIntervals, latest, latestResidual, latestKeys,
                 orderAdvice, limitAdvice, orderByMnemonic);
         if (!scan.getTableToken().isLiveView() || scan.isUpdate()) {
-            return slot;
+            return factory;
         }
         // The live-view wrapper pins the in-memory tier and routes rows by seam timestamp.
-        final int liveSlot = frame.resources.reserve();
-        final RecordCursorFactory base = frame.resources.detachFactory(slot);
-        try {
-            frame.resources.own(liveSlot, new LiveViewRecordCursorFactory(executionContext.getCairoEngine(), scan.getTableToken(), base));
-        } catch (Throwable th) {
-            Misc.free(base, th);
-            throw th;
-        }
-        return liveSlot;
+        return new LiveViewRecordCursorFactory(executionContext.getCairoEngine(), scan.getTableToken(), factory);
     }
 
-    private int generateSubqueryScan(GenerationFrame frame, int slot, ScanPlan scan, SqlExecutionContext executionContext, int order,
-                                     IntervalExtractor scanIntervals, BoundExpression residual, CursorExpression keySubquery, GenericRecordMetadata metadata,
-                                     GenericRecordMetadata readerMetadata, TableReader reader, IntList indexes, IntList shifts) throws SqlException {
-        final int frameSlot = frame.resources.reserve();
-        frame.resources.own(frameSlot, newFrames(scan, buildIntervals(frame, scanIntervals, reader),
-                readerMetadata, order));
-        final PartitionFrameCursorFactory frames = frame.resources.frames(frameSlot);
-        configurePushdown(frame, frames, residual, scan, metadata, indexes, reader, executionContext);
-        final int filterSlot = frame.resources.reserve();
-        final Function filter = residual == null ? null : frame.functionInstantiator.instantiate(residual, scan.getOutput(), metadata, executionContext);
-        if (filter != null) {
-            frame.resources.own(filterSlot, filter);
+    private RecordCursorFactory generateSubqueryScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, int order,
+                                                     IntervalExtractor scanIntervals, BoundExpression residual, CursorExpression keySubquery,
+                                                     GenericRecordMetadata metadata, GenericRecordMetadata readerMetadata, TableReader reader,
+                                                     IntList indexes, IntList shifts) throws SqlException {
+        PartitionFrameCursorFactory frames = null;
+        Function filter = null;
+        RecordCursorFactory subquery = null;
+        final Record.CharSequenceFunction keyGetter;
+        try {
+            frames = newFrames(scan, buildIntervals(frame, scanIntervals, reader), readerMetadata, order);
+            configurePushdown(frame, frames, residual, scan, metadata, indexes, reader, executionContext);
+            filter = residual == null ? null : frame.functionInstantiator.instantiate(residual, scan.getOutput(), metadata, executionContext);
+            subquery = frame.functionInstantiator.takeSubquery(keySubquery, executionContext);
+            keyGetter = subqueryKeyGetter(subquery.getMetadata().getColumnType(0));
+        } catch (Throwable th) {
+            Misc.free(subquery, th);
+            Misc.free(filter, th);
+            Misc.free(frames, th);
+            throw th;
         }
-        final int subquerySlot = frame.resources.reserve();
-        final RecordCursorFactory subquery = frame.functionInstantiator.takeSubquery(keySubquery, executionContext);
-        frame.resources.own(subquerySlot, subquery);
-        if (filter != null) {
-            frame.resources.detach(filterSlot);
-        }
-        frame.resources.detach(frameSlot);
-        frame.resources.detach(subquerySlot);
-        frame.resources.own(slot, new FilterOnSubQueryRecordCursorFactory(configuration, metadata, frames, subquery,
-                keySubquery.isStableWithinExecution(),
-                scan.getOutput().getColumnIndexById(frame.symbols.getColumnId()), filter,
-                subqueryKeyGetter(subquery.getMetadata().getColumnType(0)), indexes, shifts));
-        return slot;
+        return new FilterOnSubQueryRecordCursorFactory(configuration, metadata, frames, subquery, keySubquery.isStableWithinExecution(),
+                scan.getOutput().getColumnIndexById(frame.symbols.getColumnId()), filter, keyGetter, indexes, shifts);
     }
 
     /**
-     * Returns false, owning nothing new, when no indexed SYMBOL pattern conjunct can drive the scan.
+     * Returns null, owning nothing new, when no indexed SYMBOL pattern conjunct can drive the scan.
      */
-    private boolean generateSymbolPatternIndex(
-            GenerationFrame frame, int slot, ScanPlan scan, SqlExecutionContext executionContext, int order, IntervalExtractor scanIntervals,
+    private RecordCursorFactory generateSymbolPatternIndex(
+            GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, int order, IntervalExtractor scanIntervals,
             BoundExpression predicate, GenericRecordMetadata metadata, RecordMetadata readerMetadata, TableReader reader,
             IntList indexes, IntList shifts, SortPlan orderAdvice, LimitPlan limitAdvice, int orderByMnemonic
     ) throws SqlException {
@@ -603,7 +564,7 @@ final class ScanFactoryGenerator {
                 && orderAdvice.getColumnIds().getQuick(0) == scan.getNativeTimestampColumnId();
         if (isOrderByTimestampOnly && limitAdvice == null
                 && orderAdvice.getDirections().getQuick(0) == SortDirection.DESCENDING) {
-            return false;
+            return null;
         }
         frame.patternConjuncts.clear();
         LogicalPlans.collectConjuncts(predicate, frame.patternConjuncts);
@@ -620,13 +581,13 @@ final class ScanFactoryGenerator {
             }
         }
         if (frame.patternIndex < 0) {
-            return false;
+            return null;
         }
         if (limitAdvice != null && limitAdvice.getHi() == null) {
             final Function lo = frame.functionInstantiator.instantiate(limitAdvice.getLo(), emptySchema, executionContext);
             try {
                 if (filterGenerator.mayBeNegativeLimit(lo, executionContext)) {
-                    return false;
+                    return null;
                 }
             } finally {
                 Misc.free(lo);
@@ -638,7 +599,7 @@ final class ScanFactoryGenerator {
         }
         AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter filter = preparePatternFilter(frame, input, metadata, executionContext);
         if (filter == null) {
-            return false;
+            return null;
         }
         ObjList<Function> workerFilters = null;
         try {
@@ -647,8 +608,10 @@ final class ScanFactoryGenerator {
                     metadata, frame.isPatternNegated, isCoveringAllowed) != null;
             if (!filter.isThreadSafe() && executionContext.isParallelFilterEnabled()) {
                 if (!hasCovering) {
-                    filter = Misc.free(filter);
-                    return false;
+                    final AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter unused = filter;
+                    filter = null;
+                    Misc.free(unused);
+                    return null;
                 }
                 final int workerCount = executionContext.getSharedQueryWorkerCount();
                 workerFilters = new ObjList<>(workerCount);
@@ -670,10 +633,9 @@ final class ScanFactoryGenerator {
             final ObjList<Function> ownedWorkers = workerFilters;
             filter = null;
             workerFilters = null;
-            frame.resources.own(slot, generateSymbolPatternIndex(frames, metadata, reader, indexes, shifts, ownedFilter,
+            return generateSymbolPatternIndex(frames, metadata, reader, indexes, shifts, ownedFilter,
                     filterColumns, ownedWorkers, orderByMnemonic, isOrderByTimestampOnly, isCoveringAllowed,
-                    scan.hasHint(ScanPlan.HINT_PRE_TOUCH), executionContext));
-            return true;
+                    scan.hasHint(ScanPlan.HINT_PRE_TOUCH), executionContext);
         } catch (Throwable th) {
             Misc.free(filter, th);
             Misc.freeObjList(workerFilters, th);
@@ -681,9 +643,9 @@ final class ScanFactoryGenerator {
         }
     }
 
-    private int generateTableScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, int order, IntervalExtractor scanIntervals,
-                                  LatestByPlan latest, BoundExpression latestResidual, SymbolKeyExtractor latestKeys,
-                                  SortPlan orderAdvice, LimitPlan limitAdvice, int orderByMnemonic) throws SqlException {
+    private RecordCursorFactory generateTableScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, int order, IntervalExtractor scanIntervals,
+                                                  LatestByPlan latest, BoundExpression latestResidual, SymbolKeyExtractor latestKeys,
+                                                  SortPlan orderAdvice, LimitPlan limitAdvice, int orderByMnemonic) throws SqlException {
         final boolean isOverridden = executionContext.isOverriddenIntrinsics(scan.getTableToken()) && !isWalClientUpdate(scan, executionContext);
         final WindowJoinStep step = frame.joinIntervalStep;
         frame.joinIntervalStep = null;
@@ -695,6 +657,7 @@ final class ScanFactoryGenerator {
         }
         final int timestampType = scan.getNativeTimestampType();
         final IntervalExtractor rangeIntervals = scanIntervals != null ? scanIntervals : frame.overrideIntervals;
+        final RecordCursorFactory factory;
         try {
             if (scanIntervals == null) {
                 frame.overrideIntervals.of(timestampType);
@@ -716,193 +679,211 @@ final class ScanFactoryGenerator {
                 }
                 rangeIntervals.merge((RuntimeIntervalModel) frame.joinIntervals, lo, hi);
             }
-            return generateTableScan0(frame, scan, executionContext, order, rangeIntervals, latest, latestResidual, latestKeys,
+            factory = generateTableScan0(frame, scan, executionContext, order, rangeIntervals, latest, latestResidual, latestKeys,
                     orderAdvice, limitAdvice, orderByMnemonic);
         } catch (Throwable th) {
             Misc.clear(frame.overrideIntervals, th);
             throw th;
-        } finally {
-            frame.overrideIntervals.clear();
         }
+        return SqlCodeGenerator.clearAfter(frame.overrideIntervals, factory);
     }
 
-    private int generateTableScan0(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, int order, IntervalExtractor scanIntervals,
-                                   LatestByPlan latest, BoundExpression latestResidual, SymbolKeyExtractor latestKeys,
-                                   SortPlan orderAdvice, LimitPlan limitAdvice, int orderByMnemonic) throws SqlException {
-        final int slot = frame.resources.reserve();
+    private RecordCursorFactory generateTableScan0(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, int order, IntervalExtractor scanIntervals,
+                                                   LatestByPlan latest, BoundExpression latestResidual, SymbolKeyExtractor latestKeys,
+                                                   SortPlan orderAdvice, LimitPlan limitAdvice, int orderByMnemonic) throws SqlException {
         if (isWalClientUpdate(scan, executionContext)) {
             // Client-side WAL UPDATE validates against sequencer metadata. The data
             // reader may still have an older schema; rows are read only during WAL apply.
-            try (TableRecordMetadata tableMetadata = executionContext.getMetadataForWrite(scan.getTableToken(), scan.getMetadataVersion())) {
+            final TableRecordMetadata tableMetadata = executionContext.getMetadataForWrite(scan.getTableToken(), scan.getMetadataVersion());
+            final RecordCursorFactory factory;
+            try {
                 final GenericRecordMetadata metadata = new GenericRecordMetadata();
                 for (int i = 0, n = scan.getOutput().getColumnCount(); i < n; i++) {
                     final int index = tableMetadata.getColumnIndex(scan.getOutput().getColumnName(i));
                     metadata.add(SqlCodeGenerator.copyColumn(tableMetadata, index, tableMetadata.getColumnName(index)));
                 }
                 metadata.setTimestampIndex(scan.getOutput().getTimestampIndex());
-                frame.resources.own(slot, new EmptyTableRecordCursorFactory(metadata, tableMetadata.getTableToken()));
+                factory = new EmptyTableRecordCursorFactory(metadata, tableMetadata.getTableToken());
+            } catch (Throwable th) {
+                Misc.free(tableMetadata, th);
+                throw th;
             }
-        } else {
-            // Validate the bound version before constructing independently owned metadata.
-            try (TableReader reader = getBoundReader(scan, executionContext)) {
-                final GenericRecordMetadata metadata = new GenericRecordMetadata();
-                final GenericRecordMetadata readerMetadata = new GenericRecordMetadata();
-                final TableReaderMetadata tableMetadata = reader.getMetadata();
-                for (int i = 0, n = tableMetadata.getColumnCount(); i < n; i++) {
-                    readerMetadata.add(SqlCodeGenerator.copyColumn(tableMetadata, i, tableMetadata.getColumnName(i)));
-                }
-                readerMetadata.setTimestampIndex(tableMetadata.getTimestampIndex());
-                final IntList indexes = new IntList(scan.getOutput().getColumnCount());
-                final IntList shifts = new IntList(scan.getOutput().getColumnCount());
-                for (int i = 0, n = scan.getOutput().getColumnCount(); i < n; i++) {
-                    // UPDATE binds writer metadata, whose deleted-column slots are not
-                    // the dense reader positions. Resolve the final layout by bound name.
-                    final int sourceIndex = tableMetadata.getColumnIndex(scan.getOutput().getColumnName(i));
-                    indexes.add(sourceIndex);
-                    metadata.add(readerMetadata.getColumnMetadata(sourceIndex));
-                    shifts.add(Numbers.msb(ColumnType.sizeOf(readerMetadata.getColumnType(sourceIndex))));
-                }
-                metadata.setTimestampIndex(scan.getOutput().getTimestampIndex());
-                if (scanIntervals != null && scanIntervals.isIntrinsicFalse() || latestKeys != null && latestKeys.isFalse()) {
-                    frame.resources.own(slot, new EmptyTableRecordCursorFactory(metadata));
-                    return slot;
-                }
-                if (latest != null) {
-                    final IntList keyIndexes = new IntList(latest.getKeyColumnIds().size());
-                    for (int i = 0, n = latest.getKeyColumnIds().size(); i < n; i++) {
-                        keyIndexes.add(scan.getOutput().getColumnIndexById(latest.getKeyColumnIds().getQuick(i)));
-                    }
-                    final boolean isIndexedAllowed = scanIntervals == null || configuration.useWithinLatestByOptimisation();
-                    if (latestResidual != null && latestResidual == frame.latestWithin
-                            && (latestKeys == null || !latestKeys.hasKey() && latestKeys.getSubquery() == null)
-                            && LatestByFactoryGenerator.isIndexedScan(metadata, keyIndexes, isIndexedAllowed && !scan.hasHint(ScanPlan.HINT_NO_INDEX))) {
-                        latestResidual = null;
-                    } else {
-                        frame.latestPrefixes.clear();
-                    }
-                    final int filterSlot = frame.resources.reserve();
-                    final Function filter = latestResidual == null ? null : frame.functionInstantiator.instantiate(latestResidual, scan.getOutput(), metadata, executionContext);
-                    if (filter != null) {
-                        frame.resources.own(filterSlot, filter);
-                    }
-                    final ObjList<Function> keys = new ObjList<>();
-                    final ObjList<Function> excludedKeys = new ObjList<>();
-                    final IntList keySlots = frame.symbolKeySlots;
-                    keySlots.clear();
-                    if (latestKeys != null) {
-                        instantiateKeys(frame, latestKeys.getValues(), keys, keySlots, scan, metadata, executionContext);
-                        instantiateKeys(frame, latestKeys.getExcludedValues(), excludedKeys, keySlots, scan, metadata, executionContext);
-                    }
-                    final int frameSlot = frame.resources.reserve();
-                    frame.resources.own(frameSlot, newFrames(scan, buildIntervals(frame, scanIntervals, reader),
-                            readerMetadata, PartitionFrameCursorFactory.ORDER_DESC));
-                    final PartitionFrameCursorFactory frames = frame.resources.frames(frameSlot);
-                    if (latestResidual != null && (latestResidual.getFunctionFlags() & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) == 0) {
-                        configurePushdown(frame, frames, latestResidual, scan, metadata, indexes, reader, executionContext);
-                    }
-                    final CursorExpression keySubquery = latestKeys == null ? null : latestKeys.getSubquery();
-                    if (keySubquery != null) {
-                        final int keyIndex = keyIndexes.getQuick(0);
-                        final int subquerySlot = frame.resources.reserve();
-                        final RecordCursorFactory subquery = frame.functionInstantiator.takeSubquery(keySubquery, executionContext);
-                        frame.resources.own(subquerySlot, subquery);
-                        if (filter != null) {
-                            frame.resources.detach(filterSlot);
-                        }
-                        frame.resources.detach(frameSlot);
-                        frame.resources.detach(subquerySlot);
-                        frame.resources.own(slot, new LatestBySubQueryRecordCursorFactory(configuration, metadata, frames, keyIndex, subquery, filter,
-                                !scan.hasHint(ScanPlan.HINT_NO_INDEX) && metadata.isColumnIndexed(keyIndex),
-                                subqueryKeyGetter(subquery.getMetadata().getColumnType(0)), indexes, shifts));
-                        return slot;
-                    }
-                    if (filter != null) {
-                        frame.resources.detach(filterSlot);
-                    }
-                    for (int i = 0, n = keySlots.size(); i < n; i++) {
-                        frame.resources.detach(keySlots.getQuick(i));
-                    }
-                    frame.resources.detach(frameSlot);
-                    frame.resources.own(slot, latestByGenerator.generateLatestByScan(
-                            frames, metadata, reader, indexes, shifts, keyIndexes,
-                            isIndexedAllowed,
-                            filter, keys, excludedKeys, frame.latestPrefixes,
-                            latestResidual == null ? null : symbolCounts(latestResidual, latest.getKeyColumnIds()),
-                            !scan.hasHint(ScanPlan.HINT_NO_INDEX),
-                            executionContext.isCoveringIndexEnabled() && !scan.hasHint(ScanPlan.HINT_NO_COVERING),
-                            scan.hasHint(ScanPlan.HINT_FORCE_USE_COVERING), executionContext
-                    ));
-                    return slot;
-                }
-                if (latestResidual != null && !executionContext.isLiveViewCompile() && !scan.hasHint(ScanPlan.HINT_NO_INDEX)) {
-                    latestResidual = frame.symbols.extractIndexed(latestResidual, scan.getOutput(), metadata, reader, frame.expressionRewriter);
-                    if (frame.symbols.isFalse()) {
-                        frame.resources.own(slot, new EmptyTableRecordCursorFactory(metadata));
-                        return slot;
-                    }
-                    final CursorExpression keySubquery = frame.symbols.getSubquery();
-                    if (keySubquery != null) {
-                        return generateSubqueryScan(frame, slot, scan, executionContext, order, scanIntervals, latestResidual, keySubquery,
-                                metadata, readerMetadata, reader, indexes, shifts);
-                    }
-                    if (!frame.symbols.hasKey() && configuration.isSymbolPatternIndexEnabled() && !scan.isUpdate()
-                            && !scan.hasHint(ScanPlan.HINT_NO_SYMBOL_PATTERN_INDEX)
-                            && generateSymbolPatternIndex(frame, slot, scan, executionContext, order, scanIntervals, latestResidual,
-                            metadata, readerMetadata, reader, indexes, shifts, orderAdvice, limitAdvice, orderByMnemonic)) {
-                        return slot;
-                    }
-                    if (frame.symbols.hasKey()) {
-                        if (frame.symbols.getValues().size() > 0 || reader.getSymbolMapReader(indexes.getQuick(
-                                scan.getOutput().getColumnIndexById(frame.symbols.getColumnId()))).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount()) {
-                            return generateIndexedScan(frame, slot, scan, executionContext, order, scanIntervals, latestResidual,
-                                    metadata, readerMetadata, reader, indexes, shifts, orderAdvice, limitAdvice, orderByMnemonic);
-                        }
-                        latestResidual = restoreExclusions(frame, latestResidual);
-                    }
-                }
-                final int frameSlot = frame.resources.reserve();
-                final var intervalModel = buildIntervals(frame, scanIntervals, reader);
-                frame.resources.own(frameSlot, newFrames(scan, intervalModel, readerMetadata, order));
-                final int sortedKeyIndex = sortedSymbolIndexKey(scan, intervalModel, latestResidual, metadata, orderAdvice, executionContext);
-                if (sortedKeyIndex >= 0) {
-                    final boolean isTimestampDescending = orderAdvice.getColumnIds().size() == 2
-                            && orderAdvice.getDirections().getQuick(1) == SortDirection.DESCENDING;
-                    metadata.setTimestampIndex(-1);
-                    frame.resources.own(slot, new SortedSymbolIndexRecordCursorFactory(configuration, metadata,
-                            frame.resources.detachFrames(frameSlot), sortedKeyIndex,
-                            orderAdvice.getDirections().getQuick(0) == SortDirection.ASCENDING,
-                            isTimestampDescending ? IndexReader.DIR_BACKWARD : IndexReader.DIR_FORWARD, indexes, shifts));
-                    return slot;
-                }
-                configurePushdown(frame, frame.resources.frames(frameSlot), latestResidual, scan,
-                        metadata, indexes, reader, executionContext);
-                frame.resources.own(slot, generateScan(frame.resources.detachFrames(frameSlot), metadata,
-                        order, order == PartitionFrameCursorFactory.ORDER_DESC, indexes, shifts, scan.isRandomAccess()));
-                if (latestResidual != null) {
-                    final int filteredSlot = frame.resources.reserve();
-                    final int filterSlot = frame.resources.reserve();
-                    final Function filter = frame.functionInstantiator.instantiate(latestResidual, scan.getOutput(), metadata, executionContext);
-                    frame.resources.own(filterSlot, filter);
-                    final RecordCursorFactory base = frame.resources.detachFactory(slot);
-                    frame.resources.detach(filterSlot);
-                    frame.resources.own(filteredSlot, filterGenerator.generate(frame, latestResidual, scan.getOutput(), base, filter,
-                            frame.functionInstantiator, executionContext, scan.isUpdate(), isLimitOrderPreserved(scan, order, orderAdvice) ? limitAdvice : null,
-                            scan.hasHint(ScanPlan.HINT_PRE_TOUCH)));
-                    return filteredSlot;
-                }
-            }
+            return SqlCodeGenerator.closeAfter(tableMetadata, factory);
         }
-        return slot;
+        // Validate the bound version before constructing independently owned metadata.
+        final TableReader reader = getBoundReader(scan, executionContext);
+        final RecordCursorFactory factory;
+        try {
+            factory = generateReaderScan(frame, scan, executionContext, order, scanIntervals, latest, latestResidual, latestKeys,
+                    orderAdvice, limitAdvice, orderByMnemonic, reader);
+        } catch (Throwable th) {
+            Misc.free(reader, th);
+            throw th;
+        }
+        return SqlCodeGenerator.closeAfter(reader, factory);
     }
 
-    private void instantiateKeys(GenerationFrame frame, ObjList<BoundExpression> values, ObjList<Function> keys, IntList slots, ScanPlan scan,
+    private RecordCursorFactory generateReaderScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, int order,
+                                                   IntervalExtractor scanIntervals, LatestByPlan latest, BoundExpression latestResidual,
+                                                   SymbolKeyExtractor latestKeys, SortPlan orderAdvice, LimitPlan limitAdvice, int orderByMnemonic,
+                                                   TableReader reader) throws SqlException {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        final GenericRecordMetadata readerMetadata = new GenericRecordMetadata();
+        final TableReaderMetadata tableMetadata = reader.getMetadata();
+        for (int i = 0, n = tableMetadata.getColumnCount(); i < n; i++) {
+            readerMetadata.add(SqlCodeGenerator.copyColumn(tableMetadata, i, tableMetadata.getColumnName(i)));
+        }
+        readerMetadata.setTimestampIndex(tableMetadata.getTimestampIndex());
+        final IntList indexes = new IntList(scan.getOutput().getColumnCount());
+        final IntList shifts = new IntList(scan.getOutput().getColumnCount());
+        for (int i = 0, n = scan.getOutput().getColumnCount(); i < n; i++) {
+            // UPDATE binds writer metadata, whose deleted-column slots are not
+            // the dense reader positions. Resolve the final layout by bound name.
+            final int sourceIndex = tableMetadata.getColumnIndex(scan.getOutput().getColumnName(i));
+            indexes.add(sourceIndex);
+            metadata.add(readerMetadata.getColumnMetadata(sourceIndex));
+            shifts.add(Numbers.msb(ColumnType.sizeOf(readerMetadata.getColumnType(sourceIndex))));
+        }
+        metadata.setTimestampIndex(scan.getOutput().getTimestampIndex());
+        if (scanIntervals != null && scanIntervals.isIntrinsicFalse() || latestKeys != null && latestKeys.isFalse()) {
+            return new EmptyTableRecordCursorFactory(metadata);
+        }
+        if (latest != null) {
+            return generateLatestByScan(frame, scan, executionContext, scanIntervals, latest, latestResidual, latestKeys,
+                    metadata, readerMetadata, reader, indexes, shifts);
+        }
+        if (latestResidual != null && !executionContext.isLiveViewCompile() && !scan.hasHint(ScanPlan.HINT_NO_INDEX)) {
+            latestResidual = frame.symbols.extractIndexed(latestResidual, scan.getOutput(), metadata, reader, frame.expressionRewriter);
+            if (frame.symbols.isFalse()) {
+                return new EmptyTableRecordCursorFactory(metadata);
+            }
+            final CursorExpression keySubquery = frame.symbols.getSubquery();
+            if (keySubquery != null) {
+                return generateSubqueryScan(frame, scan, executionContext, order, scanIntervals, latestResidual, keySubquery,
+                        metadata, readerMetadata, reader, indexes, shifts);
+            }
+            if (!frame.symbols.hasKey() && configuration.isSymbolPatternIndexEnabled() && !scan.isUpdate()
+                    && !scan.hasHint(ScanPlan.HINT_NO_SYMBOL_PATTERN_INDEX)) {
+                final RecordCursorFactory patternScan = generateSymbolPatternIndex(frame, scan, executionContext, order, scanIntervals,
+                        latestResidual, metadata, readerMetadata, reader, indexes, shifts, orderAdvice, limitAdvice, orderByMnemonic);
+                if (patternScan != null) {
+                    return patternScan;
+                }
+            }
+            if (frame.symbols.hasKey()) {
+                if (frame.symbols.getValues().size() > 0 || reader.getSymbolMapReader(indexes.getQuick(
+                        scan.getOutput().getColumnIndexById(frame.symbols.getColumnId()))).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount()) {
+                    return generateIndexedScan(frame, scan, executionContext, order, scanIntervals, latestResidual,
+                            metadata, readerMetadata, reader, indexes, shifts, orderAdvice, limitAdvice, orderByMnemonic);
+                }
+                latestResidual = restoreExclusions(frame, latestResidual);
+            }
+        }
+        final RuntimeIntrinsicIntervalModel intervalModel = buildIntervals(frame, scanIntervals, reader);
+        final PartitionFrameCursorFactory frames = newFrames(scan, intervalModel, readerMetadata, order);
+        final int sortedKeyIndex;
+        try {
+            sortedKeyIndex = sortedSymbolIndexKey(scan, intervalModel, latestResidual, metadata, orderAdvice, executionContext);
+            if (sortedKeyIndex < 0) {
+                configurePushdown(frame, frames, latestResidual, scan, metadata, indexes, reader, executionContext);
+            }
+        } catch (Throwable th) {
+            Misc.free(frames, th);
+            throw th;
+        }
+        if (sortedKeyIndex >= 0) {
+            final boolean isTimestampDescending = orderAdvice.getColumnIds().size() == 2
+                    && orderAdvice.getDirections().getQuick(1) == SortDirection.DESCENDING;
+            metadata.setTimestampIndex(-1);
+            return new SortedSymbolIndexRecordCursorFactory(configuration, metadata, frames, sortedKeyIndex,
+                    orderAdvice.getDirections().getQuick(0) == SortDirection.ASCENDING,
+                    isTimestampDescending ? IndexReader.DIR_BACKWARD : IndexReader.DIR_FORWARD, indexes, shifts);
+        }
+        final RecordCursorFactory factory = generateScan(frames, metadata, order, order == PartitionFrameCursorFactory.ORDER_DESC,
+                indexes, shifts, scan.isRandomAccess());
+        if (latestResidual == null) {
+            return factory;
+        }
+        final Function filter;
+        try {
+            filter = frame.functionInstantiator.instantiate(latestResidual, scan.getOutput(), metadata, executionContext);
+        } catch (Throwable th) {
+            Misc.free(factory, th);
+            throw th;
+        }
+        return filterGenerator.generate(frame, latestResidual, scan.getOutput(), factory, filter, frame.functionInstantiator, executionContext,
+                scan.isUpdate(), isLimitOrderPreserved(scan, order, orderAdvice) ? limitAdvice : null, scan.hasHint(ScanPlan.HINT_PRE_TOUCH));
+    }
+
+    private RecordCursorFactory generateLatestByScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, IntervalExtractor scanIntervals,
+                                                     LatestByPlan latest, BoundExpression latestResidual, SymbolKeyExtractor latestKeys,
+                                                     GenericRecordMetadata metadata, GenericRecordMetadata readerMetadata, TableReader reader,
+                                                     IntList indexes, IntList shifts) throws SqlException {
+        final IntList keyIndexes = new IntList(latest.getKeyColumnIds().size());
+        for (int i = 0, n = latest.getKeyColumnIds().size(); i < n; i++) {
+            keyIndexes.add(scan.getOutput().getColumnIndexById(latest.getKeyColumnIds().getQuick(i)));
+        }
+        final boolean isIndexedAllowed = scanIntervals == null || configuration.useWithinLatestByOptimisation();
+        if (latestResidual != null && latestResidual == frame.latestWithin
+                && (latestKeys == null || !latestKeys.hasKey() && latestKeys.getSubquery() == null)
+                && LatestByFactoryGenerator.isIndexedScan(metadata, keyIndexes, isIndexedAllowed && !scan.hasHint(ScanPlan.HINT_NO_INDEX))) {
+            latestResidual = null;
+        } else {
+            frame.latestPrefixes.clear();
+        }
+        final CursorExpression keySubquery = latestKeys == null ? null : latestKeys.getSubquery();
+        final ObjList<Function> keys = new ObjList<>();
+        final ObjList<Function> excludedKeys = new ObjList<>();
+        Function filter = null;
+        PartitionFrameCursorFactory frames = null;
+        RecordCursorFactory subquery = null;
+        Record.CharSequenceFunction keyGetter = null;
+        IntList symbolCounts = null;
+        try {
+            filter = latestResidual == null ? null : frame.functionInstantiator.instantiate(latestResidual, scan.getOutput(), metadata, executionContext);
+            if (latestKeys != null) {
+                instantiateKeys(frame, latestKeys.getValues(), keys, scan, metadata, executionContext);
+                instantiateKeys(frame, latestKeys.getExcludedValues(), excludedKeys, scan, metadata, executionContext);
+            }
+            frames = newFrames(scan, buildIntervals(frame, scanIntervals, reader), readerMetadata, PartitionFrameCursorFactory.ORDER_DESC);
+            if (latestResidual != null && (latestResidual.getFunctionFlags() & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) == 0) {
+                configurePushdown(frame, frames, latestResidual, scan, metadata, indexes, reader, executionContext);
+            }
+            if (keySubquery != null) {
+                subquery = frame.functionInstantiator.takeSubquery(keySubquery, executionContext);
+                keyGetter = subqueryKeyGetter(subquery.getMetadata().getColumnType(0));
+            } else if (latestResidual != null) {
+                symbolCounts = symbolCounts(latestResidual, latest.getKeyColumnIds());
+            }
+        } catch (Throwable th) {
+            Misc.free(subquery, th);
+            Misc.free(frames, th);
+            Misc.freeObjList(excludedKeys, th);
+            Misc.freeObjList(keys, th);
+            Misc.free(filter, th);
+            throw th;
+        }
+        if (keySubquery != null) {
+            final int keyIndex = keyIndexes.getQuick(0);
+            return new LatestBySubQueryRecordCursorFactory(configuration, metadata, frames, keyIndex, subquery, filter,
+                    !scan.hasHint(ScanPlan.HINT_NO_INDEX) && metadata.isColumnIndexed(keyIndex), keyGetter, indexes, shifts);
+        }
+        return latestByGenerator.generateLatestByScan(
+                frames, metadata, reader, indexes, shifts, keyIndexes,
+                isIndexedAllowed,
+                filter, keys, excludedKeys, frame.latestPrefixes,
+                symbolCounts,
+                !scan.hasHint(ScanPlan.HINT_NO_INDEX),
+                executionContext.isCoveringIndexEnabled() && !scan.hasHint(ScanPlan.HINT_NO_COVERING),
+                scan.hasHint(ScanPlan.HINT_FORCE_USE_COVERING), executionContext
+        );
+    }
+
+    private void instantiateKeys(GenerationFrame frame, ObjList<BoundExpression> values, ObjList<Function> keys, ScanPlan scan,
                                  RecordMetadata metadata, SqlExecutionContext executionContext) throws SqlException {
+        keys.checkCapacity(keys.size() + values.size());
         for (int i = 0, n = values.size(); i < n; i++) {
-            final int slot = frame.resources.reserve();
-            slots.add(slot);
-            final Function key = SymbolKeyExtractor.instantiateValue(values.getQuick(i), scan.getOutput(), metadata, frame.functionInstantiator, executionContext);
-            frame.resources.own(slot, key);
-            keys.add(key);
+            keys.add(SymbolKeyExtractor.instantiateValue(values.getQuick(i), scan.getOutput(), metadata, frame.functionInstantiator, executionContext));
         }
     }
 
@@ -1076,11 +1057,12 @@ final class ScanFactoryGenerator {
         }
     }
 
-    int generateFiltered(
+    RecordCursorFactory generateFiltered(
             GenerationFrame frame, ScanPlan scan, BoundExpression residual, int requiredOrderColumnId, int requiredScanDirection,
             SortPlan orderAdvice, LimitPlan limitAdvice, int orderByMnemonic, SqlExecutionContext executionContext
     ) throws SqlException {
         final int timestampIndex = scan.getOutput().getColumnIndexById(scan.getNativeTimestampColumnId());
+        final RecordCursorFactory factory;
         try {
             if (timestampIndex >= 0) {
                 residual = frame.intervals.extract(residual, scan.getOutput().getColumnId(timestampIndex), scan.getOutput(), frame.functionInstantiator, frame.expressionRewriter, executionContext);
@@ -1091,57 +1073,60 @@ final class ScanFactoryGenerator {
                     ? PartitionFrameCursorFactory.ORDER_DESC : PartitionFrameCursorFactory.ORDER_ASC;
             if (scan.getTableToken().isLiveView()) {
                 // Rows the live view serves from memory bypass the wrapped scan, so only intervals go below it.
-                final int scanSlot = generateScan(frame, scan, executionContext, order, frame.intervals, null, null, null,
+                final RecordCursorFactory scanFactory = generateScan(frame, scan, executionContext, order, frame.intervals, null, null, null,
                         orderAdvice, limitAdvice, orderByMnemonic);
-                return residual == null ? scanSlot
-                        : filterScan(frame, scanSlot, scan, residual, order, orderAdvice, limitAdvice, executionContext);
+                factory = residual == null ? scanFactory
+                        : filterScan(frame, scanFactory, scan, residual, order, orderAdvice, limitAdvice, executionContext);
+            } else {
+                factory = generateScan(frame, scan, executionContext, order, frame.intervals, null, residual, null, orderAdvice, limitAdvice, orderByMnemonic);
             }
-            return generateScan(frame, scan, executionContext, order, frame.intervals, null, residual, null, orderAdvice, limitAdvice, orderByMnemonic);
         } catch (Throwable th) {
             Misc.clear(frame.intervals, th);
             throw th;
         } finally {
             frame.symbols.clear();
-            frame.intervals.clear();
         }
+        return SqlCodeGenerator.clearAfter(frame.intervals, factory);
     }
 
-    int generateFunctionSource(GenerationFrame frame, FunctionSourcePlan plan, SqlExecutionContext executionContext) throws SqlException {
-        final int inputSlot = frame.resources.reserve();
+    RecordCursorFactory generateFunctionSource(GenerationFrame frame, FunctionSourcePlan plan, SqlExecutionContext executionContext) throws SqlException {
         final RecordCursorFactory base = frame.functionSources.takeFactory(plan, executionContext);
-        frame.resources.own(inputSlot, base);
-        final RecordMetadata baseMetadata = base.getMetadata();
-        final OutputSchema output = plan.getOutput();
-        final IntList sourceIndexes = plan.getSourceColumnIndexes();
-        boolean isIdentity = sourceIndexes.size() == baseMetadata.getColumnCount()
-                && output.getTimestampIndex() == baseMetadata.getTimestampIndex();
-        for (int i = 0, n = sourceIndexes.size(); i < n; i++) {
-            isIdentity &= sourceIndexes.getQuick(i) == i;
+        final GenericRecordMetadata metadata;
+        final IntList mapping;
+        try {
+            final RecordMetadata baseMetadata = base.getMetadata();
+            final OutputSchema output = plan.getOutput();
+            final IntList sourceIndexes = plan.getSourceColumnIndexes();
+            boolean isIdentity = sourceIndexes.size() == baseMetadata.getColumnCount()
+                    && output.getTimestampIndex() == baseMetadata.getTimestampIndex();
+            for (int i = 0, n = sourceIndexes.size(); i < n; i++) {
+                isIdentity &= sourceIndexes.getQuick(i) == i;
+            }
+            if (isIdentity) {
+                return base;
+            }
+            metadata = new GenericRecordMetadata();
+            mapping = new IntList(sourceIndexes);
+            for (int i = 0, n = mapping.size(); i < n; i++) {
+                metadata.add(baseMetadata.getColumnMetadata(mapping.getQuick(i)));
+            }
+            metadata.setTimestampIndex(output.getTimestampIndex());
+            if (base instanceof ProjectableRecordCursorFactory projectable) {
+                projectable.setQueryProjectedMetadata(metadata);
+                return base;
+            }
+        } catch (Throwable th) {
+            Misc.free(base, th);
+            throw th;
         }
-        if (isIdentity) {
-            return inputSlot;
-        }
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        final IntList mapping = new IntList(sourceIndexes);
-        for (int i = 0, n = mapping.size(); i < n; i++) {
-            metadata.add(baseMetadata.getColumnMetadata(mapping.getQuick(i)));
-        }
-        metadata.setTimestampIndex(output.getTimestampIndex());
-        if (base instanceof ProjectableRecordCursorFactory projectable) {
-            projectable.setQueryProjectedMetadata(metadata);
-            return inputSlot;
-        }
-        final int slot = frame.resources.reserve();
-        final RecordCursorFactory factory = new SelectedRecordCursorFactory(metadata, mapping, base);
-        frame.resources.detach(inputSlot);
-        frame.resources.own(slot, factory);
-        return slot;
+        return new SelectedRecordCursorFactory(metadata, mapping, base);
     }
 
-    int generateLatestBy(GenerationFrame frame, LatestByPlan latest, ScanPlan scan, SqlExecutionContext executionContext) throws SqlException {
+    RecordCursorFactory generateLatestBy(GenerationFrame frame, LatestByPlan latest, ScanPlan scan, SqlExecutionContext executionContext) throws SqlException {
         if (!(latest.getInput() instanceof FilterPlan filter)) {
             return generateScan(frame, scan, executionContext, PartitionFrameCursorFactory.ORDER_DESC, null, latest, null, null);
         }
+        final RecordCursorFactory factory;
         try {
             final BoundExpression predicate = filter.getPredicate();
             if (configuration.useWithinLatestByOptimisation()) {
@@ -1151,7 +1136,7 @@ final class ScanFactoryGenerator {
                     scan.getNativeTimestampColumnId(), scan.getOutput(), frame.functionInstantiator, frame.expressionRewriter, executionContext);
             final int candidateColumnId = latest.getKeyColumnIds().size() == 1 ? latest.getKeyColumnIds().getQuick(0) : -1;
             residual = frame.symbols.extract(foldSelfComparisons(frame, residual), candidateColumnId, frame.expressionRewriter);
-            return generateScan(frame, scan, executionContext, PartitionFrameCursorFactory.ORDER_DESC, frame.intervals, latest, residual, frame.symbols);
+            factory = generateScan(frame, scan, executionContext, PartitionFrameCursorFactory.ORDER_DESC, frame.intervals, latest, residual, frame.symbols);
         } catch (Throwable th) {
             Misc.clear(frame.intervals, th);
             throw th;
@@ -1159,11 +1144,11 @@ final class ScanFactoryGenerator {
             frame.latestPrefixes.clear();
             frame.latestWithin = null;
             frame.symbols.clear();
-            frame.intervals.clear();
         }
+        return SqlCodeGenerator.clearAfter(frame.intervals, factory);
     }
 
-    int generateScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, int order) throws SqlException {
+    RecordCursorFactory generateScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, int order) throws SqlException {
         return generateScan(frame, scan, executionContext, order, null, null, null, null);
     }
 
@@ -1179,17 +1164,12 @@ final class ScanFactoryGenerator {
             IntList columnSizeShifts,
             boolean isRandomAccessSupported
     ) {
-        try {
-            return new PageFrameRecordCursorFactory(configuration, queryMetadata, frames, new PageFrameRowCursorFactory(order),
-                    isFollowingOrderByAdvice, null, true, columnIndexes, columnSizeShifts, isRandomAccessSupported, false);
-        } catch (Throwable th) {
-            Misc.free(frames, th);
-            throw th;
-        }
+        return new PageFrameRecordCursorFactory(configuration, queryMetadata, frames, new PageFrameRowCursorFactory(order),
+                isFollowingOrderByAdvice, null, true, columnIndexes, columnSizeShifts, isRandomAccessSupported, false);
     }
 
     /**
-     * Consumes frames, key and filter on entry; covering scans leave filtering to their caller.
+     * Consumes frames, key and filter on entry, including on failure; covering scans leave filtering to their caller.
      */
     RecordCursorFactory generateSingleSymbolIndexScan(
             RecordMetadata metadata,
@@ -1205,59 +1185,36 @@ final class ScanFactoryGenerator {
             int @Nullable [] coveringMapping,
             boolean isBackupSuppressed
     ) {
-        RecordCursorFactory backup = null;
-        RecordCursorFactory result = null;
-        RowCursorFactory rows = null;
-        try {
-            if (coveringMapping != null) {
-                assert filter == null;
-                final PartitionFrameCursorFactory sharedFrames = frames;
-                final Function sharedKey = key;
-                if (!isBackupSuppressed && canKeyBeNull(symbolKey, key)) {
-                    backup = buildSingleSymbolIndexScan(configuration, metadata, frames, keyIndex, symbolKey,
-                            key, indexDirection, followsOrderByAdvice, columnIndexes, columnSizeShifts);
-                    frames = null;
-                    key = null;
-                }
-                result = new CoveringIndexRecordCursorFactory(metadata, sharedFrames, columnIndexes.getQuick(keyIndex),
-                        symbolKey, sharedKey, columnIndexes, coveringMapping, null, null, false, null, null,
-                        backup, true, backup == null && canKeyBeNull(symbolKey, sharedKey));
-                backup = null;
-                frames = null;
-                key = null;
-                return result;
-            }
-            if (filter == null) {
-                result = buildSingleSymbolIndexScan(configuration, metadata, frames, keyIndex, symbolKey,
-                        key, indexDirection, followsOrderByAdvice, columnIndexes, columnSizeShifts);
-                frames = null;
-                key = null;
-                return result;
-            }
-            if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                rows = new DeferredSymbolIndexFilteredRowCursorFactory(keyIndex, key, filter, indexDirection);
-                key = null;
-            } else {
-                rows = new SymbolIndexFilteredRowCursorFactory(keyIndex, symbolKey, filter, indexDirection, null);
-            }
-            result = new PageFrameRecordCursorFactory(configuration, metadata, frames, rows, followsOrderByAdvice,
+        if (coveringMapping != null) {
+            assert filter == null;
+            final boolean canKeyBeNull = canKeyBeNull(symbolKey, key);
+            final RecordCursorFactory backup = !isBackupSuppressed && canKeyBeNull
+                    ? buildSingleSymbolIndexScan(configuration, metadata, frames, keyIndex, symbolKey,
+                    key, indexDirection, followsOrderByAdvice, columnIndexes, columnSizeShifts)
+                    : null;
+            return new CoveringIndexRecordCursorFactory(metadata, frames, columnIndexes.getQuick(keyIndex),
+                    symbolKey, key, columnIndexes, coveringMapping, null, null, false, null, null,
+                    backup, true, backup == null && canKeyBeNull);
+        }
+        if (filter == null) {
+            return buildSingleSymbolIndexScan(configuration, metadata, frames, keyIndex, symbolKey,
+                    key, indexDirection, followsOrderByAdvice, columnIndexes, columnSizeShifts);
+        }
+        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+            return new PageFrameRecordCursorFactory(configuration, metadata, frames,
+                    new DeferredSymbolIndexFilteredRowCursorFactory(keyIndex, key, filter, indexDirection), followsOrderByAdvice,
                     filter, false, columnIndexes, columnSizeShifts, true, false);
-            rows = null;
-            frames = null;
-            filter = null;
-            final Function resolvedKey = key;
-            key = null;
-            Misc.free(resolvedKey);
-            return result;
+        }
+        final RecordCursorFactory result;
+        try {
+            result = new PageFrameRecordCursorFactory(configuration, metadata, frames,
+                    new SymbolIndexFilteredRowCursorFactory(keyIndex, symbolKey, filter, indexDirection, null), followsOrderByAdvice,
+                    filter, false, columnIndexes, columnSizeShifts, true, false);
         } catch (Throwable th) {
-            Misc.free(result, th);
-            Misc.free(backup, th);
-            Misc.free(rows, th);
-            Misc.free(frames, th);
-            Misc.free(filter, th);
             Misc.free(key, th);
             throw th;
         }
+        return SqlCodeGenerator.closeAfter(key, result);
     }
 
     /**
@@ -1278,17 +1235,17 @@ final class ScanFactoryGenerator {
             boolean isPreTouchEnabled,
             SqlExecutionContext executionContext
     ) {
+        final int keyColumnIndex = filter.getSymbolColumnIndex();
+        final boolean isNegated = filter.isNegated();
+        final IntList effectiveKeys = new IntList();
+        final AdaptiveSymbolPatternRecordCursorFactory.NonOwningPartitionFrameCursorFactory sharedFrames =
+                new AdaptiveSymbolPatternRecordCursorFactory.NonOwningPartitionFrameCursorFactory(frames);
+        final boolean isParallel = executionContext.isParallelFilterEnabled();
         RecordCursorFactory coveringDelegate = null;
         RecordCursorFactory indexDelegate = null;
         RecordCursorFactory scanDelegate = null;
-        AdaptiveSymbolPatternRecordCursorFactory adaptive = null;
-        boolean isFilterOwned = false;
+        boolean isSelfFiltering = false;
         try {
-            final int keyColumnIndex = filter.getSymbolColumnIndex();
-            final boolean isNegated = filter.isNegated();
-            final IntList effectiveKeys = new IntList();
-            final AdaptiveSymbolPatternRecordCursorFactory.NonOwningPartitionFrameCursorFactory sharedFrames =
-                    new AdaptiveSymbolPatternRecordCursorFactory.NonOwningPartitionFrameCursorFactory(frames);
             indexDelegate = new SymbolPatternIndexRecordCursorFactory(configuration, metadata, sharedFrames, keyColumnIndex,
                     effectiveKeys, orderByMnemonic, isOrderByTimestampOnly, IndexReader.DIR_FORWARD, columnIndexes, columnSizeShifts);
             final int[] coveringMapping = symbolPatternCoveringMapping(reader, keyColumnIndex, columnIndexes, metadata, isNegated, isCoveringAllowed);
@@ -1299,50 +1256,56 @@ final class ScanFactoryGenerator {
             }
             scanDelegate = new PageFrameRecordCursorFactory(configuration, metadata, sharedFrames,
                     new PageFrameRowCursorFactory(frames.getOrder()), false, null, true, columnIndexes, columnSizeShifts, true, false);
-            final boolean isParallel = executionContext.isParallelFilterEnabled();
-            final boolean isSelfFiltering = coveringDelegate == null && isParallel && filter.isThreadSafe();
-            if (isSelfFiltering) {
+            if (coveringDelegate == null && isParallel && filter.isThreadSafe()) {
+                final RecordCursorFactory unfiltered = scanDelegate;
+                scanDelegate = null;
+                isSelfFiltering = true;
                 scanDelegate = new AsyncFilteredRecordCursorFactory(executionContext.getCairoEngine(), configuration,
-                        executionContext.getMessageBus(), scanDelegate, filter, filterColumnIndexes, reduceTaskFactory, null,
+                        executionContext.getMessageBus(), unfiltered, filter, filterColumnIndexes, reduceTaskFactory, null,
                         null, 0, executionContext.getSharedQueryWorkerCount(), isPreTouchEnabled);
-                isFilterOwned = true;
             }
-            adaptive = new AdaptiveSymbolPatternRecordCursorFactory(metadata, frames, sharedFrames, columnIndexes, effectiveKeys,
-                    columnIndexes.getQuick(keyColumnIndex), isNegated, configuration.getSymbolPatternIndexThreshold(), filter,
-                    isSelfFiltering, indexDelegate, coveringDelegate, scanDelegate);
-            frames = null;
-            indexDelegate = null;
-            coveringDelegate = null;
-            scanDelegate = null;
-            if (isSelfFiltering) {
-                Misc.freeObjList(workerFilters);
-                return adaptive;
-            }
-            final RecordCursorFactory result = isParallel && adaptive.supportsPageFrameCursor()
-                    ? new AsyncFilteredRecordCursorFactory(executionContext.getCairoEngine(), configuration, executionContext.getMessageBus(),
-                    adaptive, filter, filterColumnIndexes, reduceTaskFactory, workerFilters, null, 0,
-                    executionContext.getSharedQueryWorkerCount(), isPreTouchEnabled)
-                    : new FilteredRecordCursorFactory(adaptive, filter);
-            if (result instanceof FilteredRecordCursorFactory) {
-                Misc.freeObjList(workerFilters);
-            }
-            return result;
         } catch (Throwable th) {
             Misc.free(coveringDelegate, th);
             Misc.free(indexDelegate, th);
             Misc.free(scanDelegate, th);
-            Misc.free(adaptive, th);
             Misc.free(frames, th);
             Misc.freeObjList(workerFilters, th);
-            if (!isFilterOwned) {
+            if (!isSelfFiltering) {
                 Misc.free(filter, th);
             }
             throw th;
         }
+        final AdaptiveSymbolPatternRecordCursorFactory adaptive;
+        try {
+            adaptive = new AdaptiveSymbolPatternRecordCursorFactory(metadata, frames, sharedFrames, columnIndexes, effectiveKeys,
+                    columnIndexes.getQuick(keyColumnIndex), isNegated, configuration.getSymbolPatternIndexThreshold(), filter,
+                    isSelfFiltering, indexDelegate, coveringDelegate, scanDelegate);
+        } catch (Throwable th) {
+            Misc.freeObjList(workerFilters, th);
+            if (!isSelfFiltering) {
+                Misc.free(filter, th);
+            }
+            throw th;
+        }
+        if (isSelfFiltering || !isParallel || !adaptive.supportsPageFrameCursor()) {
+            try {
+                Misc.freeObjList(workerFilters);
+            } catch (Throwable th) {
+                Misc.free(adaptive, th);
+                if (!isSelfFiltering) {
+                    Misc.free(filter, th);
+                }
+                throw th;
+            }
+            return isSelfFiltering ? adaptive : new FilteredRecordCursorFactory(adaptive, filter);
+        }
+        return new AsyncFilteredRecordCursorFactory(executionContext.getCairoEngine(), configuration, executionContext.getMessageBus(),
+                adaptive, filter, filterColumnIndexes, reduceTaskFactory, workerFilters, null, 0,
+                executionContext.getSharedQueryWorkerCount(), isPreTouchEnabled);
     }
 
     /**
-     * Consumes frames, key functions and filter; the key list and reader are borrowed.
+     * Consumes frames, key functions and filter, including on failure; the key list and reader are borrowed.
      */
     RecordCursorFactory generateSymbolValuesIndexScan(
             RecordMetadata metadata,
@@ -1361,34 +1324,28 @@ final class ScanFactoryGenerator {
             int @Nullable [] coveringMapping,
             boolean isBackupSuppressed
     ) {
-        RecordCursorFactory backup = null;
+        if (coveringMapping == null) {
+            return new FilterOnValuesRecordCursorFactory(configuration, metadata, frames, keys, keyIndex,
+                    reader, filter, orderByMnemonic, isOrderByKey, isOrderByTimestamp, orderDirection,
+                    indexDirection, columnIndexes, columnSizeShifts);
+        }
+        assert filter == null;
+        final int readerKeyIndex = columnIndexes.getQuick(keyIndex);
+        final boolean hasNullableKey;
         try {
-            if (coveringMapping == null) {
-                return new FilterOnValuesRecordCursorFactory(configuration, metadata, frames, keys, keyIndex,
-                        reader, filter, orderByMnemonic, isOrderByKey, isOrderByTimestamp, orderDirection,
-                        indexDirection, columnIndexes, columnSizeShifts);
-            }
-            assert filter == null;
-            final int readerKeyIndex = columnIndexes.getQuick(keyIndex);
-            final boolean hasNullableKey = canAnyKeyBeNull(keys, reader.getSymbolMapReader(readerKeyIndex));
-            final PartitionFrameCursorFactory sharedFrames = frames;
-            final ObjList<Function> sharedKeys = keys;
-            if (hasNullableKey && !isBackupSuppressed) {
-                backup = new FilterOnValuesRecordCursorFactory(configuration, metadata, frames, keys, keyIndex,
-                        reader, null, orderByMnemonic, isOrderByKey, isOrderByTimestamp, orderDirection,
-                        indexDirection, columnIndexes, columnSizeShifts);
-                frames = null;
-                keys = null;
-            }
-            return new CoveringIndexRecordCursorFactory(metadata, sharedFrames, readerKeyIndex,
-                    SymbolTable.VALUE_NOT_FOUND, null, columnIndexes, coveringMapping, sharedKeys, reader,
-                    false, null, null, backup, true, hasNullableKey && isBackupSuppressed);
+            hasNullableKey = canAnyKeyBeNull(keys, reader.getSymbolMapReader(readerKeyIndex));
         } catch (Throwable th) {
-            Misc.free(backup, th);
             Misc.free(frames, th);
             Misc.freeObjList(keys, th);
-            Misc.free(filter, th);
             throw th;
         }
+        final RecordCursorFactory backup = hasNullableKey && !isBackupSuppressed
+                ? new FilterOnValuesRecordCursorFactory(configuration, metadata, frames, keys, keyIndex,
+                reader, null, orderByMnemonic, isOrderByKey, isOrderByTimestamp, orderDirection,
+                indexDirection, columnIndexes, columnSizeShifts)
+                : null;
+        return new CoveringIndexRecordCursorFactory(metadata, frames, readerKeyIndex,
+                SymbolTable.VALUE_NOT_FOUND, null, columnIndexes, coveringMapping, keys, reader,
+                false, null, null, backup, true, hasNullableKey && isBackupSuppressed);
     }
 }

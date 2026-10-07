@@ -48,7 +48,12 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
             int columnSplit
     ) {
         super(metadata, null, masterFactory, slaveFactory);
-        this.cursor = new CrossJoinRecordCursor(columnSplit);
+        try {
+            this.cursor = new CrossJoinRecordCursor(columnSplit);
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override

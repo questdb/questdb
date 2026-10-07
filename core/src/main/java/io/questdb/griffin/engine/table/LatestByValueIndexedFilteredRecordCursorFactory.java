@@ -54,14 +54,19 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractPag
             @NotNull IntList columnSizeShifts
     ) {
         super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
-        cursor = new LatestByValueIndexedFilteredRecordCursor(
-                configuration,
-                metadata,
-                columnIndex,
-                TableUtils.toIndexKey(symbolKey),
-                filter
-        );
         this.filter = filter;
+        try {
+            cursor = new LatestByValueIndexedFilteredRecordCursor(
+                    configuration,
+                    metadata,
+                    columnIndex,
+                    TableUtils.toIndexKey(symbolKey),
+                    filter
+            );
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override

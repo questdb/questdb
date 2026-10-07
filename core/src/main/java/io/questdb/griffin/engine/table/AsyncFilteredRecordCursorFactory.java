@@ -95,15 +95,13 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         this.filter = filter;
         // A throw part-way through this constructor never returns the factory, so _close() never runs
         // and everything allocated up to that point is unreachable: the cursors hold native records
-        // and page frame memory, and a per-worker filter can hold native memory of its own. The
-        // caller frees what it passed in (the filter and the base factory), so build the rest into
-        // locals and release them here.
+        // and page frame memory, and a per-worker filter can hold native memory of its own. Build the
+        // rest into locals and release them here, together with the inputs this constructor consumes.
         //
-        // The caller retains the per-worker filter list until this constructor returns. Once the atom
-        // takes the filters, its failure paths close them and null the list slots, so the caller can
-        // safely close any remaining entries. The atom belongs to the frame sequence from the moment
-        // the PageFrameSequence constructor is entered: that constructor closes the atom on its own
-        // failure path, and close() closes it afterwards. Nothing that can throw sits between the two
+        // Once the atom takes the per-worker filters, its failure paths close them and null the list
+        // slots. The atom belongs to the frame sequence from the moment the PageFrameSequence
+        // constructor is entered: that constructor closes the atom on its own failure path, and
+        // close() closes it afterwards. Nothing that can throw sits between the two
         // calls, so isPerWorkerFiltersOwned covers the whole gap and every object below is closed
         // exactly once on every path.
         AsyncFilteredRecordCursor cursor = null;
@@ -147,6 +145,9 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             // The cursors are not open yet, and close() frees their records only once they are, so
             // release the records directly - the same call halfClose() makes on the open factory.
             halfCloseBestEffort(th, frameSequence, cursor, negativeLimitCursor);
+            Misc.free(filter, th);
+            Misc.free(limitLoFunction, th);
+            Misc.free(base, th);
             throw th;
         }
         this.cursor = cursor;
@@ -154,8 +155,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         this.frameSequence = frameSequence;
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = maxNegativeLimit;
-        // Assigned last: _close() frees this field, so it must not be set before a statement that
-        // can still throw, or the caller's own free would become a double free.
         this.limitLoFunction = limitLoFunction;
         this.workerCount = workerCount;
     }

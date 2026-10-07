@@ -152,7 +152,6 @@ final class AggregateFactoryGenerator {
     private final EntityColumnFilter entityColumnFilter;
     private final ObjList<HorizonJoinKeys> horizonKeys = new ObjList<>();
     private final IntList horizonMasterSymbols;
-    private final IntList horizonSlaveSlots = new IntList();
     private final IntList horizonSlaveSymbols;
 
     AggregateFactoryGenerator(
@@ -566,18 +565,18 @@ final class AggregateFactoryGenerator {
         }
     }
 
-    private int generateSharedInput(GenerationFrame frame, AggregatePlan aggregate) {
+    private RecordCursorFactory generateSharedInput(GenerationFrame frame, AggregatePlan aggregate) {
         final JoinInput source = aggregate.getSharedSource();
         final int entry = source == null ? -1 : frame.sharedSources.indexOf(source);
         if (entry < 0 || !frame.sharedFactories.getQuick(entry).supportsSharedCursors()) {
-            return -1;
+            return null;
         }
         final RecordCursorFactory primary = frame.sharedFactories.getQuick(entry);
         final RecordMetadata primaryMetadata = primary.getMetadata();
         final OutputSchema sourceOutput = source.getSourceOutput();
         final OutputSchema input = aggregate.getInput().getOutput();
         if (sourceOutput.getColumnCount() != primaryMetadata.getColumnCount()) {
-            return -1;
+            return null;
         }
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         final IntList mapping = new IntList(input.getColumnCount());
@@ -586,16 +585,14 @@ final class AggregateFactoryGenerator {
             final int index = shared < 0 ? sourceOutput.getColumnIndexQuiet(input.getColumnName(i))
                     : sourceOutput.getColumnIndexById(aggregate.getSharedSourceIds().getQuick(shared));
             if (index < 0 || primaryMetadata.getColumnType(index) != input.getColumnType(i)) {
-                return -1;
+                return null;
             }
             mapping.add(index);
             metadata.add(SqlCodeGenerator.copyColumn(primaryMetadata, index, SqlUtil.toColumnName(input.getColumnName(i))));
         }
         final int sharedId = frame.sharedConsumerCounts.getQuick(entry);
         frame.sharedConsumerCounts.setQuick(entry, sharedId + 1);
-        final int slot = frame.resources.reserve();
-        frame.resources.own(slot, new SelectedRecordCursorFactory(metadata, mapping, new SharedRecordCursorFactory(primary, sharedId)));
-        return slot;
+        return new SelectedRecordCursorFactory(metadata, mapping, new SharedRecordCursorFactory(primary, sharedId));
     }
 
     private RecordCursorFactory generateVector(AggregatePlan plan, RecordCursorFactory base, SqlExecutionContext executionContext) {
@@ -867,65 +864,84 @@ final class AggregateFactoryGenerator {
         if (scan.hasHint(ScanPlan.HINT_NO_COVERING) || scan.hasHint(ScanPlan.HINT_NO_INDEX)) {
             return null;
         }
-        final OutputSchema schema = scan.getOutput();
-        final int nativeTimestampIndex = schema.getColumnIndexById(scan.getNativeTimestampColumnId());
+        final RecordCursorFactory result;
         try {
-            if (predicate != null && (nativeTimestampIndex < 0
-                    || frame.intervals.extract(predicate, scan.getNativeTimestampColumnId(), schema, instantiator, frame.expressionRewriter, executionContext) != null)) {
-                return null;
-            }
-            try (TableReader reader = ScanFactoryGenerator.getBoundReader(scan, executionContext)) {
-                final TableReaderMetadata tableMetadata = reader.getMetadata();
-                final int index = scan.getSourceColumnIndexes().getQuick(schema.getColumnIndexById(key.getColumnId()));
-                if (!IndexType.isPosting(tableMetadata.getColumnIndexType(index))) {
-                    return null;
-                }
-                RuntimeIntrinsicIntervalModel intervalModel = null;
-                PartitionFrameCursorFactory frames = null;
-                try {
-                    if (predicate != null) {
-                        intervalModel = frame.intervals.build(reader.getPartitionedBy());
-                        if (intervalModel == null || intervalModel.calculateIntervals(executionContext).size() == 0) {
-                            final RuntimeIntrinsicIntervalModel discarded = intervalModel;
-                            intervalModel = null;
-                            Misc.free(discarded);
-                            return null;
-                        }
-                    }
-                    final TableColumnMetadata column = tableMetadata.getColumnMetadata(index);
-                    final GenericRecordMetadata output = new GenericRecordMetadata().add(new TableColumnMetadata(
-                            Chars.toString(plan.getOutput().getColumnName(0)), key.getDataType(), column.getIndexType(),
-                            column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), null, column.getWriterIndex(),
-                            false, 0, column.isSymbolCacheFlag(), column.getSymbolCapacity()));
-                    final GenericRecordMetadata frameMetadata = GenericRecordMetadata.copyOfNew(tableMetadata);
-                    final IntList indexes = new IntList();
-                    indexes.add(index);
-                    if (intervalModel != null) {
-                        final int timestampIndex = tableMetadata.getTimestampIndex();
-                        if (timestampIndex != index) {
-                            indexes.add(timestampIndex);
-                        }
-                        frames = new IntervalPartitionFrameCursorFactory(scan.getTableToken(), scan.getMetadataVersion(), intervalModel,
-                                timestampIndex, frameMetadata, ORDER_ASC, scan.getViewName(), scan.getViewPosition(), scan.isUpdate());
-                        intervalModel = null;
-                    } else {
-                        frames = new FullPartitionFrameCursorFactory(scan.getTableToken(), scan.getMetadataVersion(), frameMetadata,
-                                ORDER_ASC, scan.getViewName(), scan.getViewPosition(), scan.isUpdate());
-                    }
-                    final RecordCursorFactory result = new PostingIndexDistinctRecordCursorFactory(output, frames, index, 0, indexes);
-                    frames = null;
-                    return result;
-                } catch (Throwable th) {
-                    Misc.free(frames, th);
-                    Misc.free(intervalModel, th);
-                    throw th;
-                }
-            }
+            result = generatePostingIndex(frame, plan, key, scan, predicate, instantiator, executionContext);
         } catch (Throwable th) {
             Misc.clear(frame.intervals, th);
             throw th;
-        } finally {
-            frame.intervals.clear();
+        }
+        return SqlCodeGenerator.clearAfter(frame.intervals, result);
+    }
+
+    private RecordCursorFactory generatePostingIndex(GenerationFrame frame, AggregatePlan plan, ColumnExpression key, ScanPlan scan,
+                                                     BoundExpression predicate, FunctionInstantiator instantiator,
+                                                     SqlExecutionContext executionContext) throws SqlException {
+        final OutputSchema schema = scan.getOutput();
+        final int nativeTimestampIndex = schema.getColumnIndexById(scan.getNativeTimestampColumnId());
+        if (predicate != null && (nativeTimestampIndex < 0
+                || frame.intervals.extract(predicate, scan.getNativeTimestampColumnId(), schema, instantiator, frame.expressionRewriter, executionContext) != null)) {
+            return null;
+        }
+        final TableReader reader = ScanFactoryGenerator.getBoundReader(scan, executionContext);
+        final RecordCursorFactory result;
+        try {
+            result = generatePostingIndexScan(plan, key, scan, predicate, reader, frame, executionContext);
+        } catch (Throwable th) {
+            Misc.free(reader, th);
+            throw th;
+        }
+        return SqlCodeGenerator.closeAfter(reader, result);
+    }
+
+    private RecordCursorFactory generatePostingIndexScan(AggregatePlan plan, ColumnExpression key, ScanPlan scan, BoundExpression predicate,
+                                                         TableReader reader, GenerationFrame frame, SqlExecutionContext executionContext) throws SqlException {
+        final OutputSchema schema = scan.getOutput();
+        final TableReaderMetadata tableMetadata = reader.getMetadata();
+        final int index = scan.getSourceColumnIndexes().getQuick(schema.getColumnIndexById(key.getColumnId()));
+        if (!IndexType.isPosting(tableMetadata.getColumnIndexType(index))) {
+            return null;
+        }
+        RuntimeIntrinsicIntervalModel intervalModel = null;
+        PartitionFrameCursorFactory frames = null;
+        try {
+            if (predicate != null) {
+                intervalModel = frame.intervals.build(reader.getPartitionedBy());
+                if (intervalModel == null || intervalModel.calculateIntervals(executionContext).size() == 0) {
+                    final RuntimeIntrinsicIntervalModel discarded = intervalModel;
+                    intervalModel = null;
+                    Misc.free(discarded);
+                    return null;
+                }
+            }
+            final TableColumnMetadata column = tableMetadata.getColumnMetadata(index);
+            final GenericRecordMetadata output = new GenericRecordMetadata().add(new TableColumnMetadata(
+                    Chars.toString(plan.getOutput().getColumnName(0)), key.getDataType(), column.getIndexType(),
+                    column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), null, column.getWriterIndex(),
+                    false, 0, column.isSymbolCacheFlag(), column.getSymbolCapacity()));
+            final GenericRecordMetadata frameMetadata = GenericRecordMetadata.copyOfNew(tableMetadata);
+            final IntList indexes = new IntList();
+            indexes.add(index);
+            if (intervalModel != null) {
+                final int timestampIndex = tableMetadata.getTimestampIndex();
+                if (timestampIndex != index) {
+                    indexes.add(timestampIndex);
+                }
+                final RuntimeIntrinsicIntervalModel ownedIntervalModel = intervalModel;
+                intervalModel = null;
+                frames = new IntervalPartitionFrameCursorFactory(scan.getTableToken(), scan.getMetadataVersion(), ownedIntervalModel,
+                        timestampIndex, frameMetadata, ORDER_ASC, scan.getViewName(), scan.getViewPosition(), scan.isUpdate());
+            } else {
+                frames = new FullPartitionFrameCursorFactory(scan.getTableToken(), scan.getMetadataVersion(), frameMetadata,
+                        ORDER_ASC, scan.getViewName(), scan.getViewPosition(), scan.isUpdate());
+            }
+            final PartitionFrameCursorFactory ownedFrames = frames;
+            frames = null;
+            return new PostingIndexDistinctRecordCursorFactory(output, ownedFrames, index, 0, indexes);
+        } catch (Throwable th) {
+            Misc.free(frames, th);
+            Misc.free(intervalModel, th);
+            throw th;
         }
     }
 
@@ -1042,9 +1058,9 @@ final class AggregateFactoryGenerator {
             if (plan.getGroupingExpressions().size() == 0 && aggregates.size() == 0) {
                 // DISTINCT of constants uses global aggregation even over an empty
                 // input. Its outer projection owns the values; COUNT supplies the row.
-                final RecordCursorFactory result = new CountRecordCursorFactory(new GenericRecordMetadata(), base);
+                final GenericRecordMetadata metadata = new GenericRecordMetadata();
                 isAdopted = true;
-                return result;
+                return new CountRecordCursorFactory(metadata, base);
             }
             if (plan.getGroupingExpressions().size() == 0 && aggregates.size() == 1) {
                 final FunctionExpression call = aggregates.getQuick(0);
@@ -1057,9 +1073,8 @@ final class AggregateFactoryGenerator {
                     if (base instanceof SelectedRecordCursorFactory selected && selected.getMetadata().getColumnCount() == 0) {
                         base = selected.getBaseFactory();
                     }
-                    final RecordCursorFactory result = new CountRecordCursorFactory(metadata, base);
                     isAdopted = true;
-                    return result;
+                    return new CountRecordCursorFactory(metadata, base);
                 }
             }
             final RecordCursorFactory posting = tryPostingIndex(frame, plan, instantiator, executionContext);
@@ -1090,8 +1105,8 @@ final class AggregateFactoryGenerator {
         }
     }
 
-    int generateAggregate(GenerationFrame frame, AggregatePlan aggregate, SortPlan orderAdvice, SqlExecutionContext executionContext,
-                          int requiredOrderColumnId, int requiredScanDirection) throws SqlException {
+    RecordCursorFactory generateAggregate(GenerationFrame frame, AggregatePlan aggregate, SortPlan orderAdvice, SqlExecutionContext executionContext,
+                                          int requiredOrderColumnId, int requiredScanDirection) throws SqlException {
         if (aggregate.getInput() instanceof HorizonJoinPlan horizon) {
             return generateHorizonJoin(frame, aggregate, horizon, executionContext);
         }
@@ -1102,10 +1117,10 @@ final class AggregateFactoryGenerator {
                 break;
             }
         }
-        int sharedSlot = generateSharedInput(frame, aggregate);
-        if (sharedSlot < 0 && prepareSharedHead(frame, aggregate)) {
+        RecordCursorFactory shared = generateSharedInput(frame, aggregate);
+        if (shared == null && prepareSharedHead(frame, aggregate)) {
             try {
-                sharedSlot = codeGenerator.generate(frame, aggregate.getInput(), executionContext, -1, RecordCursorFactory.SCAN_DIRECTION_OTHER, null, null, inputMnemonic);
+                shared = codeGenerator.generate(frame, aggregate.getInput(), executionContext, -1, RecordCursorFactory.SCAN_DIRECTION_OTHER, null, null, inputMnemonic);
             } finally {
                 frame.sharedHeadTarget = null;
             }
@@ -1117,46 +1132,39 @@ final class AggregateFactoryGenerator {
             inputOrderId = key.getColumnId();
         }
         final LogicalPlan input = skipRenames(aggregate.getInput());
-        final boolean isTimestampDeclared = sharedSlot < 0 && SqlCodeGenerator.isTimestampDeclarationOnly(input);
-        final int inputSlot = sharedSlot >= 0 ? sharedSlot : codeGenerator.generate(frame, isTimestampDeclared ? input.inputAt(0) : input,
+        final boolean isTimestampDeclared = shared == null && SqlCodeGenerator.isTimestampDeclarationOnly(input);
+        final RecordCursorFactory base = shared != null ? shared : codeGenerator.generate(frame, isTimestampDeclared ? input.inputAt(0) : input,
                 executionContext, inputOrderId, inputOrderId < 0 ? RecordCursorFactory.SCAN_DIRECTION_OTHER : requiredScanDirection,
                 remapKeyOrderAdvice(frame, aggregate, orderAdvice), null, inputMnemonic);
-        raiseDeferredKeys(aggregate);
-        final int slot = frame.resources.reserve();
-        final RecordCursorFactory base = frame.resources.detachFactory(inputSlot);
+        try {
+            raiseDeferredKeys(aggregate);
+        } catch (Throwable th) {
+            Misc.free(base, th);
+            throw th;
+        }
         final int timestampIndex = isTimestampDeclared ? input.getOutput().getTimestampIndex() : base.getMetadata().getTimestampIndex();
-        frame.resources.own(slot, generate(frame, aggregate, base, timestampIndex, frame.functionInstantiator,
-                sharedConsumerCount(frame, aggregate), executionContext));
-        return slot;
+        return generate(frame, aggregate, base, timestampIndex, frame.functionInstantiator, sharedConsumerCount(frame, aggregate), executionContext);
     }
 
-    int generateDistinct(GenerationFrame frame, DistinctPlan distinct, LimitPlan limitAdvice, SqlExecutionContext executionContext) throws SqlException {
+    RecordCursorFactory generateDistinct(GenerationFrame frame, DistinctPlan distinct, LimitPlan limitAdvice, SqlExecutionContext executionContext) throws SqlException {
         // DISTINCT keeps its input order. A downstream sort must not turn the
         // timestamp-specialized factory's forward input into a backward scan.
-        final int inputSlot = codeGenerator.generate(frame, distinct.getInput(), executionContext);
-        final RecordCursorFactory base = frame.resources.factory(inputSlot);
-        final int slot = frame.resources.reserve();
-        final int loSlot = frame.resources.reserve();
-        final int hiSlot = frame.resources.reserve();
+        final RecordCursorFactory base = codeGenerator.generate(frame, distinct.getInput(), executionContext);
         Function lo = null;
         Function hi = null;
         if (limitAdvice != null && !isTimeSeriesDistinct(base)) {
-            lo = frame.functionInstantiator.instantiate(limitAdvice.getLo(), emptySchema, executionContext);
-            frame.resources.own(loSlot, lo);
-            if (limitAdvice.getHi() != null) {
-                hi = frame.functionInstantiator.instantiate(limitAdvice.getHi(), emptySchema, executionContext);
-                frame.resources.own(hiSlot, hi);
+            try {
+                lo = frame.functionInstantiator.instantiate(limitAdvice.getLo(), emptySchema, executionContext);
+                if (limitAdvice.getHi() != null) {
+                    hi = frame.functionInstantiator.instantiate(limitAdvice.getHi(), emptySchema, executionContext);
+                }
+            } catch (Throwable th) {
+                Misc.free(lo, th);
+                Misc.free(base, th);
+                throw th;
             }
         }
-        frame.resources.detach(inputSlot);
-        if (lo != null) {
-            frame.resources.detach(loSlot);
-        }
-        if (hi != null) {
-            frame.resources.detach(hiSlot);
-        }
-        frame.resources.own(slot, generateDistinct(base, lo, hi));
-        return slot;
+        return generateDistinct(base, lo, hi);
     }
 
     /**
@@ -1337,29 +1345,21 @@ final class AggregateFactoryGenerator {
         }
     }
 
-    int generateHorizonJoin(GenerationFrame frame, AggregatePlan aggregate, HorizonJoinPlan horizon, SqlExecutionContext executionContext)
+    RecordCursorFactory generateHorizonJoin(GenerationFrame frame, AggregatePlan aggregate, HorizonJoinPlan horizon, SqlExecutionContext executionContext)
             throws SqlException {
         final int slaveCount = horizon.getSlaves().size();
-        final int masterSlot = codeGenerator.generateJoinInput(frame, horizon.getMaster(), executionContext, true, OrderByMnemonic.ORDER_BY_REQUIRED);
-        final int slotBase = horizonSlaveSlots.size();
-        final int slot;
-        final RecordCursorFactory master;
-        final ObjList<RecordCursorFactory> slaves;
+        final ObjList<RecordCursorFactory> slaves = new ObjList<>(slaveCount);
+        final RecordCursorFactory master = codeGenerator.generateJoinInput(frame, horizon.getMaster(), executionContext, true, OrderByMnemonic.ORDER_BY_REQUIRED);
         try {
             for (int i = 0; i < slaveCount; i++) {
-                horizonSlaveSlots.add(codeGenerator.generateJoinInput(frame, horizon.getSlaves().getQuick(i).getInput(), executionContext, true, OrderByMnemonic.ORDER_BY_REQUIRED));
+                slaves.add(codeGenerator.generateJoinInput(frame, horizon.getSlaves().getQuick(i).getInput(), executionContext, true, OrderByMnemonic.ORDER_BY_REQUIRED));
             }
-            slot = frame.resources.reserve();
-            master = frame.resources.detachFactory(masterSlot);
-            slaves = new ObjList<>(slaveCount);
-            for (int i = 0; i < slaveCount; i++) {
-                slaves.add(frame.resources.detachFactory(horizonSlaveSlots.getQuick(slotBase + i)));
-            }
-        } finally {
-            horizonSlaveSlots.setPos(slotBase);
+        } catch (Throwable th) {
+            Misc.freeObjList(slaves, th);
+            Misc.free(master, th);
+            throw th;
         }
-        frame.resources.own(slot, generateHorizonJoin(frame, aggregate, horizon, master, slaves, frame.functionInstantiator, executionContext));
-        return slot;
+        return generateHorizonJoin(frame, aggregate, horizon, master, slaves, frame.functionInstantiator, executionContext);
     }
 
     /**

@@ -69,7 +69,6 @@ final class GenerationFrame implements Closeable, Mutable {
     final OutputSchema projectionScope = new OutputSchema();
     final GenericRecordMetadata projectionScopeMetadata = new GenericRecordMetadata();
     final ParquetPushdownExtractor pushdown = new ParquetPushdownExtractor();
-    final ResourceScope resources = new ResourceScope();
     final ObjList<RecordCursorFactory> setOperationHeads = new ObjList<>();
     final ObjList<LogicalPlan> setOperationPlans = new ObjList<>();
     final IntList sharedConsumerCounts = new IntList();
@@ -78,7 +77,6 @@ final class GenerationFrame implements Closeable, Mutable {
     final ObjList<RecordCursorFactory> sharedFactories = new ObjList<>();
     final ObjList<JoinInput> sharedSources = new ObjList<>();
     final ObjectPool<SortPlan> sorts = new ObjectPool<>(SortPlan.FACTORY, 4);
-    final IntList symbolKeySlots = new IntList();
     final SymbolKeyExtractor symbols = new SymbolKeyExtractor();
     final ObjObjHashMap<IntList, ObjList<WindowFunction>> windowGroups = new ObjObjHashMap<>();
     final ObjList<TableColumnMetadata> windowOutputColumns = new ObjList<>();
@@ -105,8 +103,7 @@ final class GenerationFrame implements Closeable, Mutable {
 
     @Override
     public void clear() {
-        Throwable failure = Misc.clearBestEffort(null, resources);
-        failure = Misc.clearBestEffort(failure, intervals);
+        final Throwable failure = Misc.clearBestEffort(null, intervals);
         parallelFilterFactories.clear();
         parallelFilterPredicates.clear();
         isJoinIntervalCapture = false;
@@ -126,7 +123,6 @@ final class GenerationFrame implements Closeable, Mutable {
         setOperationHeads.clear();
         setOperationPlans.clear();
         projectionScopeMetadata.clear();
-        symbolKeySlots.clear();
         windowGroups.clear();
         windowOutputColumns.clear();
         windowPartitionKeys.clear();

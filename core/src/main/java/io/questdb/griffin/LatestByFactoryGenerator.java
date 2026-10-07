@@ -171,25 +171,26 @@ final class LatestByFactoryGenerator {
     /**
      * Generates LATEST BY over a derived input; a table scan input takes the keyed scan path instead.
      */
-    int generateLatestBy(GenerationFrame frame, LatestByPlan latest, SqlExecutionContext executionContext) throws SqlException {
+    RecordCursorFactory generateLatestBy(GenerationFrame frame, LatestByPlan latest, SqlExecutionContext executionContext) throws SqlException {
         final LogicalPlan input = latest.getInput();
         // LATEST BY locates its timestamp by position; a declaration alone adds nothing.
-        final int inputSlot = codeGenerator.generate(frame, SqlCodeGenerator.isTimestampDeclarationOnly(input) ? input.inputAt(0) : input, executionContext);
-        final RecordCursorFactory base = frame.resources.factory(inputSlot);
+        final RecordCursorFactory base = codeGenerator.generate(frame, SqlCodeGenerator.isTimestampDeclarationOnly(input) ? input.inputAt(0) : input, executionContext);
         final OutputSchema schema = input.getOutput();
         final int timestampIndex = schema.getColumnIndexById(latest.getTimestampColumnId());
         final IntList keyIndexes = latestByColumnIndexes;
-        keyIndexes.clear();
-        for (int i = 0, n = latest.getKeyColumnIds().size(); i < n; i++) {
-            keyIndexes.add(schema.getColumnIndexById(latest.getKeyColumnIds().getQuick(i)));
+        try {
+            keyIndexes.clear();
+            for (int i = 0, n = latest.getKeyColumnIds().size(); i < n; i++) {
+                keyIndexes.add(schema.getColumnIndexById(latest.getKeyColumnIds().getQuick(i)));
+            }
+        } catch (Throwable th) {
+            Misc.free(base, th);
+            throw th;
         }
         final boolean orderedByTimestampAsc = latest.isTimestampOrderInherited()
                 && timestampIndex == base.getMetadata().getTimestampIndex()
                 && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD;
-        final int slot = frame.resources.reserve();
-        frame.resources.detach(inputSlot);
-        frame.resources.own(slot, generateLatestBy(base, timestampIndex, keyIndexes, orderedByTimestampAsc));
-        return slot;
+        return generateLatestBy(base, timestampIndex, keyIndexes, orderedByTimestampAsc);
     }
 
     /**
@@ -205,17 +206,15 @@ final class LatestByFactoryGenerator {
                 keyTypes.add(metadata.getColumnType(index));
                 listColumnFilterA.add(index + 1);
             }
-            final RecordCursorFactory base = factory;
-            factory = null;
-            return generateLatestByPrepared(base, timestampIndex, orderedByTimestampAsc);
         } catch (Throwable th) {
             Misc.free(factory, th);
             throw th;
         }
+        return generateLatestByPrepared(factory, timestampIndex, orderedByTimestampAsc);
     }
 
     /**
-     * Consumes the optional interval model, filter and key function, including on failure.
+     * Consumes the frames, filter and key functions, including on failure.
      */
     RecordCursorFactory generateLatestByScan(
             PartitionFrameCursorFactory frames,
@@ -256,25 +255,6 @@ final class LatestByFactoryGenerator {
                 keyTypes.add(queryMetadata.getColumnType(index));
                 listColumnFilterA.add(index + 1);
             }
-            final PartitionFrameCursorFactory ownedFrames = frames;
-            final Function ownedFilter = filter;
-            frames = null;
-            filter = null;
-            if (keys.size() > 0 || excludedKeys.size() > 0) {
-                final int keyIndex = keyIndexes.getQuick(0);
-                final boolean isIndexed = isIndexAllowed && IndexType.isIndexed(queryMetadata.getColumnIndexType(keyIndex));
-                if (keys.size() == 1 && excludedKeys.size() == 0) {
-                    final Function ownedKey = keys.getQuick(0);
-                    keys.clear();
-                    return generateLatestBySingleKey(reader, queryMetadata, ownedFrames, keyIndex, ownedKey, ownedFilter,
-                            columnIndexes, columnSizeShifts, isIndexed, isCoveringAllowed, isBackupSuppressed);
-                }
-                return generateLatestByKeyList(reader, queryMetadata, ownedFrames, keyIndex, keys, excludedKeys,
-                        ownedFilter, columnIndexes, columnSizeShifts, isIndexed, isCoveringAllowed, isBackupSuppressed);
-            }
-            return generateLatestByAll(executionContext, queryMetadata, ownedFrames, columnIndexes, columnSizeShifts,
-                    ownedFilter == null && isIndexedScan(queryMetadata, keyIndexes, isIndexedAllowed && isIndexAllowed),
-                    ownedFilter, symbolCounts);
         } catch (Throwable th) {
             Misc.free(frames, th);
             Misc.free(filter, th);
@@ -282,10 +262,23 @@ final class LatestByFactoryGenerator {
             Misc.freeObjList(excludedKeys, th);
             throw th;
         }
+        if (keys.size() > 0 || excludedKeys.size() > 0) {
+            final int keyIndex = keyIndexes.getQuick(0);
+            final boolean isIndexed = isIndexAllowed && IndexType.isIndexed(queryMetadata.getColumnIndexType(keyIndex));
+            if (keys.size() == 1 && excludedKeys.size() == 0) {
+                return generateLatestBySingleKey(reader, queryMetadata, frames, keyIndex, keys.getQuick(0), filter,
+                        columnIndexes, columnSizeShifts, isIndexed, isCoveringAllowed, isBackupSuppressed);
+            }
+            return generateLatestByKeyList(reader, queryMetadata, frames, keyIndex, keys, excludedKeys,
+                    filter, columnIndexes, columnSizeShifts, isIndexed, isCoveringAllowed, isBackupSuppressed);
+        }
+        return generateLatestByAll(executionContext, queryMetadata, frames, columnIndexes, columnSizeShifts,
+                filter == null && isIndexedScan(queryMetadata, keyIndexes, isIndexedAllowed && isIndexAllowed),
+                filter, symbolCounts);
     }
 
     /**
-     * Consumes frames and filter; keyTypes and listColumnFilterA describe the ordered key tuple.
+     * Consumes frames and filter, including on failure; keyTypes and listColumnFilterA describe the ordered key tuple.
      */
     private RecordCursorFactory generateLatestByAll(
             SqlExecutionContext executionContext,
@@ -297,57 +290,47 @@ final class LatestByFactoryGenerator {
             @Nullable Function filter,
             @Nullable IntList symbolCounts
     ) {
+        final int keyIndex = listColumnFilterA.size() == 1 ? listColumnFilterA.getColumnIndexFactored(0) : -1;
+        if (keyIndex >= 0 && isIndexedScan) {
+            return new LatestByAllIndexedRecordCursorFactory(executionContext.getCairoEngine(), configuration,
+                    metadata, frames, keyIndex, columnIndexes, columnSizeShifts, prefixes);
+        }
+        final boolean isStaticSymbolKey;
+        RecordSink sink = null;
+        IntList partitionByColumnIndexes = null;
         try {
-            if (listColumnFilterA.size() == 1) {
-                final int keyIndex = listColumnFilterA.getColumnIndexFactored(0);
-                if (isIndexedScan) {
-                    final PartitionFrameCursorFactory ownedFrames = frames;
-                    frames = null;
-                    return new LatestByAllIndexedRecordCursorFactory(executionContext.getCairoEngine(), configuration,
-                            metadata, ownedFrames, keyIndex, columnIndexes, columnSizeShifts, prefixes);
+            isStaticSymbolKey = keyIndex >= 0 && isSymbol(metadata.getColumnType(keyIndex)) && metadata.isSymbolTableStatic(keyIndex);
+            if (!isStaticSymbolKey) {
+                boolean hasOnlySymbolKeys = true;
+                for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+                    hasOnlySymbolKeys &= isSymbol(keyTypes.getColumnType(i));
                 }
-                if (isSymbol(metadata.getColumnType(keyIndex)) && metadata.isSymbolTableStatic(keyIndex)) {
-                    // This constructor borrows until success, unlike the map/index factories below.
-                    final RecordCursorFactory result = new LatestByDeferredListValuesFilteredRecordCursorFactory(
-                            configuration, metadata, frames, keyIndex, filter, columnIndexes, columnSizeShifts);
-                    frames = null;
-                    filter = null;
-                    return result;
+                sink = RecordSinkFactory.getInstance(configuration, asm, metadata, listColumnFilterA);
+                if (hasOnlySymbolKeys) {
+                    partitionByColumnIndexes = new IntList(listColumnFilterA.size());
+                    for (int i = 0, n = listColumnFilterA.size(); i < n; i++) {
+                        partitionByColumnIndexes.add(listColumnFilterA.getColumnIndexFactored(i));
+                    }
                 }
             }
-            boolean hasOnlySymbolKeys = true;
-            for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
-                hasOnlySymbolKeys &= isSymbol(keyTypes.getColumnType(i));
-            }
-            final RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, metadata, listColumnFilterA);
-            if (hasOnlySymbolKeys) {
-                final IntList partitionByColumnIndexes = new IntList(listColumnFilterA.size());
-                for (int i = 0, n = listColumnFilterA.size(); i < n; i++) {
-                    partitionByColumnIndexes.add(listColumnFilterA.getColumnIndexFactored(i));
-                }
-                final PartitionFrameCursorFactory ownedFrames = frames;
-                frames = null;
-                // Until its cursor is constructed this factory owns frames, but not the filter.
-                final RecordCursorFactory result = new LatestByAllSymbolsFilteredRecordCursorFactory(configuration, metadata, ownedFrames,
-                        sink, keyTypes, partitionByColumnIndexes, symbolCounts, filter, columnIndexes, columnSizeShifts);
-                filter = null;
-                return result;
-            }
-            final PartitionFrameCursorFactory ownedFrames = frames;
-            final Function ownedFilter = filter;
-            frames = null;
-            filter = null;
-            return new LatestByAllFilteredRecordCursorFactory(configuration, metadata, ownedFrames,
-                    sink, keyTypes, ownedFilter, columnIndexes, columnSizeShifts);
         } catch (Throwable th) {
             Misc.free(frames, th);
             Misc.free(filter, th);
             throw th;
         }
+        if (isStaticSymbolKey) {
+            return new LatestByDeferredListValuesFilteredRecordCursorFactory(
+                    configuration, metadata, frames, keyIndex, filter, columnIndexes, columnSizeShifts);
+        }
+        return partitionByColumnIndexes != null
+                ? new LatestByAllSymbolsFilteredRecordCursorFactory(configuration, metadata, frames,
+                sink, keyTypes, partitionByColumnIndexes, symbolCounts, filter, columnIndexes, columnSizeShifts)
+                : new LatestByAllFilteredRecordCursorFactory(configuration, metadata, frames,
+                sink, keyTypes, filter, columnIndexes, columnSizeShifts);
     }
 
     /**
-     * Consumes frames, both key lists and the filter.
+     * Consumes frames, both key lists and the filter, including on failure.
      */
     private RecordCursorFactory generateLatestByKeyList(
             TableReader reader,
@@ -363,75 +346,52 @@ final class LatestByFactoryGenerator {
             boolean isCoveringAllowed,
             boolean isBackupSuppressed
     ) {
-        RecordCursorFactory backup = null;
-        try {
-            if (isIndexed && excludedKeys.size() == 0) {
-                final int readerKeyIndex = columnIndexes.getQuick(keyIndex);
-                final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(readerKeyIndex);
-                if (isCoveringAllowed) {
-                    final int[] coveringMapping = ScanFactoryGenerator.buildCoveringIndexMapping(reader, readerKeyIndex, columnIndexes, metadata);
-                    if (coveringMapping != null) {
-                        final PartitionFrameCursorFactory sharedFrames = frames;
-                        final Function sharedFilter = filter;
-                        if (!isBackupSuppressed && ScanFactoryGenerator.canAnyKeyBeNull(keys, symbolMapReader)) {
-                            backup = new LatestByValuesIndexedFilteredRecordCursorFactory(configuration, metadata,
-                                    sharedFrames, keyIndex, keys, symbolMapReader, sharedFilter, columnIndexes, columnSizeShifts);
-                            frames = null;
-                            filter = null;
-                        }
-                        final RecordCursorFactory result = new CoveringIndexRecordCursorFactory(metadata, sharedFrames,
-                                readerKeyIndex, SymbolTable.VALUE_NOT_FOUND, null, columnIndexes, coveringMapping, keys,
-                                reader, true, sharedFilter, null, backup, true,
-                                backup == null && ScanFactoryGenerator.canAnyKeyBeNull(keys, symbolMapReader));
-                        backup = null;
-                        frames = null;
-                        filter = null;
-                        keys.clear();
-                        return result;
-                    }
-                }
-                final RecordCursorFactory result = new LatestByValuesIndexedFilteredRecordCursorFactory(configuration,
-                        metadata, frames, keyIndex, keys, symbolMapReader, filter, columnIndexes, columnSizeShifts);
-                frames = null;
-                filter = null;
-                keys.clear();
-                return result;
-            }
-            final RecordCursorFactory result = new LatestByDeferredListValuesFilteredRecordCursorFactory(configuration,
+        if (!isIndexed || excludedKeys.size() > 0) {
+            return new LatestByDeferredListValuesFilteredRecordCursorFactory(configuration,
                     metadata, frames, keyIndex, keys, excludedKeys, filter, columnIndexes, columnSizeShifts);
-            frames = null;
-            filter = null;
-            keys.clear();
-            excludedKeys.clear();
-            return result;
+        }
+        final int readerKeyIndex = columnIndexes.getQuick(keyIndex);
+        final SymbolMapReader symbolMapReader;
+        final int[] coveringMapping;
+        final boolean hasNullableKey;
+        try {
+            symbolMapReader = reader.getSymbolMapReader(readerKeyIndex);
+            coveringMapping = isCoveringAllowed ? ScanFactoryGenerator.buildCoveringIndexMapping(reader, readerKeyIndex, columnIndexes, metadata) : null;
+            hasNullableKey = coveringMapping != null && ScanFactoryGenerator.canAnyKeyBeNull(keys, symbolMapReader);
         } catch (Throwable th) {
-            Misc.free(backup, th);
             Misc.free(frames, th);
             Misc.free(filter, th);
             Misc.freeObjList(keys, th);
-            Misc.freeObjList(excludedKeys, th);
             throw th;
         }
+        if (coveringMapping == null) {
+            return new LatestByValuesIndexedFilteredRecordCursorFactory(configuration,
+                    metadata, frames, keyIndex, keys, symbolMapReader, filter, columnIndexes, columnSizeShifts);
+        }
+        final RecordCursorFactory backup = !isBackupSuppressed && hasNullableKey
+                ? new LatestByValuesIndexedFilteredRecordCursorFactory(configuration, metadata,
+                frames, keyIndex, keys, symbolMapReader, filter, columnIndexes, columnSizeShifts)
+                : null;
+        return new CoveringIndexRecordCursorFactory(metadata, frames,
+                readerKeyIndex, SymbolTable.VALUE_NOT_FOUND, null, columnIndexes, coveringMapping, keys,
+                reader, true, filter, null, backup, true, backup == null && hasNullableKey);
     }
 
     private RecordCursorFactory generateLatestByPrepared(RecordCursorFactory factory, int timestampIndex, boolean orderedByTimestampAsc) {
+        final RecordSink recordSink;
         try {
-            final RecordSink recordSink = RecordSinkFactory.getInstance(configuration, asm, factory.getMetadata(), listColumnFilterA);
-            if (!factory.recordCursorSupportsRandomAccess()) {
-                final RecordCursorFactory base = factory;
-                factory = null;
-                return new LatestByRecordCursorFactory(configuration, base, recordSink, keyTypes, timestampIndex);
-            }
-            return new LatestByLightRecordCursorFactory(configuration, factory, recordSink, keyTypes,
-                    timestampIndex, orderedByTimestampAsc);
+            recordSink = RecordSinkFactory.getInstance(configuration, asm, factory.getMetadata(), listColumnFilterA);
         } catch (Throwable th) {
             Misc.free(factory, th);
             throw th;
         }
+        return factory.recordCursorSupportsRandomAccess()
+                ? new LatestByLightRecordCursorFactory(configuration, factory, recordSink, keyTypes, timestampIndex, orderedByTimestampAsc)
+                : new LatestByRecordCursorFactory(configuration, factory, recordSink, keyTypes, timestampIndex);
     }
 
     /**
-     * Consumes frames, key and filter; the reader is borrowed only for physical selection.
+     * Consumes frames, key and filter, including on failure; the reader is borrowed only for physical selection.
      */
     private RecordCursorFactory generateLatestBySingleKey(
             TableReader reader,
@@ -446,65 +406,55 @@ final class LatestByFactoryGenerator {
             boolean isCoveringAllowed,
             boolean isBackupSuppressed
     ) {
-        RecordCursorFactory backup = null;
-        RecordCursorFactory result = null;
+        final int readerKeyIndex = columnIndexes.getQuick(keyIndex);
+        final int symbolKey;
+        final int[] coveringMapping;
         try {
-            final int readerKeyIndex = columnIndexes.getQuick(keyIndex);
             final SymbolMapReader symbols = reader.getSymbolMapReader(readerKeyIndex);
-            final int symbolKey = key.isRuntimeConstant() ? SymbolTable.VALUE_NOT_FOUND : symbols.keyOf(key.getStrA(null));
-            final boolean isDeferred = symbolKey == SymbolTable.VALUE_NOT_FOUND;
-            if (isIndexed && isCoveringAllowed) {
-                final int[] coveringMapping = ScanFactoryGenerator.buildCoveringIndexMapping(reader, readerKeyIndex, columnIndexes, metadata);
-                if (coveringMapping != null) {
-                    final PartitionFrameCursorFactory sharedFrames = frames;
-                    final Function sharedKey = key;
-                    final Function sharedFilter = filter;
-                    if (!isBackupSuppressed && ScanFactoryGenerator.canKeyBeNull(symbolKey, key)) {
-                        backup = buildLatestByIndexScan(configuration, metadata, frames, keyIndex, symbolKey,
-                                key, filter, columnIndexes, columnSizeShifts);
-                        frames = null;
-                        filter = null;
-                        if (isDeferred) {
-                            key = null;
-                        }
-                    }
-                    result = new CoveringIndexRecordCursorFactory(metadata, sharedFrames, readerKeyIndex, symbolKey,
-                            sharedKey, columnIndexes, coveringMapping, null, null, true, sharedFilter, null, backup,
-                            isDeferred, backup == null && ScanFactoryGenerator.canKeyBeNull(symbolKey, sharedKey));
-                    backup = null;
-                    frames = null;
-                    filter = null;
-                    key = null;
-                    return result;
-                }
-            }
-            if (isIndexed) {
-                result = buildLatestByIndexScan(configuration, metadata, frames, keyIndex, symbolKey,
-                        key, filter, columnIndexes, columnSizeShifts);
-            } else if (isDeferred) {
-                result = new LatestByValueDeferredFilteredRecordCursorFactory(configuration, metadata, frames,
-                        keyIndex, key, filter, columnIndexes, columnSizeShifts);
-            } else {
-                result = new LatestByValueFilteredRecordCursorFactory(configuration, metadata, frames,
-                        keyIndex, symbolKey, filter, columnIndexes, columnSizeShifts);
-            }
-            frames = null;
-            filter = null;
-            if (isDeferred) {
-                key = null;
-            } else {
-                final Function resolvedKey = key;
-                key = null;
-                resolvedKey.close();
-            }
-            return result;
+            symbolKey = key.isRuntimeConstant() ? SymbolTable.VALUE_NOT_FOUND : symbols.keyOf(key.getStrA(null));
+            coveringMapping = isIndexed && isCoveringAllowed
+                    ? ScanFactoryGenerator.buildCoveringIndexMapping(reader, readerKeyIndex, columnIndexes, metadata) : null;
         } catch (Throwable th) {
-            Misc.free(result, th);
-            Misc.free(backup, th);
             Misc.free(frames, th);
             Misc.free(filter, th);
             Misc.free(key, th);
             throw th;
         }
+        final boolean isDeferred = symbolKey == SymbolTable.VALUE_NOT_FOUND;
+        if (coveringMapping != null) {
+            final boolean canKeyBeNull = ScanFactoryGenerator.canKeyBeNull(symbolKey, key);
+            RecordCursorFactory backup = null;
+            if (!isBackupSuppressed && canKeyBeNull) {
+                try {
+                    backup = buildLatestByIndexScan(configuration, metadata, frames, keyIndex, symbolKey,
+                            key, filter, columnIndexes, columnSizeShifts);
+                } catch (Throwable th) {
+                    if (!isDeferred) {
+                        Misc.free(key, th);
+                    }
+                    throw th;
+                }
+            }
+            return new CoveringIndexRecordCursorFactory(metadata, frames, readerKeyIndex, symbolKey,
+                    key, columnIndexes, coveringMapping, null, null, true, filter, null, backup,
+                    isDeferred, backup == null && canKeyBeNull);
+        }
+        if (isDeferred) {
+            return isIndexed
+                    ? buildLatestByIndexScan(configuration, metadata, frames, keyIndex, symbolKey, key, filter, columnIndexes, columnSizeShifts)
+                    : new LatestByValueDeferredFilteredRecordCursorFactory(configuration, metadata, frames,
+                    keyIndex, key, filter, columnIndexes, columnSizeShifts);
+        }
+        final RecordCursorFactory result;
+        try {
+            result = isIndexed
+                    ? buildLatestByIndexScan(configuration, metadata, frames, keyIndex, symbolKey, key, filter, columnIndexes, columnSizeShifts)
+                    : new LatestByValueFilteredRecordCursorFactory(configuration, metadata, frames,
+                    keyIndex, symbolKey, filter, columnIndexes, columnSizeShifts);
+        } catch (Throwable th) {
+            Misc.free(key, th);
+            throw th;
+        }
+        return SqlCodeGenerator.closeAfter(key, result);
     }
 }

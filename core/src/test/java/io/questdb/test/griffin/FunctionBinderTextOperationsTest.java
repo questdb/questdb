@@ -68,7 +68,7 @@ public class FunctionBinderTextOperationsTest extends AbstractCairoTest {
             final OutputSchema firstLayout = new OutputSchema().add(70, "v", ColumnType.VARCHAR, true);
             final OutputSchema secondLayout = new OutputSchema().add(80, "unused", ColumnType.INT, true)
                     .add(70, "v", ColumnType.VARCHAR, true);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final ExpressionNode source = unary("trim", literal("v"));
                 final FunctionExpression expression = (FunctionExpression) binder.bind(source, original, null, sqlExecutionContext);
                 Assert.assertEquals(0, constructed.size());
@@ -110,7 +110,7 @@ public class FunctionBinderTextOperationsTest extends AbstractCairoTest {
             final ConstantExpression expression = new ConstantExpression().ofVarchar(source, 0);
             source.clear();
             source.put("changed");
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser);
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser);
                  Function first = binder.instantiate(expression, input, sqlExecutionContext);
                  Function second = binder.instantiate(expression, input, sqlExecutionContext)) {
                 Assert.assertNotSame(first, second);
@@ -122,7 +122,7 @@ public class FunctionBinderTextOperationsTest extends AbstractCairoTest {
                 Assert.assertEquals("'hé中'", Utf8s.toString(first.getVarcharA(null)));
                 Assert.assertEquals("'hé中'", second.getStrB(null).toString());
             }
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser);
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser);
                  Function value = binder.instantiate(new ConstantExpression().ofVarchar(null, 0), input, sqlExecutionContext)) {
                 Assert.assertNull(value.getVarcharA(null));
                 Assert.assertTrue(value.isNullConstant());
@@ -135,7 +135,7 @@ public class FunctionBinderTextOperationsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema input = new OutputSchema().add(4, "v", ColumnType.VARCHAR, true);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final FunctionExpression bytes = (FunctionExpression) binder.bind(unary("length_bytes", literal("v")), input, null, sqlExecutionContext);
                 final FunctionExpression lower = (FunctionExpression) binder.bind(unary("lower", literal("v")), input, null, sqlExecutionContext);
                 try (Function length = binder.instantiate(bytes, input, sqlExecutionContext);

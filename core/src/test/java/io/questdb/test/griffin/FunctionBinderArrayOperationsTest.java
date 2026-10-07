@@ -66,7 +66,7 @@ public class FunctionBinderArrayOperationsTest extends AbstractCairoTest {
                         Function owner = null;
                         Function worker = null;
                         try {
-                            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                                 final FunctionExpression expression = (FunctionExpression) binder.bindGroupByExpression(
                                         ternary(name, literal(), literal(), literal()), schema(type, true), null, sqlExecutionContext);
                                 Assert.assertFalse(expression.isAggregate());
@@ -122,7 +122,7 @@ public class FunctionBinderArrayOperationsTest extends AbstractCairoTest {
                     Function owner = null;
                     Function worker = null;
                     try {
-                        try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                        try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                             final FunctionExpression expression = (FunctionExpression) binder.bindGroupByExpression(unary(name, literal()),
                                     schema(type, true), null, sqlExecutionContext);
                             Assert.assertTrue(expression.isAggregate());
@@ -176,7 +176,7 @@ public class FunctionBinderArrayOperationsTest extends AbstractCairoTest {
                 }
             };
             final OutputSchema input = schema(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1), false);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 for (String name : new String[]{"array_elem_sum", "array_elem_avg", "array_elem_min", "array_elem_max"}) {
                     constructions[0] = 0;
                     Assert.assertThrows(IllegalStateException.class, () -> binder.bindAggregate(binary(name, literal(), literal()), input, null, sqlExecutionContext));
@@ -201,7 +201,7 @@ public class FunctionBinderArrayOperationsTest extends AbstractCairoTest {
                  ArrayConstant second = new ArrayConstant(new double[]{3, 4, 5})) {
                 for (String name : new String[]{"array_elem_sum", "array_elem_avg", "array_elem_min", "array_elem_max"}) {
                     final OutputSchema input = new OutputSchema();
-                    try (FunctionBindingHarness binder = new FunctionBindingHarness(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
+                    try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
                         final SqlException error = Assert.assertThrows(SqlException.class,
                                 () -> binder.bindGroupByExpression(binary(name,
                                         unary("array_sort", array(constant("2"), constant("1"))), constant("1")), input, null, sqlExecutionContext));
@@ -265,7 +265,7 @@ public class FunctionBinderArrayOperationsTest extends AbstractCairoTest {
                     Function owner = null;
                     Function worker = null;
                     try {
-                        try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                        try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                             final BoundExpression expression = binder.bind(node, schema(type, true), null, sqlExecutionContext);
                             owner = binder.instantiate(expression, schema(type, false), sqlExecutionContext);
                             worker = binder.instantiate(expression, schema(type, true), sqlExecutionContext);
@@ -316,7 +316,7 @@ public class FunctionBinderArrayOperationsTest extends AbstractCairoTest {
     public void testDimensionMismatchEqualityReleasesNativeConstantChildren() throws Exception {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 for (int pass = 0; pass < 3; pass++) {
                     final ExpressionNode first = unary("array_sort", array(constant("2"), constant("1")));
                     final ExpressionNode second = array(array(constant("1"), constant("2")), array(constant("3"), constant("4")));
@@ -354,7 +354,7 @@ public class FunctionBinderArrayOperationsTest extends AbstractCairoTest {
                     Function owner = null;
                     Function worker = null;
                     try {
-                        try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                        try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                             final FunctionExpression expression = binder.bindAggregate(unary(name, literal()), schema(inputType, true), null, sqlExecutionContext);
                             Assert.assertTrue(expression.getOverload().isOrderSensitiveAggregate());
                             owner = binder.instantiateAggregate(expression, schema(inputType, false), metadata(inputType, false), sqlExecutionContext);
@@ -406,7 +406,7 @@ public class FunctionBinderArrayOperationsTest extends AbstractCairoTest {
     @Test
     public void testArrayAggregateScalarContextAndDimensionRestrictionsRemain() throws Exception {
         assertMemoryLeak(() -> {
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
                 final int arrayType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
                 for (int variant = 0; variant < 5; variant++) {
                     final String name = switch (variant) {

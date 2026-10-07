@@ -81,7 +81,12 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
         this.hiFunction = hiFunction;
         this.sortColumnFilter = sortColumnFilter;
         this.timestampIndex = timestampIndex;
-        this.cursor = new EncodedSortLimitedLightRecordCursor(configuration, metadata, sortColumnFilter, timestampIndex);
+        try {
+            this.cursor = new EncodedSortLimitedLightRecordCursor(configuration, metadata, sortColumnFilter, timestampIndex);
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override

@@ -106,7 +106,7 @@ public class FunctionBinderEqualityTest extends AbstractCairoTest {
             final OutputSchema full = new OutputSchema().add(1, "unused", ColumnType.INT, true).add(7, "value", ColumnType.UUID, true);
             final OutputSchema pruned = new OutputSchema().add(7, "value", ColumnType.UUID, true);
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                 FunctionBindingHarness binder = new FunctionBindingHarness(new FunctionParser(configuration, cache))) {
+                 FunctionBindingHarness binder = new FunctionBindingHarness(engine, new FunctionParser(configuration, cache))) {
                 final FunctionExpression original = (FunctionExpression) binder.bind(
                         compiler.parseExpression("'00000000-0000-0000-0000-000000000001' = value"), full, null, sqlExecutionContext);
                 final FunctionExpression commuted = binder.commuteEquality(original);

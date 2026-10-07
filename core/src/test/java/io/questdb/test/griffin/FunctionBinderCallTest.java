@@ -78,7 +78,7 @@ public class FunctionBinderCallTest extends AbstractCairoTest {
             final OutputSchema reordered = new OutputSchema().add(11, "c", ColumnType.LONG, true)
                     .add(10, "s", ColumnType.LONG, true);
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                 FunctionBindingHarness binder = new FunctionBindingHarness(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
+                 FunctionBindingHarness binder = new FunctionBindingHarness(engine, new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
                 final OutputSchema input = input();
                 final BoundExpression expression = bindViaApi(binder, compiler.parseExpression("s + c * 3"), input);
                 try (Function function = binder.instantiate(expression, reordered, sqlExecutionContext)) {
@@ -99,7 +99,7 @@ public class FunctionBinderCallTest extends AbstractCairoTest {
     public void testDecimalCastUsesFloatLiteralSpelling() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                 FunctionBindingHarness binder = new FunctionBindingHarness(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
+                 FunctionBindingHarness binder = new FunctionBindingHarness(engine, new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
                 final OutputSchema input = input();
                 final ExpressionNode node = compiler.parseExpression("0.1::decimal(5,2)");
                 final BoundExpression expected = binder.bind(node, input, null, sqlExecutionContext);
@@ -117,7 +117,7 @@ public class FunctionBinderCallTest extends AbstractCairoTest {
     public void testErrorsMatchSqlText() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                 FunctionBindingHarness binder = new FunctionBindingHarness(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
+                 FunctionBindingHarness binder = new FunctionBindingHarness(engine, new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
                 final OutputSchema input = input();
                 final String[] texts = {"bo * 3", "sum(bo)", "nosuch(i)", "s + count(i)"};
                 final String[] messages = {
@@ -191,7 +191,7 @@ public class FunctionBinderCallTest extends AbstractCairoTest {
     private static void assertEquivalent(String... texts) throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                 FunctionBindingHarness binder = new FunctionBindingHarness(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
+                 FunctionBindingHarness binder = new FunctionBindingHarness(engine, new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
                 final OutputSchema input = input();
                 for (String text : texts) {
                     final ExpressionNode node = compiler.parseExpression(text);

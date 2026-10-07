@@ -107,6 +107,7 @@ final class BindContext implements Mutable {
     final IntHashSet joinNativeTimestampIds = new IntHashSet();
     final ObjectPool<JoinPlan> joins = new ObjectPool<>(JoinPlan.FACTORY, 2);
     final ObjectPool<LatestByPlan> latestByPlans = new ObjectPool<>(LatestByPlan.FACTORY, 4);
+    final QueryLevelCompiler level;
     final ObjectPool<LimitPlan> limits = new ObjectPool<>(LimitPlan.FACTORY, 4);
     final IntList tmpOuterColumns;
     final ObjectPool<OuterColumnExpression> outerColumns = new ObjectPool<>(OuterColumnExpression.FACTORY, 4);
@@ -140,22 +141,18 @@ final class BindContext implements Mutable {
      * ORDER BY and LIMIT the parser places on its last branch, so no branch binds them itself.
      */
     boolean isSetOperationBranch;
-    /**
-     * A sub-query failed to bind or generate since the last conjunct deferral read it; its error is never
-     * deferred.
-     */
-    boolean isSubqueryFailed;
     int nextColumnId;
 
-    BindContext(FunctionParser functionParser, ObjectPool<ExpressionNode> bindingExpressions, CharacterStore characterStore, SubqueryCompiler subqueries) {
+    BindContext(FunctionParser functionParser, ObjectPool<ExpressionNode> bindingExpressions, CharacterStore characterStore, QueryLevelCompiler level) {
         this.bindingExpressions = bindingExpressions;
         this.characterStore = characterStore;
+        this.level = level;
         this.tmpOuterColumns = projectionAliasIndexes;
         this.functionFactoryCache = functionParser.getFunctionFactoryCache();
         this.expressionRewriter = new BoundExpressionRewriter(functionFactoryCache, columns, constants, functions, outerColumns,
                 parameters, types, preparedFunctions, tmpArguments, tmpPositions);
-        this.functionInstantiator = new FunctionInstantiator(functionParser, preparedFunctions, tmpScope, subqueries);
-        this.functionBinder = new FunctionBinder(this, functionParser, subqueries);
+        this.functionInstantiator = new FunctionInstantiator(functionParser, preparedFunctions, tmpScope, level);
+        this.functionBinder = new FunctionBinder(this, functionParser, level);
         this.functionSources = new TableFunctionSources(functionParser);
     }
 
@@ -167,7 +164,6 @@ final class BindContext implements Mutable {
             functionSources.clear();
         }
         isInsideJoin = false;
-        isSubqueryFailed = false;
         windowBindingSchema.clear();
         windowJoinPlans.clear();
         windowJoinSteps.clear();
@@ -516,19 +512,19 @@ final class BindContext implements Mutable {
 
     /**
      * The deferred form of a WHERE or ON conjunct that failed to bind with {@code e}, which generation raises
-     * when it builds the filter. A column reference that does not resolve, or a sub-query that fails to bind
-     * or generate, fails at once instead.
+     * when it builds the filter. A column reference that does not resolve, or a sub-query of the conjunct that fails
+     * to bind or generate, fails at once instead: the conjunct's sub-queries are those the level registers from
+     * {@code subqueryMark}, its sub-query count before the conjunct binds.
      */
     DeferredErrorExpression deferConjunct(
             SqlException e,
             ExpressionNode expression,
             OutputSchema scope,
             CharSequence alias,
-            int joinInput
+            int joinInput,
+            int subqueryMark
     ) throws SqlException {
-        final boolean hasSubqueryFailure = isSubqueryFailed;
-        isSubqueryFailed = false;
-        if (hasSubqueryFailure && hasSubquery(expression)) {
+        if (level.hasFailedSubquery(subqueryMark) && hasSubquery(expression)) {
             throw e;
         }
         validateColumnReferences(expression, scope, alias, null);

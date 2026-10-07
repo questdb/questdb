@@ -90,6 +90,12 @@ import java.io.Closeable;
 
 import static io.questdb.griffin.model.QueryModel.CREATE_MAT_VIEW;
 
+/**
+ * Generates the executable factory tree of a bound logical plan. Ownership contract: a generate* method
+ * either returns a factory its caller owns, or throws having closed everything it created. A generate*
+ * method or factory constructor that takes child factories or functions consumes them on entry, including
+ * when it throws, so a caller never closes an input it has handed over.
+ */
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_MICRO_HOUR_INT = 1;
     public static final int GKK_NANO_HOUR_INT = 2;
@@ -231,11 +237,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (model.getModelType() != ExecutionModel.QUERY) {
                 owned = new RecordCursorFactoryStub(model, factory);
             }
-            return new ExplainPlanFactory(owned, format);
         } catch (Throwable th) {
-            Misc.free(owned, th);
+            Misc.free(factory, th);
             throw th;
         }
+        return new ExplainPlanFactory(owned, format);
     }
 
     public BytecodeAssembler getAsm() {
@@ -296,24 +302,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    private int declareTimestamp(GenerationFrame frame, int inputSlot, int timestampIndex) {
-        final RecordCursorFactory base = frame.resources.factory(inputSlot);
-        final RecordMetadata baseMetadata = base.getMetadata();
+    private static RecordCursorFactory declareTimestamp(RecordCursorFactory base, int timestampIndex) {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        final IntList mapping = new IntList(baseMetadata.getColumnCount());
-        for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
-            metadata.add(baseMetadata.getColumnMetadata(i));
-            mapping.add(i);
+        final IntList mapping;
+        try {
+            final RecordMetadata baseMetadata = base.getMetadata();
+            mapping = new IntList(baseMetadata.getColumnCount());
+            for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
+                metadata.add(baseMetadata.getColumnMetadata(i));
+                mapping.add(i);
+            }
+            metadata.setTimestampIndex(timestampIndex);
+        } catch (Throwable th) {
+            Misc.free(base, th);
+            throw th;
         }
-        metadata.setTimestampIndex(timestampIndex);
-        final int slot = frame.resources.reserve();
-        final RecordCursorFactory factory = new SelectedRecordCursorFactory(metadata, mapping, base);
-        frame.resources.detach(inputSlot);
-        frame.resources.own(slot, factory);
-        return slot;
+        return new SelectedRecordCursorFactory(metadata, mapping, base);
     }
 
-    private int generateUnary(
+    private RecordCursorFactory generateUnary(
             GenerationFrame frame,
             LogicalPlan plan,
             SqlExecutionContext executionContext,
@@ -383,65 +390,69 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         assert plan != null;
         final LogicalPlan input = plan.inputAt(0);
         final BoundExpression residual = plan instanceof FilterPlan filter ? filter.getPredicate() : null;
-        final int inputSlot;
+        final RecordCursorFactory base;
         if (residual != null && input instanceof ScanPlan scan
                 && !ScanFactoryGenerator.isWalClientUpdate(scan, executionContext)) {
             return scanGenerator.generateFiltered(frame, scan, residual, inputOrderId, inputScanDirection,
                     inputOrderAdvice, inputLimitAdvice, inputOrderByMnemonic, executionContext);
         } else if (plan instanceof LimitPlan limit && input instanceof DistinctPlan distinct) {
-            inputSlot = aggregateGenerator.generateDistinct(frame, distinct, limit, executionContext);
+            base = aggregateGenerator.generateDistinct(frame, distinct, limit, executionContext);
         } else if (plan instanceof SortPlan sort) {
-            inputSlot = sortGenerator.generateSortInput(frame, sort, executionContext, inputOrderId, inputScanDirection, inputLimitAdvice);
+            base = sortGenerator.generateSortInput(frame, sort, executionContext, inputOrderId, inputScanDirection, inputLimitAdvice);
         } else {
-            inputSlot = generate(frame, input, executionContext, inputOrderId, inputScanDirection, inputOrderAdvice, inputLimitAdvice, inputOrderByMnemonic);
+            base = generate(frame, input, executionContext, inputOrderId, inputScanDirection, inputOrderAdvice, inputLimitAdvice, inputOrderByMnemonic);
         }
-        final RecordCursorFactory base = frame.resources.factory(inputSlot);
         if (residual instanceof ColumnExpression column
                 && WindowFactoryGenerator.tryFuseKeepFlagFilter(base, input.getOutput().getColumnIndexById(column.getColumnId()))) {
-            return inputSlot;
+            return base;
         }
         switch (plan) {
             case SortPlan _ when base.followedOrderByAdvice() && SortFactoryGenerator.hasAdvisedInput(input) -> {
-                return inputSlot;
+                return base;
             }
             case SortPlan sort when base.followedOrderByAdvice() && sort.isMarkoutHorizon() -> {
                 final int timestampIndex = sort.getOutput().getTimestampIndex();
                 return timestampIndex < 0 || timestampIndex == base.getMetadata().getTimestampIndex() || !executionContext.isTimestampRequired()
-                        ? inputSlot : declareTimestamp(frame, inputSlot, timestampIndex);
+                        ? base : declareTimestamp(base, timestampIndex);
             }
             case LimitPlan _ when base.implementsLimit() && SortFactoryGenerator.hasNativeFilterInput(input) -> {
-                return inputSlot;
+                return base;
             }
             case SortPlan _ when inputOrderId >= 0 && base.getMetadata().getTimestampIndex() == input.getOutput().getColumnIndexById(inputOrderId) && base.getScanDirection() == inputScanDirection -> {
                 // Remove this one-key sort only when the actual generated input proves it.
-                return inputSlot;
+                return base;
             }
             default -> {
             }
         }
-        final int slot = frame.resources.reserve();
         switch (plan) {
             case FilterPlan _ -> {
-                final int predicateSlot = frame.resources.reserve();
                 final Function predicate;
-                if (residual instanceof ConstantExpression constant) {
-                    predicate = BooleanConstant.of(constant.getLongValue() != 0);
-                } else if (residual instanceof ColumnExpression column) {
-                    final int index = input.getOutput().getColumnIndexById(column.getColumnId());
-                    predicate = FunctionParser.createColumn(column.getPosition(), index, base.getMetadata());
-                } else {
-                    predicate = frame.functionInstantiator.instantiate(residual, input.getOutput(), base.getMetadata(), executionContext);
+                try {
+                    if (residual instanceof ConstantExpression constant) {
+                        predicate = BooleanConstant.of(constant.getLongValue() != 0);
+                    } else if (residual instanceof ColumnExpression column) {
+                        final int index = input.getOutput().getColumnIndexById(column.getColumnId());
+                        predicate = FunctionParser.createColumn(column.getPosition(), index, base.getMetadata());
+                    } else {
+                        predicate = frame.functionInstantiator.instantiate(residual, input.getOutput(), base.getMetadata(), executionContext);
+                    }
+                } catch (Throwable th) {
+                    Misc.free(base, th);
+                    throw th;
                 }
-                frame.resources.own(predicateSlot, predicate);
                 if (input instanceof FunctionSourcePlan source) {
-                    scanGenerator.configurePushdown(frame, source, base, residual, executionContext);
+                    try {
+                        scanGenerator.configurePushdown(frame, source, base, residual, executionContext);
+                    } catch (Throwable th) {
+                        Misc.free(predicate, th);
+                        Misc.free(base, th);
+                        throw th;
+                    }
                 }
-                frame.resources.detach(inputSlot);
-                frame.resources.detach(predicateSlot);
-                frame.resources.own(slot, filterGenerator.generate(frame, residual, input.getOutput(), base, predicate,
+                return filterGenerator.generate(frame, residual, input.getOutput(), base, predicate,
                         frame.functionInstantiator, executionContext, hasUpdateScan(input), null,
-                        input instanceof ScanPlan scan && scan.hasHint(ScanPlan.HINT_PRE_TOUCH)));
-                return slot;
+                        input instanceof ScanPlan scan && scan.hasHint(ScanPlan.HINT_PRE_TOUCH));
             }
             case ProjectPlan project -> {
                 final int timestampIndex = orderAdvice != null && base.getMetadata().getTimestampIndex() < 0
@@ -449,35 +460,50 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         : project.getOutput().getTimestampIndex() < 0 && inputOrderId >= 0
                         && base.getMetadata().getTimestampIndex() == input.getOutput().getColumnIndexById(inputOrderId)
                           ? project.getOutput().getColumnIndexById(requiredOrderColumnId) : project.getOutput().getTimestampIndex();
-                return projectionGenerator.generateProjection(frame, project, inputSlot, slot, timestampIndex, executionContext);
+                return projectionGenerator.generateProjection(frame, project, base, timestampIndex, executionContext);
             }
             case SortPlan sort -> {
-                frame.resources.detach(inputSlot);
-                frame.resources.own(slot, sortGenerator.generate(sort, base, null, null, 0, executionContext, frame.functionInstantiator));
-                return slot;
+                return sortGenerator.generate(sort, base, null, null, 0, executionContext, frame.functionInstantiator);
+            }
+            case LimitPlan limit -> {
+                Function lo = null;
+                final Function hi;
+                try {
+                    lo = frame.functionInstantiator.instantiate(limit.getLo(), emptySchema, executionContext);
+                    hi = limit.getHi() == null ? null : frame.functionInstantiator.instantiate(limit.getHi(), emptySchema, executionContext);
+                } catch (Throwable th) {
+                    Misc.free(lo, th);
+                    Misc.free(base, th);
+                    throw th;
+                }
+                return new LimitRecordCursorFactory(base, lo, hi, limit.getPosition());
             }
             default -> {
+                final IllegalStateException failure = new IllegalStateException("unknown logical operation");
+                Misc.free(base, failure);
+                throw failure;
             }
         }
-        if (!(plan instanceof LimitPlan limit)) {
-            throw new IllegalStateException("unknown logical operation");
+    }
+
+    static RecordCursorFactory closeAfter(Closeable resource, RecordCursorFactory factory) {
+        try {
+            Misc.free(resource);
+        } catch (Throwable th) {
+            Misc.free(factory, th);
+            throw th;
         }
-        final int loSlot = frame.resources.reserve();
-        final Function lo = frame.functionInstantiator.instantiate(limit.getLo(), emptySchema, executionContext);
-        frame.resources.own(loSlot, lo);
-        final int hiSlot = frame.resources.reserve();
-        final Function hi = limit.getHi() == null ? null : frame.functionInstantiator.instantiate(limit.getHi(), emptySchema, executionContext);
-        if (hi != null) {
-            frame.resources.own(hiSlot, hi);
+        return factory;
+    }
+
+    static RecordCursorFactory clearAfter(Mutable state, RecordCursorFactory factory) {
+        try {
+            state.clear();
+        } catch (Throwable th) {
+            Misc.free(factory, th);
+            throw th;
         }
-        final RecordCursorFactory factory = new LimitRecordCursorFactory(base, lo, hi, limit.getPosition());
-        frame.resources.detach(loSlot);
-        if (hi != null) {
-            frame.resources.detach(hiSlot);
-        }
-        frame.resources.detach(inputSlot);
-        frame.resources.own(slot, factory);
-        return slot;
+        return factory;
     }
 
     static TableColumnMetadata copyColumn(RecordMetadata metadata, int index, String name) {
@@ -626,14 +652,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 projectionGenerator.setReferenceCounts(frame, root.getOutput(), 1);
                 projectionGenerator.collectColumnReferenceCounts(frame, root);
                 aggregateGenerator.countSharedConsumers(frame, root);
-                final int slot = generate(frame, root, executionContext);
-                final Throwable cleanup = frame.closePrepared(frame.resources.closeOwned(slot, null));
+                final RecordCursorFactory factory = generate(frame, root, executionContext);
+                final Throwable cleanup = frame.closePrepared(null);
                 if (cleanup != null) {
-                    CairoException.rethrowCleanupFailure(frame.resources.closeOwned(-1, cleanup));
+                    Misc.free(factory, cleanup);
+                    CairoException.rethrowCleanupFailure(cleanup);
                 }
-                return frame.resources.detachFactory(slot);
+                return factory;
             } catch (Throwable e) {
-                frame.resources.closeOwned(e);
                 final Throwable failure = frame.closePrepared(e);
                 assert failure == e;
                 throw e;
@@ -647,21 +673,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    int generate(GenerationFrame frame, LogicalPlan plan, SqlExecutionContext executionContext) throws SqlException {
+    RecordCursorFactory generate(GenerationFrame frame, LogicalPlan plan, SqlExecutionContext executionContext) throws SqlException {
         return generate(frame, plan, executionContext, -1, RecordCursorFactory.SCAN_DIRECTION_OTHER);
     }
 
-    int generate(GenerationFrame frame, LogicalPlan plan, SqlExecutionContext executionContext, int requiredOrderColumnId, int requiredScanDirection) throws SqlException {
+    RecordCursorFactory generate(GenerationFrame frame, LogicalPlan plan, SqlExecutionContext executionContext, int requiredOrderColumnId, int requiredScanDirection) throws SqlException {
         return generate(frame, plan, executionContext, requiredOrderColumnId, requiredScanDirection, null, null, OrderByMnemonic.ORDER_BY_REQUIRED);
     }
 
-    int generate(GenerationFrame frame, LogicalPlan plan, SqlExecutionContext executionContext, int requiredOrderColumnId, int requiredScanDirection,
-                 SortPlan orderAdvice, LimitPlan limitAdvice, int orderByMnemonic) throws SqlException {
+    RecordCursorFactory generate(GenerationFrame frame, LogicalPlan plan, SqlExecutionContext executionContext, int requiredOrderColumnId, int requiredScanDirection,
+                                 SortPlan orderAdvice, LimitPlan limitAdvice, int orderByMnemonic) throws SqlException {
         if (plan == frame.sharedHeadTarget) {
             frame.sharedHeadTarget = null;
-            final int slot = frame.resources.reserve();
-            frame.resources.own(slot, new SharedRecordCursorFactory(frame.sharedHeadFactory, frame.sharedHeadId));
-            return slot;
+            return new SharedRecordCursorFactory(frame.sharedHeadFactory, frame.sharedHeadId);
         }
         return switch (plan) {
             case WindowPlan window ->
@@ -685,11 +709,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             case SampleByPlan sample -> sampleByGenerator.generateSampleBy(frame, sample, executionContext);
             case FillPlan fill -> {
-                final int inputSlot = generate(frame, fill.getInput(), executionContext);
-                final int slot = frame.resources.reserve();
-                final RecordCursorFactory base = frame.resources.detachFactory(inputSlot);
-                frame.resources.own(slot, sampleByGenerator.generateFill(fill, fill.getInput().getOutput(), base, frame.functionInstantiator, executionContext));
-                yield slot;
+                final RecordCursorFactory base = generate(frame, fill.getInput(), executionContext);
+                yield sampleByGenerator.generateFill(fill, fill.getInput().getOutput(), base, frame.functionInstantiator, executionContext);
             }
             case ScanPlan scan -> {
                 final int order = requiredOrderColumnId >= 0 && requiredOrderColumnId == scan.getOutput().getTimestampColumnId()
@@ -717,20 +738,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         };
     }
 
-    int generateJoinInput(GenerationFrame frame, LogicalPlan input, SqlExecutionContext executionContext, boolean isTimestampRequired, int orderByMnemonic) throws SqlException {
+    RecordCursorFactory generateJoinInput(GenerationFrame frame, LogicalPlan input, SqlExecutionContext executionContext, boolean isTimestampRequired, int orderByMnemonic) throws SqlException {
         return generateJoinInput(frame, input, executionContext, isTimestampRequired, orderByMnemonic, -1, RecordCursorFactory.SCAN_DIRECTION_OTHER, null);
     }
 
-    int generateJoinInput(GenerationFrame frame, LogicalPlan input, SqlExecutionContext executionContext, boolean isTimestampRequired, int orderByMnemonic,
-                          int requiredOrderColumnId, int requiredScanDirection, SortPlan orderAdvice) throws SqlException {
+    RecordCursorFactory generateJoinInput(GenerationFrame frame, LogicalPlan input, SqlExecutionContext executionContext, boolean isTimestampRequired, int orderByMnemonic,
+                                          int requiredOrderColumnId, int requiredScanDirection, SortPlan orderAdvice) throws SqlException {
         executionContext.pushTimestampRequiredFlag(isTimestampRequired);
         try {
-            final int slot = generate(frame, input, executionContext, requiredOrderColumnId, requiredScanDirection, orderAdvice, null,
+            final RecordCursorFactory factory = generate(frame, input, executionContext, requiredOrderColumnId, requiredScanDirection, orderAdvice, null,
                     isTimestampRequired ? OrderByMnemonic.ORDER_BY_REQUIRED : orderByMnemonic);
-            if (isTimestampRequired && frame.resources.factory(slot).getMetadata().getTimestampIndex() < 0) {
-                rejectDerivedLatestWithoutTimestamp(input);
+            if (isTimestampRequired && factory.getMetadata().getTimestampIndex() < 0) {
+                try {
+                    rejectDerivedLatestWithoutTimestamp(input);
+                } catch (Throwable th) {
+                    Misc.free(factory, th);
+                    throw th;
+                }
             }
-            return slot;
+            return factory;
         } finally {
             executionContext.popTimestampRequiredFlag();
         }

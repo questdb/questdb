@@ -55,7 +55,7 @@ public class FunctionBinderArrayTest extends AbstractCairoTest {
                 Function first = null;
                 Function second = null;
                 try {
-                    try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                    try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                         final BoundExpression expression = binder.bind(literal("a"), input, null, sqlExecutionContext);
                         first = binder.instantiate(expression, pruned, sqlExecutionContext);
                         second = binder.instantiate(expression, input, sqlExecutionContext);
@@ -90,7 +90,7 @@ public class FunctionBinderArrayTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final OutputSchema input = new OutputSchema();
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final BoundExpression expression = binder.bind(array(array(constant("1"), constant("null")),
                         array(constant("3"), constant("4"))), input, null, sqlExecutionContext);
                 Assert.assertTrue(expression instanceof FunctionExpression);
@@ -126,7 +126,7 @@ public class FunctionBinderArrayTest extends AbstractCairoTest {
             final OutputSchema pruned = new OutputSchema().add(70, "d", ColumnType.DOUBLE, true);
             bindVariableService.setDouble(0, 7);
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final BoundExpression expression = binder.bind(array(literal("d"), variable("$1")), input, null, sqlExecutionContext);
                 Assert.assertEquals(0, expression.getFunctionFlags() & BoundExpression.CONSTANT);
                 try (Function first = binder.instantiate(expression, pruned, sqlExecutionContext);
@@ -156,7 +156,7 @@ public class FunctionBinderArrayTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final OutputSchema input = new OutputSchema();
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 for (int pass = 0; pass < 3; pass++) {
                     try {
                         binder.bind(array(array(constant("1"), constant("2")), constant("3")), input, null, sqlExecutionContext);
@@ -189,7 +189,7 @@ public class FunctionBinderArrayTest extends AbstractCairoTest {
                 Function first = null;
                 Function second = null;
                 try {
-                    try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                    try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                         final ExpressionNode access = dimensions == 1 ? access(literal("a"), constant("2"))
                                 : access(access(literal("a"), constant("2")), constant("1"));
                         final BoundExpression expression = binder.bind(binary("+", access, constant("1.0")), input, null, sqlExecutionContext);
@@ -223,7 +223,7 @@ public class FunctionBinderArrayTest extends AbstractCairoTest {
             bindVariableService.setInt(0, 2);
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             try (ArrayConstant value = new ArrayConstant(new double[]{10, 20, 30, 40});
-                 FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                 FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final BoundExpression slice = binder.bind(access(literal("a"),
                         binary(":", variable("$1"), constant("4"))), input, null, sqlExecutionContext);
                 final BoundExpression negative = binder.bind(access(literal("a"), constant("-1")), input, null, sqlExecutionContext);
@@ -264,7 +264,7 @@ public class FunctionBinderArrayTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema input = new OutputSchema();
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final BoundExpression expression = binder.bind(access(array(constant("1"), constant("2")),
                         binary("cast", constant("null"), constant("long"))), input, null, sqlExecutionContext);
                 try (Function function = binder.instantiate(expression, input, sqlExecutionContext)) {

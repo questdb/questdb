@@ -105,6 +105,18 @@ final class ProjectionFactoryGenerator {
         return false;
     }
 
+    private static boolean isVirtualProjection(ProjectPlan project) {
+        if (project.hasUpdateConversions() || project.hasPrunedComputedColumns()) {
+            return true;
+        }
+        for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
+            if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression column) || column.isCast()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static RecordCursorFactory newSelected(GenericRecordMetadata metadata, IntList mapping, RecordCursorFactory base, LogicalPlan input) {
         if (input instanceof JoinPlan && base instanceof SelectedRecordCursorFactory selected) {
             final IntList inner = selected.getColumnCrossIndex();
@@ -194,93 +206,94 @@ final class ProjectionFactoryGenerator {
         }
     }
 
-    private int generateVirtualProjection(GenerationFrame frame, ProjectPlan project, int inputSlot, int slot, int timestampIndex, SqlExecutionContext executionContext) throws SqlException {
-        final OutputSchema input = project.getInput().getOutput();
-        final RecordCursorFactory base = frame.resources.factory(inputSlot);
+    private RecordCursorFactory generateVirtualProjection(GenerationFrame frame, ProjectPlan project, RecordCursorFactory base, int timestampIndex,
+                                                          SqlExecutionContext executionContext) throws SqlException {
         final int count = project.getExpressions().size();
-        final ObjList<Function> functions = new ObjList<>(count);
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        // A column that reads an earlier column by alias reads that column's slot of this record,
-        // so every column addresses the base past the reserved prefix.
-        final int reservedSlots = !project.hasUpdateConversions() && hasProjectionReferences(project) ? count : 0;
-        final PriorityMetadata priorityMetadata = new PriorityMetadata(reservedSlots, base.getMetadata());
-        final OutputSchema scope;
-        final GenericRecordMetadata scopeMetadata;
-        if (reservedSlots > 0) {
-            scope = frame.projectionScope;
-            scope.clear();
-            scopeMetadata = frame.projectionScopeMetadata;
-            scopeMetadata.clear();
-            for (int i = 0; i < count; i++) {
-                scope.add(project.getOutput().getColumnId(i), project.getOutput().getColumnName(i), project.getOutput().getColumnType(i), true);
-                scopeMetadata.add(frame.projectionSlotColumn(i, project.getOutput().getColumnType(i)));
-            }
-            for (int i = 0, n = input.getColumnCount(); i < n; i++) {
-                scope.add(input.getColumnId(i), input.getColumnName(i), input.getColumnType(i), input.getMetadata(i), true);
-                scopeMetadata.add(base.getMetadata().getColumnMetadata(i));
-            }
-        } else {
-            scope = input;
-            scopeMetadata = null;
-        }
-        final int firstFunctionSlot = frame.resources.nextSlot();
-        for (int i = 0; i < count; i++) {
-            final int functionSlot = frame.resources.reserve();
-            final BoundExpression expression = project.getExpressions().getQuick(i);
-            Function function;
-            final int columnIndex;
-            if (project.hasUpdateConversions()) {
-                columnIndex = expression instanceof ColumnExpression column ? input.getColumnIndexById(column.getColumnId()) : -1;
-                function = frame.functionInstantiator.instantiateUpdateAssignment(expression, project.getUpdateTargetTypes().getQuick(i),
-                        input, base.getMetadata(), executionContext);
-            } else if (expression instanceof ColumnExpression column) {
-                columnIndex = input.getColumnIndexById(column.getColumnId());
-                function = reservedSlots == 0 ? FunctionParser.createColumn(expression.getPosition(), columnIndex, base.getMetadata())
-                        : FunctionParser.createColumn(expression.getPosition(),
-                        columnIndex >= 0 ? reservedSlots + columnIndex : scope.getColumnIndexById(column.getColumnId()), scopeMetadata);
-            } else {
-                columnIndex = -1;
-                function = reservedSlots == 0 ? frame.functionInstantiator.instantiate(expression, input, base.getMetadata(), executionContext)
-                        : frame.functionInstantiator.instantiate(expression, scope, scopeMetadata, executionContext);
-            }
-            try {
-                if (project.hasUpdateConversions() && FunctionBinder.updateColumnType(function, project.getUpdateTargetTypes().getQuick(i))
-                        != project.getOutput().getColumnType(i)) {
-                    throw new IllegalStateException("UPDATE assignment output type has changed");
-                }
-                function = memoizeProjectionFunction(function, frame.getReferenceCount(project.getOutput().getColumnId(i)));
-            } catch (Throwable th) {
-                Misc.free(function, th);
-                throw th;
-            }
-            frame.resources.own(functionSlot, function);
-            functions.add(function);
-            final TableColumnMetadata columnMetadata = new TableColumnMetadata(
-                    uniqueColumnName(metadata, project.getOutput().getColumnName(i)), project.getOutput().getColumnType(i),
-                    IndexType.NONE, 0, project.hasUpdateConversions()
-                    ? function instanceof SymbolFunction symbol && symbol.isSymbolTableStatic()
-                    : columnIndex >= 0 && base.getMetadata().isSymbolTableStatic(columnIndex),
-                    function.getMetadata()
-            );
-            if (columnIndex >= 0) {
-                columnMetadata.setParquetEncodingConfig(base.getMetadata().getColumnMetadata(columnIndex).getParquetEncodingConfig());
-            }
-            metadata.add(columnMetadata);
+        ObjList<Function> functions = null;
+        final GenericRecordMetadata metadata;
+        final PriorityMetadata priorityMetadata;
+        final int reservedSlots;
+        try {
+            final OutputSchema input = project.getInput().getOutput();
+            functions = new ObjList<>(count);
+            metadata = new GenericRecordMetadata();
+            // A column that reads an earlier column by alias reads that column's slot of this record,
+            // so every column addresses the base past the reserved prefix.
+            reservedSlots = !project.hasUpdateConversions() && hasProjectionReferences(project) ? count : 0;
+            priorityMetadata = new PriorityMetadata(reservedSlots, base.getMetadata());
+            final OutputSchema scope;
+            final GenericRecordMetadata scopeMetadata;
             if (reservedSlots > 0) {
-                priorityMetadata.add(columnMetadata);
+                scope = frame.projectionScope;
+                scope.clear();
+                scopeMetadata = frame.projectionScopeMetadata;
+                scopeMetadata.clear();
+                for (int i = 0; i < count; i++) {
+                    scope.add(project.getOutput().getColumnId(i), project.getOutput().getColumnName(i), project.getOutput().getColumnType(i), true);
+                    scopeMetadata.add(frame.projectionSlotColumn(i, project.getOutput().getColumnType(i)));
+                }
+                for (int i = 0, n = input.getColumnCount(); i < n; i++) {
+                    scope.add(input.getColumnId(i), input.getColumnName(i), input.getColumnType(i), input.getMetadata(i), true);
+                    scopeMetadata.add(base.getMetadata().getColumnMetadata(i));
+                }
+            } else {
+                scope = input;
+                scopeMetadata = null;
             }
+            for (int i = 0; i < count; i++) {
+                final BoundExpression expression = project.getExpressions().getQuick(i);
+                Function function;
+                final int columnIndex;
+                if (project.hasUpdateConversions()) {
+                    columnIndex = expression instanceof ColumnExpression column ? input.getColumnIndexById(column.getColumnId()) : -1;
+                    function = frame.functionInstantiator.instantiateUpdateAssignment(expression, project.getUpdateTargetTypes().getQuick(i),
+                            input, base.getMetadata(), executionContext);
+                } else if (expression instanceof ColumnExpression column) {
+                    columnIndex = input.getColumnIndexById(column.getColumnId());
+                    function = reservedSlots == 0 ? FunctionParser.createColumn(expression.getPosition(), columnIndex, base.getMetadata())
+                            : FunctionParser.createColumn(expression.getPosition(),
+                            columnIndex >= 0 ? reservedSlots + columnIndex : scope.getColumnIndexById(column.getColumnId()), scopeMetadata);
+                } else {
+                    columnIndex = -1;
+                    function = reservedSlots == 0 ? frame.functionInstantiator.instantiate(expression, input, base.getMetadata(), executionContext)
+                            : frame.functionInstantiator.instantiate(expression, scope, scopeMetadata, executionContext);
+                }
+                try {
+                    if (project.hasUpdateConversions() && FunctionBinder.updateColumnType(function, project.getUpdateTargetTypes().getQuick(i))
+                            != project.getOutput().getColumnType(i)) {
+                        throw new IllegalStateException("UPDATE assignment output type has changed");
+                    }
+                    function = memoizeProjectionFunction(function, frame.getReferenceCount(project.getOutput().getColumnId(i)));
+                } catch (Throwable th) {
+                    Misc.free(function, th);
+                    throw th;
+                }
+                functions.add(function);
+                final TableColumnMetadata columnMetadata = new TableColumnMetadata(
+                        uniqueColumnName(metadata, project.getOutput().getColumnName(i)), project.getOutput().getColumnType(i),
+                        IndexType.NONE, 0, project.hasUpdateConversions()
+                        ? function instanceof SymbolFunction symbol && symbol.isSymbolTableStatic()
+                        : columnIndex >= 0 && base.getMetadata().isSymbolTableStatic(columnIndex),
+                        function.getMetadata()
+                );
+                if (columnIndex >= 0) {
+                    columnMetadata.setParquetEncodingConfig(base.getMetadata().getColumnMetadata(columnIndex).getParquetEncodingConfig());
+                }
+                metadata.add(columnMetadata);
+                if (reservedSlots > 0) {
+                    priorityMetadata.add(columnMetadata);
+                }
+            }
+            if (timestampIndex >= 0 && !ColumnType.isTimestamp(metadata.getColumnType(timestampIndex))) {
+                throw SqlException.$(project.getExpressions().getQuick(timestampIndex).getPosition(), "TIMESTAMP column is required but not provided");
+            }
+            metadata.setTimestampIndex(timestampIndex);
+        } catch (Throwable th) {
+            Misc.freeObjList(functions, th);
+            Misc.free(base, th);
+            throw th;
         }
-        if (timestampIndex >= 0 && !ColumnType.isTimestamp(metadata.getColumnType(timestampIndex))) {
-            throw SqlException.$(project.getExpressions().getQuick(timestampIndex).getPosition(), "TIMESTAMP column is required but not provided");
-        }
-        metadata.setTimestampIndex(timestampIndex);
-        // The constructor consumes the source and all functions, including on failure.
-        frame.resources.detach(inputSlot);
-        for (int i = 0; i < count; i++) {
-            frame.resources.detach(firstFunctionSlot + i);
-        }
-        frame.resources.own(slot, new VirtualRecordCursorFactory(metadata, priorityMetadata, functions, base, reservedSlots));
-        return slot;
+        return new VirtualRecordCursorFactory(metadata, priorityMetadata, functions, base, reservedSlots);
     }
 
     /**
@@ -436,55 +449,59 @@ final class ProjectionFactoryGenerator {
         }
     }
 
-    int generateProjection(GenerationFrame frame, ProjectPlan project, int inputSlot, int slot, int timestampIndex, SqlExecutionContext executionContext) throws SqlException {
+    RecordCursorFactory generateProjection(GenerationFrame frame, ProjectPlan project, RecordCursorFactory base, int timestampIndex,
+                                           SqlExecutionContext executionContext) throws SqlException {
         final LogicalPlan input = project.getInput();
-        final RecordCursorFactory base = frame.resources.factory(inputSlot);
-        if (!project.hasTimestampDeclaration() && timestampIndex >= 0 && base.getMetadata().getTimestampIndex() < 0
-                && !hasExplicitJoinTimestamp(input)
-                && project.getExpressions().getQuick(timestampIndex) instanceof ColumnExpression timestamp
-                && (input.getOutput().getTimestampIndex() < 0 || timestamp.getColumnId() == input.getOutput().getTimestampColumnId())) {
-            timestampIndex = -1;
-        }
-        if (timestampIndex >= 0 && input instanceof WindowJoinPlan windowJoin && !SqlCodeGenerator.isColumnOnlyProjection(project)
-                && !isWindowJoinTimestampKept(project, windowJoin)) {
-            timestampIndex = -1;
-        }
-        if (project.hasUpdateConversions() || project.hasPrunedComputedColumns()) {
-            return generateVirtualProjection(frame, project, inputSlot, slot, timestampIndex, executionContext);
-        }
-        for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-            if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression column) || column.isCast()) {
-                return generateVirtualProjection(frame, project, inputSlot, slot, timestampIndex, executionContext);
+        try {
+            if (!project.hasTimestampDeclaration() && timestampIndex >= 0 && base.getMetadata().getTimestampIndex() < 0
+                    && !hasExplicitJoinTimestamp(input)
+                    && project.getExpressions().getQuick(timestampIndex) instanceof ColumnExpression timestamp
+                    && (input.getOutput().getTimestampIndex() < 0 || timestamp.getColumnId() == input.getOutput().getTimestampColumnId())) {
+                timestampIndex = -1;
             }
+            if (timestampIndex >= 0 && input instanceof WindowJoinPlan windowJoin && !SqlCodeGenerator.isColumnOnlyProjection(project)
+                    && !isWindowJoinTimestampKept(project, windowJoin)) {
+                timestampIndex = -1;
+            }
+        } catch (Throwable th) {
+            Misc.free(base, th);
+            throw th;
         }
-        // A SELECT list over GROUP BY keeps the key spelling when it only changes the name case.
-        final LogicalPlan source = LogicalPlans.skipFilters(input);
-        final boolean isKeySpellingKept = source instanceof AggregatePlan aggregate
-                && aggregate.hasKeySpellingKept() && !(aggregate.getInput() instanceof HorizonJoinPlan);
-        boolean isIdentity = project.getOutput().getColumnCount() == base.getMetadata().getColumnCount()
-                && timestampIndex == base.getMetadata().getTimestampIndex();
-        for (int i = 0, n = project.getExpressions().size(); isIdentity && i < n; i++) {
-            final ColumnExpression column = (ColumnExpression) project.getExpressions().getQuick(i);
-            final CharSequence name = project.getOutput().getColumnName(i);
-            isIdentity = input.getOutput().getColumnIndexById(column.getColumnId()) == i
-                    && project.getOutput().getColumnType(i) == base.getMetadata().getColumnType(i)
-                    && (isKeySpellingKept ? Chars.equalsIgnoreCase(name, base.getMetadata().getColumnName(i)) : Chars.equals(name, base.getMetadata().getColumnName(i)));
+        if (isVirtualProjection(project)) {
+            return generateVirtualProjection(frame, project, base, timestampIndex, executionContext);
         }
-        if (isIdentity) {
-            return inputSlot;
+        final IntList mapping;
+        final GenericRecordMetadata metadata;
+        try {
+            // A SELECT list over GROUP BY keeps the key spelling when it only changes the name case.
+            final LogicalPlan source = LogicalPlans.skipFilters(input);
+            final boolean isKeySpellingKept = source instanceof AggregatePlan aggregate
+                    && aggregate.hasKeySpellingKept() && !(aggregate.getInput() instanceof HorizonJoinPlan);
+            boolean isIdentity = project.getOutput().getColumnCount() == base.getMetadata().getColumnCount()
+                    && timestampIndex == base.getMetadata().getTimestampIndex();
+            for (int i = 0, n = project.getExpressions().size(); isIdentity && i < n; i++) {
+                final ColumnExpression column = (ColumnExpression) project.getExpressions().getQuick(i);
+                final CharSequence name = project.getOutput().getColumnName(i);
+                isIdentity = input.getOutput().getColumnIndexById(column.getColumnId()) == i
+                        && project.getOutput().getColumnType(i) == base.getMetadata().getColumnType(i)
+                        && (isKeySpellingKept ? Chars.equalsIgnoreCase(name, base.getMetadata().getColumnName(i)) : Chars.equals(name, base.getMetadata().getColumnName(i)));
+            }
+            if (isIdentity) {
+                return base;
+            }
+            mapping = new IntList(project.getExpressions().size());
+            metadata = new GenericRecordMetadata();
+            for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
+                final int index = input.getOutput().getColumnIndexById(((ColumnExpression) project.getExpressions().getQuick(i)).getColumnId());
+                mapping.add(index);
+                metadata.add(SqlCodeGenerator.copyColumn(base.getMetadata(), index, Chars.toString(project.getOutput().getColumnName(i))));
+            }
+            metadata.setTimestampIndex(timestampIndex);
+        } catch (Throwable th) {
+            Misc.free(base, th);
+            throw th;
         }
-        final IntList mapping = new IntList(project.getExpressions().size());
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-            final int index = input.getOutput().getColumnIndexById(((ColumnExpression) project.getExpressions().getQuick(i)).getColumnId());
-            mapping.add(index);
-            metadata.add(SqlCodeGenerator.copyColumn(base.getMetadata(), index, Chars.toString(project.getOutput().getColumnName(i))));
-        }
-        metadata.setTimestampIndex(timestampIndex);
-        final RecordCursorFactory factory = newSelected(metadata, mapping, base, input);
-        frame.resources.detach(inputSlot);
-        frame.resources.own(slot, factory);
-        return slot;
+        return newSelected(metadata, mapping, base, input);
     }
 
     void setReferenceCounts(GenerationFrame frame, OutputSchema output, int count) {

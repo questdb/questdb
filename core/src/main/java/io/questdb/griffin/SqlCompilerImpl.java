@@ -197,6 +197,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final OutputSchema emptySchema = new OutputSchema();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final FilesFacade ff;
+    private final ObjList<QueryLevelCompiler> freeQueryLevels = new ObjList<>();
     private final FunctionParser functionParser;
     private final IntList tmpIndexes = new IntList();
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
@@ -211,11 +212,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final Path renamePath;
+    private final QueryLevelCompiler rootLevel;
     private final IntHashSet tmpIds = new IntHashSet();
     private final StringSink tmpSink = new StringSink();
     private final IntList tmpSlaveKeys = new IntList();
     private final ObjectPool<ExpressionNode> sqlNodePool;
-    private final SubqueryCompiler subqueryCompiler;
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final VacuumColumnVersions vacuumColumnVersions;
@@ -281,8 +282,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // we can pass 1 as worker count because actual query plan does not matter
             // for COMPILE VIEW, what we care about is validating view dependencies
             compileViewContext = new ViewCompilerExecutionContext(engine, 1);
-            subqueryCompiler = new SubqueryCompiler(configuration, functionParser, this);
-            binder = subqueryCompiler.getBinder();
+            rootLevel = new QueryLevelCompiler(configuration, functionParser, this, freeQueryLevels);
+            binder = rootLevel.getBinder();
             final BindContext planNodes = binder.ctx;
             optimiser = new SqlOptimiser(characterStore, planNodes, tmpIds, tmpIndexes, tmpValues, tmpMasterKeys);
         } catch (Throwable th) {
@@ -397,7 +398,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         Misc.freeObjList(tableWriters);
         Misc.free(blockFileWriter);
         Misc.free(compileViewContext);
-        Misc.free(subqueryCompiler);
+        Misc.free(rootLevel);
+        Misc.freeObjListAndClear(freeQueryLevels);
     }
 
     @Override
@@ -534,7 +536,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     @Override
     public void freeResourcesInFlight() {
-        final Throwable failure = subqueryCompiler.freeResourcesInFlight();
+        final Throwable failure = rootLevel.freeResourcesInFlight();
         if (failure != null) {
             LOG.error().$("could not free in-flight compilation resources [error=").$(failure).I$();
         }
@@ -596,6 +598,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @TestOnly
     public LogicalPlan getPlanForTesting() {
         return binder.getRoot();
+    }
+
+    @TestOnly
+    public int getRetainedQueryLevelCount() {
+        return freeQueryLevels.size();
     }
 
     @Override
@@ -2229,7 +2236,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private Function bindStatementExpression(ExpressionNode expression, RecordMetadata metadata, int preferredType, SqlExecutionContext executionContext) throws SqlException {
-        return subqueryCompiler.compileExpression(expression, metadata, preferredType, executionContext);
+        return rootLevel.compileExpression(expression, metadata, preferredType, executionContext);
     }
 
     private void checkViewModification(ExecutionModel executionModel) throws SqlException {
@@ -2250,7 +2257,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void clearExceptSqlText() {
-        subqueryCompiler.clear();
+        rootLevel.clear();
         optimiser.clear();
         boundModel = null;
         sqlNodePool.clear();
@@ -3982,7 +3989,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private void compileQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         assert model.getBottomUpColumns().size() > 0 || model.getNestedModel() == null;
         optimiser.clear();
-        compilePlan(subqueryCompiler, model, this, executionContext);
+        compilePlan(rootLevel, model, this, executionContext);
         boundModel = model;
     }
 
@@ -4494,7 +4501,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } catch (Throwable th) {
             // Preparations may still be owned when statement checks reject a
             // successfully bound query before cursor generation starts.
-            subqueryCompiler.freeResourcesInFlight(th);
+            rootLevel.freeResourcesInFlight(th);
             // unregister query on error
             queryRegistry.unregister(sqlId, executionContext);
 
@@ -5468,7 +5475,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void freePlanningResources(Throwable failure) {
-        subqueryCompiler.freeResourcesInFlight(failure);
+        rootLevel.freeResourcesInFlight(failure);
     }
 
     private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -6085,7 +6092,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * Binds the statement, then completes its sub-queries and optimises it: every level shares
      * {@link #optimiser}, and a level is optimised after its sub-queries are generated.
      */
-    void compilePlan(SubqueryCompiler level, QueryModel model, SqlParserCallback parserCallback,
+    void compilePlan(QueryLevelCompiler level, QueryModel model, SqlParserCallback parserCallback,
                      SqlExecutionContext executionContext) throws SqlException {
         level.bind(model, parserCallback, executionContext);
         level.completeSubqueries(executionContext);

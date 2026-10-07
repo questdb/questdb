@@ -579,6 +579,7 @@ final class JoinBinder implements Mutable {
         // Native precision belongs to this conjunct, not to every use of a
         // column elsewhere in the predicate. A mixed-source OR stays intact.
         BoundExpression predicate;
+        final int subqueryMark = ctx.level.getSubqueryCount();
         try {
             predicate = ctx.functionBinder.toBooleanSubquery(ctx.functionBinder.bindPredicate(expression,
                     join.getOutput(), sourceAlias(source), ctx.joinNativeTimestampIds,
@@ -590,7 +591,7 @@ final class JoinBinder implements Mutable {
                         Math.max(sourceIndex, -1));
             }
         } catch (SqlException e) {
-            predicate = ctx.deferConjunct(e, expression, join.getOutput(), sourceAlias(source), Math.max(sourceIndex, -1));
+            predicate = ctx.deferConjunct(e, expression, join.getOutput(), sourceAlias(source), Math.max(sourceIndex, -1), subqueryMark);
         }
         if (originalOnSource == -2) {
             final int index = joinResidualNodes.indexOf(expression);

@@ -271,8 +271,13 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
                 ? MAX_COVERING_ROUTE_ROW_SHARE_DIVISOR
                 : MAX_INDEX_ROUTE_ROW_SHARE_DIVISOR;
         this.scanDelegate = scanDelegate;
-        this.indexRouteFilterCursor = isSelfFiltering ? new FilteredRecordCursor(patternFilter) : null;
-        this.symbolTableSourceMapper = new SymbolTableSourceMapper(columnIndexes);
+        try {
+            this.indexRouteFilterCursor = isSelfFiltering ? new FilteredRecordCursor(patternFilter) : null;
+            this.symbolTableSourceMapper = new SymbolTableSourceMapper(columnIndexes);
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @TestOnly

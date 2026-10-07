@@ -68,13 +68,18 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         super(metadata);
         this.base = base;
         this.columnCrossIndex = columnCrossIndex;
-        this.cursor = new SelectedRecordCursor(columnCrossIndex, base.recordCursorSupportsRandomAccess());
-        // True when the cursor must wrap its base to expose only the projected columns.
-        // isCrossedIndex covers reorder; the size check covers drop-only-with-identity-mapping
-        // (kept columns are at base[0..size-1]). Without the size check, page frame consumers
-        // that iterate by base columnMapping size would walk past the projected metadata.
-        this.needsProjection = isCrossedIndex(columnCrossIndex)
-                || columnCrossIndex.size() != base.getMetadata().getColumnCount();
+        try {
+            this.cursor = new SelectedRecordCursor(columnCrossIndex, base.recordCursorSupportsRandomAccess());
+            // True when the cursor must wrap its base to expose only the projected columns.
+            // isCrossedIndex covers reorder; the size check covers drop-only-with-identity-mapping
+            // (kept columns are at base[0..size-1]). Without the size check, page frame consumers
+            // that iterate by base columnMapping size would walk past the projected metadata.
+            this.needsProjection = isCrossedIndex(columnCrossIndex)
+                    || columnCrossIndex.size() != base.getMetadata().getColumnCount();
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     public static boolean isCrossedIndex(IntList columnCrossIndex) {

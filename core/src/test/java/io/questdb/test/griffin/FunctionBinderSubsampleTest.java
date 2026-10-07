@@ -51,7 +51,7 @@ public class FunctionBinderSubsampleTest extends AbstractCairoTest {
     public void testConstantValidationPrecedesOverloadSelection() throws Exception {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 configure();
                 try {
                     assertError(binder, window("uniform", constant("1.5", 17)), 17, "integer expected for target point count");
@@ -77,7 +77,7 @@ public class FunctionBinderSubsampleTest extends AbstractCairoTest {
     public void testNativeArgumentValidationFailureReleasesChildren() throws Exception {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 configure();
                 try {
                     for (int i = 0; i < 5; i++) {
@@ -98,7 +98,7 @@ public class FunctionBinderSubsampleTest extends AbstractCairoTest {
     public void testOrdinaryWindowDiagnosticsRemainUnchanged() throws Exception {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 configure();
                 try {
                     final ExpressionNode ordinary = window("uniform", constant("1.5", 17));
@@ -125,7 +125,7 @@ public class FunctionBinderSubsampleTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema input = schema();
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 configure();
                 try {
                     final ExpressionNode target = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.BIND_VARIABLE, "$1", 0, 17);
@@ -171,7 +171,7 @@ public class FunctionBinderSubsampleTest extends AbstractCairoTest {
             sum.lhs = constant("2", 17);
             sum.rhs = constant("1", 21);
             final OutputSchema input = schema();
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 configure();
                 try {
                     final FunctionExpression expression = binder.bindWindow(window("uniform", sum), input, null, sqlExecutionContext);

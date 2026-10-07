@@ -50,7 +50,7 @@ public class FunctionBinderHiddenColumnTest extends AbstractCairoTest {
                     .add(3, "ID", ColumnType.INT, null, true, "source")
                     .add(4, "", ColumnType.TIMESTAMP, null, false, "source");
             final ObjList<String> references = new ObjList<>("ts", "source.ts", "\"ts\"", "source.\"ts\"", "\"\"", "source.\"\"");
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 for (int i = 0; i < references.size(); i++) {
                     final ExpressionNode reference = literal(references.getQuick(i));
                     final SqlException error = Assert.assertThrows(SqlException.class,
@@ -84,7 +84,7 @@ public class FunctionBinderHiddenColumnTest extends AbstractCairoTest {
             final ExpressionNode node = literal("internal_timestamp");
             final ObjList<ExpressionNode> nodes = new ObjList<>(node);
             final ObjList<ColumnExpression> replacements = new ObjList<>(new ColumnExpression().of(70, ColumnType.TIMESTAMP_NANO, 13));
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final BoundExpression expression = binder.bind(node, input, null, nodes, replacements, sqlExecutionContext);
                 Assert.assertEquals(ColumnType.TIMESTAMP_NANO, expression.getDataType());
                 final OutputSchema layout = new OutputSchema()

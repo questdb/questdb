@@ -63,10 +63,15 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
         this.sources = sources;
         this.hasOrdinality = hasOrdinality;
         this.columnNames = columnNames;
-        if (hasOrdinality) {
-            sources.add(new OrdinalityUnnestSource());
+        try {
+            if (hasOrdinality) {
+                sources.add(new OrdinalityUnnestSource());
+            }
+            this.cursor = new UnnestRecordCursor(columnSplit, sources);
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
         }
-        this.cursor = new UnnestRecordCursor(columnSplit, sources);
     }
 
     @Override

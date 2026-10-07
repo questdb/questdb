@@ -272,7 +272,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             this.slaveSymbolIndex = slaveSymbolIndex;
             this.masterSymbolIndex = masterSymbolIndex;
         } catch (Throwable th) {
-            releaseAdoptedStateOnConstructorFailure();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -482,13 +482,6 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
      * Nulling the three fields before {@code close()} keeps the release of the adopted handles -
      * the join filter, the group-by functions, the cursor and the map value - in one place.
      */
-    private void releaseAdoptedStateOnConstructorFailure() {
-        masterFactory = null;
-        slaveFactory = null;
-        joinMetadata = null;
-        close();
-    }
-
     private abstract class AbstractWindowJoinFastRecordCursor implements NoRandomAccessRecordCursor {
         protected final GroupByFunctionsUpdater groupByFunctionsUpdater;
         // Stores metadata about storage of slave underlying records

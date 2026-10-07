@@ -92,7 +92,12 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         this.base = base;
         this.columnToFunctionIndex = columnToFunctionIndex;
         this.functions = functions;
-        this.cursor = new UnionSymbolCastRecordCursor(columnToFunctionIndex, functions);
+        try {
+            this.cursor = new UnionSymbolCastRecordCursor(columnToFunctionIndex, functions);
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override

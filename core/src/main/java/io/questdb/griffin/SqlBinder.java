@@ -106,11 +106,11 @@ final class SqlBinder implements Mutable {
     private LogicalPlan predicateSource;
     private LogicalPlan root;
 
-    SqlBinder(CairoConfiguration configuration, FunctionParser functionParser, SqlCompilerImpl compiler, SubqueryCompiler subqueries) {
+    SqlBinder(CairoConfiguration configuration, FunctionParser functionParser, SqlCompilerImpl compiler, QueryLevelCompiler level) {
         this.configuration = configuration;
         this.functionParser = functionParser;
         final OutputSchema emptySchema = compiler.getEmptySchema();
-        this.ctx = new BindContext(functionParser, compiler.getSqlNodePool(), compiler.getCharacterStore(), subqueries);
+        this.ctx = new BindContext(functionParser, compiler.getSqlNodePool(), compiler.getCharacterStore(), level);
         this.translatingAliases = new TranslatingAliases(ctx.joinNativeTimestampIds);
         this.windowBinder = new WindowBinder(ctx, functionParser);
         this.cursorNames = windowBinder.windowNames;
@@ -124,7 +124,7 @@ final class SqlBinder implements Mutable {
         this.orderBinder = new OrderBinder(ctx, emptySchema, sampleByBinder);
         this.aggregateBinder = new AggregateBinder(ctx, this, configuration, orderBinder, sampleByBinder, windowBinder);
         this.temporalJoinBinder = new TemporalJoinBinder(ctx, this, emptySchema, orderBinder, aggregateBinder, joinBinder);
-        this.pivotBinder = new PivotBinder(ctx, this, subqueries, configuration, windowBinder, temporalJoinBinder, aggregateBinder, joinBinder,
+        this.pivotBinder = new PivotBinder(ctx, this, level, configuration, windowBinder, temporalJoinBinder, aggregateBinder, joinBinder,
                 compiler.getTmpSink());
         this.updateBinder = new UpdateBinder(ctx, this, windowBinder, joinBinder, orderBinder);
     }
@@ -339,6 +339,7 @@ final class SqlBinder implements Mutable {
         if (hasSinglePredicateSource(expression, input, alias)) {
             ctx.copyTimestampScope(input.getOutput());
         }
+        final int subqueryMark = ctx.level.getSubqueryCount();
         try {
             final BoundExpression bound = ctx.functionBinder.bindPredicate(expression, input.getOutput(), alias,
                     ctx.joinNativeTimestampIds, isAndArgument ? ColumnType.BOOLEAN : ColumnType.UNDEFINED, executionContext);
@@ -353,7 +354,7 @@ final class SqlBinder implements Mutable {
             }
             return predicate;
         } catch (SqlException e) {
-            return ctx.deferConjunct(e, expression, input.getOutput(), alias, -1);
+            return ctx.deferConjunct(e, expression, input.getOutput(), alias, -1, subqueryMark);
         }
     }
 
@@ -1166,7 +1167,7 @@ final class SqlBinder implements Mutable {
     }
 
     /**
-     * Binds the model of a cleared binder into an unoptimised plan. {@link SubqueryCompiler} installs it as the
+     * Binds the model of a cleared binder into an unoptimised plan. {@link QueryLevelCompiler} installs it as the
      * root and {@link SqlCompilerImpl} optimises it and hands the result back through {@link #setRoot(LogicalPlan)}.
      */
     LogicalPlan bind(QueryModel model, SqlParserCallback parserCallback, SqlExecutionContext executionContext) throws SqlException {

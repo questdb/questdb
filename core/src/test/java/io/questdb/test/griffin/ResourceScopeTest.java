@@ -49,11 +49,11 @@ public class ResourceScopeTest {
         scope.own(firstSlot, first);
         scope.own(secondSlot, second);
 
-        Assert.assertSame(firstFailure, scope.closeOwned(-1, null));
+        Assert.assertSame(firstFailure, scope.closeOwned(null));
         Assert.assertArrayEquals(new Throwable[]{secondFailure}, firstFailure.getSuppressed());
         Assert.assertEquals(1, first.closeCount);
         Assert.assertEquals(1, second.closeCount);
-        Assert.assertNull(scope.closeOwned(-1, null));
+        Assert.assertNull(scope.closeOwned(null));
         Assert.assertEquals(1, first.closeCount);
         Assert.assertEquals(1, second.closeCount);
         Assert.assertThrows(IllegalStateException.class, () -> scope.detach(firstSlot));
@@ -71,7 +71,7 @@ public class ResourceScopeTest {
         scope.own(scope.reserve(), first);
         scope.own(scope.reserve(), second);
 
-        Assert.assertSame(primary, scope.closeOwned(-1, primary));
+        Assert.assertSame(primary, scope.closeOwned(primary));
         Assert.assertArrayEquals(new Throwable[]{closeFailure}, primary.getSuppressed());
         Assert.assertEquals(1, first.closeCount);
         Assert.assertEquals(1, second.closeCount);
@@ -128,25 +128,6 @@ public class ResourceScopeTest {
         scope.close();
         Assert.assertEquals(1, dependent.closeCount);
         Assert.assertEquals(1, provider.closeCount);
-    }
-
-    @Test
-    public void testRetainsCompletedRootUntilTemporaryCleanupSucceeds() {
-        final ResourceScope scope = new ResourceScope();
-        final int rootSlot = scope.reserve();
-        final TestResource root = new TestResource(null);
-        scope.own(rootSlot, root);
-        final RuntimeException failure = new RuntimeException("temporary close");
-        final TestResource temporary = new TestResource(failure);
-        scope.own(scope.reserve(), temporary);
-
-        final Throwable cleanupFailure = scope.closeOwned(rootSlot, null);
-        Assert.assertSame(failure, cleanupFailure);
-        Assert.assertEquals(0, root.closeCount);
-        Assert.assertSame(failure, scope.closeOwned(-1, cleanupFailure));
-        Assert.assertEquals(1, root.closeCount);
-        Assert.assertEquals(1, temporary.closeCount);
-        scope.clear();
     }
 
     @Test

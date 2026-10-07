@@ -163,7 +163,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private int executionRequirementPosition = -1;
     private RecordMetadata metadata;
     private SqlExecutionContext sqlExecutionContext;
-    private SubqueryCompiler subqueries;
+    private QueryLevelCompiler level;
 
     public FunctionParser(CairoConfiguration configuration, FunctionFactoryCache functionFactoryCache) {
         this.configuration = configuration;
@@ -1013,11 +1013,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
-        if (subqueries == null) {
+        if (level == null) {
             throw SqlException.$(node.position, "sub-query is not supported in this context");
         }
-        final int index = subqueries.compileSubquery(node.queryModel, node.position, sqlExecutionContext);
-        return new CursorFunction(subqueries.takeSubquery(index, sqlExecutionContext));
+        final int index = level.compileSubquery(node.queryModel, node.position, sqlExecutionContext);
+        return new CursorFunction(level.takeSubquery(index, sqlExecutionContext));
     }
 
     /**
@@ -1865,12 +1865,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     /**
-     * Installs the compiler that generates sub-queries met outside function binding, e.g. in
+     * Installs the query level that compiles the sub-queries met outside function binding, e.g. in
      * table-function arguments, and returns the previous one for the caller to restore.
      */
-    SubqueryCompiler swapSubqueryCompiler(SubqueryCompiler subqueries) {
-        final SubqueryCompiler previous = this.subqueries;
-        this.subqueries = subqueries;
+    QueryLevelCompiler swapQueryLevel(QueryLevelCompiler level) {
+        final QueryLevelCompiler previous = this.level;
+        this.level = level;
         return previous;
     }
 

@@ -1125,7 +1125,7 @@ final class IntervalExtractor implements Mutable {
                             BoundExpressionRewriter rewriter, SqlExecutionContext executionContext) throws SqlException {
         of(input.getColumnType(input.getColumnIndexById(timestampColumnId)));
         // Each pruning bound generates its sub-query once more, so cap the nesting that speculates.
-        isBoundSpeculationAllowed = instantiator.getScalarBoundDepth() < MAX_SPECULATIVE_SCALAR_BOUND_DEPTH;
+        isBoundSpeculationAllowed = instantiator.getLevelDepth() < MAX_SPECULATIVE_SCALAR_BOUND_DEPTH;
         return intersect(predicate, timestampColumnId, input, instantiator, rewriter, executionContext);
     }
 

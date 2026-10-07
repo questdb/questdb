@@ -79,7 +79,7 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
                 }
             };
             final OutputSchema input = new OutputSchema().add(7, "id", ColumnType.LONG, true);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final BoundExpression expression = binder.bind(cast(in(constant("2")), "string"), input, null, sqlExecutionContext);
                 Assert.assertTrue(hasNativeChild[0]);
                 Assert.assertEquals(1, foldedCastCalls[0]);
@@ -139,7 +139,7 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
                          RecordCursorFactory narrowed = select(isDynamic
                                  ? "SELECT s FROM fb_cast_symbol UNION ALL SELECT s FROM fb_cast_symbol"
                                  : "SELECT s FROM fb_cast_symbol");
-                         FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                         FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                         final OutputSchema full = schema(original.getMetadata(), 100);
                         final OutputSchema pruned = schema(narrowed.getMetadata(), 101);
                         final FunctionExpression expression = (FunctionExpression) binder.bind(
@@ -191,7 +191,7 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
                 final OutputSchema firstLayout = new OutputSchema().add(70, "value", ColumnType.LONG, true);
                 final OutputSchema secondLayout = new OutputSchema().add(80, "unused", ColumnType.INT, true)
                         .add(70, "value", ColumnType.LONG, true);
-                try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                     final ExpressionNode source = cast(literal("value"), type == ColumnType.STRING ? "string" : "varchar");
                     final FunctionExpression expression = (FunctionExpression) binder.bind(source, original, null, sqlExecutionContext);
                     Assert.assertEquals(type, expression.getDataType());
@@ -242,7 +242,7 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
             final OutputSchema firstLayout = new OutputSchema().add(70, "value", ColumnType.VARCHAR, true);
             final OutputSchema secondLayout = new OutputSchema().add(80, "unused", ColumnType.INT, true)
                     .add(70, "value", ColumnType.VARCHAR, true);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bind(
                         cast(literal("value"), "char"), original, null, sqlExecutionContext);
                 TestUtils.assertEquals("cast(Øa)", expression.getSignature());

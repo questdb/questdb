@@ -110,15 +110,13 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         this.bindVarFunctions = bindVarFunctions;
         // A throw part-way through this constructor never returns the factory, so _close() never runs
         // and everything allocated up to that point is unreachable: the bind variable memory is
-        // native, and a per-worker filter can hold native memory of its own. The caller frees what it
-        // passed in - the compiled filters, the filter, the bind variable functions and the base
-        // factory - so build the rest into locals and release them here.
+        // native, and a per-worker filter can hold native memory of its own. Build the rest into
+        // locals and release them here, together with the inputs this constructor consumes.
         //
-        // The caller retains the per-worker filter list until this constructor returns. Once the atom
-        // takes the filters, its failure paths close them and null the list slots, so the caller can
-        // safely close any remaining entries. The atom belongs to the frame sequence from the moment
-        // the PageFrameSequence constructor is entered: that constructor closes the atom on its own
-        // failure path, and close() closes it afterwards. Nothing that can throw sits between the two
+        // Once the atom takes the per-worker filters, its failure paths close them and null the list
+        // slots. The atom belongs to the frame sequence from the moment the PageFrameSequence
+        // constructor is entered: that constructor closes the atom on its own failure path, and
+        // close() closes it afterwards. Nothing that can throw sits between the two
         // calls, so isPerWorkerFiltersOwned covers the whole gap and every object below is closed
         // exactly once on every path.
         MemoryCARW bindVarMemory = null;
@@ -175,6 +173,12 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             // release the records directly - the same call halfClose() makes on the open factory.
             freeRecordsBestEffort(th, cursor);
             freeRecordsBestEffort(th, negativeLimitCursor);
+            Misc.free(compiledCountOnlyFilter, th);
+            Misc.free(compiledFilter, th);
+            Misc.free(filter, th);
+            Misc.freeObjList(bindVarFunctions, th);
+            Misc.free(limitLoFunction, th);
+            Misc.free(base, th);
             throw th;
         }
         this.cursor = cursor;

@@ -71,14 +71,14 @@ final class PreparedFunctions implements Mutable {
      * Closes every root nothing adopted and chains close failures onto {@code primary}.
      */
     Throwable closePrepared(Throwable primary) {
-        return resources.closeOwned(-1, primary);
+        return resources.closeOwned(primary);
     }
 
     /**
      * Transfers the entry's root to the caller.
      */
     Function detach(Entry entry) {
-        final Function function = resources.detachFunction(entry.slot);
+        final Function function = (Function) resources.detach(entry.slot);
         entry.slot = -1;
         return function;
     }

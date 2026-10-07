@@ -131,42 +131,44 @@ final class WindowFactoryGenerator {
      * so projection aliases of input columns name that input.
      */
     private static RecordCursorFactory renameWindowInput(RecordCursorFactory base, OutputSchema input, ProjectPlan projection) {
-        final RecordMetadata metadata = base.getMetadata();
-        final int columnCount = metadata.getColumnCount();
-        final ObjList<CharSequence> names = new ObjList<>(columnCount);
-        names.setPos(columnCount);
-        boolean isRenamed = false;
-        for (int i = 0, n = projection.getExpressions().size(); i < n; i++) {
-            if (!(projection.getExpressions().getQuick(i) instanceof ColumnExpression column)) {
-                continue;
-            }
-            final int index = input.getColumnIndexById(column.getColumnId());
-            final CharSequence name = projection.getOutput().getColumnName(i);
-            if (index >= 0 && names.getQuick(index) == null && !Chars.equalsIgnoreCase(name, metadata.getColumnName(index))
-                    && metadata.getColumnIndexQuiet(name) < 0) {
-                names.setQuick(index, name);
-                isRenamed = true;
-            }
-        }
-        if (!isRenamed) {
-            return base;
-        }
-        final GenericRecordMetadata renamed = new GenericRecordMetadata();
-        final IntList mapping = new IntList(columnCount);
-        for (int i = 0; i < columnCount; i++) {
-            final TableColumnMetadata column = metadata.getColumnMetadata(i);
-            final CharSequence name = names.getQuick(i);
-            renamed.add(name == null ? column : new TableColumnMetadata(Chars.toString(name), column.getColumnType(),
-                    column.getIndexType(), column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), column.getMetadata()));
-            mapping.add(i);
-        }
-        renamed.setTimestampIndex(metadata.getTimestampIndex());
+        final GenericRecordMetadata renamed;
+        final IntList mapping;
         try {
-            return new SelectedRecordCursorFactory(renamed, mapping, base);
+            final RecordMetadata metadata = base.getMetadata();
+            final int columnCount = metadata.getColumnCount();
+            final ObjList<CharSequence> names = new ObjList<>(columnCount);
+            names.setPos(columnCount);
+            boolean isRenamed = false;
+            for (int i = 0, n = projection.getExpressions().size(); i < n; i++) {
+                if (!(projection.getExpressions().getQuick(i) instanceof ColumnExpression column)) {
+                    continue;
+                }
+                final int index = input.getColumnIndexById(column.getColumnId());
+                final CharSequence name = projection.getOutput().getColumnName(i);
+                if (index >= 0 && names.getQuick(index) == null && !Chars.equalsIgnoreCase(name, metadata.getColumnName(index))
+                        && metadata.getColumnIndexQuiet(name) < 0) {
+                    names.setQuick(index, name);
+                    isRenamed = true;
+                }
+            }
+            if (!isRenamed) {
+                return base;
+            }
+            renamed = new GenericRecordMetadata();
+            mapping = new IntList(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                final TableColumnMetadata column = metadata.getColumnMetadata(i);
+                final CharSequence name = names.getQuick(i);
+                renamed.add(name == null ? column : new TableColumnMetadata(Chars.toString(name), column.getColumnType(),
+                        column.getIndexType(), column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), column.getMetadata()));
+                mapping.add(i);
+            }
+            renamed.setTimestampIndex(metadata.getTimestampIndex());
         } catch (Throwable th) {
             Misc.free(base, th);
             throw th;
         }
+        return new SelectedRecordCursorFactory(renamed, mapping, base);
     }
 
     private boolean hasGroupByWindowFunction(GenerationFrame frame, WindowPlan window) {
@@ -266,7 +268,7 @@ final class WindowFactoryGenerator {
             // The Map subgroups the sort groups' functions form, compiled one bucket at a
             // time so a group is by construction driven by one traversal. Built into a local
             // the outer catch can free: each group owns a map, and whichever factory is built
-            // below takes ownership only once its constructor has returned.
+            // below takes ownership on entry to its constructor.
             if (cachedWindowMapSpecs != null) {
                 // Give the groups' key projection its own snapshot of the assembled chain layout.
                 final ArrayColumnTypes chainRecordTypes = new ArrayColumnTypes();
@@ -385,12 +387,10 @@ final class WindowFactoryGenerator {
             LiveViewCheckpointRowsPlan rowsPlan
     ) {
         ObjList<WindowMapState> states = null;
+        final ObjList<WindowAccumulatorPlan> plans;
         try {
-            final ObjList<WindowAccumulatorPlan> plans = specs == null ? null
-                    : WindowAccumulatorPlanBuilder.compileGroups(functions, specs, base.getMetadata());
+            plans = specs == null ? null : WindowAccumulatorPlanBuilder.compileGroups(functions, specs, base.getMetadata());
             states = WindowMapState.createGroups(configuration, asm, plans, base.getMetadata());
-            return new WindowRecordCursorFactory(base, metadata, functions, anchorableFunctions,
-                    rangePlan, rowsPlan, plans, states);
         } catch (Throwable th) {
             Misc.free(base, th);
             Misc.freeObjList(states, th);
@@ -398,11 +398,12 @@ final class WindowFactoryGenerator {
             Misc.free(rowsPlan, th);
             throw th;
         }
+        return new WindowRecordCursorFactory(base, metadata, functions, anchorableFunctions, rangePlan, rowsPlan, plans, states);
     }
 
-    int generateWindow(GenerationFrame frame, WindowPlan window, ProjectPlan projection, int requiredOrderColumnId, int requiredScanDirection,
-                       SortPlan orderAdvice, boolean isModelOrder, int orderByMnemonic,
-                       SqlExecutionContext executionContext) throws SqlException {
+    RecordCursorFactory generateWindow(GenerationFrame frame, WindowPlan window, ProjectPlan projection, int requiredOrderColumnId, int requiredScanDirection,
+                                       SortPlan orderAdvice, boolean isModelOrder, int orderByMnemonic,
+                                       SqlExecutionContext executionContext) throws SqlException {
         int orderId = -1;
         int direction = RecordCursorFactory.SCAN_DIRECTION_OTHER;
         // Order advice, or else a uniform window order, lets a nested UNION ALL merge its branches in that order.
@@ -432,14 +433,10 @@ final class WindowFactoryGenerator {
         }
         final int inputMnemonic = isModelOrder || orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT || hasGroupByWindowFunction(frame, window)
                 ? OrderByMnemonic.ORDER_BY_INVARIANT : OrderByMnemonic.ORDER_BY_REQUIRED;
-        final int inputSlot = codeGenerator.generate(frame, window.getInput(), executionContext, orderId,
+        final RecordCursorFactory base = codeGenerator.generate(frame, window.getInput(), executionContext, orderId,
                 orderId < 0 ? RecordCursorFactory.SCAN_DIRECTION_OTHER : direction,
                 SqlCodeGenerator.hasColumns(window.getInput().getOutput(), orderAdvice) && !orderAdvice.hasAliasedKey() ? orderAdvice : null, null, inputMnemonic);
-        final int slot = frame.resources.reserve();
-        final RecordCursorFactory base = frame.resources.detachFactory(inputSlot);
-        frame.resources.own(slot, generateWindow(frame, window, projection, base, isModelOrder ? orderAdvice : null,
-                executionContext));
-        return slot;
+        return generateWindow(frame, window, projection, base, isModelOrder ? orderAdvice : null, executionContext);
     }
 
     /**

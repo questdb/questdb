@@ -77,7 +77,7 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
                     final FunctionParser parser = parser(constructions);
                     final OutputSchema full = schema(type, true);
                     final OutputSchema pruned = schema(type, false);
-                    try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                    try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                         final FunctionExpression expression = binder.bindAggregate(call(name), full, null, sqlExecutionContext);
                         Assert.assertTrue(expression.getOverload().isOrderSensitiveAggregate());
                         Assert.assertEquals(type, expression.getDataType());
@@ -133,7 +133,7 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
                     final OutputSchema full = schema(type, true);
                     final OutputSchema pruned = schema(type, false);
                     final int[] lookups = {0, 0};
-                    try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                    try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                         final FunctionExpression expression = binder.bindAggregate(call(name), full, null, sqlExecutionContext);
                         Assert.assertEquals(type, expression.getDataType());
                         Assert.assertFalse(expression.getOverload().isOrderSensitiveAggregate());
@@ -195,7 +195,7 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
                     final FunctionParser parser = parser(new ObjList<>());
                     final OutputSchema full = schema(type, true);
                     final OutputSchema pruned = schema(type, false);
-                    try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                    try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                         final FunctionExpression expression = binder.bindAggregate(call(name), full, null, sqlExecutionContext);
                         Assert.assertFalse(expression.getOverload().isOrderSensitiveAggregate());
                         try (Function owner = binder.instantiateAggregate(expression, pruned, metadata(type, false), sqlExecutionContext);
@@ -246,7 +246,7 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
                              RecordCursorFactory narrowed = select(isDynamic
                                      ? "SELECT v FROM fb_ordered_symbol UNION ALL SELECT v FROM fb_ordered_symbol"
                                      : "SELECT v FROM fb_ordered_symbol");
-                             FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                             FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                             final OutputSchema full = schema(ColumnType.SYMBOL, true);
                             final OutputSchema pruned = schema(ColumnType.SYMBOL, false);
                             full.setSymbolTableStatic(1, true);
@@ -282,7 +282,7 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
     public void testScalarAndNestedAggregatesRemainRejected() throws Exception {
         assertMemoryLeak(() -> {
             final OutputSchema input = schema(ColumnType.INT, false);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser(new ObjList<>()))) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser(new ObjList<>()))) {
                 try {
                     binder.bind(call("first"), input, null, sqlExecutionContext);
                     Assert.fail("aggregate accepted as scalar");

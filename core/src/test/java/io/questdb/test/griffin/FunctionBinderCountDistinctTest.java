@@ -78,7 +78,7 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
                 final OutputSchema pruned = new OutputSchema().add(27, "v", type, true);
                 final GenericRecordMetadata originalMetadata = metadata(type, true);
                 final GenericRecordMetadata prunedMetadata = metadata(type, false);
-                try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                     final ExpressionNode ast = unary("count_distinct", literal("v"));
                     final FunctionExpression expression = binder.bindAggregate(ast, original, null, sqlExecutionContext);
                     ast.clear();
@@ -141,7 +141,7 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
             execute("INSERT INTO fb_count_symbol VALUES(1,'alpha'),(2,'beta'),(3,null),(4,'alpha')");
             final FunctionParser parser = parser(new ObjList<>());
             try (RecordCursorFactory source = select("SELECT s FROM fb_count_symbol");
-                 FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                 FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final OutputSchema schema = new OutputSchema().add(27, "s", ColumnType.SYMBOL, true);
                 schema.setSymbolTableStatic(0, true);
                 final FunctionExpression expression = binder.bindAggregate(unary("count_distinct", literal("s")), schema, null, sqlExecutionContext);
@@ -183,7 +183,7 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
     public void testWideNullPredicatesConstantsAndParameters() throws Exception {
         assertMemoryLeak(() -> {
             final FunctionParser parser = parser(new ObjList<>());
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 for (int type : new int[]{ColumnType.IPv4, ColumnType.UUID, ColumnType.LONG256}) {
                     final OutputSchema full = new OutputSchema().add(1, "unused", ColumnType.INT, true).add(27, "v", type, true);
                     final OutputSchema pruned = new OutputSchema().add(27, "v", type, true);
@@ -254,7 +254,7 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
             caseArgs.add(literal("v"));
             caseArgs.add(constant("null"));
             final ExpressionNode counted = unary("count_distinct", call("case", caseArgs));
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 try {
                     binder.bindAggregate(unary("count_distinct", counted), full, null, sqlExecutionContext);
                     Assert.fail("nested aggregate accepted");
@@ -290,7 +290,7 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final ObjList<Function> constructions = new ObjList<>();
             final OutputSchema input = new OutputSchema().add(27, "v", ColumnType.INT, true);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser(constructions))) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser(constructions))) {
                 try {
                     binder.bind(unary("count_distinct", literal("v")), input, null, sqlExecutionContext);
                     Assert.fail("aggregate accepted as scalar");
@@ -315,7 +315,7 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final ObjList<Function> constructions = new ObjList<>();
             final OutputSchema original = new OutputSchema().add(27, "v", ColumnType.INT, true);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser(constructions))) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser(constructions))) {
                 final BoundExpression expression = binder.bind(binary("|", literal("v"), constant("2")), original, null, sqlExecutionContext);
                 final ProjectPlan left = projection(10);
                 final ProjectPlan right = projection(11);

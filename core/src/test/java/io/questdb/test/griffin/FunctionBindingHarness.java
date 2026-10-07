@@ -24,12 +24,14 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.BoundExpressionRewriter;
 import io.questdb.griffin.FunctionBinder;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowFunction;
@@ -49,11 +51,18 @@ import java.io.Closeable;
  */
 public final class FunctionBindingHarness implements Closeable {
     private final FunctionBinder binder;
+    private final SqlCompilerImpl compiler;
     private final FunctionInstantiator instantiator;
     private final BoundExpressionRewriter rewriter;
 
-    public FunctionBindingHarness(FunctionParser parser) {
-        this.binder = FunctionBinder.newStandalone(parser);
+    public FunctionBindingHarness(CairoEngine engine, FunctionParser parser) {
+        this.compiler = new SqlCompilerImpl(engine);
+        try {
+            this.binder = FunctionBinder.newStandalone(compiler, parser);
+        } catch (Throwable th) {
+            compiler.close();
+            throw th;
+        }
         this.instantiator = binder.getFunctionInstantiator();
         this.rewriter = binder.getExpressionRewriter();
     }
@@ -118,7 +127,11 @@ public final class FunctionBindingHarness implements Closeable {
 
     @Override
     public void close() {
-        binder.clearExpressions();
+        try {
+            binder.clearExpressions();
+        } finally {
+            compiler.close();
+        }
     }
 
     public FunctionExpression commuteEquality(FunctionExpression original) {

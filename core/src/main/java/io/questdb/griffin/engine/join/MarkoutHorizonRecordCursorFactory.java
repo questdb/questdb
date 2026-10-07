@@ -138,7 +138,8 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
                     slaveRecordArray
             );
         } catch (Throwable th) {
-            Misc.free(slaveRecordArray);
+            Misc.free(slaveRecordArray, th);
+            Misc.free(this, th);
             throw th;
         }
     }

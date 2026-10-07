@@ -368,6 +368,7 @@ final class SampleByFactoryGenerator {
             Function tzFunc,
             int tzFuncPos
     ) throws SqlException {
+        boolean isTransferred = false;
         try {
             final RecordMetadata groupByMetadata = groupByFactory.getMetadata();
             final int columnCount = groupByMetadata.getColumnCount();
@@ -508,33 +509,32 @@ final class SampleByFactoryGenerator {
                 listColumnFilterA.add(timestampIndex + 1); // positive = ascending
                 entityColumnFilter.of(sortMetadata.getColumnCount());
                 final int sortStrategy = configuration.getSampleByFillSortStrategy();
-                // LIGHT_RECORDCHAIN and FULL_RECORDCHAIN need null-before-risky:
-                // SortedLight/SortedRecordCursorFactory's ctor catch cascades codeGenerator.close()
-                // and frees `base`, so the outer catch's Misc.free(groupByFactory)
-                // would double-free unless we null first. Risky-arg calls (newInstance,
-                // RecordSinkFactory.getInstance, copy) run BEFORE the null so the
-                // outer catch still owns base on their failure. LIGHT_ENCODED and
-                // FULL_ENCODED have no such ctor catch -- the caller is the single
-                // owner there.
                 switch (sortStrategy) {
                     case SampleBySortStrategy.LIGHT_ENCODED -> {
                         assert SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA)
                                 && groupByFactory.recordCursorSupportsRandomAccess();
+                        final ListColumnFilter filterCopy = listColumnFilterA.copy();
+                        final RecordCursorFactory base = groupByFactory;
+                        groupByFactory = null;
                         groupByFactory = new EncodedSortLightRecordCursorFactory(
                                 configuration,
                                 sortMetadata,
-                                groupByFactory,
-                                listColumnFilterA.copy()
+                                base,
+                                filterCopy
                         );
                     }
                     case SampleBySortStrategy.FULL_ENCODED -> {
                         assert SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA);
+                        final RecordSink recordSink = RecordSinkFactory.getInstance(configuration, asm, sortMetadata, entityColumnFilter);
+                        final ListColumnFilter filterCopy = listColumnFilterA.copy();
+                        final RecordCursorFactory base = groupByFactory;
+                        groupByFactory = null;
                         groupByFactory = new EncodedSortRecordCursorFactory(
                                 configuration,
                                 sortMetadata,
-                                groupByFactory,
-                                RecordSinkFactory.getInstance(configuration, asm, sortMetadata, entityColumnFilter),
-                                listColumnFilterA.copy()
+                                base,
+                                recordSink,
+                                filterCopy
                         );
                     }
                     case SampleBySortStrategy.LIGHT_RECORDCHAIN -> {
@@ -583,6 +583,7 @@ final class SampleByFactoryGenerator {
             final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, fillValues);
             fillValues = null;
             CairoException.rethrowCleanupFailure(cleanupFailure);
+            isTransferred = true;
             return new SampleByFillRecordCursorFactory(
                     configuration,
                     fillMetadata,
@@ -613,19 +614,21 @@ final class SampleByFactoryGenerator {
                     isSampleBySource
             );
         } catch (Throwable th) {
-            Misc.freeObjList(fillValues, th);
-            Misc.freeObjList(constantFills, th);
-            Misc.free(fillFromFunc, th);
-            if (fillToFunc != fillFromFunc) {
-                Misc.free(fillToFunc, th);
+            if (!isTransferred) {
+                Misc.freeObjList(fillValues, th);
+                Misc.freeObjList(constantFills, th);
+                Misc.free(fillFromFunc, th);
+                if (fillToFunc != fillFromFunc) {
+                    Misc.free(fillToFunc, th);
+                }
+                if (offsetFunc != fillFromFunc && offsetFunc != fillToFunc) {
+                    Misc.free(offsetFunc, th);
+                }
+                if (tzFunc != fillFromFunc && tzFunc != fillToFunc && tzFunc != offsetFunc) {
+                    Misc.free(tzFunc, th);
+                }
+                Misc.free(groupByFactory, th);
             }
-            if (offsetFunc != fillFromFunc && offsetFunc != fillToFunc) {
-                Misc.free(offsetFunc, th);
-            }
-            if (tzFunc != fillFromFunc && tzFunc != fillToFunc && tzFunc != offsetFunc) {
-                Misc.free(tzFunc, th);
-            }
-            Misc.free(groupByFactory, th);
             throw th;
         }
     }
@@ -1020,14 +1023,11 @@ final class SampleByFactoryGenerator {
         }
     }
 
-    int generateSampleBy(GenerationFrame frame, SampleByPlan sample, SqlExecutionContext executionContext) throws SqlException {
+    RecordCursorFactory generateSampleBy(GenerationFrame frame, SampleByPlan sample, SqlExecutionContext executionContext) throws SqlException {
         final LogicalPlan sampled = sample.getInput();
-        final int inputSlot = codeGenerator.generateJoinInput(frame, !sample.isTimestampRequired() && SqlCodeGenerator.isTimestampDeclarationOnly(sampled) ? sampled.inputAt(0) : sampled, executionContext,
+        final RecordCursorFactory base = codeGenerator.generateJoinInput(frame, !sample.isTimestampRequired() && SqlCodeGenerator.isTimestampDeclarationOnly(sampled) ? sampled.inputAt(0) : sampled, executionContext,
                 sample.isTimestampRequired(), OrderByMnemonic.ORDER_BY_REQUIRED);
-        final int slot = frame.resources.reserve();
-        final RecordCursorFactory base = frame.resources.detachFactory(inputSlot);
-        frame.resources.own(slot, generateSampleBy(sample, base, frame.functionInstantiator, executionContext));
-        return slot;
+        return generateSampleBy(sample, base, frame.functionInstantiator, executionContext);
     }
 
     /**
