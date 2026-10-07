@@ -8376,6 +8376,9 @@ public class SqlOptimiser implements Mutable {
                             // optimisation already ran, so re-derive transitive constant filters to
                             // let the constant reach the slave scans (e.g. a view wrapping LEFT JOINs)
                             deriveTransitiveFiltersFromPushedPredicate(nested, normalisedNode, sqlExecutionContext);
+                            // the derive pass recomputed the nulling-join anchors for nested; restore this
+                            // level's anchors, which the remaining conjuncts of the loop read
+                            precomputeNullingJoinAnchors(model);
                             // we do not have to deal with "union" models here
                             // because "where" clause is made to apply to the result of the union
                         } catch (NonLiteralException ignore) {

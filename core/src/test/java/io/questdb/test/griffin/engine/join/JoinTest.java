@@ -2831,6 +2831,65 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinBeforeRightJoinUnderOuterWhere() throws Exception {
+        // moveWhereInsideSubQueries() pushed t0x = 1 into the join sub-query, and
+        // deriveTransitiveFiltersFromPushedPredicate() overwrote the outer level's nulling-join anchors with the
+        // sub-query's. The next conjunct read a stale anchor, and the query failed with a NullPointerException.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (t0k INT, t0x INT)");
+            execute("INSERT INTO t0 VALUES (null, null), (2, 1)");
+            execute("CREATE TABLE t1 (t1k INT, t1x INT)");
+            execute("INSERT INTO t1 VALUES (2, 2), (1, null), (1, 3), (3, 2)");
+            execute("CREATE TABLE t3 (t3k INT, t3x INT)");
+            execute("INSERT INTO t3 VALUES (1, 1), (1, 1), (null, 1)");
+            final String crossRight = "SELECT t0.t0k, t0.t0x, t1.t1k, t1.t1x, t3.t3k, t3.t3x FROM t0 CROSS JOIN t1 RIGHT JOIN t3 ON t3.t3k = t1.t1k";
+            execute("CREATE VIEW vv AS (" + crossRight + ")");
+            final String[] sources = {
+                    "SELECT * FROM vv",
+                    "SELECT * FROM (" + crossRight + ")",
+                    "WITH q AS (" + crossRight + ") SELECT * FROM q",
+                    "SELECT * FROM (SELECT t0.t0k, t0.t0x, t1.t1k, t1.t1x, t3.t3k, t3.t3x FROM t0, t1 RIGHT JOIN t3 ON t3.t3k = t1.t1k)",
+                    "SELECT * FROM (SELECT t0.t0k, t0.t0x, t1.t1k, t1.t1x, t3.t3k, t3.t3x FROM t0 CROSS JOIN t1 FULL JOIN t3 ON t3.t3k = t1.t1k)"
+            };
+            for (String source : sources) {
+                for (String where : new String[]{" WHERE t0x IS NULL AND t3k > 0", " WHERE t3k > 0 AND t0x IS NULL"}) {
+                    assertQuery(source + where + " ORDER BY 1, 2, 3, 4, 5, 6")
+                            .noLeakCheck()
+                            .returns("""
+                                    t0k\tt0x\tt1k\tt1x\tt3k\tt3x
+                                    null\tnull\t1\tnull\t1\t1
+                                    null\tnull\t1\tnull\t1\t1
+                                    null\tnull\t1\t3\t1\t1
+                                    null\tnull\t1\t3\t1\t1
+                                    """);
+                }
+                for (String where : new String[]{" WHERE t0x = 1 AND t3k > 0", " WHERE t3k > 0 AND t0x = 1"}) {
+                    assertQuery(source + where + " ORDER BY 1, 2, 3, 4, 5, 6")
+                            .noLeakCheck()
+                            .returns("""
+                                    t0k\tt0x\tt1k\tt1x\tt3k\tt3x
+                                    2\t1\t1\tnull\t1\t1
+                                    2\t1\t1\tnull\t1\t1
+                                    2\t1\t1\t3\t1\t1
+                                    2\t1\t1\t3\t1\t1
+                                    """);
+                }
+            }
+            // the keyed INNER JOIN already ran t0 ahead of the RIGHT JOIN before the CROSS JOIN reordering
+            for (String where : new String[]{" WHERE t0x IS NULL AND t3k > 0", " WHERE t3k > 0 AND t0x IS NULL"}) {
+                assertQuery("SELECT * FROM (SELECT t0.t0k, t0.t0x, t1.t1k, t1.t1x, t3.t3k, t3.t3x FROM t0 JOIN t1 ON t0.t0k = t1.t1k RIGHT JOIN t3 ON t3.t3k = t1.t1k)"
+                        + where + " ORDER BY 1, 2, 3, 4, 5, 6")
+                        .noLeakCheck()
+                        .returns("""
+                                t0k\tt0x\tt1k\tt1x\tt3k\tt3x
+                                null\tnull\tnull\tnull\t1\t1
+                                null\tnull\tnull\tnull\t1\t1
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testCrossJoinCount() throws Exception {
         assertMemoryLeak(() -> {
             // 1 partition
