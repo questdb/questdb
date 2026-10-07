@@ -1888,6 +1888,48 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // Each lateral NULL check passes its scalar sub-query value only to the filter over the same
+    // sub-query. The two guards have the same function class, min(id) is 20 and min(k) is 1, so a
+    // value passed to the other guard's filter drops every row or keeps 1 10 100. Two guards in one
+    // body tell the sub-queries apart, and two bodies with one guard each tell the checks apart.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithTwoScalarSubQueryFilters() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE trades (id INT, x INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE refunds (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO orders VALUES (1, 1, 1::timestamp), (2, 2, 2::timestamp), (3, 3, 3::timestamp)");
+            execute("INSERT INTO trades VALUES (10, 1, 1::timestamp), (20, 2, 2::timestamp), (30, 3, 3::timestamp)");
+            execute("INSERT INTO refunds VALUES (100, 1, 1::timestamp), (101, 2, 2::timestamp), (102, 3, 3::timestamp)");
+            final String tradeGuard = "t.id >= (SELECT min(id) FROM trades WHERE x >= 2)";
+            final String refundGuard = "t.x >= (SELECT min(k) FROM refunds)";
+            final String[][] guardOrders = {{tradeGuard, refundGuard}, {refundGuard, tradeGuard}};
+            for (String[] guards : guardOrders) {
+                assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + guards[0] + " AND " + guards[1] + ") l ORDER BY 1, 2, 3")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\ttid\trid
+                                2\t20\t101
+                                3\t30\t102
+                                """);
+            }
+            for (String[] guards : guardOrders) {
+                assertQuery("SELECT o.id, l1.tid, l1.rid, l2.tid, l2.rid FROM orders o"
+                        + " JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + guards[0] + ") l1"
+                        + " JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + guards[1] + ") l2"
+                        + " ORDER BY 1, 2, 3")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\ttid\trid\ttid1\trid1
+                                2\t20\t101\t20\t101
+                                3\t30\t102\t30\t102
+                                """);
+            }
+        });
+    }
+
     // BOOLEAN, BYTE and SHORT have no NULL, so the refunds that match no trade hold false or 0 in
     // those columns of trades. A filter that holds for false or 0 keeps them per outer row: WHERE
     // t.s < 11 returns 1 10 100, 1 null 101, 2 null 100 and 2 null 101. They would carry a NULL
