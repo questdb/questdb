@@ -29,10 +29,13 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
 
@@ -1565,6 +1568,64 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testSimpleLiteralExit() throws Exception {
         x("a", "a lit");
+    }
+
+    @Test
+    public void testStackOverflowLeavesNoStateForNextStatement() throws Exception {
+        assertMemoryLeak(() -> {
+            // Every level nests a sub-query inside an EXTRACT call, so the overflow unwinds through
+            // levels that each left an open 'extract(' on the operator stack. The FROM check of the
+            // next statement scans that stack and would read the stale tokens.
+            final int depth = 10_000;
+            final StringSink sql = new StringSink();
+            sql.put("SELECT ");
+            for (int i = 0; i < depth; i++) {
+                sql.put("extract(year FROM (SELECT ");
+            }
+            sql.put("now()");
+            for (int i = 0; i < depth; i++) {
+                sql.put("))");
+            }
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                // The compile runs on a thread with a small stack of its own, so the nested
+                // sub-queries exhaust it whatever stack size the JVM gives the test thread. The
+                // statements after it run on the test thread, on the same compiler.
+                final AtomicReference<Throwable> failure = new AtomicReference<>();
+                final Thread thread = new Thread(
+                        null,
+                        () -> {
+                            try {
+                                compiler.compile(sql, sqlExecutionContext);
+                            } catch (Throwable th) {
+                                failure.set(th);
+                            }
+                        },
+                        "overflow",
+                        256 * 1024
+                );
+                thread.start();
+                thread.join();
+                if (!(failure.get() instanceof StackOverflowError)) {
+                    throw new AssertionError("expected StackOverflowError", failure.get());
+                }
+                assertQuery("SELECT x FROM long_sequence(3)")
+                        .withCompiler(compiler)
+                        .expectSize()
+                        .returns("""
+                                x
+                                1
+                                2
+                                3
+                                """);
+                assertQuery("SELECT x FROM long_sequence(3) WHERE x > (SELECT min(x) FROM long_sequence(3))")
+                        .withCompiler(compiler)
+                        .returns("""
+                                x
+                                2
+                                3
+                                """);
+            }
+        });
     }
 
     @Test

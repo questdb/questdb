@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.view;
 
+import io.questdb.griffin.SqlCompilerImpl;
 import org.junit.Test;
 
 public class ViewQueryTest extends AbstractViewTest {
@@ -93,6 +94,179 @@ public class ViewQueryTest extends AbstractViewTest {
                             sum
                             152.0
                             """);
+        });
+    }
+
+    @Test
+    public void testCallerCteDoesNotReachViewBody() throws Exception {
+        // A view body resolves a table name against its own WITH clauses and real tables. A CTE
+        // of the statement that reads the view is not visible anywhere inside the body, so a
+        // principal with SELECT on a view cannot replace part of the view's filter.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE)");
+            execute("CREATE TABLE allowed (symbol SYMBOL)");
+            execute("INSERT INTO trades VALUES ('AAPL', 100.5), ('MSFT', 300.75)");
+            execute("INSERT INTO allowed VALUES ('AAPL')");
+            createView("v_in", "SELECT symbol, price FROM trades WHERE symbol IN (SELECT symbol FROM allowed)");
+            createView("v_from", "SELECT a.symbol, t.price FROM (SELECT symbol FROM allowed) a JOIN trades t ON a.symbol = t.symbol");
+            createView("v_join", "SELECT t.symbol, t.price FROM trades t JOIN (SELECT symbol FROM allowed) a ON t.symbol = a.symbol");
+            createView("v_declared", "DECLARE @a := (SELECT symbol FROM allowed) SELECT * FROM @a UNION ALL SELECT * FROM @a");
+            createView("v_outer", "SELECT * FROM v_in");
+            createView(
+                    "v_overridable",
+                    "DECLARE OVERRIDABLE @a := (SELECT symbol FROM allowed) SELECT * FROM @a UNION ALL SELECT * FROM @a"
+            );
+
+            final String callerCte = "WITH allowed AS (SELECT 'MSFT'::SYMBOL symbol) ";
+            final String aapl = """
+                    symbol\tprice
+                    AAPL\t100.5
+                    """;
+            // The sub-query of the filter used to read the caller's CTE and return MSFT.
+            assertQuery(callerCte + "SELECT * FROM v_in")
+                    .noLeakCheck()
+                    .returns(aapl);
+            assertQuery("SELECT * FROM (" + callerCte + "SELECT * FROM v_in)")
+                    .noLeakCheck()
+                    .returns(aapl);
+            assertQuery(callerCte + "SELECT * FROM v_outer")
+                    .noLeakCheck()
+                    .returns(aapl);
+            // The second read of the view parsed the caller's CTE again, at its position in the
+            // caller's text but from the view's text, and failed with "')' expected".
+            assertQuery(callerCte + "SELECT * FROM v_in UNION ALL SELECT * FROM v_in")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            symbol\tprice
+                            AAPL\t100.5
+                            AAPL\t100.5
+                            """);
+            assertQuery(callerCte + "SELECT * FROM v_in")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Async Filter workers: 1
+                              filter: symbol in cursor\s
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: allowed [state-shared]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: trades
+                            """);
+            // FROM and JOIN sub-queries used to read the caller's CTE as well.
+            assertQuery(callerCte + "SELECT * FROM v_from")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(aapl);
+            assertQuery(callerCte + "SELECT * FROM v_join")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(aapl);
+            // A declared sub-query and its copy read the view's table, where the copy used to fail.
+            final String aaplTwice = """
+                    symbol
+                    AAPL
+                    AAPL
+                    """;
+            assertQuery(callerCte + "SELECT * FROM v_declared")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(aaplTwice);
+            assertQuery(callerCte + "SELECT * FROM v_overridable")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(aaplTwice);
+            // A value the caller passes for an OVERRIDABLE variable is the caller's text, so it reads
+            // the caller's CTE, in every read the view makes of it.
+            assertQuery(callerCte + "SELECT * FROM (DECLARE @a := (SELECT symbol FROM allowed) SELECT * FROM v_overridable)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            symbol
+                            MSFT
+                            MSFT
+                            """);
+        });
+    }
+
+    @Test
+    public void testCallerCteDoesNotReachViewCteDefinitions() throws Exception {
+        // The CTE definitions of a view body read the body's own CTEs, never a caller's CTE of the
+        // same name, with or without EXPLAIN.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (l LONG)");
+            execute("INSERT INTO k VALUES (1), (2), (3)");
+            createView(
+                    "v_cte",
+                    "WITH c AS (SELECT l FROM k WHERE l > 1), d AS (SELECT * FROM c UNION ALL SELECT * FROM c) " +
+                            "SELECT * FROM d UNION ALL SELECT * FROM d UNION ALL SELECT * FROM c"
+            );
+            final String expected = """
+                    l
+                    2
+                    3
+                    2
+                    3
+                    2
+                    3
+                    2
+                    3
+                    2
+                    3
+                    """;
+            assertQuery("SELECT * FROM v_cte")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+            // The first read of c in d used to read the caller's c, which added the row 1.
+            assertQuery("WITH c AS (SELECT l FROM k) SELECT * FROM v_cte")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+            // EXPLAIN used to fail with "table and column names that are SQL keywords have to be
+            // enclosed in double quotes": the second read of c in d parsed the caller's CTE from
+            // its position in the caller's text, which EXPLAIN shifts, but with the view's text.
+            final String plan = """
+                    Union All
+                        Union All
+                            Union All
+                                Async Filter workers: 1
+                                  filter: 1<l
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: k
+                                Async Filter workers: 1
+                                  filter: 1<l
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: k
+                            Union All
+                                Async Filter workers: 1
+                                  filter: 1<l
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: k
+                                Async Filter workers: 1
+                                  filter: 1<l
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: k
+                        Async Filter workers: 1
+                          filter: 1<l
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: k
+                    """;
+            assertQuery("SELECT * FROM v_cte")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("WITH c AS (SELECT l FROM k) SELECT * FROM v_cte")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
         });
     }
 
@@ -1456,6 +1630,119 @@ public class ViewQueryTest extends AbstractViewTest {
     }
 
     @Test
+    public void testSharedViewLayersReadManyTimesWithinModelBudget() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE raw_trades (ts TIMESTAMP, sym SYMBOL, px DOUBLE, qty DOUBLE, ccy SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE raw_quotes (ts TIMESTAMP, sym SYMBOL, bid DOUBLE, ask DOUBLE, ccy SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE fx (ts TIMESTAMP, ccy SYMBOL, rate DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO raw_trades VALUES ('2026-01-01T00:00:00', 'A', 10, 1, 'EUR'), ('2026-01-01T00:01:00', 'B', 20, 2, 'USD')");
+            execute("INSERT INTO raw_quotes VALUES ('2026-01-01T00:00:00', 'A', 9.9, 10.1, 'EUR'), ('2026-01-01T00:01:00', 'B', 19.9, 20.1, 'USD')");
+            execute("INSERT INTO fx VALUES ('2026-01-01T00:00:00', 'EUR', 1.1), ('2026-01-01T00:00:00', 'USD', 1.0)");
+            // A trading analytics layer of ten views: fx_v, trades_usd and quotes_usd are read by
+            // several views each, so a read of dashboard_v expands them several times.
+            execute("CREATE VIEW fx_v AS (SELECT ts, ccy, rate FROM fx)");
+            execute("CREATE VIEW trades_v AS (SELECT ts, sym, px, qty, ccy FROM raw_trades WHERE qty > 0)");
+            execute("CREATE VIEW quotes_v AS (SELECT ts, sym, bid, ask, ccy FROM raw_quotes WHERE ask > bid)");
+            execute("CREATE VIEW trades_usd AS (SELECT t.ts, t.sym, t.px * f.rate px, t.qty FROM trades_v t ASOF JOIN fx_v f ON (ccy))");
+            execute("CREATE VIEW quotes_usd AS (SELECT q.ts, q.sym, q.bid * f.rate bid, q.ask * f.rate ask FROM quotes_v q ASOF JOIN fx_v f ON (ccy))");
+            execute("CREATE VIEW vwap_v AS (SELECT ts, sym, sum(px * qty) / sum(qty) vwap FROM trades_usd SAMPLE BY 1h)");
+            execute("CREATE VIEW spread_v AS (SELECT ts, sym, avg(ask - bid) spread FROM quotes_usd SAMPLE BY 1h)");
+            execute("CREATE VIEW markout_v AS (SELECT t.ts, t.sym, t.px - (q.bid + q.ask) / 2 markout FROM trades_usd t JOIN quotes_usd q ON t.sym = q.sym)");
+            execute("CREATE VIEW slippage_v AS (SELECT t.ts, t.sym, t.px - v.vwap slip FROM trades_usd t JOIN vwap_v v ON t.sym = v.sym)");
+            execute("CREATE VIEW dashboard_v AS (SELECT v.ts, v.sym, v.vwap, s.spread, m.markout, l.slip FROM vwap_v v JOIN spread_v s ON v.sym = s.sym JOIN markout_v m ON v.sym = m.sym JOIN slippage_v l ON v.sym = l.sym)");
+            drainWalAndViewQueues();
+            // Every read of dashboard_v takes 61 query models. Five reads take 305, far below the
+            // budget of the statement, 1,000 models plus 2 for each character of its text and of
+            // the bodies of the views it reads.
+            final StringBuilder periods = new StringBuilder();
+            for (int i = 0; i < 5; i++) {
+                if (i > 0) {
+                    periods.append(" UNION ALL ");
+                }
+                periods.append("SELECT ").append(i).append(" period, count() c FROM dashboard_v WHERE ts > dateadd('d', -").append(i).append(", '2026-01-02')");
+            }
+            assertQuery(periods)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            period\tc
+                            0\t0
+                            1\t0
+                            2\t2
+                            3\t2
+                            4\t2
+                            """);
+            assertQuery("SELECT count() FROM dashboard_v d0 JOIN dashboard_v d1 ON d0.sym = d1.sym JOIN dashboard_v d2 ON d0.sym = d2.sym JOIN dashboard_v d3 ON d0.sym = d3.sym JOIN dashboard_v d4 ON d0.sym = d4.sym")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            2
+                            """);
+        });
+    }
+
+    @Test
+    public void testSharedViewLayersWithinModelBudget() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fact (ts TIMESTAMP, k1 INT, k2 INT, k3 INT, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE dim (k INT, name STRING)");
+            execute("INSERT INTO fact VALUES ('2026-01-01', 1, 1, 1, 1.0)");
+            execute("INSERT INTO dim VALUES (1, 'one')");
+            // A star schema: a chain of four views under three dimension views, ten marts that each
+            // join a fact view with the three dimensions, and a KPI view that joins the marts. A
+            // read of kpi10 expands the dimension chain 30 times.
+            execute("CREATE VIEW ref_src AS (SELECT k, name FROM dim)");
+            execute("CREATE VIEW ref_raw AS (SELECT k, name FROM ref_src)");
+            execute("CREATE VIEW ref_v AS (SELECT k, name FROM ref_raw WHERE name IS NOT NULL)");
+            execute("CREATE VIEW dim_base AS (SELECT k, upper(name) name FROM ref_v)");
+            execute("CREATE VIEW fact_v AS (SELECT ts, k1, k2, k3, v FROM fact)");
+            for (int d = 1; d < 4; d++) {
+                execute("CREATE VIEW dim" + d + " AS (SELECT k, name n" + d + " FROM dim_base)");
+            }
+            for (int m = 1; m < 11; m++) {
+                execute("CREATE VIEW mart" + m + " AS (SELECT f.ts, f.v * " + m + " v, a.n1, b.n2, c.n3 FROM fact_v f JOIN dim1 a ON f.k1 = a.k JOIN dim2 b ON f.k2 = b.k JOIN dim3 c ON f.k3 = c.k)");
+            }
+            drainWalAndViewQueues();
+            // Creating kpi10 and reading it once take 381 query models, and the self-join of the
+            // five-mart kpi5 takes about as many, far below the budget of each statement, 1,000
+            // models plus 2 for each character of its text and of the bodies of the views it reads.
+            execute("CREATE VIEW kpi10 AS (" + kpiBody(10) + ")");
+            execute("CREATE VIEW kpi5 AS (" + kpiBody(5) + ")");
+            drainWalAndViewQueues();
+            assertViewState("kpi10");
+            assertViewState("kpi5");
+            assertQuery("SELECT v1, v2, v10 FROM kpi10")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v1\tv2\tv10
+                            1.0\t2.0\t10.0
+                            """);
+            assertQuery(kpiBody(10))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tv1\tv2\tv3\tv4\tv5\tv6\tv7\tv8\tv9\tv10
+                            2026-01-01T00:00:00.000000Z\t1.0\t2.0\t3.0\t4.0\t5.0\t6.0\t7.0\t8.0\t9.0\t10.0
+                            """);
+            assertQuery("SELECT count() FROM kpi5 a JOIN kpi5 b ON a.ts = b.ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            1
+                            """);
+        });
+    }
+
+    @Test
     public void testSpecifyTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -1516,6 +1803,250 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:10.000000Z	k7	k2_7	7
                             1970-01-01T00:01:20.000000Z	k8	k2_8	8
                             """);
+        });
+    }
+
+    @Test
+    public void testViewBodiesCountTowardsModelBudget() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL)");
+            execute("INSERT INTO k VALUES ('1'), ('2'), ('3'), ('4'), ('5')");
+            // The body of wide reads its CTE 300 times and takes 1,202 query models, more than the
+            // 1,000 every statement may take, and its 8,178 characters allow 16,356 more.
+            final StringBuilder body = new StringBuilder("WITH c AS (SELECT x::STRING s FROM long_sequence(3)) SELECT count() c FROM k WHERE s IN (SELECT s FROM c)");
+            for (int i = 1; i < 300; i++) {
+                body.append(" AND s IN (SELECT s FROM c)");
+            }
+            execute("CREATE VIEW wide AS (" + body + ')');
+            drainWalAndViewQueues();
+            assertViewState("wide");
+            // A statement that reads a view parses the view's body, and the body's text counts
+            // towards the budget of the statement as its own text does, so the 18-character read
+            // keeps the allowance of the body.
+            assertQuery("SELECT c FROM wide")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            c
+                            3
+                            """);
+        });
+    }
+
+    @Test
+    public void testViewBodyNestedWithShadowsBodyCte() throws Exception {
+        // A nested WITH in a view body may reuse the name of a CTE of the body. CREATE VIEW and
+        // every read of the view parse the body with the same bindings, whatever CTEs the
+        // statement that reads the view defines.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE)");
+            execute("INSERT INTO trades VALUES ('AAPL', 100.5), ('MSFT', 300.75)");
+            // The sub-query of the filter reads the inner c. Creating these views failed with
+            // "duplicate name" once a sub-query in an expression saw the WITH clauses around it.
+            createView(
+                    "v_shadow1",
+                    "WITH c AS (SELECT 'AAPL'::SYMBOL symbol) SELECT * FROM trades WHERE symbol IN (DECLARE @v := 1 WITH c AS (SELECT 'MSFT'::SYMBOL symbol) SELECT symbol FROM c)"
+            );
+            createView(
+                    "v_shadow2",
+                    "SELECT * FROM (WITH c AS (SELECT 'AAPL'::SYMBOL symbol) SELECT * FROM trades WHERE symbol IN (SELECT symbol FROM (WITH c AS (SELECT 'MSFT'::SYMBOL symbol) SELECT symbol FROM c)))"
+            );
+            // d, defined before the inner c, reads the body's c on both of its reads.
+            createView(
+                    "v_shadow3",
+                    "WITH c AS (SELECT 'AAPL'::SYMBOL symbol) SELECT * FROM trades WHERE symbol IN (SELECT symbol FROM (WITH d AS (SELECT symbol FROM c), c AS (SELECT 'MSFT'::SYMBOL symbol) SELECT symbol FROM d UNION ALL SELECT symbol FROM d))"
+            );
+
+            final String msft = """
+                    symbol\tprice
+                    MSFT\t300.75
+                    """;
+            final String msftTwice = """
+                    symbol\tprice
+                    MSFT\t300.75
+                    MSFT\t300.75
+                    """;
+            assertQuery("SELECT * FROM v_shadow1")
+                    .noLeakCheck()
+                    .returns(msft);
+            assertQuery("WITH c AS (SELECT 'AAPL'::SYMBOL symbol) SELECT * FROM v_shadow1")
+                    .noLeakCheck()
+                    .returns(msft);
+            assertQuery("SELECT * FROM v_shadow1 UNION ALL SELECT * FROM v_shadow1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(msftTwice);
+            assertQuery("SELECT * FROM v_shadow2")
+                    .noLeakCheck()
+                    .returns(msft);
+            assertQuery("WITH c AS (SELECT 'AAPL'::SYMBOL symbol) SELECT * FROM v_shadow2")
+                    .noLeakCheck()
+                    .returns(msft);
+            assertQuery("SELECT * FROM v_shadow2 UNION ALL SELECT * FROM v_shadow2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(msftTwice);
+
+            // A CTE c of the reading statement would add MSFT if it reached d.
+            final String callerCte = "WITH c AS (SELECT 'MSFT'::SYMBOL symbol) ";
+            final String aapl = """
+                    symbol\tprice
+                    AAPL\t100.5
+                    """;
+            assertQuery("SELECT * FROM v_shadow3")
+                    .noLeakCheck()
+                    .returns(aapl);
+            assertQuery(callerCte + "SELECT * FROM v_shadow3")
+                    .noLeakCheck()
+                    .returns(aapl);
+            assertQuery(callerCte + "SELECT * FROM v_shadow3 UNION ALL SELECT * FROM v_shadow3")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            symbol\tprice
+                            AAPL\t100.5
+                            AAPL\t100.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testViewCteReadBySubQueries() throws Exception {
+        // A sub-query in a view body sees the WITH clauses around it in the body, as CREATE VIEW
+        // does when it validates the body. Reading these views used to fail with "table does not
+        // exist", and a caller's CTE of the same name used to stand in for the view's own.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE)");
+            execute("CREATE TABLE pub (symbol SYMBOL, price DOUBLE)");
+            execute("CREATE TABLE allowed (symbol SYMBOL)");
+            execute("INSERT INTO trades VALUES ('AAPL', 100.5), ('MSFT', 300.75)");
+            execute("INSERT INTO pub VALUES ('AAPL', 1.0), ('MSFT', 2.0)");
+            execute("INSERT INTO allowed VALUES ('AAPL')");
+            createView(
+                    "v_in",
+                    "WITH c AS (SELECT symbol FROM allowed) SELECT * FROM trades WHERE symbol IN (SELECT symbol FROM c)"
+            );
+            createView(
+                    "v_pivot",
+                    "WITH c AS (SELECT symbol FROM trades) SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT DISTINCT symbol FROM c ORDER BY symbol))"
+            );
+
+            final String aapl = """
+                    symbol\tprice
+                    AAPL\t100.5
+                    """;
+            assertQuery("SELECT * FROM v_in")
+                    .noLeakCheck()
+                    .returns(aapl);
+            assertQuery("WITH c AS (SELECT 'MSFT'::SYMBOL symbol) SELECT * FROM v_in")
+                    .noLeakCheck()
+                    .returns(aapl);
+            final String pivot = """
+                    AAPL\tMSFT
+                    1.0\t2.0
+                    """;
+            assertQuery("SELECT * FROM v_pivot")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(pivot);
+            assertQuery("WITH c AS (SELECT 'MSFT'::SYMBOL symbol) SELECT * FROM v_pivot")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(pivot);
+
+            // CREATE VIEW used to reject this body: a sub-query saw only the top-level WITH.
+            createView(
+                    "v_nested",
+                    "SELECT * FROM (WITH c AS (SELECT symbol FROM allowed) SELECT * FROM trades WHERE symbol IN (SELECT symbol FROM c))"
+            );
+            assertQuery("SELECT * FROM v_nested")
+                    .noLeakCheck()
+                    .returns(aapl);
+        });
+    }
+
+    @Test
+    public void testViewDenseChainHasNodeBudget() throws Exception {
+        assertMemoryLeak(() -> {
+            // An expansion of a view takes as many expression nodes as its body holds, but only one
+            // or two query models. The body of v0 sums 430 terms, and each view after it reads the
+            // one before twice. A statement may take 10,000 nodes, plus 20 for each character of its
+            // text and of the body of each view it reads.
+            final StringBuilder v0 = new StringBuilder("CREATE VIEW v0 AS (SELECT 1");
+            for (int i = 1; i < 430; i++) {
+                v0.append("+1");
+            }
+            execute(v0.append(" a FROM long_sequence(1))").toString());
+            for (int i = 1; i < 6; i++) {
+                execute("CREATE VIEW v" + i + " AS (SELECT * FROM v" + (i - 1) + " UNION ALL SELECT * FROM v" + (i - 1) + ')');
+            }
+            drainWalAndViewQueues();
+            // A read of v5 expands v0 32 times, 27,777 nodes of its 32,700.
+            assertQuery("SELECT count(), sum(a) FROM v5")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            32\t13760
+                            """);
+            // v6 would expand v0 64 times. While only models counted, the chain could be created up
+            // to v9, and the compiler kept 464 MB after compiling a 22-character read of v9. The
+            // parser refuses the expansion that finds the nodes spent, at the second read of v5.
+            final String v6 = "CREATE VIEW v6 AS (SELECT * FROM v5 UNION ALL SELECT * FROM v5)";
+            assertExceptionNoLeakCheck(
+                    v6,
+                    v6.lastIndexOf("v5"),
+                    "statement is too complex to parse [nodes=33847, max=33360]"
+            );
+            final String read = "SELECT count() FROM (SELECT * FROM v5 UNION ALL SELECT * FROM v5)";
+            assertExceptionNoLeakCheck(
+                    read,
+                    read.lastIndexOf("v5"),
+                    "statement is too complex to parse [nodes=33848, max=33400]"
+            );
+        });
+    }
+
+    @Test
+    public void testViewDoublingChainHasModelBudget() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE VIEW v0 AS (SELECT x::STRING s, x FROM long_sequence(3))");
+            for (int i = 1; i < 9; i++) {
+                execute("CREATE VIEW v" + i + " AS (SELECT * FROM v" + (i - 1) + " UNION ALL SELECT * FROM v" + (i - 1) + ')');
+            }
+            drainWalAndViewQueues();
+            // Every read of a view expands its body anew, and the expansion expands every view the
+            // body reads. So when each view reads the one before it twice, the query models double
+            // with every level: a 22-character read of v9 used to run out of a 1.5 GB heap. A
+            // statement may take 1,000 models, plus 2 for each character of its text and of the
+            // body of each view it reads. A read of v8 takes 1,534 of its 1,834.
+            assertQuery("SELECT count(), sum(x) FROM v8")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            768\t1536
+                            """);
+            // v9 would take over 3,000. The parser refuses the expansion that finds the budget
+            // spent. That expansion sits in the body of a view, so the error points at the read of
+            // the outermost view in the statement that it expands, the second read of v8.
+            final String v9 = "CREATE VIEW v9 AS (SELECT * FROM v8 UNION ALL SELECT * FROM v8)";
+            assertExceptionNoLeakCheck(
+                    v9,
+                    v9.lastIndexOf("v8"),
+                    "statement is too complex to parse [models=1902, max=1900]"
+            );
+            final String read = "SELECT count() FROM (SELECT * FROM v8 UNION ALL SELECT * FROM v8)";
+            assertExceptionNoLeakCheck(
+                    read,
+                    read.lastIndexOf("v8"),
+                    "statement is too complex to parse [models=1906, max=1904]"
+            );
         });
     }
 
@@ -1817,6 +2348,296 @@ public class ViewQueryTest extends AbstractViewTest {
     }
 
     @Test
+    public void testViewPastModelBudgetBecomesInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE VIEW w AS (SELECT x FROM long_sequence(3))");
+            execute("CREATE VIEW v0 AS (SELECT x FROM long_sequence(3))");
+            for (int i = 1; i < 9; i++) {
+                execute("CREATE VIEW v" + i + " AS (SELECT * FROM v" + (i - 1) + " UNION ALL SELECT * FROM v" + (i - 1) + ')');
+            }
+            drainWalAndViewQueues();
+            // The new body of v0 reads w twice, which adds to the query models every read of v0
+            // in the chain takes. The statement that replaces v0 takes few, but v8 now needs more
+            // than its budget allows, so recompiling it after the change marks it invalid, and
+            // reading it fails, at the read of v8.
+            execute("CREATE OR REPLACE VIEW v0 AS (SELECT * FROM w UNION ALL SELECT * FROM w)");
+            drainWalAndViewQueues();
+            // The view compiler job compiles the body of v8 as a statement of its own.
+            assertViewState("v7");
+            assertViewState("v8", "statement is too complex to parse [models=1832, max=1830]");
+            assertExceptionNoLeakCheck(
+                    "SELECT count() FROM v8",
+                    "SELECT count() FROM ".length(),
+                    "statement is too complex to parse [models=1878, max=1874]"
+            );
+            assertQuery("SELECT count(), sum(x) FROM v7")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            768\t1536
+                            """);
+            // Putting the old body back brings v8 under the budget again.
+            execute("CREATE OR REPLACE VIEW v0 AS (SELECT x FROM long_sequence(3))");
+            drainWalAndViewQueues();
+            assertViewState("v8");
+            assertQuery("SELECT count(), sum(x) FROM v8")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            768\t1536
+                            """);
+        });
+    }
+
+    @Test
+    public void testViewReadAfterConstantsKeepsGeneratedColumnNames() throws Exception {
+        assertMemoryLeak(() -> {
+            // The test configuration names an unaliased constant with a dot in it column1, column2
+            // and so on, from a counter the parser keeps for the whole statement. A view body used
+            // to go on counting where the reading statement had got to, so a view read after the
+            // statement's own constants exposed other names than its metadata lists: after
+            // (SELECT 6.5, 7.5), the body of v named 1.5 and 2.5 column2 and column3, and vs
+            // returned 1.5 for column2. Every expansion now numbers the body from 1.
+            execute("CREATE VIEW v AS (SELECT 1.5, 2.5)");
+            execute("CREATE VIEW vs AS (SELECT column2 FROM v)");
+            execute("CREATE VIEW vq AS (DECLARE OVERRIDABLE @q := (SELECT 1.5, 2.5) SELECT column2 FROM @q)");
+            execute("CREATE VIEW vv AS (SELECT 3.5, 4.5, * FROM v)");
+            execute("CREATE VIEW vc AS (WITH c AS (SELECT 1.5, 2.5) SELECT column2 FROM c)");
+            execute("CREATE VIEW vd AS (DECLARE @q := (SELECT 1.5, 2.5) SELECT column2 FROM @q)");
+            execute("CREATE VIEW vjoin AS (SELECT * FROM (SELECT 6.5, 7.5) x CROSS JOIN vs)");
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM (SELECT 6.5, 7.5) x CROSS JOIN vs")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            column1\tcolumn2\tcolumn21
+                            6.5\t7.5\t2.5
+                            """);
+            // Two reads after the constants used to return 1.5 twice.
+            assertQuery("SELECT * FROM (SELECT 6.5, 7.5) x CROSS JOIN vs y CROSS JOIN vs z")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            column1\tcolumn2\tcolumn21\tcolumn22
+                            6.5\t7.5\t2.5\t2.5
+                            """);
+            // The first read of vq parses the caller's value for @q, which moves the counter, and
+            // the second read of vq used to name its own value's columns from there.
+            assertQuery("SELECT * FROM (DECLARE @q := (SELECT 6.5, 7.5) SELECT * FROM vq) UNION ALL SELECT * FROM vq")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            column2
+                            7.5
+                            2.5
+                            """);
+            // A view inside a view: vv numbers its own constants and the body of v from 1, as the
+            // metadata of vv lists them, wherever the statement reads vv.
+            assertQuery("SELECT \"column\" FROM table_columns('vv')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column
+                            column1
+                            column2
+                            column11
+                            column21
+                            """);
+            assertQuery("SELECT column21 FROM (SELECT 6.5, 7.5) x CROSS JOIN vv")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            column21
+                            2.5
+                            """);
+            // A CTE and a declared sub-query inside a view body.
+            assertQuery("SELECT * FROM (SELECT 6.5, 7.5) x CROSS JOIN vc")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            column1\tcolumn2\tcolumn21
+                            6.5\t7.5\t2.5
+                            """);
+            assertQuery("SELECT * FROM (SELECT 6.5, 7.5) x CROSS JOIN vd")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            column1\tcolumn2\tcolumn21
+                            6.5\t7.5\t2.5
+                            """);
+            // A view whose body reads vs after constants: CREATE VIEW parsed the body the same way,
+            // so the view stored 1.5 under the name of the column that holds 2.5 in vs.
+            assertQuery("SELECT \"column\" FROM table_columns('vjoin')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column
+                            column1
+                            column2
+                            column21
+                            """);
+            assertQuery("vjoin")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            column1\tcolumn2\tcolumn21
+                            6.5\t7.5\t2.5
+                            """);
+            assertQuery("SELECT column21 FROM (SELECT 8.5, 9.5) z CROSS JOIN vjoin")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            column21
+                            2.5
+                            """);
+            // A CTE that reads vs after constants, read twice.
+            assertQuery("WITH w AS (SELECT * FROM (SELECT 6.5, 7.5) x CROSS JOIN vs) SELECT column21 FROM w UNION ALL SELECT column21 FROM w")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            column21
+                            2.5
+                            2.5
+                            """);
+            // A read moves the statement's counter on as far as the body moves it from 1, so the
+            // constants after it keep the names they get when the statement reads v first.
+            assertQuery("SELECT * FROM (SELECT 7.5, 8.5) x CROSS JOIN v a CROSS JOIN (SELECT 5.5, 6.5) b")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            column1\tcolumn2\tcolumn11\tcolumn21\tcolumn3\tcolumn4
+                            7.5\t8.5\t1.5\t2.5\t5.5\t6.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testViewReadMoreThanOnceKeepsGeneratedColumnNames() throws Exception {
+        assertMemoryLeak(() -> {
+            // The test configuration names an unaliased constant with a dot in it column1, column2
+            // and so on, from a counter the parser keeps for the whole statement. Every read of a
+            // view parses its body, and a later read used to go on counting where the statement
+            // had got to: the second read of v saw column2 and column3, and returned 1.5 for
+            // column2.
+            execute("CREATE VIEW v AS (SELECT 1.5, 2.5)");
+            execute("CREATE VIEW v_union AS (SELECT column2 FROM v UNION ALL SELECT column2 FROM v)");
+            execute("CREATE VIEW v_join AS (SELECT * FROM v a CROSS JOIN v b)");
+            drainWalAndViewQueues();
+            assertQuery("SELECT column2 FROM v UNION ALL SELECT column2 FROM v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            column2
+                            2.5
+                            2.5
+                            """);
+            assertQuery("v_union")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            column2
+                            2.5
+                            2.5
+                            """);
+            // The second read had no column1 at all.
+            assertQuery("SELECT column1 FROM v UNION ALL SELECT column1 FROM v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            column1
+                            1.5
+                            1.5
+                            """);
+            // The reads expose the same names, so a join of them suffixes the second read's. The
+            // second read used to expose column2 and column3, which the join named column21 and
+            // column3, and the view kept those names.
+            assertQuery("SELECT * FROM v a CROSS JOIN v b")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            column1	column2	column11	column21
+                            1.5	2.5	1.5	2.5
+                            """);
+            assertQuery("SELECT \"column\" FROM table_columns('v_join')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column
+                            column1
+                            column2
+                            column11
+                            column21
+                            """);
+            // A CTE that reads v, read twice. The definition of w expands v first, from the count
+            // of 1, and names 3.5 and 4.5 after it. The second reference parses w again from the
+            // same count, and expands v again: it reads v under the names of the first read, and
+            // moves the count on as far, so it names 3.5 and 4.5 the same as well.
+            assertQuery("WITH w AS (SELECT * FROM v CROSS JOIN (SELECT 3.5, 4.5)) SELECT column3 FROM w UNION ALL SELECT column3 FROM w")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            column3
+                            4.5
+                            4.5
+                            """);
+            // So the statement's own constants after two reads get the names they got before.
+            assertQuery("SELECT * FROM (SELECT * FROM v UNION ALL SELECT * FROM v) a CROSS JOIN (SELECT 5.5, 6.5) b")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            column1	column2	column3	column4
+                            1.5	2.5	5.5	6.5
+                            1.5	2.5	5.5	6.5
+                            """);
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                assertQuery("SELECT column2 FROM v UNION ALL SELECT column2 FROM v")
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                column2
+                                2.5
+                                2.5
+                                """);
+                // Nothing the parser keeps about the views of one statement reaches the next one.
+                // The read of v here comes after the constants of the select list, and names 1.5
+                // and 2.5 column1 and column2 from the count of 1, as the metadata of v lists them.
+                // A single read used to go on from the count of 2 and name them column2 and
+                // column3, which the select list renamed column21 and column3.
+                assertQuery("SELECT 3.5, 4.5, * FROM v")
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                column1	column2	column11	column21
+                                3.5	4.5	1.5	2.5
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testViewUnion() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -1973,5 +2794,19 @@ public class ViewQueryTest extends AbstractViewTest {
                     VIEW1
             );
         });
+    }
+
+    // SELECT m1.ts, m1.v v1, ..., m<marts>.v v<marts> FROM mart1 m1
+    // JOIN mart2 m2 ON m1.ts = m2.ts ... JOIN mart<marts> ...
+    private static String kpiBody(int marts) {
+        final StringBuilder sql = new StringBuilder("SELECT m1.ts, m1.v v1");
+        for (int i = 2; i <= marts; i++) {
+            sql.append(", m").append(i).append(".v v").append(i);
+        }
+        sql.append(" FROM mart1 m1");
+        for (int i = 2; i <= marts; i++) {
+            sql.append(" JOIN mart").append(i).append(" m").append(i).append(" ON m1.ts = m").append(i).append(".ts");
+        }
+        return sql.toString();
     }
 }

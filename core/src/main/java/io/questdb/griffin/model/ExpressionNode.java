@@ -658,7 +658,9 @@ public class ExpressionNode implements Mutable, Sinkable {
                     // for cast we want to display them as lhs::rhs instead of cast(lhs, rhs)
                     // in some cases the casted parameter may contains space which makes it hard to understand when the
                     // cast is applied, in such case we wrap lhs in parentheses.
-                    final boolean parent = lhs.type == OPERATION || SqlKeywords.isCaseKeyword(lhs.token) || SqlKeywords.isBetweenKeyword(lhs.token);
+                    // A sub-query lhs has no token and prints its own parentheses.
+                    final boolean parent = lhs.type == OPERATION
+                            || (lhs.token != null && (SqlKeywords.isCaseKeyword(lhs.token) || SqlKeywords.isBetweenKeyword(lhs.token)));
                     if (parent) {
                         sink.put('(');
                         sink.put(lhs);

@@ -616,13 +616,13 @@ public class ViewAuditTest extends AbstractCairoTest {
                 // record the read.
                 final String badValues = "SELECT * FROM pub PIVOT (sum(price) FOR price IN (SELECT concat(symbol, '@', price) FROM v_audited))";
                 assertExceptionNoLeakCheck(badValues, badValues.indexOf("SELECT concat"), "AAPL@100.5");
-                assertEquals("[v_audited]", Arrays.toString(planAudits()));
+                assertEquals("[v_audited]", planAudits());
 
                 // A sub-query that finds no row has still read the view to find that out.
                 generatedPlanAudits.clear();
                 final String noValues = "SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT symbol FROM v_audited WHERE price > 1_000))";
                 assertExceptionNoLeakCheck(noValues, noValues.indexOf("SELECT symbol"), "PIVOT IN subquery returned empty result set");
-                assertEquals("[v_audited]", Arrays.toString(planAudits()));
+                assertEquals("[v_audited]", planAudits());
             } finally {
                 generatedPlanAudits = null;
             }
@@ -809,7 +809,7 @@ public class ViewAuditTest extends AbstractCairoTest {
                         52,
                         "constant expected"
                 );
-                assertEquals("[]", Arrays.toString(planAudits()));
+                assertEquals("[]", planAudits());
             } finally {
                 generatedPlanAudits = null;
             }
@@ -977,6 +977,53 @@ public class ViewAuditTest extends AbstractCairoTest {
                     "DECLARE @w := rank() OVER (PARTITION BY x % 3 ORDER BY x) SELECT * FROM v_win",
                     "@w=rank() OVER (PARTITION BY x % 3 ORDER BY x)"
             );
+        });
+    }
+
+    @Test
+    public void testReadsOfOneCteRecordTheSameValues() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndView();
+            createAuditedView("v_a", "DECLARE OVERRIDABLE AUDITED @s := 'a' SELECT s FROM t WHERE s = @s");
+            // No @s is in scope at the definition of w, so every read of w reads v_a with its
+            // default and records it. The second reference parses w again, and used to read and
+            // record the @s of the query that reference sits in.
+            final String defaultTwice = """
+                    v_a @s='a'
+                    v_a @s='a'
+                    """;
+            final String rowsOfDefault = """
+                    s
+                    a
+                    a
+                    """;
+            final String plainSql = "WITH w AS (SELECT * FROM v_a) SELECT * FROM (DECLARE @s := 'b' SELECT * FROM w UNION ALL SELECT * FROM w)";
+            assertRecordsAuditsWithParams(plainSql, defaultTwice);
+            assertQuery(plainSql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(rowsOfDefault);
+            final String declaredSql = "WITH w AS (SELECT * FROM v_a) SELECT * FROM (DECLARE @s := 'b', @q := (SELECT * FROM w) SELECT * FROM @q UNION ALL SELECT * FROM @q)";
+            assertRecordsAuditsWithParams(declaredSql, defaultTwice);
+            assertQuery(declaredSql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(rowsOfDefault);
+
+            // A caller's value in scope at the definition reaches, and is recorded by, every read.
+            final String callerSql = "DECLARE @s := 'b' WITH w AS (SELECT * FROM v_a) SELECT * FROM w UNION ALL SELECT * FROM w";
+            assertRecordsAuditsWithParams(callerSql, """
+                    v_a @s='b'
+                    v_a @s='b'
+                    """);
+            assertQuery(callerSql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            s
+                            b
+                            b
+                            """);
         });
     }
 
@@ -1219,7 +1266,7 @@ public class ViewAuditTest extends AbstractCairoTest {
         generatedPlanAudits = new ObjList<>();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.generateExecutionModel(sql, sqlExecutionContext);
-            assertEquals("wrong plan audits for [" + sql + "]", Arrays.toString(expectedPlanAudits), Arrays.toString(planAudits()));
+            assertEquals("wrong plan audits for [" + sql + "]", Arrays.toString(expectedPlanAudits), planAudits());
         } finally {
             generatedPlanAudits = null;
         }
@@ -1233,7 +1280,7 @@ public class ViewAuditTest extends AbstractCairoTest {
         generatedPlanAudits = new ObjList<>();
         try {
             execute(sql);
-            assertEquals("wrong plan audits for [" + sql + "]", Arrays.toString(expectedPlanAudits), Arrays.toString(planAudits()));
+            assertEquals("wrong plan audits for [" + sql + "]", Arrays.toString(expectedPlanAudits), planAudits());
         } finally {
             generatedPlanAudits = null;
         }
@@ -1249,14 +1296,36 @@ public class ViewAuditTest extends AbstractCairoTest {
             final IQueryModel queryModel = readModelOf(model);
             assertNotNull("no query model for [" + sql + "]", queryModel);
             final ObjList<ViewAuditModel> audits = queryModel.getViewAudits();
-            final String[] actual = new String[audits.size()];
+            final ObjList<String> actual = new ObjList<>();
             for (int i = 0, n = audits.size(); i < n; i++) {
-                actual[i] = audits.getQuick(i).getViewName().toString();
+                actual.add(audits.getQuick(i).getViewName().toString());
             }
-            final String[] expected = viewNames.clone();
-            Arrays.sort(actual);
-            Arrays.sort(expected);
-            assertEquals("wrong audits for [" + sql + "]", Arrays.toString(expected), Arrays.toString(actual));
+            final ObjList<String> expected = new ObjList<>(viewNames);
+            actual.sort(String::compareTo);
+            expected.sort(String::compareTo);
+            assertEquals("wrong audits for [" + sql + "]", "[" + join(expected) + "]", "[" + join(actual) + "]");
+        }
+    }
+
+    /**
+     * Asserts the reads the statement records, in the order the parser recorded them: one line per
+     * read, the view's name followed by its parameters, each rendered as {@code @name=value}, in
+     * name order and separated by a space.
+     */
+    private static void assertRecordsAuditsWithParams(String sql, String expectedAudits) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            final ExecutionModel model = compiler.generateExecutionModel(sql, sqlExecutionContext);
+            final ObjList<ViewAuditModel> audits = readModelOf(model).getViewAudits();
+            final StringSink actual = new StringSink();
+            for (int i = 0, n = audits.size(); i < n; i++) {
+                final ViewAuditModel audit = audits.getQuick(i);
+                actual.put(audit.getViewName());
+                for (int j = 0, m = audit.getParamCount(); j < m; j++) {
+                    actual.put(' ').put(audit.getParamName(j)).put('=').put(audit.getParamValue(j).token);
+                }
+                actual.put('\n');
+            }
+            TestUtils.assertEquals("wrong audits for [" + sql + "]", expectedAudits, actual);
         }
     }
 
@@ -1374,6 +1443,18 @@ public class ViewAuditTest extends AbstractCairoTest {
         createAuditedView("v_audited", "SELECT symbol, price FROM trades");
     }
 
+    // Joins the strings with ", ", as String.join() and Arrays.toString() separate them.
+    private static String join(ObjList<String> strings) {
+        final StringSink sink = new StringSink();
+        for (int i = 0, n = strings.size(); i < n; i++) {
+            if (i > 0) {
+                sink.put(", ");
+            }
+            sink.put(strings.getQuick(i));
+        }
+        return sink.toString();
+    }
+
     /**
      * OSS has no syntax that sets the flag - {@code WITH AUDIT} is an Enterprise clause - so a test
      * that needs an audited view swaps the graph's definition for one carrying the flag.
@@ -1382,12 +1463,10 @@ public class ViewAuditTest extends AbstractCairoTest {
         storeAuditedDefinition(viewName, engine.getViewGraph().getViewDefinition(engine.getTableTokenIfExists(viewName)).getViewSql());
     }
 
-    private static String[] planAudits() {
-        final String[] planAudits = new String[generatedPlanAudits.size()];
-        for (int i = 0, n = generatedPlanAudits.size(); i < n; i++) {
-            planAudits[i] = generatedPlanAudits.getQuick(i);
-        }
-        return planAudits;
+    // Renders the audits of the plans generated since the test armed the list as
+    // Arrays.toString() renders an array: one entry per plan, in generation order, in brackets.
+    private static String planAudits() {
+        return "[" + join(generatedPlanAudits) + "]";
     }
 
     private static ViewDefinition readDefinitionFile(TableToken viewToken) {
@@ -1474,12 +1553,12 @@ public class ViewAuditTest extends AbstractCairoTest {
                 throw SqlException.$(0, "refused plan [audits=").put(audits.size()).put(']');
             }
             if (generatedPlanAudits != null) {
-                final String[] viewNames = new String[audits.size()];
+                final ObjList<String> viewNames = new ObjList<>();
                 for (int i = 0, n = audits.size(); i < n; i++) {
-                    viewNames[i] = audits.getQuick(i).getViewName().toString();
+                    viewNames.add(audits.getQuick(i).getViewName().toString());
                 }
-                Arrays.sort(viewNames);
-                generatedPlanAudits.add(String.join(", ", viewNames));
+                viewNames.sort(String::compareTo);
+                generatedPlanAudits.add(join(viewNames));
             }
             return factory;
         }

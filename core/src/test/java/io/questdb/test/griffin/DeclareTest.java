@@ -260,6 +260,98 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCteReadMoreThanOnceSeesDeclarationsOfItsDefinition() throws Exception {
+        assertMemoryLeak(() -> {
+            // The outer DECLARE is in scope at the definition of c, so the body of c reads the
+            // outer @x wherever a query reads c. The first reference takes the model the definition
+            // parsed. The second parses the body again, and used to read the @x of the query that
+            // reference sits in.
+            final String outerTwice = """
+                    v
+                    1
+                    1
+                    """;
+            assertQuery("DECLARE @x := 1 WITH c AS (SELECT @x v) SELECT * FROM (DECLARE @x := 2 SELECT * FROM c UNION ALL SELECT * FROM c)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(outerTwice);
+            // The same through a declared sub-query. Its declaration takes the definition's model,
+            // and the copy the second read of @q parses reads c as the declaration did.
+            assertQuery("DECLARE @x := 1 WITH c AS (SELECT @x v) SELECT * FROM (DECLARE @x := 2, @q := (SELECT * FROM c) SELECT * FROM @q UNION ALL SELECT * FROM @q)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(outerTwice);
+            // The query that reads c still reads its own @x.
+            assertQuery("DECLARE @x := 1 WITH c AS (SELECT @x v) SELECT * FROM (DECLARE @x := 2 SELECT v, @x x FROM c UNION ALL SELECT v, @x x FROM c)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v\tx
+                            1\t2
+                            1\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testCteReadMoreThanOnceSeesViewVariableOfItsDefinition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (l LONG)");
+            execute("INSERT INTO k VALUES (1), (2), (3)");
+            execute("CREATE VIEW v_ovl AS (DECLARE OVERRIDABLE @lim := 2 SELECT l FROM k WHERE l <= @lim)");
+            drainWalAndViewQueues();
+            // No @lim is in scope at the definition of c, so every read of c reads the view with
+            // its default. The second reference parses c again, and used to pass the view the @lim
+            // of the query that reference sits in.
+            final String defaultTwice = """
+                    l
+                    1
+                    2
+                    1
+                    2
+                    """;
+            assertQuery("WITH c AS (SELECT * FROM v_ovl) SELECT * FROM (DECLARE @lim := 3 SELECT * FROM c UNION ALL SELECT * FROM c)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(defaultTwice);
+            assertQuery("WITH c AS (SELECT * FROM v_ovl) SELECT * FROM (DECLARE @lim := 3, @q := (SELECT * FROM c) SELECT * FROM @q UNION ALL SELECT * FROM @q)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(defaultTwice);
+            // The body of d takes the definition's model, and d never reaches the result, so the
+            // one read of c that does parses c again. It reads the view with its default, as the
+            // statement without d does.
+            final String defaultOnce = """
+                    l
+                    1
+                    2
+                    """;
+            assertQuery("WITH c AS (SELECT * FROM v_ovl), d AS (SELECT * FROM c) SELECT * FROM (DECLARE @lim := 3 SELECT * FROM c)")
+                    .noLeakCheck()
+                    .returns(defaultOnce);
+            assertQuery("WITH c AS (SELECT * FROM v_ovl) SELECT * FROM (DECLARE @lim := 3 SELECT * FROM c)")
+                    .noLeakCheck()
+                    .returns(defaultOnce);
+            // A caller's value in scope at the definition reaches the view in every read of c.
+            assertQuery("DECLARE @lim := 3 WITH c AS (SELECT * FROM v_ovl) SELECT * FROM c UNION ALL SELECT * FROM c")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            l
+                            1
+                            2
+                            3
+                            1
+                            2
+                            3
+                            """);
+        });
+    }
+
+    @Test
     public void testDeclareCreateAsSelect() throws Exception {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
@@ -275,6 +367,63 @@ public class DeclareTest extends AbstractSqlParserTest {
                 assertModel("create view foo as (select-virtual 1 + 2 column from (long_sequence(1)))",
                         "CREATE VIEW foo AS (DECLARE @x := 1, @y := 2 SELECT @x + @y)", ExecutionModel.CREATE_VIEW)
         );
+    }
+
+    @Test
+    public void testDeclareEmptyQuotedName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE q (\"@c\" INT, d INT)");
+            execute("INSERT INTO q VALUES (7, 8)");
+            drainWalQueue();
+            // The expression parser unquotes "" and `` to an empty name. The check for undeclared
+            // variables leaves it to the compiler, which reports the column once a read resolves
+            // it, in the first declaration, in a later one and in the query alike.
+            assertQuery("DECLARE @x := \"\" SELECT @x FROM q")
+                    .fails(14, "Invalid column: ");
+            assertQuery("DECLARE @x := (\"\", 1) SELECT 1 a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            1
+                            """);
+            assertQuery("DECLARE OVERRIDABLE @x := (1, ``) SELECT d FROM q")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d
+                            8
+                            """);
+            assertQuery("DECLARE @a := 1, @x := \"\" SELECT @x FROM q")
+                    .fails(23, "Invalid column: ");
+            assertQuery("DECLARE @a := 1, @x := (\"\", 1) SELECT @a a FROM q")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            1
+                            """);
+            assertQuery("DECLARE @a := 1 SELECT \"\" FROM q")
+                    .fails(23, "Invalid column: ");
+            // A view body parses its first declaration on CREATE VIEW and on every read.
+            execute("CREATE VIEW v_empty AS (DECLARE @x := \"\" SELECT 1 a)");
+            execute("CREATE VIEW v_empty_list AS (DECLARE @x := (\"\", 1) SELECT 1 a)");
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM v_empty")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            1
+                            """);
+            assertQuery("SELECT * FROM v_empty_list")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            1
+                            """);
+        });
     }
 
     @Test
@@ -398,6 +547,13 @@ public class DeclareTest extends AbstractSqlParserTest {
                             v
                             9
                             """);
+            // The declaration in a comment declares nothing, so CREATE VIEW fails at the reference
+            // to @y in the body.
+            assertExceptionNoLeakCheck(
+                    "CREATE VIEW v AS (DECLARE OVERRIDABLE--@y := 2,\n@x := 1 SELECT @y AS v)",
+                    63,
+                    "tried to use undeclared variable `@y`"
+            );
         });
     }
 
@@ -461,6 +617,85 @@ public class DeclareTest extends AbstractSqlParserTest {
     public void testDeclareOverridableMultiple() throws Exception {
         assertModel("select-virtual 5 5, 10 10 from (long_sequence(1))",
                 "DECLARE OVERRIDABLE @x := 5, OVERRIDABLE @y := 10 SELECT @x, @y", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareQuotedNameInFirstDeclaration() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE q (\"@c\" INT, d INT)");
+            execute("INSERT INTO q VALUES (7, 8)");
+            drainWalQueue();
+            // A quoted name in a block's first declaration names a column, even when it starts
+            // with @. The expression parser drops the quotes, so the check for undeclared
+            // variables tells "@c" from @c by the text the parse read it from.
+            assertQuery("DECLARE @col := \"@c\" SELECT @col FROM q")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            @c
+                            7
+                            """);
+            assertQuery("DECLARE OVERRIDABLE @col := `@c` + 1 SELECT @col v FROM q")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            8
+                            """);
+            assertQuery("DECLARE @l := (\"@c\", 1) SELECT d FROM q WHERE 7 IN @l")
+                    .noLeakCheck()
+                    .returns("""
+                            d
+                            8
+                            """);
+            // An unquoted variable next to the quoted name still has to be declared.
+            assertQuery("DECLARE @x := \"@c\" + @q SELECT 1")
+                    .fails(21, "tried to use undeclared variable `@q`");
+            assertQuery("DECLARE @x := (\"@c\", @q) SELECT 1")
+                    .fails(21, "tried to use undeclared variable `@q`");
+            // Later declarations and the query read a quoted name that starts with @ as a
+            // variable. The quote check applies to the first declaration alone.
+            assertQuery("DECLARE @x := \"@c\", @y := \"@c\" SELECT @x FROM q")
+                    .fails(26, "tried to use undeclared variable `@c`");
+            // A view body, a copy of a declared sub-query and a CTE parsed again for a later
+            // reference each parse from a text of their own, and read the quotes from it.
+            execute("CREATE VIEW v_quoted AS (DECLARE @col := \"@c\" SELECT @col c FROM q)");
+            execute("CREATE VIEW v_quoted_copy AS (DECLARE @s := (DECLARE @l := (\"@c\", 1) SELECT d FROM q WHERE 7 IN @l) SELECT * FROM @s UNION ALL SELECT * FROM @s)");
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM v_quoted")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            c
+                            7
+                            """);
+            assertQuery("SELECT * FROM v_quoted_copy")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            d
+                            8
+                            8
+                            """);
+            assertQuery("DECLARE @s := (DECLARE @col := \"@c\" SELECT @col c FROM q) SELECT * FROM @s UNION ALL SELECT * FROM @s")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            c
+                            7
+                            7
+                            """);
+            assertQuery("WITH w AS (DECLARE @col := \"@c\" SELECT @col c FROM q) SELECT * FROM w UNION ALL SELECT * FROM w")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            c
+                            7
+                            7
+                            """);
+        });
     }
 
     @Test
@@ -957,18 +1192,83 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareStrayComma() throws Exception {
+        assertMemoryLeak(() -> {
+            // A comma separates declarations, so a comma that follows no declaration is a mistake,
+            // and the error points at it. The parser used to skip such commas.
+            assertQuery("DECLARE @a := 1,,@x := 2 SELECT @x")
+                    .fails(16, "missing declaration");
+            assertQuery("DECLARE @a := (1, 2),,@x := 2 SELECT @x")
+                    .fails(21, "missing declaration");
+            assertQuery("DECLARE ,@a := 1 SELECT @a")
+                    .fails(8, "missing declaration");
+            assertQuery("DECLARE @a := 1,, SELECT @a")
+                    .fails(16, "missing declaration");
+            // A single comma after the last declaration still closes the block.
+            assertQuery("DECLARE @a := 1, SELECT @a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            1
+                            1
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareUndeclaredVariableInFirstDeclaration() throws Exception {
+        assertMemoryLeak(() -> {
+            // The first declaration of a block checks its variables as every later one does. With
+            // nothing declared yet, it used to leave an undeclared variable unchecked, and the
+            // statement compiled whenever nothing read the declared variable.
+            assertQuery("DECLARE @x := @q SELECT 1")
+                    .fails(14, "tried to use undeclared variable `@q`");
+            assertQuery("DECLARE @x := 1 + @q SELECT 1")
+                    .fails(18, "tried to use undeclared variable `@q`");
+            assertQuery("DECLARE @x := (@q, 1) SELECT 1")
+                    .fails(15, "tried to use undeclared variable `@q`");
+            // A sub-query in the value is a query of its own, which leaves a variable it cannot
+            // resolve to the compiler, as a query outside DECLARE does. The statement compiles the
+            // sub-query even though nothing reads @x, so the variable still fails there.
+            assertQuery("DECLARE @x := (SELECT @q) SELECT 1")
+                    .fails(22, "Invalid column: @q");
+            // The declarations of an enclosing block reach the query of a nested block, not its
+            // declarations: they join the nested block's own only once its DECLARE is parsed.
+            assertQuery("DECLARE @x := 5 SELECT * FROM (DECLARE @y := @x SELECT 1 c)")
+                    .fails(45, "tried to use undeclared variable `@x`");
+            assertExceptionNoLeakCheck(
+                    "CREATE VIEW v_undeclared AS (DECLARE OVERRIDABLE @x := @q SELECT 1 a)",
+                    55,
+                    "tried to use undeclared variable `@q`"
+            );
+        });
+    }
+
+    @Test
     public void testDeclareVariableAfterMissingComma() throws Exception {
         assertMemoryLeak(() -> {
-            // The value of @a ends before @x, and the parse of that value hands @x back to the
-            // lexer. The parser then parses the value of @x again from past the variable, finds no
-            // left operand for `:=` and fails the declaration.
+            // A declaration that follows another without a comma fails at the token where the
+            // comma is missing. It used to fail only where the value of @a happened to end before
+            // @x, and a marker or a list in between hid the missing comma altogether.
             assertQuery("DECLARE @a := 1 @x := 2 SELECT @x")
-                    .fails(19, "too few arguments for ':='");
-            // A comment glued to the variable puts the start of that parse inside the comment, where
-            // the parse finds no left operand at all. The check of the left operand failed on that
-            // with a NullPointerException.
+                    .fails(16, "',' expected");
+            assertQuery("DECLARE @a := 1 OVERRIDABLE @x := 2 SELECT @x")
+                    .fails(16, "',' expected");
+            assertQuery("DECLARE @a := 1 AUDITED @x := 2 SELECT @x")
+                    .fails(16, "',' expected");
+            assertQuery("DECLARE @a := (1, 2) @x := 2 SELECT @x")
+                    .fails(21, "',' expected");
+            assertQuery("DECLARE @a := 1 @x SELECT @a")
+                    .fails(16, "',' expected");
+            // A comment between the declarations, glued to either of them, changes nothing.
+            assertQuery("DECLARE @a := 1/*c*/@x := 2 SELECT @x")
+                    .fails(20, "',' expected");
+            assertQuery("DECLARE @a := 1--c\n@x := 2 SELECT @x")
+                    .fails(19, "',' expected");
             assertQuery("DECLARE @a := 1 @x/*c*/:= 2 SELECT @x")
-                    .fails(21, "unexpected token [@x] - unexpected bind expression");
+                    .fails(16, "',' expected");
+            assertQuery("DECLARE @a := 1 OVERRIDABLE/*c*/@x := 2 SELECT @x")
+                    .fails(16, "',' expected");
         });
     }
 
@@ -1020,6 +1320,68 @@ public class DeclareTest extends AbstractSqlParserTest {
                 "SELECT * FROM (SELECT 1 as y)", ExecutionModel.QUERY);
         assertModel(targetModel,
                 "DECLARE @x := (SELECT 1 as y) SELECT * FROM @x", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryDoesNotReadWithAfterIt() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y (x SYMBOL)");
+            execute("INSERT INTO y VALUES ('table')");
+            // DECLARE precedes the WITH of its query, so the declared sub-query reads the table y,
+            // in its first read and in the copy every later read parses. The query body reads the
+            // CTE.
+            final String tableTwice = """
+                    x
+                    table
+                    table
+                    """;
+            assertQuery("DECLARE @q := (SELECT x FROM y) WITH y AS (SELECT 'cte'::SYMBOL x) SELECT * FROM @q UNION ALL SELECT * FROM @q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(tableTwice);
+            assertQuery("SELECT * FROM (DECLARE @q := (SELECT x FROM y) WITH y AS (SELECT 'cte'::SYMBOL x) SELECT * FROM @q UNION ALL SELECT * FROM @q)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(tableTwice);
+            assertQuery("DECLARE @q := (SELECT x FROM y) WITH y AS (SELECT 'cte'::SYMBOL x) SELECT * FROM @q UNION ALL SELECT * FROM y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x
+                            table
+                            cte
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryInCteDoesNotReadLaterCte() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y (x SYMBOL)");
+            execute("INSERT INTO y VALUES ('table')");
+            // The body of u names y before the WITH defines it, so y is the table, as it is for a
+            // FROM clause in that body. The first reference to u takes the model the definition
+            // parsed, whose reads of @q read the table. The second reference parses the body
+            // again, after the WITH has defined y, and its reads of @q used to read the CTE.
+            assertQuery("""
+                    WITH
+                        u AS (DECLARE @q := (SELECT x FROM y) SELECT x FROM @q UNION ALL SELECT x FROM @q),
+                        y AS (SELECT 'cte'::SYMBOL x)
+                    SELECT * FROM u UNION ALL SELECT * FROM u""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x
+                            table
+                            table
+                            table
+                            table
+                            """);
+        });
     }
 
     @Test
@@ -1476,6 +1838,44 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareVariableAsSubQueryOverViewHasModelBudget() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL, x LONG)");
+            execute("INSERT INTO k VALUES ('1', 1), ('2', 2), ('3', 3)");
+            // The body of cv reads its CTE 36 times, so every read of cv parses 146 query models.
+            final StringBuilder cv = new StringBuilder("CREATE VIEW cv AS (WITH c AS (SELECT x::STRING s FROM long_sequence(3)) SELECT s FROM c");
+            for (int i = 1; i < 36; i++) {
+                cv.append(" UNION ALL SELECT s FROM c");
+            }
+            execute(cv.append(')').toString());
+            drainWalAndViewQueues();
+            // @q0 reads cv four times, and each level of declarations reads the one before it twice.
+            // Two levels read @q0 four times and take 2,358 query models of their 3,520.
+            assertQuery(declaredDoublingOverView(2))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            12
+                            """);
+            // Five levels read @q0 32 times, far fewer copies than MAX_DECLARED_QUERY_COPIES, but
+            // the copies multiply the reads of cv and of its CTE: the parse used to take 18,878
+            // models, about 365 MB of heap, and compiling it ran out of a 1.5 GB heap. The statement
+            // may take 1,000 models, plus 2 for each of its 450 characters and the 978 of the body
+            // of cv. The parser refuses the read that finds the budget spent. That read sits in the
+            // body of cv, so the error points at the read of cv in the statement that expands it,
+            // the third one in the text of @q0.
+            final String fiveLevels = declaredDoublingOverView(5);
+            assertExceptionNoLeakCheck(
+                    fiveLevels,
+                    114,
+                    "statement is too complex to parse [models=3857, max=3856]"
+            );
+        });
+    }
+
+    @Test
     public void testDeclareVariableAsSubQueryOverViewSharesLexers() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE k (l LONG)");
@@ -1591,6 +1991,49 @@ public class DeclareTest extends AbstractSqlParserTest {
             // of @own inside the inner one are all being parsed at once, and one for the copy of
             // the caller's sub-query.
             Assert.assertEquals(4, countViewLexersHeld(sameViewInsideItself));
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryReadAsLatestByColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // LATEST BY and LATEST ON name columns. Code generation looks each one up by its
+            // token, which a sub-query does not have.
+            final String error = "query is not allowed here";
+            assertQuery("DECLARE @c := (SELECT 1) SELECT * FROM k LATEST ON ts PARTITION BY @c")
+                    .noLeakCheck()
+                    .fails(15, error);
+            assertQuery("DECLARE @c := (SELECT 's') SELECT * FROM k LATEST BY @c")
+                    .noLeakCheck()
+                    .fails(15, error);
+            assertQuery("DECLARE @t := (SELECT ts FROM k) SELECT * FROM k LATEST ON @t PARTITION BY s")
+                    .noLeakCheck()
+                    .fails(15, error);
+            // a later read, after one that took the declaration's model
+            assertQuery("DECLARE @c := (SELECT 1) SELECT * FROM k WHERE @c = 1 LATEST ON ts PARTITION BY @c")
+                    .noLeakCheck()
+                    .fails(15, error);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryReadAsSampleByFill() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // The optimiser and the code generator read FILL values by their tokens, which a
+            // sub-query does not have.
+            final String error = "query is not allowed here";
+            assertQuery("DECLARE @f := (SELECT 1) SELECT ts, count() FROM k SAMPLE BY 12h FILL(@f)")
+                    .noLeakCheck()
+                    .fails(15, error);
+            assertQuery("DECLARE @f := (SELECT 1) SELECT ts, count(), sum(l) FROM k SAMPLE BY 12h FILL(NULL, @f)")
+                    .noLeakCheck()
+                    .fails(15, error);
+            // a later read, which parses a copy of the sub-query
+            assertQuery("DECLARE @f := (SELECT 1) SELECT ts, count() FROM k WHERE @f = 1 SAMPLE BY 12h FILL(@f)")
+                    .noLeakCheck()
+                    .fails(15, error);
         });
     }
 
@@ -1816,11 +2259,9 @@ public class DeclareTest extends AbstractSqlParserTest {
     @Test
     public void testDeclareVariableAsSubQueryReadInWindowClauseWhereNoQueryIsAllowed() throws Exception {
         assertMemoryLeak(() -> {
-            // An expression without a model has nowhere to register a copy of a declared
-            // sub-query, so a read there that would need one is refused, as a sub-query written in
-            // place is. FROM takes the declaration's model here, which leaves the window in the
-            // SAMPLE BY time zone needing a copy. A read counts in every clause of the window:
-            // PARTITION BY, ORDER BY and either frame bound.
+            // An expression without a model has no place for a sub-query, so a read of a declared
+            // one there is refused, as a sub-query written in place is. A read counts in every
+            // clause of the window: PARTITION BY, ORDER BY and either frame bound.
             final String error = "query is not allowed here";
             assertQuery("""
                     DECLARE @q := (SELECT 1L x), @w := row_number() OVER (PARTITION BY x = @q)
@@ -1868,44 +2309,39 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute("INSERT INTO k VALUES (1, '2024-01-01T00:00:00Z'), (2, '2024-01-01T01:00:00Z'), (3, '2024-01-02T00:00:00Z')");
             execute("CREATE VIEW v_lim AS (DECLARE OVERRIDABLE @lim := 0 SELECT l FROM k WHERE l >= @lim AND l <= @lim)");
             drainWalAndViewQueues();
-            final String error = "query is not allowed here";
+            final String error = "declared sub-queries are read too many times [max=" + SqlParser.MAX_DECLARED_QUERY_COPIES + ']';
+            // The reads of @one parse one copy fewer than the budget, one after another, each with
+            // the lexer the one before it used. The second read of @lim in v_lim parses the last
+            // copy the budget allows with that lexer too, and this copy fails: it reads @w a second
+            // time, and the copy of @w that read needs is past the budget. A lexer that has parsed
+            // other copies reports the failure where a new one does, at the sub-query of @w.
+            final String declared = """
+                    DECLARE
+                        @one := (SELECT 1L l),
+                        @w := (SELECT 1L l),
+                        @lim := (SELECT max(l) FROM @w)
+                    """;
+            final int wPosition = declared.indexOf("@w := (") + "@w := (".length();
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                // The second and the third read of @one parse a copy each, the third with the lexer
-                // the second used. The second read of @lim in v_lim parses a copy with that lexer
-                // too, and this copy fails: it reads @tz a second time, as a SAMPLE BY time zone,
-                // which has no model to hold a copy of @tz. A lexer that has parsed other copies
-                // reports the failure where a new one does, at the sub-query of @tz.
-                assertQuery("""
-                        DECLARE
-                            @one := (SELECT 1L l),
-                            @tz := (SELECT 'UTC'),
-                            @lim := (SELECT max(c) FROM (SELECT count() c FROM k SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE @tz))
-                        SELECT * FROM @one UNION ALL SELECT * FROM @one UNION ALL SELECT * FROM @one UNION ALL SELECT * FROM v_lim
-                        """)
+                assertQuery(declared + readsOfOne(SqlParser.MAX_DECLARED_QUERY_COPIES) + " UNION ALL SELECT * FROM v_lim")
                         .withCompiler(compiler)
                         .noLeakCheck()
-                        .fails(47, error);
-                // One lexer for the three copies and one for v_lim's body: the failing copy took
-                // none of its own.
+                        .fails(wPosition, error);
+                // One lexer for the copies of @one and @lim and one for v_lim's body: the failing
+                // copy took none of its own.
                 Assert.assertEquals(2, countViewLexersHeld(compiler));
 
                 // The same failure inside the third expansion of v_lim, which parses the body with
                 // the lexer the first two used. Only that expansion sees the declarations of the
                 // sub-query it sits in.
-                assertQuery("""
-                        DECLARE @one := (SELECT 1L l)
-                        SELECT * FROM @one UNION ALL SELECT * FROM @one UNION ALL SELECT * FROM @one
-                        UNION ALL SELECT * FROM v_lim UNION ALL SELECT * FROM v_lim
-                        UNION ALL SELECT * FROM (
-                            DECLARE
-                                @tz := (SELECT 'UTC'),
-                                @lim := (SELECT max(c) FROM (SELECT count() c FROM k SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE @tz))
-                            SELECT * FROM v_lim
-                        )
-                        """)
+                final String nested = "DECLARE @one := (SELECT 1L l) "
+                        + readsOfOne(SqlParser.MAX_DECLARED_QUERY_COPIES)
+                        + " UNION ALL SELECT * FROM v_lim UNION ALL SELECT * FROM v_lim"
+                        + " UNION ALL SELECT * FROM (DECLARE @w := (SELECT 1L l), @lim := (SELECT max(l) FROM @w) SELECT * FROM v_lim)";
+                assertQuery(nested)
                         .withCompiler(compiler)
                         .noLeakCheck()
-                        .fails(221, error);
+                        .fails(nested.indexOf("@w := (") + "@w := (".length(), error);
                 Assert.assertEquals(2, countViewLexersHeld(compiler));
 
                 // The lexers a failed parse leaves behind do not reach the next statement.
@@ -1919,6 +2355,31 @@ public class DeclareTest extends AbstractSqlParserTest {
                                 3
                                 """);
             }
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryReadManyTimesHasModelBudget() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (l LONG)");
+            // @q0 joins k a hundred times, so every copy of it takes 101 query models, and the
+            // chain reads it 32 times, far fewer copies than MAX_DECLARED_QUERY_COPIES. Every copy
+            // checks the statement's budget, 1,000 models plus 2 for each character of its text,
+            // and the copy of @q1 that finds it spent fails, at the sub-query it would copy.
+            final StringBuilder sql = new StringBuilder("DECLARE @q0 := (SELECT k0.l FROM k k0");
+            for (int i = 1; i < 100; i++) {
+                sql.append(", k k").append(i);
+            }
+            sql.append(')');
+            for (int i = 1; i < 6; i++) {
+                sql.append(", @q").append(i).append(" := (SELECT * FROM @q").append(i - 1).append(" UNION ALL SELECT * FROM @q").append(i - 1).append(')');
+            }
+            sql.append(" SELECT count() FROM @q5");
+            assertExceptionNoLeakCheck(
+                    sql,
+                    sql.indexOf("@q1 := (") + "@q1 := (".length(),
+                    "statement is too complex to parse [models=3151, max=3052]"
+            );
         });
     }
 
@@ -2382,21 +2843,22 @@ public class DeclareTest extends AbstractSqlParserTest {
                             1.5	2.5	0.5	0.25	3.5	4.5
                             """);
             // The sub-query refers to w twice. Its first reference takes the model of w, and its
-            // second parses w again, from the count the declaration has reached: column2 and
-            // column3, which the join names column21 and column3. The copy does the same at each
-            // reference.
+            // second parses w again, from the count the definition of w began with: column1 and
+            // column2, which the join names column11 and column21. The copy does the same at each
+            // reference. The second reference used to parse w from the count the declaration had
+            // reached, as column2 and column3.
             assertQuery("""
                     WITH w AS (SELECT 1.5, 2.5)
                     SELECT * FROM (
                         DECLARE @q := (SELECT * FROM w a CROSS JOIN w b)
-                        SELECT column2, column21, column3 FROM @q UNION ALL SELECT column2, column21, column3 FROM @q
+                        SELECT column2, column11, column21 FROM @q UNION ALL SELECT column2, column11, column21 FROM @q
                     )
                     """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
                     .returns("""
-                            column2	column21	column3
+                            column2	column11	column21
                             2.5	1.5	2.5
                             2.5	1.5	2.5
                             """);
@@ -2406,25 +2868,25 @@ public class DeclareTest extends AbstractSqlParserTest {
                     WITH w AS (SELECT 1.5, 2.5)
                     SELECT * FROM (
                         DECLARE @t := w, @q := (SELECT * FROM @t a CROSS JOIN @t b)
-                        SELECT column2, column21, column3 FROM @q UNION ALL SELECT column2, column21, column3 FROM @q
+                        SELECT column2, column11, column21 FROM @q UNION ALL SELECT column2, column11, column21 FROM @q
                     )
                     """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
                     .returns("""
-                            column2	column21	column3
+                            column2	column11	column21
                             2.5	1.5	2.5
                             2.5	1.5	2.5
                             """);
             // Another sub-query took the model of w before the declaration of @q, so the
-            // declaration parses w again itself, as column2 and column3, and so does the copy.
-            assertQuery("WITH w AS (SELECT 1.5, 2.5) SELECT * FROM (SELECT column1 a FROM w) z CROSS JOIN (DECLARE @q := (SELECT * FROM w) SELECT column3 FROM @q UNION ALL SELECT column3 FROM @q)")
+            // declaration parses w again itself, as column1 and column2, and so does the copy.
+            assertQuery("WITH w AS (SELECT 1.5, 2.5) SELECT * FROM (SELECT column1 a FROM w) z CROSS JOIN (DECLARE @q := (SELECT * FROM w) SELECT column2 FROM @q UNION ALL SELECT column2 FROM @q)")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
                     .returns("""
-                            a	column3
+                            a	column2
                             1.5	2.5
                             1.5	2.5
                             """);
@@ -2447,14 +2909,15 @@ public class DeclareTest extends AbstractSqlParserTest {
                             1.5	2.5	5.5	6.5
                             1.5	2.5	5.5	6.5
                             """);
-            // A reference to w outside the declared sub-query parses w from the current count, as
-            // it does in a statement without declared sub-queries: column2 and column3 here.
+            // A reference to w outside the declared sub-query parses w from the count the
+            // definition of w began with, as it does in a statement without declared sub-queries:
+            // column1 and column2, which the join names column12 and column22.
             assertQuery("WITH w AS (SELECT 1.5, 2.5) SELECT * FROM (DECLARE @q := (SELECT * FROM w) SELECT * FROM @q a CROSS JOIN (SELECT * FROM @q) b CROSS JOIN w c)")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
                     .returns("""
-                            column1	column2	column11	column21	column22	column3
+                            column1	column2	column11	column21	column12	column22
                             1.5	2.5	1.5	2.5	1.5	2.5
                             """);
             // A view body reads a caller's value for its variable twice, and the value reads a
@@ -2538,8 +3001,8 @@ public class DeclareTest extends AbstractSqlParserTest {
                             """);
             // u reads w, and its definition takes the model of w. The declaration of @q takes the
             // model of u at its first reference, and at its second parses u again, and w inside
-            // it, from the current count. The copy parses u at its first reference as the
-            // definition of u did, w included, and at its second as the declaration did.
+            // it, each from the count its definition began with. The copy parses u at both
+            // references, and names both as the definition of u did, w included.
             assertQuery("""
                     WITH w AS (SELECT 1.5, 2.5), u AS (SELECT * FROM w)
                     SELECT * FROM (
@@ -2558,20 +3021,20 @@ public class DeclareTest extends AbstractSqlParserTest {
                             2.5
                             """);
             // The same in a join, where the names of the second reference show: w is column1 and
-            // column2 under the first reference to u, and column2 and column3 under the second,
-            // which the join names column21 and column3.
+            // column2 under both references to u, which the join names column11 and column21
+            // under the second. The second reference used to see column2 and column3.
             assertQuery("""
                     WITH w AS (SELECT 1.5, 2.5), u AS (SELECT * FROM w)
                     SELECT * FROM (
                         DECLARE @q := (SELECT * FROM u a CROSS JOIN u b)
-                        SELECT column2, column21, column3 FROM @q UNION ALL SELECT column2, column21, column3 FROM @q
+                        SELECT column2, column11, column21 FROM @q UNION ALL SELECT column2, column11, column21 FROM @q
                     )
                     """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
                     .returns("""
-                            column2	column21	column3
+                            column2	column11	column21
                             2.5	1.5	2.5
                             2.5	1.5	2.5
                             """);
@@ -2626,8 +3089,8 @@ public class DeclareTest extends AbstractSqlParserTest {
                             1.5
                             """);
             // The reads sit in the body of a CTE that the statement refers to three times, so the
-            // second and the third reference parse the body again, from the current count. The
-            // copy of @q they parse reads w as the declaration of @q did all the same.
+            // second and the third reference parse the body again, from the count its definition
+            // began with. The copy of @q they parse reads w as the declaration of @q did.
             assertQuery("""
                     WITH w AS (SELECT 1.5, 2.5)
                     SELECT * FROM (
@@ -2661,9 +3124,9 @@ public class DeclareTest extends AbstractSqlParserTest {
                             2.5
                             """);
             // The second reference to u parses its body again, declaration included, and that
-            // declaration of @q finds the model of w gone: it parses w from the current count,
-            // and so does its copy. Both reads of each @q return the same value, so neither
-            // EXCEPT leaves a row.
+            // declaration of @q finds the model of w gone: it parses w from the count the
+            // definition of w began with, and so does its copy. Both reads of each @q return the
+            // same value, so neither EXCEPT leaves a row.
             assertQuery("""
                     WITH
                         w AS (SELECT 1.5, 2.5),
@@ -2728,8 +3191,8 @@ public class DeclareTest extends AbstractSqlParserTest {
                             7.5	true	true	8.5
                             """);
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                // The copy of @q fails: it reads @tz a second time, as a SAMPLE BY time zone, which
-                // has no model to hold a copy of @tz.
+                // The declaration of @q fails: it reads @tz as a SAMPLE BY time zone, which has no
+                // place for a sub-query.
                 assertQuery("""
                         DECLARE
                             @tz := (SELECT 'UTC'),
@@ -2811,8 +3274,8 @@ public class DeclareTest extends AbstractSqlParserTest {
                     20,
                     "declared sub-queries are read too many times [max=100]"
             );
-            // The same chain written with CTEs parses as many copies, and the budget does not
-            // apply to it.
+            // The same chain written with CTEs parses as many copies of CTE bodies. They take 382
+            // query models, well within the statement's budget of 1,812, so it returns rows.
             assertQuery("""
                     WITH
                         q0 AS (SELECT l FROM k),
@@ -2831,6 +3294,65 @@ public class DeclareTest extends AbstractSqlParserTest {
                             count\tsum
                             192\t384
                             """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryReadTooManyTimesInsideViews() throws Exception {
+        assertMemoryLeak(() -> {
+            // v_q reads its own @q twice, so every expansion of v_q parses one copy of @q. v_n1
+            // reads v_q five times and v_n2 reads v_n1 five times, so a read of v_n2 parses 25.
+            execute("CREATE VIEW v_q AS (DECLARE @q := (SELECT x l FROM long_sequence(3)) SELECT * FROM @q UNION ALL SELECT * FROM @q)");
+            execute("""
+                    CREATE VIEW v_n1 AS (
+                        SELECT * FROM v_q UNION ALL SELECT * FROM v_q UNION ALL SELECT * FROM v_q
+                        UNION ALL SELECT * FROM v_q UNION ALL SELECT * FROM v_q
+                    )
+                    """);
+            execute("""
+                    CREATE VIEW v_n2 AS (
+                        SELECT * FROM v_n1 UNION ALL SELECT * FROM v_n1 UNION ALL SELECT * FROM v_n1
+                        UNION ALL SELECT * FROM v_n1 UNION ALL SELECT * FROM v_n1
+                    )
+                    """);
+            drainWalAndViewQueues();
+            final String error = "declared sub-queries are read too many times [max=100]";
+            // The copies every expansion parses count against the budget of the statement that
+            // reads the views, not one of each expansion's own. Four reads of v_n2 parse 100
+            // copies, the budget exactly, and take about half the query models the statement's
+            // parse budget allows, so the copy budget is the one these reads reach.
+            final String threeReads = "SELECT * FROM v_n2 UNION ALL SELECT * FROM v_n2 UNION ALL SELECT * FROM v_n2";
+            final String fourReads = threeReads + " UNION ALL SELECT * FROM v_n2";
+            assertQuery("SELECT count(), sum(l) FROM (" + fourReads + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            600\t1200
+                            """);
+            // One more read of v_q parses the 101st copy, inside v_q. The error points at the
+            // sub-query in the body of v_q, a position in the body's text rather than in the
+            // statement's, so the test checks the message only.
+            assertQuery("SELECT count(), sum(l) FROM (" + fourReads + " UNION ALL SELECT * FROM v_q)")
+                    .noLeakCheck()
+                    .failsWith(error);
+
+            // The copies inside the views and the copies of the statement's own sub-queries share
+            // that budget. Three reads of v_n2 parse 75 copies, and 26 reads of @one 25 more.
+            final String declared = "DECLARE @one := (SELECT 1L l) SELECT count(), sum(l) FROM (" + threeReads + " UNION ALL ";
+            assertQuery(declared + readsOfOne(26) + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            476\t926
+                            """);
+            // A 27th read of @one parses the 101st copy, at the sub-query of @one.
+            assertQuery(declared + readsOfOne(27) + ")")
+                    .noLeakCheck()
+                    .fails("DECLARE @one := (".length(), error);
         });
     }
 
@@ -2874,17 +3396,17 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute("CREATE VIEW v_lim AS (DECLARE OVERRIDABLE @lim := 0 SELECT l FROM k WHERE l >= @lim AND l <= @lim)");
             drainWalAndViewQueues();
             // The second read of @lim in v_lim parses a copy of the caller's sub-query outside
-            // v_lim. The copy reads @tz a second time, as a SAMPLE BY time zone, which has no model
-            // to hold a copy of @tz, so the copy's parse fails. The views it set aside go back on
+            // v_lim. The reads of @one before it leave the budget one copy, which the copy of @lim
+            // takes, so the copy's parse fails at its read of @w. The views it set aside go back on
             // the way out, and v_lim's expansion unwinds to the parse error.
             assertQuery("""
                     DECLARE
-                        @tz := (SELECT 'UTC'),
-                        @lim := (SELECT max(c) FROM (SELECT count() c FROM k SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE @tz))
-                    SELECT * FROM v_lim
-                    """)
+                        @one := (SELECT 1L l),
+                        @w := (SELECT 1L l),
+                        @lim := (SELECT max(l) FROM @w)
+                    """ + readsOfOne(SqlParser.MAX_DECLARED_QUERY_COPIES) + " UNION ALL SELECT * FROM v_lim")
                     .noLeakCheck()
-                    .failsWith("query is not allowed here");
+                    .failsWith("declared sub-queries are read too many times");
             assertQuery("DECLARE @lim := (SELECT max(l) FROM k) SELECT * FROM v_lim")
                     .noLeakCheck()
                     .returns("""
@@ -3082,6 +3604,84 @@ public class DeclareTest extends AbstractSqlParserTest {
             assertQuery("DECLARE @lim := (SELECT min(l) FROM v_self) SELECT * FROM v_lim")
                     .noLeakCheck()
                     .failsWith("circular view reference detected: v_self");
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryReadWhereNoQueryIsAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE p (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO k VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T13:00:00.000000Z')");
+            execute("INSERT INTO p VALUES (1.5, '2024-01-01T00:00:00.000000Z'), (2.5, '2024-01-01T12:30:00.000000Z')");
+            // These clauses parse their expressions without a model, which refuses a sub-query
+            // written in place. The first read of a declared sub-query, which takes the
+            // declaration's model rather than a copy, is refused there too.
+            final String error = "query is not allowed here";
+            assertQuery("DECLARE @tz := (SELECT 'UTC') SELECT ts, count() FROM k SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE @tz")
+                    .noLeakCheck()
+                    .fails(16, error);
+            assertQuery("DECLARE @o := (SELECT '00:00') SELECT ts, count() FROM k SAMPLE BY 1d ALIGN TO CALENDAR WITH OFFSET @o")
+                    .noLeakCheck()
+                    .fails(15, error);
+            assertQuery("DECLARE @q := (SELECT 1) SELECT ts, count() FROM k SAMPLE BY @q h")
+                    .noLeakCheck()
+                    .fails(15, error);
+            assertQuery("DECLARE @q := (SELECT 3_600_000_000L) SELECT k.ts, sum(p.v) FROM k WINDOW JOIN p RANGE BETWEEN @q PRECEDING AND CURRENT ROW")
+                    .noLeakCheck()
+                    .fails(15, error);
+            // the first read is refused, whatever the later reads are
+            assertQuery("""
+                    DECLARE @tz := (SELECT 'UTC')
+                    SELECT ts, count() FROM k SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE @tz
+                    UNION ALL
+                    SELECT ts, count() FROM k WHERE @tz = 'UTC' SAMPLE BY 1d
+                    """)
+                    .noLeakCheck()
+                    .fails(16, error);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryUnderShadowingCte() throws Exception {
+        assertMemoryLeak(() -> {
+            // A declared sub-query reads the CTEs visible at its declaration, in its first read and
+            // in the copy every later read parses. A WITH after the DECLARE block that shadows an
+            // outer CTE does not reach it.
+            assertQuery("WITH c AS (SELECT 'outer'::SYMBOL x) SELECT * FROM (DECLARE @q := (SELECT x FROM c) WITH c AS (SELECT 'inner'::SYMBOL x) SELECT * FROM @q UNION ALL SELECT * FROM @q UNION ALL SELECT * FROM c)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x
+                            outer
+                            outer
+                            inner
+                            """);
+            // The body of d reads the outer c, on the definition's parse and on the parse the
+            // second reference to d makes, after the WITH has defined the inner c.
+            assertQuery("WITH c AS (SELECT 'outer'::SYMBOL x) SELECT * FROM (WITH d AS (DECLARE @q := (SELECT x FROM c) SELECT * FROM @q UNION ALL SELECT * FROM @q), c AS (SELECT 'inner'::SYMBOL x) SELECT * FROM d UNION ALL SELECT * FROM d UNION ALL SELECT * FROM c)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x
+                            outer
+                            outer
+                            outer
+                            outer
+                            inner
+                            """);
+            // Declared inside the query that shadows c, it reads the inner c.
+            assertQuery("WITH c AS (SELECT 'outer'::SYMBOL x) SELECT * FROM (WITH c AS (SELECT 'inner'::SYMBOL x) SELECT * FROM (DECLARE @q := (SELECT x FROM c) SELECT * FROM @q UNION ALL SELECT * FROM @q))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x
+                            inner
+                            inner
+                            """);
         });
     }
 
@@ -3675,9 +4275,10 @@ public class DeclareTest extends AbstractSqlParserTest {
             // The sub-query used to drop out of the value without notice.
             assertQuery("DECLARE @x := -((SELECT 1), @x, 1) SELECT @x")
                     .fails(35, "unexpected token [@x] - unexpected bind expression");
-            // The cast to a sub-query used to fail later with a NullPointerException.
+            // A sub-query names no type: the cast refuses it while the value parses, before the
+            // value is checked for its own variable.
             assertQuery("DECLARE @x := @x :: (1, (SELECT 1)) SELECT @x")
-                    .fails(36, "unexpected token [@x] - unexpected bind expression");
+                    .fails(25, "query is not allowed here");
             assertQuery("DECLARE @x := 1, @x := @x = (2, 3) SELECT @x")
                     .fails(35, "unexpected token [@x] - unexpected bind expression");
             assertQuery("DECLARE OVERRIDABLE AUDITED @x := @x = (2, 3) SELECT @x")
@@ -4303,6 +4904,56 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclaredListMemberWithDanglingOperand() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (l LONG)");
+            execute("INSERT INTO k VALUES (1), (2), (3)");
+            drainWalQueue();
+            // An operand that nothing in a list member consumes is a malformed member. The parse of
+            // the member keeps only the last operand it builds and used to drop the rest without a
+            // word: a bracketed operand after a bind variable, or the left side of an operator
+            // applied to a bracketed pair, of which the operator takes both members instead.
+            assertQuery("DECLARE @x := (1, $1 (SELECT 1)) SELECT l FROM k WHERE l IN @x")
+                    .fails(22, "dangling expression");
+            assertQuery("DECLARE @x := (1, $1 (2)) SELECT l FROM k WHERE l IN @x")
+                    .fails(22, "dangling expression");
+            assertQuery("DECLARE @x := ((SELECT 1) = (2, 3), 1) SELECT 1")
+                    .fails(16, "dangling expression");
+            assertQuery("DECLARE @x := (1 + (2, 3), 4) SELECT l FROM k WHERE l IN @x")
+                    .fails(15, "dangling expression");
+            assertQuery("DECLARE @a := 1, @x := (1, $1 (SELECT 1)) SELECT 1")
+                    .fails(31, "dangling expression");
+        });
+    }
+
+    @Test
+    public void testDeclaredListMemberWithDanglingOperandInSearchedCase() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (l LONG)");
+            execute("INSERT INTO k VALUES (1), (2), (3)");
+            drainWalQueue();
+            // A searched CASE takes one operand more than it has branches, a marker with no text
+            // of its own. A bracketed pair in a branch supplies one operand too many: the CASE
+            // takes the pair's members in place of its own, and the marker is the operand left
+            // over. The marker has no position, so the error points at the member.
+            assertQuery("DECLARE @x := (1, CASE WHEN true THEN 1 ELSE (2, 3) END) SELECT l FROM k WHERE l IN @x")
+                    .fails(18, "dangling expression");
+            assertQuery("DECLARE @x := (CASE WHEN (true, false) THEN 1 END, 1) SELECT 1")
+                    .fails(15, "dangling expression");
+            assertQuery("DECLARE @x := (1, abs(CASE WHEN true THEN (2, 3) END)) SELECT 1")
+                    .fails(18, "dangling expression");
+            // A well-formed searched CASE leaves nothing over.
+            assertQuery("DECLARE @x := (1, CASE WHEN true THEN 2 ELSE 3 END) SELECT l FROM k WHERE l IN @x")
+                    .noLeakCheck()
+                    .returns("""
+                            l
+                            1
+                            2
+                            """);
+        });
+    }
+
+    @Test
     public void testDeclaredListOfBindVariables() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE k (s SYMBOL, l LONG)");
@@ -4915,8 +5566,9 @@ public class DeclareTest extends AbstractSqlParserTest {
             );
 
             // A view's body expands with the statement that reads it, and its copies count against
-            // that statement: one read of this body copies 65,507 nodes, and a second read crosses
-            // the budget.
+            // that statement: one read of this body copies 65,507 nodes. The parse of a 53-character
+            // statement over the 316-character body may take 17,380 nodes, so the parser refuses
+            // the second read before it expands the body again.
             execute("CREATE VIEW v_chain AS (" + declaredVariableChain(14) + " SELECT @v1 x FROM long_sequence(1))");
             drainWalAndViewQueues();
             assertQuery("SELECT * FROM v_chain")
@@ -4926,9 +5578,12 @@ public class DeclareTest extends AbstractSqlParserTest {
                             x
                             2
                             """);
-            assertQuery("SELECT * FROM v_chain UNION ALL SELECT * FROM v_chain")
-                    .noLeakCheck()
-                    .failsWith("declared variables expand to too many expression nodes [max=100000]");
+            final String readTwice = "SELECT * FROM v_chain UNION ALL SELECT * FROM v_chain";
+            assertExceptionNoLeakCheck(
+                    readTwice,
+                    readTwice.lastIndexOf("v_chain"),
+                    "statement is too complex to parse [nodes=65588, max=17380]"
+            );
         });
     }
 
@@ -5129,6 +5784,21 @@ public class DeclareTest extends AbstractSqlParserTest {
         inputRoot = root;
     }
 
+    // DECLARE @q0 := (SELECT s FROM k WHERE s IN (SELECT s FROM cv) AND ..., four times),
+    // @q1 := (SELECT * FROM @q0 UNION ALL SELECT * FROM @q0), ... SELECT count() FROM @q<levels>
+    private static String declaredDoublingOverView(int levels) {
+        final StringBuilder sql = new StringBuilder("DECLARE @q0 := (SELECT s FROM k WHERE s IN (SELECT s FROM cv)");
+        for (int i = 1; i < 4; i++) {
+            sql.append(" AND s IN (SELECT s FROM cv)");
+        }
+        sql.append(')');
+        for (int i = 1; i <= levels; i++) {
+            sql.append(", @q").append(i).append(" := (SELECT * FROM @q").append(i - 1)
+                    .append(" UNION ALL SELECT * FROM @q").append(i - 1).append(')');
+        }
+        return sql.append(" SELECT count() FROM @q").append(levels).toString();
+    }
+
     // Declares a sub-query that reads the given table or view and five more on top of it, each
     // reading the one before it twice, and reads the last: 32 reads of the first.
     private static String declaredQueryChainOver(String source) {
@@ -5146,6 +5816,16 @@ public class DeclareTest extends AbstractSqlParserTest {
         final StringBuilder sql = new StringBuilder("DECLARE @v0 := 1");
         for (int i = 1; i <= depth; i++) {
             sql.append(", @v").append(i).append(" := @v").append(i - 1).append(" + @v").append(i - 1);
+        }
+        return sql.toString();
+    }
+
+    // Reads @one the given number of times, one read after another, so that every read after the
+    // first parses a copy of it.
+    private static String readsOfOne(int reads) {
+        final StringBuilder sql = new StringBuilder("SELECT * FROM @one");
+        for (int i = 1; i < reads; i++) {
+            sql.append(" UNION ALL SELECT * FROM @one");
         }
         return sql.toString();
     }

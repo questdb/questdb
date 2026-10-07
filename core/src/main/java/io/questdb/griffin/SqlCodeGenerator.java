@@ -5180,9 +5180,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private RecordCursorFactory generateFunctionQuery(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         RecordCursorFactory tableFactory = model.getTableNameFunction();
         if (tableFactory != null) {
-            // We're transferring ownership of the tableFactory's factory to another factory
-            // setting tableFactory to NULL will prevent double-ownership.
-            // We should not release tableFactory itself, they typically just a lightweight factory wrapper.
+            // This method takes the factory over from the model and clears the model's reference,
+            // so that no cleanup that walks the models closes the factory a second time. The
+            // method frees the factory only when the projection below throws; otherwise it hands
+            // the factory to the caller.
             model.setTableNameFunction(null);
         } else {
             // when tableFactory is null we have to recompile it from scratch, including creating new factory
@@ -5190,18 +5191,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         if (tableFactory instanceof ProjectableRecordCursorFactory factory) {
-            RecordMetadata metadata = factory.getMetadata();
-            int readerTimestampIndex = getTimestampIndex(model, metadata);
-            boolean requiresTimestamp = joinsRequiringTimestamp[model.getJoinType()];
-            factory.setQueryProjectedMetadata(buildQueryMetadata(
-                    model,
-                    executionContext,
-                    tableFactory.getMetadata(),
-                    readerTimestampIndex,
-                    requiresTimestamp,
-                    null,
-                    null
-            ));
+            // This method owns the factory until it returns it: it either took the factory over
+            // from the model or created it, and no plan holds it yet. So this method closes it
+            // when the projection fails, or nothing would.
+            try {
+                RecordMetadata metadata = factory.getMetadata();
+                int readerTimestampIndex = getTimestampIndex(model, metadata);
+                boolean requiresTimestamp = joinsRequiringTimestamp[model.getJoinType()];
+                factory.setQueryProjectedMetadata(buildQueryMetadata(
+                        model,
+                        executionContext,
+                        tableFactory.getMetadata(),
+                        readerTimestampIndex,
+                        requiresTimestamp,
+                        null,
+                        null
+                ));
+            } catch (Throwable th) {
+                Misc.free(tableFactory, th);
+                throw th;
+            }
         }
 
         return tableFactory;

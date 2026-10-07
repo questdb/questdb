@@ -1681,6 +1681,83 @@ public class UnionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionNestedInLaterBranchWithDifferentColumnCount() throws Exception {
+        assertMemoryLeak(() -> {
+            // A set operation inside the second or a later branch of another one, reached through
+            // the branch's nested or join models, gets the column count check the first branch's
+            // gets.
+            final String error = "queries have different number of columns";
+            assertQuery("SELECT * FROM (SELECT 1 a, 2 b, 3 c UNION ALL (SELECT 1 a, 2 b, 3 c UNION ALL SELECT 1 a, 2 b))")
+                    .noLeakCheck()
+                    .fails(78, error);
+            assertQuery("WITH c0 AS (SELECT 1 a, 2 b), c1 AS (SELECT 1 a, 2 b, 3 c), c2 AS (SELECT * FROM c1 UNION ALL SELECT * FROM c0) SELECT * FROM c1 UNION ALL SELECT * FROM c2")
+                    .noLeakCheck()
+                    .fails(94, error);
+            assertQuery("SELECT 1 a, 2 b UNION ALL SELECT * FROM (SELECT 1 a) x CROSS JOIN (SELECT 2 b UNION ALL SELECT 2 b, 3 c) y")
+                    .noLeakCheck()
+                    .fails(88, error);
+            assertQuery("SELECT 1 a, 2 b UNION ALL SELECT 1 a, 2 b UNION ALL (SELECT 1 a, 2 b EXCEPT SELECT 3 a)")
+                    .noLeakCheck()
+                    .fails(76, error);
+            assertQuery("SELECT 1 a, 2 b UNION (SELECT 1 a, 2 b INTERSECT SELECT 3 a)")
+                    .noLeakCheck()
+                    .fails(49, error);
+        });
+    }
+
+    @Test
+    public void testUnionNestedInLaterBranchWithPositionalOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL, l LONG)");
+            execute("INSERT INTO k VALUES ('a', 1), ('b', 2), ('a', 3)");
+            // A positional ORDER BY inside a set operation resolves the same way whether that
+            // set operation sits in the first branch of another one or in a later branch.
+            assertQuery("SELECT * FROM (SELECT s, l FROM k UNION ALL (SELECT s, l FROM k ORDER BY 2 DESC LIMIT 1)) UNION ALL SELECT 'x' s, 0L l")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            s\tl
+                            a\t1
+                            b\t2
+                            a\t3
+                            a\t3
+                            x\t0
+                            """);
+            assertQuery("SELECT 'x' s, 0L l UNION ALL SELECT * FROM (SELECT s, l FROM k UNION ALL (SELECT s, l FROM k ORDER BY 2 DESC LIMIT 1))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            s\tl
+                            x\t0
+                            a\t1
+                            b\t2
+                            a\t3
+                            a\t3
+                            """);
+            assertQuery("WITH c AS (SELECT s, l FROM k UNION ALL (SELECT s, l FROM k ORDER BY 2 DESC LIMIT 1)) SELECT * FROM c UNION ALL SELECT * FROM c")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            s\tl
+                            a\t1
+                            b\t2
+                            a\t3
+                            a\t3
+                            a\t1
+                            b\t2
+                            a\t3
+                            a\t3
+                            """);
+            assertQuery("SELECT 'x' s, 0L l UNION ALL (SELECT s, l FROM k UNION ALL (SELECT s, l FROM k ORDER BY 3))")
+                    .noLeakCheck()
+                    .fails(88, "order column position is out of range [max=2]");
+        });
+    }
+
+    @Test
     public void testUnionSymbolAndString() throws Exception {
         assertMemoryLeak(() -> {
             execute("""

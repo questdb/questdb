@@ -974,7 +974,7 @@ public class ExpressionParser {
         // validate is Query is allowed
         onNode(listener, node, argStackDepth, BRANCH_NONE);
         // we can compile query if all is well
-        node.queryModel = sqlParser.parseAsSubQuery(lexer, null, true, sqlParserCallback, decls, false);
+        node.queryModel = sqlParser.parseExpressionSubQuery(lexer, sqlParserCallback, decls);
         argStackDepth = onNode(listener, node, argStackDepth, BRANCH_NONE);
 
         // pop our control node if sub-query hasn't done it
@@ -1074,6 +1074,19 @@ public class ExpressionParser {
             }
         }
         return false;
+    }
+
+    /**
+     * Empties the parse stacks. {@link #parseExpr} empties them only on a {@link SqlException}; any
+     * other {@link Throwable}, such as a {@link StackOverflowError} from a deeply nested statement,
+     * unwinds past it and leaves their entries and raised bottoms behind, so
+     * {@link SqlParser#clear()} calls this before every statement.
+     */
+    void clear() {
+        argStackDepthStack.clear();
+        opStack.clear();
+        paramCountStack.clear();
+        scopeStack.clear();
     }
 
     void parseExpr(
