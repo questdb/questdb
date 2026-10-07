@@ -30,7 +30,11 @@ package io.questdb.cairo.sql;
  * <p>
  * A column with a non-zero {@link #getColumnAddress(int) address} holds the block's rows in
  * memory, the value of row {@code r} at {@code address + r * stride}, in the column type's
- * fixed-size storage layout: the same bits the {@link Record} getter of that type returns. A
+ * fixed-size storage layout: the same bits the {@link Record} getter of that type returns. A block
+ * that gathers its rows from scattered positions, such as a filter's selected rows, lists them
+ * instead: when the column's {@link #getColumnRowIndexesAddress(int) row indexes} are non-zero, the
+ * value of row {@code r} is at {@code address + rowIndex(r) * stride}, where {@code rowIndex(r)} is
+ * the r-th long of that list. A
  * SYMBOL column holds the symbol keys, resolved by the cursor's
  * {@link RecordCursor#getSymbolTable(int) symbol table}; a BOOLEAN one, one byte per row, true
  * when it is 1, as {@link Record#getBool(int)} reads it. A
@@ -53,6 +57,30 @@ public interface RecordBlock {
      * address
      */
     long getColumnStride(int columnIndex);
+
+    /**
+     * The row indexes a column's values are gathered by, see {@link #getRowIndexesAddress()}: the
+     * block's, unless the column's values are laid out otherwise, such as computed for the block's
+     * rows, one after another.
+     *
+     * @return the address of the first row's index, or 0 when row {@code r}'s value is at position
+     * {@code r}
+     */
+    default long getColumnRowIndexesAddress(int columnIndex) {
+        return getRowIndexesAddress();
+    }
+
+    /**
+     * The block's row indexes, for a block that gathers its rows: one long per row, in the block's
+     * row order, each the position of the row's values in every column with a non-zero address, in
+     * units of that column's stride. The list is valid as long as the block is.
+     *
+     * @return the address of the first row's index, or 0 when the block's rows are consecutive, row
+     * {@code r} at position {@code r}
+     */
+    default long getRowIndexesAddress() {
+        return 0;
+    }
 
     /**
      * Positions a record at a row of the block and returns it. The record may be the cursor's own

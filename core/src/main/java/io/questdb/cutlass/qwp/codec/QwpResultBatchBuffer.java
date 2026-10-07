@@ -89,8 +89,16 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     // which is exactly what {@link #emitDeltaSection} needs to ship.
     private int batchDeltaStart;
     private long batchDeltaWireBytesAtStart;
-    // appendBlock's per-SYMBOL-column address and stride pairs
+    // appendBlock(): the columns it fills through the block's record
+    private int[] blockRecordColumns = EMPTY_INTS;
+    // appendBlock's per-SYMBOL-column address and stride pairs, and column indexes
     private long[] blockSymbolAddresses = EMPTY_LONGS;
+    private int[] blockSymbolColumns = EMPTY_INTS;
+    // appendBlockSymbols(): per SYMBOL column, the previous row's key and its connection id
+    private int[] blockSymbolLastConnIds = EMPTY_INTS;
+    private int[] blockSymbolLastKeys = EMPTY_INTS;
+    // appendBlockSymbols(): per SYMBOL column, the row indexes its block values are gathered by
+    private long[] blockSymbolRowIndexes = EMPTY_LONGS;
     private int columnCount;
     private ObjList<QwpEgressColumnDef> columns;
     // Connection-scoped SYMBOL dictionary. Populated directly from appendRow's SYMBOL
@@ -158,9 +166,12 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      *       the row whose new entries take {@link #currentBatchDeltaWireBytes()} past
      *       {@code dictBudgetWireBytes}, the row after which the row path's caller stops;</li>
      *   <li>every other fixed-width column of a type with a columnar fill, and a non-zero
-     *       block address, is copied in one strided loop over the rows taken;</li>
-     *   <li>any other column is filled row by row through {@link RecordBlock#getRecordAt},
-     *       as {@code appendRow} fills it.</li>
+     *       block address, is copied in one loop over the rows taken, strided or gathered by
+     *       the block's {@link RecordBlock#getRowIndexesAddress() row indexes};</li>
+     *   <li>the remaining columns are filled row by row through {@link RecordBlock#getRecordAt},
+     *       as {@code appendRow} fills them, and in its order: for each row, each such column in
+     *       column order. A record whose values are computed per row, such as a projection's
+     *       expressions, so evaluates them in the order the row path does.</li>
      * </ul>
      *
      * @return the rows taken from the block's start, at least 1
@@ -182,6 +193,12 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         if (symbolColumnCount > 0) {
             rows = appendBlockSymbols(block, rows, dictBudgetWireBytes);
         }
+        // the columns read through the block's record, in column order
+        int[] recordColumns = blockRecordColumns;
+        if (recordColumns.length < n) {
+            recordColumns = blockRecordColumns = new int[n];
+        }
+        int recordColumnCount = 0;
         for (int ci = 0; ci < n; ci++) {
             final byte wt = wts[ci];
             if (wt == QwpConstants.TYPE_SYMBOL) {
@@ -191,45 +208,86 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             final long address = block.getColumnAddress(ci);
             if (address != 0) {
                 final long stride = block.getColumnStride(ci);
-                switch (wt) {
-                    case QwpConstants.TYPE_LONG:
-                    case QwpConstants.TYPE_DATE:
-                    case QwpConstants.TYPE_TIMESTAMP:
-                    case QwpConstants.TYPE_TIMESTAMP_NANOS:
-                    case QwpConstants.TYPE_DECIMAL64:
-                        scratch.appendColumnLong8WithSentinel(address, rows, stride);
-                        continue;
-                    case QwpConstants.TYPE_DOUBLE:
-                        scratch.appendColumnDouble8(address, rows, stride);
-                        continue;
-                    case QwpConstants.TYPE_INT:
-                        scratch.appendColumnInt4WithSentinel(address, rows, Numbers.INT_NULL, stride);
-                        continue;
-                    case QwpConstants.TYPE_IPV4:
-                        scratch.appendColumnInt4WithSentinel(address, rows, Numbers.IPv4_NULL, stride);
-                        continue;
-                    case QwpConstants.TYPE_FLOAT:
-                        scratch.appendColumnFloat4(address, rows, stride);
-                        continue;
-                    case QwpConstants.TYPE_SHORT:
-                    case QwpConstants.TYPE_CHAR:
-                        scratch.appendColumnFixedNoNull(address, rows, 2, stride);
-                        continue;
-                    case QwpConstants.TYPE_BYTE:
-                        scratch.appendColumnFixedNoNull(address, rows, 1, stride);
-                        continue;
-                    case QwpConstants.TYPE_BOOLEAN:
-                        scratch.appendColumnBoolean(address, rows, stride);
-                        continue;
-                    default:
-                        // GEOHASH, UUID, LONG256, DECIMAL128/256: the row path below
+                final long rowIndexes = block.getColumnRowIndexesAddress(ci);
+                if (rowIndexes == 0) {
+                    switch (wt) {
+                        case QwpConstants.TYPE_LONG:
+                        case QwpConstants.TYPE_DATE:
+                        case QwpConstants.TYPE_TIMESTAMP:
+                        case QwpConstants.TYPE_TIMESTAMP_NANOS:
+                        case QwpConstants.TYPE_DECIMAL64:
+                            scratch.appendColumnLong8WithSentinel(address, rows, stride);
+                            continue;
+                        case QwpConstants.TYPE_DOUBLE:
+                            scratch.appendColumnDouble8(address, rows, stride);
+                            continue;
+                        case QwpConstants.TYPE_INT:
+                            scratch.appendColumnInt4WithSentinel(address, rows, Numbers.INT_NULL, stride);
+                            continue;
+                        case QwpConstants.TYPE_IPV4:
+                            scratch.appendColumnInt4WithSentinel(address, rows, Numbers.IPv4_NULL, stride);
+                            continue;
+                        case QwpConstants.TYPE_FLOAT:
+                            scratch.appendColumnFloat4(address, rows, stride);
+                            continue;
+                        case QwpConstants.TYPE_SHORT:
+                        case QwpConstants.TYPE_CHAR:
+                            scratch.appendColumnFixedNoNull(address, rows, 2, stride);
+                            continue;
+                        case QwpConstants.TYPE_BYTE:
+                            scratch.appendColumnFixedNoNull(address, rows, 1, stride);
+                            continue;
+                        case QwpConstants.TYPE_BOOLEAN:
+                            scratch.appendColumnBoolean(address, rows, stride);
+                            continue;
+                        default:
+                            // GEOHASH, UUID, LONG256, DECIMAL128/256: the row path below
+                    }
+                } else {
+                    switch (wt) {
+                        case QwpConstants.TYPE_LONG:
+                        case QwpConstants.TYPE_DATE:
+                        case QwpConstants.TYPE_TIMESTAMP:
+                        case QwpConstants.TYPE_TIMESTAMP_NANOS:
+                        case QwpConstants.TYPE_DECIMAL64:
+                            scratch.appendColumnLong8WithSentinelGather(address, rowIndexes, rows, stride);
+                            continue;
+                        case QwpConstants.TYPE_DOUBLE:
+                            scratch.appendColumnDouble8Gather(address, rowIndexes, rows, stride);
+                            continue;
+                        case QwpConstants.TYPE_INT:
+                            scratch.appendColumnInt4WithSentinelGather(address, rowIndexes, rows, Numbers.INT_NULL, stride);
+                            continue;
+                        case QwpConstants.TYPE_IPV4:
+                            scratch.appendColumnInt4WithSentinelGather(address, rowIndexes, rows, Numbers.IPv4_NULL, stride);
+                            continue;
+                        case QwpConstants.TYPE_FLOAT:
+                            scratch.appendColumnFloat4Gather(address, rowIndexes, rows, stride);
+                            continue;
+                        case QwpConstants.TYPE_SHORT:
+                        case QwpConstants.TYPE_CHAR:
+                            scratch.appendColumnFixedNoNullGather(address, rowIndexes, rows, 2, stride);
+                            continue;
+                        case QwpConstants.TYPE_BYTE:
+                            scratch.appendColumnFixedNoNullGather(address, rowIndexes, rows, 1, stride);
+                            continue;
+                        case QwpConstants.TYPE_BOOLEAN:
+                            scratch.appendColumnBooleanGather(address, rowIndexes, rows, stride);
+                            continue;
+                        default:
+                            // GEOHASH, UUID, LONG256, DECIMAL128/256: the row path below
+                    }
                 }
             }
-            final int qt = qts[ci];
-            final QwpEgressColumnDef def = defs[ci];
-            final SymbolTable st = sts[ci];
+            recordColumns[recordColumnCount++] = ci;
+        }
+        if (recordColumnCount > 0) {
             for (int r = 0; r < rows; r++) {
-                appendCell(block.getRecordAt(r), ci, scratch, wt, qt, def, st);
+                final Record record = block.getRecordAt(r);
+                for (int k = 0; k < recordColumnCount; k++) {
+                    final int ci = recordColumns[k];
+                    appendCell(record, ci, scs[ci], wts[ci], qts[ci], defs[ci], sts[ci]);
+                }
             }
         }
         assert physicalRowCount <= Integer.MAX_VALUE - rows : "physicalRowCount int overflow";
@@ -912,23 +970,38 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         if (symbolColumnCount == 1 && addresses[0] != 0) {
             for (int ci = 0; ci < n; ci++) {
                 if (wts[ci] == QwpConstants.TYPE_SYMBOL) {
-                    return appendBlockSymbolColumn(scs[ci], addresses[0], addresses[1], rows, sts[ci], dictBudgetWireBytes);
+                    return appendBlockSymbolColumn(scs[ci], addresses[0], addresses[1], blockSymbolRowIndexes[0], rows, sts[ci], dictBudgetWireBytes);
                 }
             }
         }
+        // per SYMBOL column read from memory, its previous row's key and connection id: a key's
+        // id never changes within a query, so a run of one key needs no lookup
+        final int[] lastKeys = blockSymbolLastKeys(symbolColumnCount);
+        final int[] lastConnIds = blockSymbolLastConnIds;
+        final int[] symbolColumns = blockSymbolColumns;
+        for (int s = 0; s < symbolColumnCount; s++) {
+            if (addresses[2 * s] != 0) {
+                scs[symbolColumns[s]].reserveSymbolRows(rows);
+            }
+        }
         int dictSize = connDict.size();
+        final long[] rowIndexes = blockSymbolRowIndexes;
         for (int r = 0; r < rows; r++) {
-            for (int ci = 0, s = 0; ci < n; ci++) {
-                if (wts[ci] != QwpConstants.TYPE_SYMBOL) {
-                    continue;
-                }
+            for (int s = 0; s < symbolColumnCount; s++) {
+                final int ci = symbolColumns[s];
                 final long address = addresses[2 * s];
                 if (address != 0) {
-                    appendSymbolKey(scs[ci], Unsafe.getInt(address + r * addresses[2 * s + 1]), sts[ci]);
+                    final long position = rowIndexes[s] == 0 ? r : Unsafe.getLong(rowIndexes[s] + 8L * r);
+                    final int key = Unsafe.getInt(address + position * addresses[2 * s + 1]);
+                    if (key == lastKeys[s] && key != SymbolTable.VALUE_IS_NULL) {
+                        scs[ci].appendSymbolConnIdReserved(lastConnIds[s]);
+                    } else {
+                        lastKeys[s] = key;
+                        lastConnIds[s] = appendSymbolKey(scs[ci], key, sts[ci]);
+                    }
                 } else {
                     appendCell(block.getRecordAt(r), ci, scs[ci], QwpConstants.TYPE_SYMBOL, qts[ci], defs[ci], sts[ci]);
                 }
-                s++;
             }
             final int newDictSize = connDict.size();
             if (newDictSize != dictSize) {
@@ -950,6 +1023,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             QwpColumnScratch scratch,
             long address,
             long stride,
+            long rowIndexes,
             int rows,
             SymbolTable st,
             int dictBudgetWireBytes
@@ -959,7 +1033,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         int lastKey = SymbolTable.VALUE_IS_NULL;
         int lastConnId = -1;
         for (int r = 0; r < rows; r++) {
-            final int key = Unsafe.getInt(address + r * stride);
+            final long position = rowIndexes == 0 ? r : Unsafe.getLong(rowIndexes + 8L * r);
+            final int key = Unsafe.getInt(address + position * stride);
             if (key == SymbolTable.VALUE_IS_NULL) {
                 scratch.appendNull();
                 continue;
@@ -986,13 +1061,17 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
-     * Fills {@link #blockSymbolAddresses} with each SYMBOL column's block address and stride, in
-     * column order: the address is non-zero only for a column with a key/value symbol table.
+     * Fills {@link #blockSymbolAddresses} with each SYMBOL column's block address and stride,
+     * {@link #blockSymbolRowIndexes} with its row indexes and {@link #blockSymbolColumns} with its
+     * column index, in column order: the address is non-zero only for a column with a key/value
+     * symbol table.
      */
     private long[] blockSymbolAddresses(RecordBlock block) {
         long[] addresses = blockSymbolAddresses;
         if (addresses.length < 2 * symbolColumnCount) {
             addresses = blockSymbolAddresses = new long[2 * symbolColumnCount];
+            blockSymbolColumns = new int[symbolColumnCount];
+            blockSymbolRowIndexes = new long[symbolColumnCount];
         }
         for (int ci = 0, s = 0, n = columnCount; ci < n; ci++) {
             if (wireTypesArr[ci] != QwpConstants.TYPE_SYMBOL) {
@@ -1001,9 +1080,27 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             final long address = symbolTablesArr[ci] != null ? block.getColumnAddress(ci) : 0;
             addresses[2 * s] = address;
             addresses[2 * s + 1] = address != 0 ? block.getColumnStride(ci) : 0;
+            blockSymbolRowIndexes[s] = address != 0 ? block.getColumnRowIndexesAddress(ci) : 0;
+            blockSymbolColumns[s] = ci;
             s++;
         }
         return addresses;
+    }
+
+    /**
+     * {@link #blockSymbolLastKeys} and {@link #blockSymbolLastConnIds} for {@code count} SYMBOL
+     * columns, the keys reset to NULL, which never matches as a previous key.
+     */
+    private int[] blockSymbolLastKeys(int count) {
+        int[] keys = blockSymbolLastKeys;
+        if (keys.length < count) {
+            keys = blockSymbolLastKeys = new int[count];
+            blockSymbolLastConnIds = new int[count];
+        }
+        for (int i = 0; i < count; i++) {
+            keys[i] = SymbolTable.VALUE_IS_NULL;
+        }
+        return keys;
     }
 
     /**
@@ -1170,10 +1267,13 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     /**
      * A native symbol key into a SYMBOL column with a key/value symbol table: NULL, or the key's
      * connection id, adding its value to the connection dictionary on first sight.
+     *
+     * @return the key's connection id, or -1 for NULL
      */
-    private void appendSymbolKey(QwpColumnScratch scratch, int key, SymbolTable st) {
+    private int appendSymbolKey(QwpColumnScratch scratch, int key, SymbolTable st) {
         if (key == SymbolTable.VALUE_IS_NULL) {
             scratch.appendNull();
+            return -1;
         } else {
             IntIntHashMap k2c = scratch.connKeyToConnId;
             int mapIdx = k2c.keyIndex(key);
@@ -1188,6 +1288,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 k2c.putAt(mapIdx, key, connId);
             }
             scratch.appendSymbolConnId(connId);
+            return connId;
         }
     }
 

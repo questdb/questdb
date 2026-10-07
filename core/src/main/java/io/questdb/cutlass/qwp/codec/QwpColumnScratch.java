@@ -381,6 +381,29 @@ final class QwpColumnScratch implements QuietCloseable {
     }
 
     /**
+     * {@link #appendColumnBoolean} over rows gathered by index: row {@code i}'s byte is at
+     * {@code srcAddr + rowIndex(i) * stride}, {@code rowIndex(i)} the i-th long at {@code rowIndexes}.
+     */
+    void appendColumnBooleanGather(long srcAddr, long rowIndexes, int n, long stride) {
+        int startBit = nonNullCount;
+        int bytesNeeded = (startBit + n + 7) >>> 3;
+        ensureValuesCapacity(bytesNeeded);
+        for (int i = 0; i < n; i++) {
+            int bitIdx = startBit + i;
+            long byteAddr = valuesAddr + (bitIdx >>> 3);
+            if ((bitIdx & 7) == 0) {
+                Unsafe.putByte(byteAddr, (byte) 0);
+            }
+            if (Unsafe.getByte(srcAddr + Unsafe.getLong(rowIndexes + 8L * i) * stride) == 1) {
+                byte cur = Unsafe.getByte(byteAddr);
+                Unsafe.putByte(byteAddr, (byte) (cur | (1 << (bitIdx & 7))));
+            }
+        }
+        nonNullCount += n;
+        rowCount += n;
+    }
+
+    /**
      * BOOLEAN column-top fill: appends {@code n} false values without
      * touching the null bitmap. BOOLEAN has no NULL representation on the
      * wire (egress spec sec 11.5: a wire row for BOOLEAN "has the null
@@ -446,6 +469,31 @@ final class QwpColumnScratch implements QuietCloseable {
     }
 
     /**
+     * {@link #appendColumnDouble8} over rows gathered by index, see {@link #appendColumnBooleanGather}.
+     */
+    void appendColumnDouble8Gather(long srcAddr, long rowIndexes, int n, long stride) {
+        int startRow = rowCount;
+        ensureNullBitmapCapacity(startRow + n);
+        ensureValuesCapacity(valuesPos + n * 8);
+        long dst = valuesAddr + valuesPos;
+        int nonNullWritten = 0;
+        for (int i = 0; i < n; i++) {
+            double v = Unsafe.getDouble(srcAddr + Unsafe.getLong(rowIndexes + 8L * i) * stride);
+            if (Double.isNaN(v)) {
+                setNullBit(startRow + i);
+                nullCount++;
+            } else {
+                Unsafe.putDouble(dst, v);
+                dst += 8;
+                nonNullWritten++;
+            }
+        }
+        valuesPos += nonNullWritten * 8;
+        nonNullCount += nonNullWritten;
+        rowCount += n;
+    }
+
+    /**
      * No-null fixed-width column bulk append: BYTE / SHORT / CHAR columns
      * have no sentinel and never contribute to the null bitmap, so we copy
      * the whole block into {@code valuesAddr}: one {@code memcpy} when the
@@ -465,6 +513,29 @@ final class QwpColumnScratch implements QuietCloseable {
             assert typeSize == 2;
             for (int i = 0; i < n; i++) {
                 Unsafe.putShort(dst + 2L * i, Unsafe.getShort(srcAddr + i * stride));
+            }
+        }
+        valuesPos += bytes;
+        nonNullCount += n;
+        rowCount += n;
+    }
+
+    /**
+     * {@link #appendColumnFixedNoNull} over rows gathered by index, see
+     * {@link #appendColumnBooleanGather}.
+     */
+    void appendColumnFixedNoNullGather(long srcAddr, long rowIndexes, int n, int typeSize, long stride) {
+        int bytes = n * typeSize;
+        ensureValuesCapacity(valuesPos + bytes);
+        final long dst = valuesAddr + valuesPos;
+        if (typeSize == 1) {
+            for (int i = 0; i < n; i++) {
+                Unsafe.putByte(dst + i, Unsafe.getByte(srcAddr + Unsafe.getLong(rowIndexes + 8L * i) * stride));
+            }
+        } else {
+            assert typeSize == 2;
+            for (int i = 0; i < n; i++) {
+                Unsafe.putShort(dst + 2L * i, Unsafe.getShort(srcAddr + Unsafe.getLong(rowIndexes + 8L * i) * stride));
             }
         }
         valuesPos += bytes;
@@ -520,6 +591,31 @@ final class QwpColumnScratch implements QuietCloseable {
     }
 
     /**
+     * {@link #appendColumnFloat4} over rows gathered by index, see {@link #appendColumnBooleanGather}.
+     */
+    void appendColumnFloat4Gather(long srcAddr, long rowIndexes, int n, long stride) {
+        int startRow = rowCount;
+        ensureNullBitmapCapacity(startRow + n);
+        ensureValuesCapacity(valuesPos + n * 4);
+        long dst = valuesAddr + valuesPos;
+        int nonNullWritten = 0;
+        for (int i = 0; i < n; i++) {
+            float v = Unsafe.getFloat(srcAddr + Unsafe.getLong(rowIndexes + 8L * i) * stride);
+            if (Float.isNaN(v)) {
+                setNullBit(startRow + i);
+                nullCount++;
+            } else {
+                Unsafe.putFloat(dst, v);
+                dst += 4;
+                nonNullWritten++;
+            }
+        }
+        valuesPos += nonNullWritten * 4;
+        nonNullCount += nonNullWritten;
+        rowCount += n;
+    }
+
+    /**
      * INT / IPv4 column bulk append: reads {@code n} 4-byte values from
      * {@code srcAddr}, {@code stride} bytes apart. Values equal to {@code sentinel} go into the null
      * bitmap (INT: {@link Numbers#INT_NULL}; IPv4: {@link Numbers#IPv4_NULL},
@@ -548,6 +644,32 @@ final class QwpColumnScratch implements QuietCloseable {
     }
 
     /**
+     * {@link #appendColumnInt4WithSentinel} over rows gathered by index, see
+     * {@link #appendColumnBooleanGather}.
+     */
+    void appendColumnInt4WithSentinelGather(long srcAddr, long rowIndexes, int n, int sentinel, long stride) {
+        int startRow = rowCount;
+        ensureNullBitmapCapacity(startRow + n);
+        ensureValuesCapacity(valuesPos + n * 4);
+        long dst = valuesAddr + valuesPos;
+        int nonNullWritten = 0;
+        for (int i = 0; i < n; i++) {
+            int v = Unsafe.getInt(srcAddr + Unsafe.getLong(rowIndexes + 8L * i) * stride);
+            if (v == sentinel) {
+                setNullBit(startRow + i);
+                nullCount++;
+            } else {
+                Unsafe.putInt(dst, v);
+                dst += 4;
+                nonNullWritten++;
+            }
+        }
+        valuesPos += nonNullWritten * 4;
+        nonNullCount += nonNullWritten;
+        rowCount += n;
+    }
+
+    /**
      * LONG-family column bulk append: LONG, DATE, TIMESTAMP, TIMESTAMP_NANOS,
      * DECIMAL64. All use {@link Numbers#LONG_NULL} (= {@link Long#MIN_VALUE})
      * as the null sentinel. Dense non-null values land in {@code valuesAddr};
@@ -561,6 +683,32 @@ final class QwpColumnScratch implements QuietCloseable {
         int nonNullWritten = 0;
         for (int i = 0; i < n; i++) {
             long v = Unsafe.getLong(srcAddr + i * stride);
+            if (v == Numbers.LONG_NULL) {
+                setNullBit(startRow + i);
+                nullCount++;
+            } else {
+                Unsafe.putLong(dst, v);
+                dst += 8;
+                nonNullWritten++;
+            }
+        }
+        valuesPos += nonNullWritten * 8;
+        nonNullCount += nonNullWritten;
+        rowCount += n;
+    }
+
+    /**
+     * {@link #appendColumnLong8WithSentinel} over rows gathered by index, see
+     * {@link #appendColumnBooleanGather}.
+     */
+    void appendColumnLong8WithSentinelGather(long srcAddr, long rowIndexes, int n, long stride) {
+        int startRow = rowCount;
+        ensureNullBitmapCapacity(startRow + n);
+        ensureValuesCapacity(valuesPos + n * 8);
+        long dst = valuesAddr + valuesPos;
+        int nonNullWritten = 0;
+        for (int i = 0; i < n; i++) {
+            long v = Unsafe.getLong(srcAddr + Unsafe.getLong(rowIndexes + 8L * i) * stride);
             if (v == Numbers.LONG_NULL) {
                 setNullBit(startRow + i);
                 nullCount++;
