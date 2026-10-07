@@ -2417,6 +2417,89 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinSubQueryOuterWhereAnchorsAtLastJoinedTable() throws Exception {
+        // optimiseJoins orders the sub-query as b, c, a. moveWhereInsideSubQueries pushed a.j < c.j
+        // onto c, the highest referenced model index, which joins before a, so the filter failed
+        // with "Invalid column: a.j". It must anchor at a, the referenced table that joins last.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinSubQueryOuterWhere();
+            assertQuery("SELECT * FROM (SELECT a.j aj, b.j bj, c.j cj FROM a CROSS JOIN b JOIN c ON c.k = b.k) s WHERE aj < cj")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            aj\tbj\tcj
+                            0\t10\t5
+                            0\t10\t5
+                            0\t10\t5
+                            0\t20\t6
+                            0\t20\t6
+                            0\t20\t6
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinSubQueryOuterWhereFiltersAfterReorderedCrossJoin() throws Exception {
+        // optimiseJoins orders the sub-query as b, c, a. moveWhereInsideSubQueries pushed a.j < b.j
+        // onto b, the first table in the join order, where eraseColumnPrefixInWhereClauses turned
+        // it into j < j on b's scan. It must anchor at a, the referenced table that joins last.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinSubQueryOuterWhere();
+            assertQuery("SELECT * FROM (SELECT a.j aj, b.j bj, c.j cj FROM a CROSS JOIN b JOIN c ON c.k = b.k) s WHERE aj < bj")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: a.j<b.j")
+                    .returns("""
+                            aj\tbj\tcj
+                            0\t10\t5
+                            0\t10\t5
+                            0\t10\t5
+                            0\t20\t6
+                            0\t20\t6
+                            0\t20\t6
+                            """);
+            assertQuery("SELECT * FROM (SELECT a.j aj, b.j bj, c.j cj FROM a CROSS JOIN b JOIN c ON c.k = b.k) s WHERE aj = bj")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("aj\tbj\tcj\n");
+            assertQuery("SELECT count(*) FROM (SELECT a.j aj, b.j bj, c.j cj FROM a CROSS JOIN b JOIN c ON c.k = b.k) s WHERE aj < bj")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            6
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinViewOuterWhereFiltersAfterReorderedCrossJoin() throws Exception {
+        // The view's comma join orders as b, c, a. moveWhereInsideSubQueries must anchor the pushed
+        // a.j < b.j at a, the referenced table that joins last, not at b, which joins first.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinSubQueryOuterWhere();
+            execute("CREATE VIEW v AS (SELECT a.j aj, b.j bj, c.j cj FROM a, b, c WHERE c.k = b.k)");
+            assertQuery("SELECT * FROM v WHERE aj < bj")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            aj\tbj\tcj
+                            0\t10\t5
+                            0\t10\t5
+                            0\t10\t5
+                            0\t20\t6
+                            0\t20\t6
+                            0\t20\t6
+                            """);
+            assertQuery("SELECT * FROM v WHERE aj = bj")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("aj\tbj\tcj\n");
+        });
+    }
+
+    @Test
     public void testCrossJoinTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -13976,6 +14059,15 @@ public class JoinTest extends AbstractCairoTest {
         execute("INSERT INTO x VALUES (10), (20), (40)");
         execute("CREATE TABLE x2 (id INT, z INT)");
         execute("INSERT INTO x2 VALUES (10, 5), (20, 7), (40, null), (20, 8)");
+    }
+
+    private void createTablesForCrossJoinSubQueryOuterWhere() throws SqlException {
+        execute("CREATE TABLE a (k INT, j INT)");
+        execute("INSERT INTO a VALUES (1, 0), (2, 0), (3, 0)");
+        execute("CREATE TABLE b (k INT, j INT)");
+        execute("INSERT INTO b VALUES (1, 10), (2, 20)");
+        execute("CREATE TABLE c (k INT, j INT)");
+        execute("INSERT INTO c VALUES (1, 5), (2, 6)");
     }
 
     private void createTablesForInnerConjunctsAfterRightJoin() throws SqlException {

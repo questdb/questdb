@@ -7305,11 +7305,19 @@ public class SqlOptimiser implements Mutable {
      * Falls back to model order when the execution order is not a full permutation.
      */
     private int lastNullingJoinAfterReferencedTables(IntList refModelIndexes) {
+        return nullingAnchorByModelPos.getQuick(lastReferencedModelInExecOrder(refModelIndexes));
+    }
+
+    /**
+     * Model index of the referenced table that joins last in execution order. {@code refModelIndexes}
+     * holds the referenced model indexes sorted ascending. Falls back to the highest model index when
+     * the execution order is not a full permutation.
+     */
+    private int lastReferencedModelInExecOrder(IntList refModelIndexes) {
         final int n = refModelIndexes.size();
         if (!isNullingExecOrderValid) {
-            // model-order fallback: outermost nulling join after the highest referenced model index
-            // (refModelIndexes is sorted ascending, so the last entry is the highest)
-            return nullingAnchorByModelPos.getQuick(refModelIndexes.getQuick(n - 1));
+            // refModelIndexes is sorted ascending, so the last entry is the highest
+            return refModelIndexes.getQuick(n - 1);
         }
         int maxExecPos = -1;
         int lastReferencedModelIndex = -1;
@@ -7321,7 +7329,7 @@ public class SqlOptimiser implements Mutable {
                 lastReferencedModelIndex = modelIndex;
             }
         }
-        return nullingAnchorByModelPos.getQuick(lastReferencedModelIndex);
+        return lastReferencedModelIndex;
     }
 
     private CharSequence lateralCountCarrierAliasForRef(CharSequence token, IQueryModel translatingModel, IQueryModel baseModel) {
@@ -7939,11 +7947,14 @@ public class SqlOptimiser implements Mutable {
                         addWhereNode(model, node);
                         continue;
                     } else if (distinctIndexes > 1) {
-                        // A multi-table WHERE predicate must stay above any later master-nulling join
-                        // that NULL-extends a referenced table; anchoring at the highest referenced
-                        // model index would leak its NULL-master rows. Re-anchor in execution order.
+                        // A multi-table predicate can only run once every table it references has
+                        // joined, so anchor it at the referenced table that joins last in execution
+                        // order. optimiseJoins may reorder the level, so the highest referenced model
+                        // index can join before another referenced table, or even run first.
+                        // A WHERE predicate must also stay above any later master-nulling join that
+                        // NULL-extends a referenced table, or it would leak its NULL-master rows.
                         // An ON conjunct gates its own join, which runs first, so it stays put.
-                        int anchorIndex = tempIntList.get(distinctIndexes - 1);
+                        int anchorIndex = lastReferencedModelInExecOrder(tempIntList);
                         if (!node.innerPredicate) {
                             final int nullingIndex = lastNullingJoinAfterReferencedTables(tempIntList);
                             if (nullingIndex > -1) {
