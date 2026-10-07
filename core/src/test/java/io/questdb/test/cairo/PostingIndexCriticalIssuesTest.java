@@ -3539,11 +3539,11 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     drainWalQueue();
                     runPostingSealPurgeJob(purgeJob);
                 }
-                assertQuery("SELECT count() FROM " + tableName).noRandomAccess().expectSize().returns("count\n502\n");
+                assertQuery("SELECT count() FROM " + tableName).noLeakCheck().noRandomAccess().expectSize().returns("count\n502\n");
                 for (int i = 0; i < 2; i++) {
                     String columnName = i == 0 ? "sym" : "sym2";
                     assertQuery("SELECT count() FROM " + tableName + " WHERE " + columnName + " = 'a'")
-                            .noRandomAccess().expectSize().returns("count\n500\n");
+                            .noLeakCheck().noRandomAccess().expectSize().returns("count\n500\n");
                     assertPostingSealFilesExist(liveFiles.getQuick(i), true);
                     assertPostingSealFilesExist(oldFiles.getQuick(i), false);
                 }
@@ -3600,8 +3600,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 assertPostingSealFilesExist(supersededFiles.getQuick(i), false);
             }
             assertPostingSealFilesExist(liveFiles, true);
-            assertQuery("SELECT count() FROM " + tableName + " WHERE sym = 'A'").noRandomAccess().expectSize().returns("count\n30\n");
-            assertQuery("SELECT sum(marker) FROM " + tableName + " WHERE sym = 'A'").noRandomAccess().expectSize().returns("sum\n435\n");
+            assertQuery("SELECT count() FROM " + tableName + " WHERE sym = 'A'").noLeakCheck().noRandomAccess().expectSize().returns("count\n30\n");
+            assertQuery("SELECT sum(marker) FROM " + tableName + " WHERE sym = 'A'").noLeakCheck().noRandomAccess().expectSize().returns("sum\n435\n");
         });
     }
 

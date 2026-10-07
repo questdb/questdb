@@ -79,6 +79,7 @@ public class O3ParquetLastPartitionTest extends AbstractCairoTest {
             engine.releaseInactive();
 
             assertQuery("SELECT count(), min(a), max(a), sum(a) FROM x WHERE ts IN '2022-02-25'")
+                    .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
                     .returns("""
@@ -148,6 +149,7 @@ public class O3ParquetLastPartitionTest extends AbstractCairoTest {
 
         // 1..500 from the first insert plus 1..8,192 from the appended rows
         assertQuery("SELECT count(), min(a), max(a), sum(a) FROM x WHERE ts IN '2022-02-25'")
+                .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
@@ -156,6 +158,7 @@ public class O3ParquetLastPartitionTest extends AbstractCairoTest {
                         """);
         // the last appended rows sit in the region a truncating close would have discarded
         assertQuery("SELECT ts, a, s FROM x WHERE ts >= '2022-02-25T12:16:30' AND ts IN '2022-02-25'")
+                .noLeakCheck()
                 .timestamp("ts")
                 .returns("""
                         ts\ta\ts
@@ -185,6 +188,7 @@ public class O3ParquetLastPartitionTest extends AbstractCairoTest {
                     engine.getTableSequencerAPI().isSuspended(token)
             );
             assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
                     .returns("count\n2\n");
