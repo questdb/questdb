@@ -79,11 +79,14 @@ public final class QwpEgressFrameWriter {
 
     /**
      * Writes the body of an {@code EXEC_DONE} frame: msg_kind + request_id +
-     * op_type (CompiledQuery.TYPE_*) + rows_affected (varint).
+     * op_type (CompiledQuery.TYPE_*) + rows_affected (varint). rows_affected is
+     * unsigned on the wire, so it must not be negative: clients decoding it as
+     * u64 would see 2^64 - 1 for -1.
      *
      * @return address just past the body
      */
     public static long writeExecDone(long bufAddr, long requestId, short opType, long rowsAffected) {
+        assert rowsAffected >= 0 : "negative rows_affected: " + rowsAffected;
         Unsafe.putByte(bufAddr, QwpEgressMsgKind.EXEC_DONE);
         Unsafe.putLong(bufAddr + 1, requestId);
         Unsafe.putByte(bufAddr + 9, (byte) opType);
