@@ -35,20 +35,14 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Crash consistency for the two capability-marked checksum artifacts this branch added:
- * the {@code _txn} body-checksum capability marker, and the V1 sequencer's additive
- * {@code _txnlog.c} CRC sidecar.
+ * Crash consistency for the {@code _txn} body-checksum capability marker.
  * <p>
- * Both share one hazard. Each publishes a claim ("from this point a checksum exists") separately
- * from the checksummed bytes themselves, so a crash can land between the two writes. Get it wrong in
- * the unsafe direction and the reader condemns intact data:
- * <ul>
- *   <li>{@code _txn}: a capability marker durable AHEAD of the checksum it promises makes the
- *       already-written record read as torn.</li>
- *   <li>{@code _txnlog.c}: a header advertising a txn whose CRC never landed makes an intact record
- *       read as "absent/torn beyond the durable frontier".</li>
- * </ul>
- * Each is swept at EVERY durability op rather than at one chosen point, and each iteration asserts
+ * It publishes a claim ("from this point a checksum exists") separately from the checksummed bytes
+ * themselves, so a crash can land between the two writes. Get it wrong in the unsafe direction and the
+ * reader condemns intact data: a capability marker durable AHEAD of the checksum it promises makes the
+ * already-written record read as torn.
+ * <p>
+ * It is swept at EVERY durability op rather than at one chosen point, and each iteration asserts
  * the injected crash actually fired -- a sweep whose injection never fires proves nothing.
  * <p>
  * The bar is deliberately asymmetric, matching the crash model: FEWER rows or a missing table after a
@@ -125,7 +119,7 @@ public class ChecksumArtifactsCrashTest extends AbstractCrashConsistencyTest {
         }
         try {
             engine.getTableMetadata(engine.verifyTableName(tableName)).close();
-            // Reading the sequencer is what exercises the txnlog CRC path; metadata alone would not.
+            // Reading the sequencer is what exercises the txnlog checks; metadata alone would not.
             try (io.questdb.cairo.wal.seq.TransactionLogCursor cursor =
                          engine.getTableSequencerAPI().getCursor(engine.verifyTableName(tableName), 1)) {
                 //noinspection StatementWithEmptyBody

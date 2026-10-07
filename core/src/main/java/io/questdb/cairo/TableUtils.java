@@ -294,9 +294,8 @@ public final class TableUtils {
     // open. The stamp makes the slot self-identifying -- a checksum whose stamp names a different txn is
     // not this record's and says nothing about it, so it classifies as absent rather than as damage.
     //
-    // This is the discriminator TxnLogCrcSidecar already uses per entry, and the reason the V1 sequencer
-    // log survives the same sequence. Outside the checksummed range (see calculateTxnBodyChecksum), so
-    // writing it cannot change the checksum, and an older binary neither reads nor writes these bytes.
+    // Outside the checksummed range (see calculateTxnBodyChecksum), so writing it cannot change the
+    // checksum, and an older binary neither reads nor writes these bytes.
     public static final long TX_OFFSET_BODY_CHECKSUM_STAMP_32 = 124;
     // @formatter:on
     public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;

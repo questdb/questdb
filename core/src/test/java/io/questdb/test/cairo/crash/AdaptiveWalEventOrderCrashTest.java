@@ -312,9 +312,6 @@ public class AdaptiveWalEventOrderCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     private int firstSequencerOp(List<String> phaseOps) {
-        // endsWith, NOT contains: the V1 sequencer's CRC sidecar is "_txnlog.c", whose path CONTAINS
-        // "txn_seq/_txnlog". A contains-match therefore locks onto the sidecar op -- which is ordered
-        // deliberately BEFORE the header -- and identifies the wrong barrier, crashing an op early.
         // The barrier this test is about is the header write that publishes the txn.
         final String marker = WalUtils.SEQ_DIR + "/" + WalUtils.TXNLOG_FILE_NAME;
         for (int i = 0; i < phaseOps.size(); i++) {

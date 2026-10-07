@@ -554,10 +554,6 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         //   (3) a torn write that zeroed only this slot. The checksum cannot catch it.
         // A non-zero stored CRC that does not match the body means a torn or partially written record.
         private void verifyRecordChecksum() {
-            // The rules live in TxnLogRecordVerifier so V1 -- whose CRC sits in the additive
-            // _txnlog.c sidecar rather than a reserved slot -- reaches the same verdict from the
-            // same code. Divergence would make one format fatal and the other blind on the same
-            // torn record.
             final long recordBase = address + txnOffset;
             final long storedCrc = Unsafe.getLong(recordBase + RESERVED_OFFSET);
             if (storedCrc == 0L) {

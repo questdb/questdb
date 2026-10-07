@@ -100,9 +100,6 @@ public class WalUtils {
     public static final long SEQ_META_OFFSET_COLUMNS = SEQ_META_SUSPENDED + Byte.BYTES;
     public static final String TABLE_REGISTRY_NAME_FILE = "tables.d";
     public static final String TXNLOG_FILE_NAME = "_txnlog";
-    // Additive per-record CRC sidecar for the V1 sequencer txnlog. V1's RECORD_SIZE has no reserved
-    // slot (V2's does), so an in-place CRC would grow the record and stop older binaries reading it.
-    public static final String TXNLOG_CRC_FILE_NAME = "_txnlog.c";
     public static final String TXNLOG_FILE_NAME_META_INX = "_txnlog.meta.i";
     public static final String TXNLOG_FILE_NAME_META_VAR = "_txnlog.meta.d";
     public static final String TXNLOG_PARTS_DIR = "_txn_parts";

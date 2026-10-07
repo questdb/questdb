@@ -69,7 +69,6 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
-import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
@@ -134,7 +133,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.PropertyKey.*;
 
 public class CheckpointTest extends AbstractCairoTest {
-    private static final long TXNLOG_CRC_FIRST_COVERED_TXN_OFFSET = 16; // TxnLogCrcSidecar header
     private static final TestFilesFacade testFilesFacade = new TestFilesFacade();
     private static Path path;
     private static Rnd rnd;
@@ -3846,10 +3844,9 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCheckpointRestoreKeepsTxnLogCrcCoverage() throws Exception {
-        // Recovery rolls the V1 txnlog's tail back to the checkpoint. It must move the header's sidecar tail
-        // copy with it, or the next open reads the rollback as an older binary's append and drops CRC coverage
-        // of every record the restore kept.
+    public void testCheckpointRestoreRollsBackV1TxnLog() throws Exception {
+        // Recovery rolls the V1 txnlog's tail back to the checkpoint and leaves the dropped record past the
+        // tail. The txn number it held must go to the next commit, with the next commit's content.
         final String snapshotId = "id1";
         final String restartedId = "id2";
         assertMemoryLeak(() -> {
@@ -3864,13 +3861,11 @@ public class CheckpointTest extends AbstractCairoTest {
 
             final TableToken tableToken = engine.verifyTableName("test");
             Assert.assertEquals(WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1, readSeqFileInt(tableToken, WalUtils.TXNLOG_FILE_NAME, 0));
-            Assert.assertEquals(1, readSeqFileLong(tableToken, WalUtils.TXNLOG_CRC_FILE_NAME, TXNLOG_CRC_FIRST_COVERED_TXN_OFFSET));
 
             engine.clear();
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
             engine.checkpointRecover();
             Assert.assertEquals(2, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogFile.MAX_TXN_OFFSET_64));
-            Assert.assertEquals(2, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogV1.CRC_TAIL_OFFSET_64));
 
             drainWalQueue();
             assertQuery("SELECT count() FROM test")
@@ -3878,8 +3873,15 @@ public class CheckpointTest extends AbstractCairoTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("count\n2\n");
-            Assert.assertEquals(1, readSeqFileLong(tableToken, WalUtils.TXNLOG_CRC_FILE_NAME, TXNLOG_CRC_FIRST_COVERED_TXN_OFFSET));
             engine.checkpointRelease();
+
+            execute("INSERT INTO test VALUES ('2024-01-04T00:00:00.000000Z', 4)");
+            drainWalQueue();
+            Assert.assertEquals(3, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogFile.MAX_TXN_OFFSET_64));
+            assertQuery("SELECT val FROM test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("val\n1\n2\n4\n");
         });
     }
 

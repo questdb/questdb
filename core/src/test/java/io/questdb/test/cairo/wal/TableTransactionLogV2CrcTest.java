@@ -177,8 +177,6 @@ public class TableTransactionLogV2CrcTest extends AbstractCairoTest {
      * file-level "checksummed from txn N" watermark is what used to distinguish them, and it is exactly what
      * an older binary cannot withdraw.
      * <p>
-     * V1 does not pay this price: its per-entry stamp names the txn its CRC belongs to, so a zeroed CRC
-     * beside a live stamp is still detected ({@code TxnLogV1CrcVerifyTest#testStampedButWrongCrcIsStillTorn}).
      * A corrupt (non-zero, wrong) V2 checksum is still detected here by
      * {@link #testCorruptedBodyByteSuspendsTable()}.
      */
