@@ -310,7 +310,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // beginning of the transaction LAG is copied into memory buffers (o3 mem columns).
                     newAuxSize = auxSizeOld + auxSizeNew;
 
-                    srcAuxAddr = mapRW(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
+                    srcAuxAddr = mapRWToPage(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
                     if (auxRowCountOld > 0) {
                         srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, auxRowCountOld - 1);
@@ -328,7 +328,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     if (auxRowCountNew > 0) {
                         srcDataSize += columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, auxRowCountNew - 1);
                     }
-                    srcDataAddr = srcDataSize > 0 ? mapRW(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3) : srcDataAddr;
+                    srcDataAddr = srcDataSize > 0 ? mapRWToPage(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3) : srcDataAddr;
                     ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
 
                     // Set var column values to null first srcDataTop times
@@ -377,7 +377,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcDataFixOffset = 0;
                     if (auxRowCountNew > 0) {
                         newAuxSize = columnTypeDriver.getAuxVectorSize(auxRowCountNew);
-                        srcAuxAddr = mapRW(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
+                        srcAuxAddr = mapRWToPage(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
                         ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
 
                         srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, auxRowCountNew - 1);
@@ -389,7 +389,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 srcDataFixOffset = 0;
                 if (srcDataMax > 0) {
                     newAuxSize = columnTypeDriver.getAuxVectorSize(srcDataMax);
-                    srcAuxAddr = mapRW(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
+                    srcAuxAddr = mapRWToPage(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
 
                     srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, srcDataMax - 1);
@@ -408,7 +408,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long newRowCount = o3SplitPartitionSize > 0 ? o3SplitPartitionSize : srcDataNewPartitionSize - srcDataTop;
             dstAuxSize = columnTypeDriver.getAuxVectorSize(newRowCount);
 
-            dstAuxAddr = mapRW(ff, dstAuxFd, dstAuxSize, MemoryTag.MMAP_O3);
+            dstAuxAddr = mapRWToPage(ff, dstAuxFd, dstAuxSize, MemoryTag.MMAP_O3);
             if (!mixedIOFlag) {
                 ff.madvise(dstAuxAddr, dstAuxSize, Files.POSIX_MADV_RANDOM);
             }
@@ -508,7 +508,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
             dstDataFd = openRW(ff, dFile(pathToNewPartition.trimTo(pplen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             if (dstDataSize > 0) {
-                dstVarAddr = mapRW(ff, dstDataFd, dstDataSize, MemoryTag.MMAP_O3);
+                dstVarAddr = mapRWToPage(ff, dstDataFd, dstDataSize, MemoryTag.MMAP_O3);
                 if (!mixedIOFlag) {
                     ff.madvise(dstVarAddr, dstDataSize, Files.POSIX_MADV_RANDOM);
                 }
@@ -1340,7 +1340,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
                 dstAuxOffset = columnTypeDriver.getAuxVectorOffset(srcDataMax - srcDataTop);
                 dstAuxFileOffset = dstAuxOffset;
-                dstAuxAddr = mapRW(ff, Math.abs(activeFixFd), dstAuxSize, MemoryTag.MMAP_O3);
+                dstAuxAddr = mapRWToPage(ff, Math.abs(activeFixFd), dstAuxSize, MemoryTag.MMAP_O3);
 
                 if (dstAuxOffset > 0) {
                     dstDataOffset = columnTypeDriver.getDataVectorSizeAt(dstAuxAddr, srcDataMax - 1 - srcDataTop);
@@ -1349,7 +1349,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 }
 
                 dstDataSize = o3DataSize + dstDataOffset;
-                dstDataAddr = dstDataSize > 0 ? mapRW(ff, Math.abs(activeVarFd), dstDataSize, MemoryTag.MMAP_O3) : 0;
+                dstDataAddr = dstDataSize > 0 ? mapRWToPage(ff, Math.abs(activeVarFd), dstDataSize, MemoryTag.MMAP_O3) : 0;
                 dstDataAdjust = 0;
             } else {
                 assert dstAuxMem.getAppendOffset() >= columnTypeDriver.getMinAuxVectorSize();
@@ -1846,7 +1846,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             dstFixOffset = (srcDataMax - srcDataTop) << shl;
             if (dstFixMem == null || dstFixMem.getAppendAddressSize() < dstFixSize) {
                 // Area we want to write is not mapped
-                dstFixAddr = mapRW(ff, Math.abs(dstFixFd), dstFixSize, MemoryTag.MMAP_O3);
+                dstFixAddr = mapRWToPage(ff, Math.abs(dstFixFd), dstFixSize, MemoryTag.MMAP_O3);
             } else {
                 // Area we want to write is mapped.
                 // Set dstFixAddr to Append Address with adjustment that dstFixOffset offset points to offset 0.
@@ -2188,15 +2188,15 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
 
                 dstFixSize = columnTypeDriver.getAuxVectorSize(srcOooHi - srcOooLo + 1);
-                dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
+                dstFixAddr = mapRWToPage(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
 
                 dstVarFd = openRW(ff, dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 dstVarSize = columnTypeDriver.getDataVectorSize(srcOooFixAddr, srcOooLo, srcOooHi);
-                dstVarAddr = dstVarSize > 0 ? mapRW(ff, dstVarFd, dstVarSize, MemoryTag.MMAP_O3) : 0;
+                dstVarAddr = dstVarSize > 0 ? mapRWToPage(ff, dstVarFd, dstVarSize, MemoryTag.MMAP_O3) : 0;
             } else {
                 dstFixFd = openRW(ff, dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 dstFixSize = (srcOooHi - srcOooLo + 1) << ColumnType.pow2SizeOf(Math.abs(columnType));
-                dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
+                dstFixAddr = mapRWToPage(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
                 if (indexBlockCapacity > -1 && !indexWriter.isOpen()) {
                     byte indexType = indexWriter.getIndexType();
                     if (IndexType.isPosting(indexType)) {
@@ -2321,7 +2321,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstFixOffset = srcDataMax * Long.BYTES;
                 dstFixFileOffset = dstFixOffset;
                 dstFixFd = -Math.abs(srcTimestampFd);
-                dstFixAddr = mapRW(ff, -dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
+                dstFixAddr = mapRWToPage(ff, -dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
             } else {
                 dstFixAddr = dstFixMem.getAppendAddress();
                 dstFixOffset = 0;
@@ -2500,7 +2500,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // beginning of the transaction LAG is copied into memory buffers (o3 mem columns).
 
                     srcDataFixSize = srcDataActualBytesOld + (srcDataMax << shl);
-                    srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
+                    srcDataFixAddr = mapRWToPage(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
                     TableUtils.setNull(columnType, srcDataFixAddr + srcDataActualBytesOld, srcDataTop);
                     // srcDataActualBytesNew may be zero, so that the below memcpy call is no-op.
@@ -2519,7 +2519,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcDataFixSize = srcDataActualBytesNew;
                     srcDataFixOffset = 0;
                     if (srcDataFixSize > 0) {
-                        srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
+                        srcDataFixAddr = mapRWToPage(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                         ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
                     }
                 }
@@ -2527,7 +2527,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 srcDataFixSize = srcDataMax << shl;
                 srcDataFixOffset = 0;
                 if (srcDataFixSize > 0) {
-                    srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
+                    srcDataFixAddr = mapRWToPage(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
                 }
             }
@@ -2540,7 +2540,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             // for partitions splits and duplicates found by dedup
             long rowCount = o3SplitPartitionSize > 0 ? o3SplitPartitionSize : srcDataNewPartitionSize - srcDataTop;
             dstFixSize = rowCount << shl;
-            dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
+            dstFixAddr = mapRWToPage(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
             if (!mixedIOFlag) {
                 ff.madvise(dstFixAddr, dstFixSize, Files.POSIX_MADV_RANDOM);
             }

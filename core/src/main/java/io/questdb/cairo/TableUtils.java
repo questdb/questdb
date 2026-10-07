@@ -1600,6 +1600,21 @@ public final class TableUtils {
         throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
     }
 
+    /**
+     * Maps a file in read-write mode, like {@link #mapRW(FilesFacade, long, long, int)}, but rounds
+     * the disk allocation up to a whole page, so the file does not end mid-block.
+     * <p>
+     * When XFS grows a file whose EOF is not block-aligned, xfs_setattr_size() zeroes the partial
+     * tail block and writes it back synchronously, under the inode's exclusive IO and MMAP locks.
+     * O3 sizes its column files to the exact data length, so without rounding, the next append
+     * to such a file waits for one synchronous disk write.
+     */
+    public static long mapRWToPage(FilesFacade ff, long fd, long size, int memoryTag) {
+        assert fd != -1;
+        allocateDiskSpaceToPage(ff, fd, size);
+        return mapRWNoAlloc(ff, fd, size, 0, memoryTag);
+    }
+
     public static long mremap(
             FilesFacade ff,
             long fd,
