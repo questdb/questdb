@@ -4602,6 +4602,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return false;
     }
 
+    /**
+     * The commit mode of a {@code _meta} swap and its rollback: the swap's fsyncs and durable renames run
+     * only in the modes that promise power-loss durability, SYNC and ADAPTIVE. NOSYNC and ASYNC make none.
+     */
+    private static int metaSwapCommitMode(int commitMode) {
+        return CommitMode.isPowerLossDurable(commitMode) ? commitMode : CommitMode.NOSYNC;
+    }
+
     @NotNull
     private static ColumnVersionWriter openColumnVersionFile(
             CairoConfiguration configuration,
@@ -13752,7 +13760,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void recoverFromTodoWriteFailure() {
-        restoreMetaFrom(META_PREV_FILE_NAME, metaPrevIndex, effectiveCommitMode);
+        restoreMetaFrom(META_PREV_FILE_NAME, metaPrevIndex, metaSwapCommitMode(effectiveCommitMode));
         // The compensating rename must reach the directory before the caller clears the restore marker.
         // Otherwise a crash could retain the failed forward rename, lose this rollback rename, and find no
         // _todo marker on restart. If this barrier also fails, runFragile distresses the writer while leaving
@@ -14203,7 +14211,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // renamePublish: _meta -> _meta.prev is half of the metadata swap, whose durability the
                 // caller completes with a table-dir fsync -- skipped on Windows, where the durable rename is
-                // the only barrier available. NOSYNC asks for neither.
+                // the only barrier available. NOSYNC and ASYNC ask for neither.
                 if (TableUtils.renamePublish(ff, path.$(), other.$(), commitMode) != FILES_RENAME_OK) {
                     LOG.info().$("could not rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).I$();
                     index++;
@@ -14650,9 +14658,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void rewriteAndSwapMetadata(TableWriterMetadata metadata) {
-        final int metadataEffectiveCommitMode = configuration.getCommitMode();
+        final int metadataEffectiveCommitMode = metaSwapCommitMode(configuration.getCommitMode());
         // create new _meta.swp
-        this.metaSwapIndex = rewriteMetadata(metadata);
+        this.metaSwapIndex = rewriteMetadata(metadata, metadataEffectiveCommitMode);
 
         // validate new meta
         validateSwapMeta();
@@ -14709,7 +14717,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private int rewriteMetadata(TableWriterMetadata metadata) {
+    private int rewriteMetadata(TableWriterMetadata metadata, int commitMode) {
         try {
             int columnCount = metadata.getColumnCount();
             int index = openMetaSwapFile(ff, ddlMem, path, pathSize, configuration.getMaxSwapFileCount());
@@ -14780,7 +14788,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             TableUtils.storeMetaBodyChecksum(ddlMem, ddlMem.getAppendOffset());
             ddlMem.sync(false);
-            if (configuration.getCommitMode() != CommitMode.NOSYNC) {
+            if (commitMode != CommitMode.NOSYNC) {
                 try {
                     path.trimTo(pathSize).concat(META_SWAP_FILE_NAME);
                     if (index > 0) {
@@ -16544,7 +16552,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void fsyncTableDirAfterMetadataRename() {
-        if (!Os.isWindows() && effectiveCommitMode != CommitMode.NOSYNC) {
+        if (!Os.isWindows() && metaSwapCommitMode(effectiveCommitMode) != CommitMode.NOSYNC) {
             final long dirFd = TableUtils.openRONoCache(ff, path.trimTo(pathSize).$(), LOG);
             if (dirFd != -1) {
                 ff.fsyncAndClose(dirFd);

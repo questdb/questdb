@@ -108,10 +108,11 @@ public final class CommitMode {
      *       {@code .pk}/{@code .pv}) — re-derived from the column they index. Note their {@code commit()}
      *       still PUBLISHES buffered postings unconditionally; only the device flush is gated.</li>
      * </ul>
-     * It must NOT be used for structural/DDL sync sites ({@code _meta}, {@code _todo}, parquet {@code _pm}
-     * metadata) — those stay durable under {@code commitMode != NOSYNC} regardless — nor for one-shot writers
-     * that run outside a table writer and outside the epoch's coverage (table conversion, WAL staging
-     * creation, checkpoint restore), which take {@link #structuralCommitMode(int)} — nor inside
+     * It must NOT be used for structural/DDL sync sites — the {@code _meta} swap ({@code _meta.swp},
+     * {@code _todo}) is durable under SYNC and ADAPTIVE, parquet {@code _pm} metadata under
+     * {@code commitMode != NOSYNC} — nor for one-shot writers that run outside a table writer and outside
+     * the epoch's coverage (table conversion, WAL staging creation, checkpoint restore), which take
+     * {@link #structuralCommitMode(int)} — nor inside
      * {@code fsyncMaterializedState()} (the epoch must force the flush, including an explicit
      * {@code IndexWriter.sync(false)} per indexer).
      *

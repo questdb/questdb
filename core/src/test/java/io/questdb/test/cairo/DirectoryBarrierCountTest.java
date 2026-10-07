@@ -25,12 +25,14 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -52,7 +54,7 @@ import java.util.stream.Stream;
 /**
  * Pins how many directory fsyncs each commit mode pays on the ingest and apply paths, per partition switch,
  * O3 commit into the last partition, WAL writer open, WAL segment roll and WAL column DDL that rolls pending
- * rows.
+ * rows, and the fsyncs of the metadata swap per schema change.
  * <p>
  * A directory fsync makes names durable, and a mode takes one only where it promises that what the name
  * points at survives a power loss:
@@ -62,6 +64,8 @@ import java.util.stream.Stream;
  *   <li>The WAL writer fsyncs a new segment's entry in {@code wal<N>} under SYNC and ADAPTIVE, and the table
  *   directory once per writer, when it has created {@code wal<N>}. ASYNC keeps only the segment directory
  *   fsync of a newly opened segment, as it always had.</li>
+ *   <li>A schema change swaps {@code _meta} and fsyncs {@code _meta.swp}, {@code _todo_} and the table
+ *   directory twice, under SYNC and ADAPTIVE only.</li>
  * </ul>
  * The crash tests that prove these are enough are in {@code DirectoryBarrierCrashTest}.
  */
@@ -144,6 +148,66 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
                 execute("INSERT INTO x VALUES ('2024-01-06T0" + i + ":00:00.000000Z', " + i + ")");
             }
             assertTableSide(0, tableDir);
+        });
+    }
+
+    @Test
+    public void testSchemaChangeMetaSwap() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, s SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 'a', 1)");
+            execute("CREATE TABLE w (ts TIMESTAMP, s SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO w VALUES ('2024-01-01T00:00:00.000000Z', 'a', 1)");
+            drainWalQueue();
+            final String[] ddls = {
+                    "ALTER TABLE x ADD COLUMN c INT",
+                    "ALTER TABLE x RENAME COLUMN c TO d",
+                    "ALTER TABLE x DROP COLUMN d",
+                    "ALTER TABLE x ALTER COLUMN v TYPE DOUBLE",
+                    "ALTER TABLE x ALTER COLUMN s ADD INDEX",
+                    "ALTER TABLE x ALTER COLUMN s DROP INDEX",
+                    "ALTER TABLE x ALTER COLUMN s SYMBOL CAPACITY 512",
+                    "ALTER TABLE x ALTER COLUMN s NOCACHE",
+                    "ALTER TABLE x SET PARAM maxUncommittedRows = 100",
+                    "ALTER TABLE x SET PARAM o3MaxLag = 5s",
+                    "ALTER TABLE x SET TTL 2 DAYS",
+                    "ALTER TABLE w ADD COLUMN c INT",
+                    "ALTER TABLE w DEDUP ENABLE UPSERT KEYS(ts)",
+                    "ALTER TABLE w DEDUP DISABLE"
+            };
+            // Each schema change swaps _meta once. The swap fsyncs _meta.swp, _todo_ and the table directory
+            // twice, in the modes that promise power-loss durability only.
+            final int expected = isSyncOrAdaptive() ? 1 : 0;
+            for (String ddl : ddls) {
+                final String tableDir = tableDir(ddl.substring(12, 13));
+                ff.clear();
+                execute(ddl);
+                drainWalQueue();
+                final String message = ddl + ff.dump();
+                Assert.assertEquals(message, 1, ff.countRenamesTo(tableDir + "/_meta"));
+                Assert.assertEquals(message, expected, ff.count(tableDir + "/_meta.swp"));
+                Assert.assertEquals(message, expected, ff.count(tableDir + "/_todo_"));
+                Assert.assertEquals(message, 2 * expected, ff.count(tableDir));
+            }
+
+            // A swap that fails to publish _meta.swp restores _meta from _meta.prev, and fsyncs the table
+            // directory for the restore instead of the publish, in the same modes.
+            final String tableDir = tableDir("x");
+            ff.clear();
+            ff.failRenameTo = tableDir + "/_meta";
+            try {
+                execute("ALTER TABLE x ADD COLUMN e INT");
+                Assert.fail("the _meta.swp rename must fail");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
+            }
+            final String message = "rollback" + ff.dump();
+            Assert.assertEquals(message, 2, ff.countRenamesTo(tableDir + "/_meta"));
+            Assert.assertEquals(message, expected, ff.count(tableDir + "/_meta.swp"));
+            Assert.assertEquals(message, expected, ff.count(tableDir + "/_todo_"));
+            Assert.assertEquals(message, 2 * expected, ff.count(tableDir));
+            execute("ALTER TABLE x ADD COLUMN e INT");
+            assertQuery("SELECT e FROM x").expectSize().returns("e\nnull\n");
         });
     }
 
@@ -252,16 +316,22 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
 
     /**
      * Counts fsyncs of directories by path. A directory fsync opens the directory with
-     * {@code openRONoCache}, so that is where the facade learns which descriptors are directories.
+     * {@code openRONoCache}, so that is where the facade learns which descriptors are directories. Also counts
+     * fsyncs of the {@code _meta.swp} and {@code _todo_} files of a metadata swap, which it opens with
+     * {@code openRWNoCache}, and renames by target path.
      */
     private static class DirFsyncCountingFacade extends TestFilesFacadeImpl {
         private final Map<String, Integer> counts = new HashMap<>();
         private final Map<Long, String> dirFds = new HashMap<>();
+        private final Map<Long, String> fileFds = new HashMap<>();
+        private final Map<String, Integer> renameCounts = new HashMap<>();
         private int emptyCount;
+        private volatile String failRenameTo;
 
         @Override
         public synchronized boolean close(long fd) {
             dirFds.remove(fd);
+            fileFds.remove(fd);
             return super.close(fd);
         }
 
@@ -291,6 +361,33 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
             return fd;
         }
 
+        @Override
+        public long openRWNoCache(LPSZ name, int opts) {
+            final long fd = super.openRWNoCache(name, opts);
+            if (fd > -1) {
+                final String path = toPathString(name);
+                if (path.endsWith("/_meta.swp") || path.endsWith("/_todo_")) {
+                    synchronized (this) {
+                        fileFds.put(fd, path);
+                    }
+                }
+            }
+            return fd;
+        }
+
+        @Override
+        public int rename(LPSZ from, LPSZ to) {
+            final String path = toPathString(to);
+            synchronized (this) {
+                renameCounts.merge(path, 1, Integer::sum);
+            }
+            if (path.equals(failRenameTo)) {
+                failRenameTo = null;
+                return -1;
+            }
+            return super.rename(from, to);
+        }
+
         private static String toPathString(LPSZ name) {
             final StringBuilder sb = new StringBuilder(name.size());
             for (int i = 0, n = name.size(); i < n; i++) {
@@ -305,6 +402,7 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
 
         synchronized void clear() {
             counts.clear();
+            renameCounts.clear();
             emptyCount = 0;
         }
 
@@ -334,8 +432,12 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
             return emptyCount;
         }
 
+        synchronized int countRenamesTo(String path) {
+            return renameCounts.getOrDefault(path, 0);
+        }
+
         synchronized String dump() {
-            return " " + counts;
+            return " fsyncs=" + counts + ", renames=" + renameCounts;
         }
 
         synchronized int total() {
@@ -347,6 +449,11 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
         }
 
         private synchronized void record(long fd, boolean isClosing) {
+            final String file = isClosing ? fileFds.remove(fd) : fileFds.get(fd);
+            if (file != null) {
+                counts.merge(file, 1, Integer::sum);
+                return;
+            }
             final String dir = isClosing ? dirFds.remove(fd) : dirFds.get(fd);
             if (dir != null) {
                 counts.merge(dir, 1, Integer::sum);
