@@ -10569,6 +10569,207 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterJoinInnerDerivedKeyMergesAsInnerKey() throws Exception {
+        // The INNER join implies sd.w = sa.k, and WHERE sa.bt > 0 drops the NULL-extended rows of the
+        // LEFT JOIN sa, so the key lands on that join and merges with its own key sb.k = sa.k. The
+        // equalities that merge derives hold only because the join keeps no NULL-extended row, so they
+        // must not become keys of the earlier LEFT JOIN sd: that join would NULL-extend a matched row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sa (k INT, bt BYTE)");
+            execute("INSERT INTO sa VALUES (null, 2), (2, 0), (2, 1)");
+            execute("CREATE TABLE sb (k INT)");
+            execute("INSERT INTO sb VALUES (3), (2), (0), (null), (0), (0), (3), (null)");
+            execute("CREATE TABLE sc (k INT)");
+            execute("INSERT INTO sc VALUES (2), (0), (3), (null)");
+            execute("CREATE TABLE sd (k INT, w INT)");
+            execute("INSERT INTO sd VALUES (3, null), (3, 3), (2, 1), (0, 0), (3, null), (0, 3), (0, 1)");
+            assertQuery("""
+                    SELECT sb.k bk, sd.k dk, sd.w dw, sa.k ak, sa.bt abt, sc.k ck
+                    FROM sb
+                    LEFT JOIN sd ON sd.k = sb.k
+                    LEFT JOIN sa ON sb.k = sa.k
+                    JOIN sc ON sd.w = sc.k AND sa.k = sc.k
+                    WHERE sa.bt > 0
+                    ORDER BY 1, 2, 3, 4, 5, 6
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            bk\tdk\tdw\tak\tabt\tck
+                            null\tnull\tnull\tnull\t2\tnull
+                            null\tnull\tnull\tnull\t2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyOnNullRejectedLeftJoin() throws Exception {
+        // The INNER join implies a.w = b.k, and b.u > 2 drops the NULL-extended rows of the LEFT JOIN, so
+        // the LEFT JOIN returns the rows of an INNER join and runs as a hash join on that key.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKey();
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, b.k bk, b.u bu, c.k ck
+                    FROM a
+                    LEFT JOIN b ON a.x > b.u
+                    JOIN c ON a.w = c.k AND b.k = c.k AND b.u > 2
+                    ORDER BY 1, 2, 3, 4, 5
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Left Outer Join Light", "condition: b.k=a.w")
+                    .withPlanNotContaining("Nested Loop")
+                    .returns("""
+                            ax\taw\tbk\tbu\tck
+                            5\t1\t1\t3\t1
+                            7\t3\t3\t4\t3
+                            9\tnull\tnull\t6\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyOnNullRejectedRightJoin() throws Exception {
+        // The INNER join implies a.w = b.k, and WHERE a.x > 0 drops the NULL-extended rows of the RIGHT
+        // JOIN, so the RIGHT JOIN returns the rows of an INNER join and runs as a hash join on that key.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKey();
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, b.x bx, b.k bk, c.k ck
+                    FROM a
+                    RIGHT JOIN b ON b.x > 1
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    WHERE a.x > 0
+                    ORDER BY 1, 2, 3, 4, 5
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: b.k=a.w")
+                    .withPlanNotContaining("Nested Loop")
+                    .returns("""
+                            ax\taw\tbx\tbk\tck
+                            5\t1\t2\t1\t1
+                            7\t3\t3\t3\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyStaysFilterBeforeMasterNullingJoin() throws Exception {
+        // A later RIGHT JOIN NULL-extends the master rows of the LEFT JOIN, so the LEFT JOIN keeps the
+        // INNER-derived a.w = b.k as a filter even though WHERE b.u > 2 rejects NULL b rows.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKey();
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, b.k bk, b.u bu, c.k ck, d.v dv
+                    FROM a
+                    LEFT JOIN b ON a.x > b.u
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    RIGHT JOIN d ON d.v > 10
+                    WHERE b.u > 2
+                    ORDER BY 1, 2, 3, 4, 5, 6
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Nested Loop Left Join")
+                    .returns("""
+                            ax\taw\tbk\tbu\tck\tdv
+                            5\t1\t1\t3\t1\t20
+                            5\t1\t1\t3\t1\t30
+                            7\t3\t3\t4\t3\t20
+                            7\t3\t3\t4\t3\t30
+                            9\tnull\tnull\t6\tnull\t20
+                            9\tnull\tnull\t6\tnull\t30
+                            """);
+            // a SPLICE JOIN after the LEFT JOIN needs a master with random access, which no join provides
+            assertQuery("""
+                    SELECT * FROM a
+                    LEFT JOIN b ON a.x > b.u
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    SPLICE JOIN d
+                    WHERE b.u > 2
+                    """)
+                    .noLeakCheck()
+                    .fails(75, "left side of splice join doesn't support random access");
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyStaysFilterBeforeTimeSeriesJoin() throws Exception {
+        // The LT JOIN moves ahead of the non-equi RIGHT JOIN to read the timestamp of a. As a key of the
+        // RIGHT JOIN, a.w = b.k would keep the LT JOIN behind it, where the RIGHT JOIN output has no
+        // designated timestamp, so the RIGHT JOIN keeps the equality as a filter.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKey();
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, b.x bx, b.k bk, c.k ck, d.v dv
+                    FROM a
+                    RIGHT JOIN b ON b.x > 1
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    LT JOIN d
+                    WHERE a.x > 0
+                    ORDER BY 1, 2, 3, 4, 5, 6
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Nested Loop Right Join")
+                    .returns("""
+                            ax\taw\tbx\tbk\tck\tdv
+                            5\t1\t2\t1\t1\tnull
+                            7\t3\t3\t3\t3\t30
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyStaysFilterOfMixedTypes() throws Exception {
+        // An INT = LONG key would fail with a join column type mismatch, so the LEFT JOIN keeps the
+        // INNER-derived a.w = bl.k as a filter even though bl.u > 2 rejects NULL bl rows.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKey();
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, bl.k bk, bl.u bu, cl.k ck
+                    FROM a
+                    LEFT JOIN bl ON a.x > bl.u
+                    JOIN cl ON a.w = cl.k AND bl.k = cl.k AND bl.u > 2
+                    ORDER BY 1, 2, 3, 4, 5
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Nested Loop Left Join")
+                    .returns("""
+                            ax\taw\tbk\tbu\tck
+                            5\t1\t1\t3\t1
+                            7\t3\t3\t4\t3
+                            9\tnull\tnull\t6\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyStaysFilterWithoutNullRejection() throws Exception {
+        // Without a conjunct that drops the NULL-extended rows of the LEFT JOIN, the INNER-derived
+        // a.w = b.k must not decide its matching: a row of a would come back NULL-extended. The LEFT JOIN
+        // keeps the equality as a filter and runs as a nested loop. b.u IS NULL keeps NULL b rows.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKey();
+            final String query = """
+                    SELECT a.x ax, a.w aw, b.k bk, b.u bu, c.k ck
+                    FROM a
+                    LEFT JOIN b ON a.x > b.u
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    """;
+            assertQuery(query + "ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Nested Loop Left Join")
+                    .returns("""
+                            ax\taw\tbk\tbu\tck
+                            5\t1\t1\t3\t1
+                            7\t3\t3\t4\t3
+                            9\tnull\tnull\t6\tnull
+                            """);
+            assertQuery(query + "WHERE b.u IS NULL ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Nested Loop Left Join")
+                    .returns("ax\taw\tbk\tbu\tck\n");
+        });
+    }
+
+    @Test
     public void testOuterJoinMasterFilterKeepsMatchedRow() throws Exception {
         // Companion to testOuterJoinMasterFilterStaysPostJoin: that test proves the NULL-master
         // rows are removed; this one proves a genuine master match survives, so the post-join
@@ -14122,6 +14323,43 @@ public class JoinTest extends AbstractCairoTest {
         execute("CREATE TABLE f5 (a5 INT, b5 INT)");
         execute("CREATE TABLE f6 (a6 INT, b6 INT)");
         execute("INSERT INTO f6 VALUES (200, 1), (5, 5)");
+    }
+
+    private void createTablesForOuterJoinInnerDerivedKey() throws SqlException {
+        execute("CREATE TABLE a (x INT, w INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO a VALUES
+                (5, 1, '2024-01-01T00:00:01'),
+                (5, null, '2024-01-01T00:00:02'),
+                (0, 2, '2024-01-01T00:00:03'),
+                (7, 3, '2024-01-01T00:00:04'),
+                (9, null, '2024-01-01T00:00:05')
+                """);
+        execute("CREATE TABLE b (x INT, k INT, u INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO b VALUES
+                (2, 1, 3, '2024-01-01T00:00:01'),
+                (3, 3, 4, '2024-01-01T00:00:02'),
+                (0, null, 6, '2024-01-01T00:00:03')
+                """);
+        execute("CREATE TABLE bl (x INT, k LONG, u INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO bl SELECT * FROM b");
+        execute("CREATE TABLE c (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO c VALUES
+                (1, '2024-01-01T00:00:01'),
+                (null, '2024-01-01T00:00:02'),
+                (3, '2024-01-01T00:00:03')
+                """);
+        execute("CREATE TABLE cl (k LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO cl SELECT * FROM c");
+        execute("CREATE TABLE d (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO d VALUES
+                (10, '2024-01-01T00:00:01'),
+                (20, '2024-01-01T00:00:02'),
+                (30, '2024-01-01T00:00:03')
+                """);
     }
 
     private void createTablesForOuterJoinOnImpliedKey() throws SqlException {

@@ -272,6 +272,11 @@ public class SqlOptimiser implements Mutable {
     // collectNullRejectedJoins().
     private final IntHashSet nullRejectedJoinIndexes = new IntHashSet();
     private final ArrayDeque<ExpressionNode> nullRejectedJoinStack = new ArrayDeque<>();
+    // Model indexes that a NULL-rejecting conjunct reads, scratch state of collectNullRejectedJoins().
+    private final IntHashSet nullRejectedModelIndexes = new IntHashSet();
+    // Model indexes of the LEFT and RIGHT joins whose NULL-extended rows a later conjunct drops, see
+    // collectNullRejectedJoins(). addFilterOrEmitJoin may emit an INNER-derived key onto such a join.
+    private final IntHashSet nullRejectedOuterJoinIndexes = new IntHashSet();
     // Per-level master-nulling-join anchors filled by precomputeNullingJoinAnchors for O(1) lookups.
     // By exec position: model index of the last master-nulling join strictly after it, or -1.
     private final IntList nullingAnchorByExecPos = new IntList();
@@ -1553,6 +1558,11 @@ public class SqlOptimiser implements Mutable {
                 && joinBarriers.excludes(parent.getJoinModels().getQuick(ai).getJoinType())
                 && !hasMasterNullingJoinBetween(parent, ai, contextSlaveIndex)
                 && isFilterEqualToKeyMatch(parent.getJoinModels().getQuick(ai), an, bn);
+        // A later conjunct drops the NULL-extended rows of a LEFT or RIGHT join in nullRejectedOuterJoinIndexes,
+        // so that join returns the rows of an INNER join. An emitted clause merged into its context derives
+        // equalities that hold only because of that, so they follow the INNER join rules.
+        final boolean isInnerContext = joinBarriers.excludes(joinType)
+                || (isEmittedClause && nullRejectedOuterJoinIndexes.contains(contextSlaveIndex));
         if (!isEmittedClause && joinBarriers.contains(joinType) && !isRightJoinMasterKey && !isNullRejectedMasterKey) {
             final boolean isSlaveOnly = ai == bi && ai == contextSlaveIndex;
             final boolean isSlavePreserved = joinType != IQueryModel.JOIN_LEFT_OUTER
@@ -1611,7 +1621,7 @@ public class SqlOptimiser implements Mutable {
             // the join context keeps ao and bo as keys, and the filter push-down rewrites
             // its nodes in place, so the filter gets its own copies
             ExpressionNode node = makeOperation("=", ExpressionNode.deepClone(expressionNodePool, ao), ExpressionNode.deepClone(expressionNodePool, bo));
-            if (ai < contextSlaveIndex && joinBarriers.excludes(joinType)) {
+            if (ai < contextSlaveIndex && isInnerContext) {
                 // The equality holds for the rows that the INNER join of the context matches. Place it
                 // like an ON conjunct of that join: at the table, unless a master-nulling join executes
                 // between the table and the INNER join. An emitted clause merged here comes from a later
@@ -1643,12 +1653,17 @@ public class SqlOptimiser implements Mutable {
         } else {
             // (different tables)
             final int emittedSlaveIndex = Math.max(ai, bi);
-            if (joinBarriers.excludes(joinType) && emittedSlaveIndex < contextSlaveIndex
-                    && (joinBarriers.contains(parent.getJoinModels().getQuick(emittedSlaveIndex).getJoinType())
+            if (isInnerContext && emittedSlaveIndex < contextSlaveIndex
+                    && ((joinBarriers.contains(parent.getJoinModels().getQuick(emittedSlaveIndex).getJoinType())
+                    && !(nullRejectedOuterJoinIndexes.contains(emittedSlaveIndex)
+                    && isFilterEqualToKeyMatch(parent.getJoinModels().getQuick(ai), an, parent.getJoinModels().getQuick(bi), bn)))
                     || hasMasterNullingJoinBetween(parent, emittedSlaveIndex, contextSlaveIndex))) {
                 // The implied equality holds for the rows that the INNER join of the context matches. As a
                 // key of the earlier join it would decide the matching of an outer join or run below a
-                // master-nulling join, so it filters like an ON conjunct of the INNER join instead.
+                // master-nulling join, so it filters like an ON conjunct of the INNER join instead. A LEFT
+                // or RIGHT join whose NULL-extended rows a later conjunct drops takes it as a key, when the
+                // key matches exactly the rows the filter keeps: the rows the key adds or drops never reach
+                // the result.
                 ExpressionNode node = makeOperation("=", ExpressionNode.deepClone(expressionNodePool, ao), ExpressionNode.deepClone(expressionNodePool, bo));
                 parent.addParsedWhereNode(node, true);
                 addModelOnPredicateBehindNullingJoin(parent, node, emittedSlaveIndex, contextSlaveIndex);
@@ -3161,29 +3176,78 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    // Collects the ASOF and LT joins whose unmatched master rows a top-level WHERE conjunct drops: the
-    // conjunct compares one column of the join's slave with a constant and is false when that column
-    // is NULL. The joins of a model with a master-nulling join are skipped, because such a join could
-    // null-extend the master rows of the ASOF or LT join.
+    // Collects the joins whose NULL-extended rows a later conjunct drops. A NULL-rejecting conjunct compares
+    // one column with a constant and is false when that column is NULL.
+    // - nullRejectedJoinIndexes: the ASOF and LT joins whose slave a top-level WHERE conjunct rejects. The
+    //   joins of a model with a master-nulling join are skipped, because such a join could null-extend the
+    //   master rows of the ASOF or LT join.
+    // - nullRejectedOuterJoinIndexes: the LEFT joins whose slave, and the RIGHT joins one of whose master
+    //   models, a WHERE conjunct or an ON conjunct of a later INNER join rejects. A LEFT or RIGHT join
+    //   followed by a master-nulling join is skipped, because that join could null-extend rows the
+    //   conjunct never sees, and so is a RIGHT join followed by a time-series join, which needs the RIGHT
+    //   join to stay non-equi to move ahead of it.
+    // The method clears every set on each call, so no index of another model leaks into this one.
     private void collectNullRejectedJoins(IQueryModel parent, ExpressionNode where, SqlExecutionContext sqlExecutionContext) {
         nullRejectedJoinIndexes.clear();
-        if (where == null) {
-            return;
-        }
+        nullRejectedModelIndexes.clear();
+        nullRejectedOuterJoinIndexes.clear();
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
         boolean hasAsOfOrLtJoin = false;
+        boolean hasMasterNullingJoin = false;
+        boolean hasLeftOrRightJoin = false;
         for (int i = 1, n = joinModels.size(); i < n; i++) {
             final int joinType = joinModels.getQuick(i).getJoinType();
-            if (isMasterNullingJoinType(joinType)) {
-                return;
-            }
+            hasMasterNullingJoin |= isMasterNullingJoinType(joinType);
             hasAsOfOrLtJoin |= joinType == IQueryModel.JOIN_ASOF || joinType == IQueryModel.JOIN_LT;
+            hasLeftOrRightJoin |= joinType == IQueryModel.JOIN_LEFT_OUTER || joinType == IQueryModel.JOIN_RIGHT_OUTER;
         }
-        if (!hasAsOfOrLtJoin) {
+        final boolean isAsOfOrLtCandidate = hasAsOfOrLtJoin && !hasMasterNullingJoin;
+        if (!isAsOfOrLtCandidate && !hasLeftOrRightJoin) {
             return;
         }
+        if (where != null) {
+            collectNullRejectedModels(parent, where, sqlExecutionContext);
+        }
+        if (isAsOfOrLtCandidate) {
+            for (int i = 0, n = nullRejectedModelIndexes.size(); i < n; i++) {
+                final int modelIndex = nullRejectedModelIndexes.get(i);
+                if (modelIndex > 0) {
+                    final int joinType = joinModels.getQuick(modelIndex).getJoinType();
+                    if (joinType == IQueryModel.JOIN_ASOF || joinType == IQueryModel.JOIN_LT) {
+                        nullRejectedJoinIndexes.add(modelIndex);
+                    }
+                }
+            }
+        }
+        if (!hasLeftOrRightJoin) {
+            return;
+        }
+        // An ON conjunct of an INNER join rejects rows only for the joins before it, so the walk runs from
+        // the last join to the first and collects those conjuncts as it passes their join.
+        boolean hasLaterMasterNullingJoin = false;
+        boolean hasLaterTimeSeriesJoin = false;
+        for (int i = joinModels.size() - 1; i > 0; i--) {
+            final IQueryModel joinModel = joinModels.getQuick(i);
+            final int joinType = joinModel.getJoinType();
+            if (!hasLaterMasterNullingJoin) {
+                if ((joinType == IQueryModel.JOIN_LEFT_OUTER && nullRejectedModelIndexes.contains(i))
+                        || (joinType == IQueryModel.JOIN_RIGHT_OUTER && !hasLaterTimeSeriesJoin && hasNullRejectedModelBefore(i))) {
+                    nullRejectedOuterJoinIndexes.add(i);
+                } else if (joinType == IQueryModel.JOIN_INNER && joinModel.getJoinCriteria() != null) {
+                    collectNullRejectedModels(parent, joinModel.getJoinCriteria(), sqlExecutionContext);
+                }
+            }
+            hasLaterMasterNullingJoin |= isMasterNullingJoinType(joinType);
+            hasLaterTimeSeriesJoin |= joinsRequiringTimestamp[joinType];
+        }
+    }
+
+    // Adds to nullRejectedModelIndexes every model that a conjunct of the filter compares with a constant,
+    // where the comparison is false when the column is NULL.
+    private void collectNullRejectedModels(IQueryModel parent, ExpressionNode filter, SqlExecutionContext sqlExecutionContext) {
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
         nullRejectedJoinStack.clear();
-        nullRejectedJoinStack.push(where);
+        nullRejectedJoinStack.push(filter);
         while (!nullRejectedJoinStack.isEmpty()) {
             final ExpressionNode node = nullRejectedJoinStack.pop();
             if (node.token != null && joinOps.get(node.token) == JOIN_OP_AND) {
@@ -3222,13 +3286,10 @@ public class SqlOptimiser implements Mutable {
                 // processJoinConditions() reports the invalid column
                 continue;
             }
-            if (modelIndex < 1) {
-                continue;
-            }
-            final int joinType = joinModels.getQuick(modelIndex).getJoinType();
-            if ((joinType == IQueryModel.JOIN_ASOF || joinType == IQueryModel.JOIN_LT)
+            if (modelIndex >= 0
+                    && !nullRejectedModelIndexes.contains(modelIndex)
                     && isNullRejectingPredicate(joinModels, modelIndex, node, isColumnLhs, sqlExecutionContext)) {
-                nullRejectedJoinIndexes.add(modelIndex);
+                nullRejectedModelIndexes.add(modelIndex);
             }
         }
     }
@@ -6411,6 +6472,16 @@ public class SqlOptimiser implements Mutable {
     // Returns true when every context-free RIGHT/FULL join at or after fromIndex has each model before it
     // as a context parent, which constrainRightAndFullJoinsAfterPrefix and recordNullingJoinPrefix record
     // unless a forward reference leaves the prefix unpinned.
+    // Returns true when nullRejectedModelIndexes holds a model that precedes the model at index.
+    private boolean hasNullRejectedModelBefore(int index) {
+        for (int i = 0, n = nullRejectedModelIndexes.size(); i < n; i++) {
+            if (nullRejectedModelIndexes.get(i) < index) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean hasPinnedRightOrFullJoinPrefixes(ObjList<IQueryModel> joinModels, int fromIndex) {
         for (int boundaryIndex = fromIndex, n = joinModels.size(); boundaryIndex < n; boundaryIndex++) {
             final IQueryModel boundaryModel = joinModels.getQuick(boundaryIndex);
@@ -9033,7 +9104,8 @@ public class SqlOptimiser implements Mutable {
     private void processEmittedJoinClauses(IQueryModel model) {
         if (hasJoinBarrier(model)) {
             // addFilterOrEmitJoin emits a clause only where it keeps the result of its INNER join: onto a
-            // join that is not a barrier, with no master-nulling join between it and the INNER join. A
+            // join that is not a barrier, or onto a LEFT or RIGHT join whose NULL-extended rows a later
+            // conjunct drops, with no master-nulling join between it and the INNER join. A
             // clause attached to a model without a context leaves that model unlinked, and doReorderTables
             // fails to order the level. linkLoneEmittedClauses links it once the other ordering edges are
             // in place. The loop re-reads the size, because merging a clause can emit more.
