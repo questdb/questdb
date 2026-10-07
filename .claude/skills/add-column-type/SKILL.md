@@ -13,7 +13,7 @@ Adds the column type `<NAME>` to the checkout by following the worklist of
 `utils/type-probe/type_probe.py`. The worklist names the places the compiler, the conformance kit,
 the coverage tests and the audit (`audit.py`, which reads the code for every place that decides by
 a type) reach for the type; this skill makes those decisions one item at a time and changes nothing
-the worklist does not name. The manual is `utils/type-probe/README.md`; read its sections 3 to 8
+the worklist does not name. The manual is `utils/type-probe/README.md`; read its sections 3 to 9
 before the first edit.
 
 ## Rules

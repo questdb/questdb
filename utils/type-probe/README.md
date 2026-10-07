@@ -402,7 +402,48 @@ Places outside the worklist that a type may still meet:
   largest value goes out as -1. An unsigned type declares `ILP column kind` refused, which
   the kit and the coverage tests then accept, or adds its own ILP parsing.
 
-## 9. The tests
+## 9. Functions over new NULL kinds
+
+The function library tests NULL inline, per row, by comparing a value with its type's reserved
+NULL value (`Numbers.LONG_NULL`, NaN). A type that keeps NULL outside its values (a full-range
+type, a nullable BYTE or SHORT, with a validity bitmap) or never holds NULL (NOT NULL) cannot reuse
+that code as it is: a full-range LONG's smallest value is a real value, and a bitmap type's NULL is
+not in the value at all. The functions are unchanged here; the type PR decides how they serve the
+new kinds. One way, prototyped on four functions (`=`, `+`, `sum`, a cast to DOUBLE) and measured:
+
+- **NULL kinds.** Every function reports its result's kind at setup: SENTINEL (today's types with
+  a reserved NULL value), NONE (today's BOOLEAN, BYTE, SHORT, CHAR), BITMAP, NOT_NULL. A column
+  function takes its column's kind (`RecordMetadata.getColumnNullPolicy`, which today follows the
+  type driver's `getNullPolicy`).
+- **Combining.** A small table gives a call's kind from its arguments' kinds, the same for any
+  number of types: no full-range argument, SENTINEL, and today's code runs unchanged; all NOT_NULL,
+  NOT_NULL; any other mix, BITMAP.
+- **The wrapper, chosen at setup.** Each function's arithmetic is one body over plain values. A
+  SENTINEL call runs today's class; NOT_NULL calls the body with no NULL test; BITMAP asks each
+  argument `isNull()` and calls the body when none is NULL. A sentinel argument of a BITMAP call is
+  lifted first: its reserved value reads as NULL. The wrappers are shared by shape (two LONG
+  arguments to a LONG result, one argument to a DOUBLE, an aggregate with a LONG accumulator), not
+  written per function; the prototype measured the shared classes as fast as per-function ones.
+- **Casts and aggregates.** A cast follows its target: a full-range value cast into a sentinel type
+  maps NULL to that type's reserved value. An aggregate skips NULL arguments through one shared
+  adapter, and an empty group gives NULL.
+- **No silent reach.** The parser admits a full-range argument only into a factory converted for
+  it; every other factory refuses with "no matching function", and a test lists the factories in
+  scope that are not converted yet.
+- **Cost, as the prototype measured it.** Today's types within noise. NOT_NULL no slower than
+  SENTINEL, since no NULL test runs. BITMAP 1.2 to 1.5 times the sentinel cost per row in an
+  expression, 2 to 3 times with one row in ten NULL, from the per-row `isNull` calls. An aggregate
+  over a full-range column has no batch kernel: its `sum` ran 34 to 55 times slower than LONG's
+  vectorized `sum`, until frame-level kernels are written for it. Per new type, each function it
+  supports takes about 20 lines (the body, the wrapper choice, the marker that admits the type),
+  and each shape's shared wrappers are written once.
+- **Open.** A NOT NULL column marker reaches a function only through the query's column metadata.
+  The operators that add NULL to a column (UNION with a NULL branch, an outer join, `lag`, CASE
+  without ELSE) build new metadata and so drop the marker, which is safe. An operator that adds NULL
+  and passes the metadata through unchanged would keep NOT_NULL and read a filler as a value: each
+  such operator needs checking.
+
+## 10. The tests
 
 `python3 -m unittest discover -s utils/type-probe` runs both suites. `test_audit.py` plants one place
 of every form in a small tree and checks the audit finds it, with its fallback and whether a compiler
