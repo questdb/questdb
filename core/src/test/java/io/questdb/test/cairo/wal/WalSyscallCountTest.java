@@ -28,30 +28,46 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 /**
  * The file system calls of a 1-row WAL commit and of the WAL apply pass that applies it, outside ADAPTIVE.
  * NOSYNC, ASYNC and SYNC must make exactly the calls the base version makes (OSS {@code d3b877cc}, measured
  * with this test): the same kinds, the same number of times, on the same files. A file that rides along
  * with every commit or every apply pass shows up here as extra opens, maps and msyncs.
+ * <p>
+ * In every mode, ADAPTIVE included, a WAL table keeps only files the base version writes. A file written
+ * through a mapping makes no system call on a NOSYNC commit, so only the file set can see it there.
  */
 @RunWith(Parameterized.class)
 public class WalSyscallCountTest extends AbstractCairoTest {
     private static final int MEASURED = 20;
+    // The files base writes in a WAL segment: the event file and its index, the segment _meta and the column
+    // files (.d, plus .i for var-size columns).
+    private static final Pattern SEGMENT_FILE = Pattern.compile("_event|_event\\.i|_meta|[a-z]+\\.[di]");
     private static final int WARMUP = 5;
     private final String commitMode;
     private final boolean isV2;
@@ -64,7 +80,7 @@ public class WalSyscallCountTest extends AbstractCairoTest {
     @Parameterized.Parameters(name = "mode={0}, v2={1}")
     public static Collection<Object[]> data() {
         final List<Object[]> params = new ArrayList<>();
-        for (String mode : new String[]{"nosync", "async", "sync"}) {
+        for (String mode : new String[]{"nosync", "async", "sync", "adaptive"}) {
             params.add(new Object[]{mode, false});
             params.add(new Object[]{mode, true});
         }
@@ -79,6 +95,47 @@ public class WalSyscallCountTest extends AbstractCairoTest {
     @Test
     public void testCommit() throws Exception {
         assertCalls(true);
+    }
+
+    @Test
+    public void testOnlyBaseFiles() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, isV2 ? 1000 : 0);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            for (int i = 0; i < 3; i++) {
+                execute("INSERT INTO x VALUES (" + (i + 1) * 1_000_000L + ", " + i + ", 'a" + i + "')");
+            }
+            try (WalWriter writer = getWalWriter("x")) {
+                appendRow(writer, 3);
+                // A concurrent ADD COLUMN ... SYMBOL makes the commit rewrite its pending event.
+                execute("ALTER TABLE x ADD COLUMN c SYMBOL");
+                writer.commit();
+            }
+            execute("UPDATE x SET v = v + 1 WHERE v > 1");
+            drainWalQueue();
+            engine.releaseInactive();
+            engine.getTableSequencerAPI().releaseAll();
+
+            final Path tableDir = Paths.get(root, engine.verifyTableName("x").getDirName());
+            final Set<String> foreign = new TreeSet<>();
+            try (Stream<Path> dirs = Files.list(tableDir)) {
+                for (Path walDir : dirs.filter(d -> Files.isDirectory(d) && d.getFileName().toString().startsWith(WalUtils.WAL_NAME_BASE)).toList()) {
+                    addForeignFiles(tableDir, walDir, SEGMENT_FILE, foreign);
+                }
+            }
+            Assert.assertEquals("files base does not write [mode=" + commitMode + ", v2=" + isV2 + ']', "[]", foreign.toString());
+        });
+    }
+
+    private static void addForeignFiles(Path tableDir, Path dir, Pattern baseFile, Set<String> foreign) throws IOException {
+        try (Stream<Path> files = Files.walk(dir)) {
+            for (Path file : files.filter(Files::isRegularFile).toList()) {
+                if (!baseFile.matcher(file.getFileName().toString()).matches()) {
+                    foreign.add(tableDir.relativize(file).toString());
+                }
+            }
+        }
     }
 
     private static void appendRow(WalWriter writer, long i) {
@@ -110,6 +167,7 @@ public class WalSyscallCountTest extends AbstractCairoTest {
     }
 
     private void assertCalls(boolean isCommit) throws Exception {
+        Assume.assumeFalse("ADAPTIVE makes its own calls; only its file set must match base", "adaptive".equals(commitMode));
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, isV2 ? 1000 : 0);
         final CountingFacade ff = new CountingFacade();
