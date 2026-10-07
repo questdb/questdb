@@ -59,11 +59,14 @@ all splits are squashed in the apply path the moment the next day appears.
 - `isPendingSquashSource` tells a commit not to fold a partition that the commit's own
   squash is about to consume. With a hot window it is always false: the commit writes the
   partition, so the partition is hot, and the squash will not touch it until it cools.
-- Folding a day to one folder is a sweep step: `JOIN -> MOVE-TAIL -> MAKE-PLAIN -> SQUASH
-  -> REWRITE`. SQUASH is eligible when the day is not last, > 1 split, no split written in
-  the last `hot.commits`, and selected by age or pressure waste. It reuses
-  `squashPartitionRange` (`force = false`, frozen `lastCommitTxn`), copies live ranges only,
-  folds pairs until `time.budget.ms` and resumes next sweep.
+- Folding a day to one folder is the sweep's job, and the sweep never copies bytes on the
+  writer. Once every split of a day that is not the last has been idle past
+  `squash.idle.timeout` by wall clock, the sweep copies the live rows of all of them into one
+  plain folder off a reader snapshot - squash and compaction in one go - and the writer only
+  swaps it in (see `PARTITION_COMPACTION_JOB.md`). The `hot.commits` window does not gate it:
+  a table that stops ingesting never makes the commits that would cool its newest splits, so
+  the day would stay split for good. While some split is still hot the sweep only compacts
+  the cold composite folders, each by a staged REWRITE.
 - MOVE-TAIL fresh partitions count against the ceiling, and the squash brings them back to
   the cap. Parquet conversion keeps `force = true`.
 
@@ -74,11 +77,13 @@ Today MOVE-TAIL has its own gate (dead > split size and > `cairo.partition.compa
 below it the sweep falls straight to REWRITE, which is how a 207M-row folder got copied.
 
 For any folder above `cairo.o3.partition.split.min.size`, whichever rule selected it, the
-sweep tries MOVE-TAIL first whenever it is beneficial: the cold prefix (pieces untouched
+per-commit compaction tries MOVE-TAIL first whenever it is beneficial: the cold prefix (pieces untouched
 by the last `hot.commits` commits) holds more than half the live rows. The tail goes to a
 fresh split; the prefix is then rewritten only if it is wasteful on its own, else left as
 is. The gate decides *whether* to act; once a rewrite is due, moving the tail is always
-cheaper than copying it. Small folders keep the plain REWRITE.
+cheaper than copying it. Small folders keep the plain REWRITE. The sweep does not move
+tails: it never copies on the writer, so an idle folder it selects is rewritten whole off a
+reader snapshot.
 
 Result on TSBS: late ticks merge into small splits; a split over 50% dead is rewritten
 alone; day one is folded once, when idle, never twice within a minute.
@@ -87,8 +92,9 @@ alone; day one is folded once, when idle, never twice within a minute.
 
 Policy: pressure with folders at 9/30/60/90% dead selects 90, 60, then -1; oldest never
 preferred. Splits: a day with 5 splits survives the next day's creation and is folded by the
-sweep after `idle.timeout`; a day at the cap squashes the smallest pair on commit; a hot split
-blocks SQUASH; SQUASH stops at the budget and resumes. MOVE-TAIL and the O3 split still cut a
+sweep after `squash.idle.timeout`; a day at the cap squashes the smallest pair on commit; a split
+written within `squash.idle.timeout` blocks the merge, and one only hot by commit count does
+not; the merge folds the day in one staged copy. MOVE-TAIL and the O3 split still cut a
 day that is at the cap; the count never passes the ceiling, and it settles at the cap once the
 folders cool, `hot.commits` commits later (`CompactionSplitOverflowTest`). Fuzz with cap 2, 3,
 20 and checkpoints.

@@ -40,6 +40,13 @@ public class ColumnTopRecorder implements ColumnTopSink {
         tops.clear();
     }
 
+    /**
+     * The top reported for the column at WRITER index {@code columnIndex}, or -1 when it never reported one.
+     */
+    public long getColumnTop(int columnIndex) {
+        return columnIndex < tops.size() ? tops.getQuick(columnIndex) : NOT_REPORTED;
+    }
+
     public boolean isEmpty() {
         for (int i = 0, n = tops.size(); i < n; i++) {
             if (tops.getQuick(i) != NOT_REPORTED) {

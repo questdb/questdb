@@ -10,6 +10,12 @@ updates, gets no more commits to trigger its own reclamation.
 hands each to its writer to compact. It reclaims exactly the same waste the per-commit path would have, off
 the writer thread, for partitions the per-commit path can no longer reach.
 
+The sweep never copies bytes under the writer. Every copy - a whole-day merge or a single-folder REWRITE - is
+built into a staging directory off a `TableReader` snapshot on the sweep's own thread, indexes included: every
+POSTING index is rebuilt into one sealed chain entry, covered values and all (`NativePartitionIndexBuilder`). The
+writer only re-checks the snapshot and swaps the result in. MAKE-PLAIN, the one step the writer runs itself, copies nothing:
+it drops dead space and truncates files in place.
+
 ## The unit of work: a LOGICAL partition
 
 One period of the table's PARTITION BY unit - an hour, day, week, month or year - can be several directories:

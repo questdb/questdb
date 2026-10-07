@@ -31,19 +31,17 @@ import io.questdb.tasks.TableWriterTask;
 
 /**
  * Carries the compaction sweep's decision for one composite partition to its writer - see {@code
- * PartitionCompactionScanJob} - in one of these modes:
+ * PartitionCompactionScanJob} - in one of two modes:
  * <ul>
  *     <li>REWRITE, the default: swaps in a copy built off a {@link TableReader} snapshot, without ever holding the
  *     writer for the copy itself.</li>
  *     <li>MAKE-PLAIN ({@link #ofMakePlain}): for a partition already reduced to a single piece at row 0, where the
  *     copy buys nothing - the writer drops the dead space and trims the files in place. Nothing is staged, so
  *     {@code liveRows} and the recorded tops go unused.</li>
- *     <li>Maintenance ({@link #ofMaintenance}): writer-side MOVE-TAIL or budgeted ordinary SQUASH, with no
- *     whole-day staging copy. A partial squash publishes its remaining descriptor for the next sweep.</li>
- *     <li>Legacy MERGE ({@link #ofMerge}): a staged copy of the whole logical partition. Kept for existing
- *     swap and recovery callers; the sweep no longer builds these copies.</li>
+ *     <li>MERGE ({@link #ofMerge}): the whole LOGICAL partition - the main directory plus every MOVE-TAIL split -
+ *     copied into one staging directory, which replaces the run of {@code _txn} entries it was built from.</li>
  * </ul>
- * These modes share one command and one lock reason.
+ * All three are the same errand - compact this partition - so they share one command and one lock reason.
  */
 public class CompositePartitionSwapCommand implements AsyncWriterCommand {
     /**
@@ -55,20 +53,15 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
     public static final int LONGS_PER_FOLDER = 5;
     private final ColumnTopRecorder columnTops = new ColumnTopRecorder();
     /**
-     * MERGE and maintenance: expected source folders, in {@code _txn} order.
+     * MERGE only: the source folders the staging copy was built from, in {@code _txn} order.
      */
     private final LongList folders = new LongList();
-    private final LongList remainingFolders = new LongList();
     private long correlationId = -1L;
     private long expectedMetadataVersion;
     private long expectedSrcNameTxn;
     private long expectedWriterTxn;
-    private boolean isMaintenance;
-    private volatile boolean isMaintenanceCompleted;
     private boolean isMakePlain;
     private boolean isMerge;
-    private boolean isSquash;
-    private boolean isSquashResume;
     private long liveRows;
     private long partitionTimestamp;
     private int tableId;
@@ -76,14 +69,7 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
 
     @Override
     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) {
-        if (isMaintenance) {
-            try {
-                ((TableWriter) svc).maintainPartitionFromSweep(partitionTimestamp, folders, expectedMetadataVersion, isSquash, isSquashResume, remainingFolders);
-            } finally {
-                // Publish the terminal descriptor to the sweep after every field is filled under writer ownership.
-                isMaintenanceCompleted = true;
-            }
-        } else if (isMerge) {
+        if (isMerge) {
             ((TableWriter) svc).swapMergedLogicalPartition(
                     partitionTimestamp,
                     folders,
@@ -164,10 +150,6 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
         return partitionTimestamp;
     }
 
-    public LongList getRemainingFolders() {
-        return remainingFolders;
-    }
-
     @Override
     public int getTableId() {
         return tableId;
@@ -186,10 +168,6 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
     @Override
     public long getTableVersion() {
         return 0;
-    }
-
-    public boolean isMaintenanceCompleted() {
-        return isMaintenanceCompleted;
     }
 
     public boolean isMakePlain() {
@@ -217,32 +195,10 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
         this.expectedWriterTxn = expectedWriterTxn;
         this.expectedMetadataVersion = expectedMetadataVersion;
         this.liveRows = liveRows;
-        this.isMaintenanceCompleted = false;
-        this.isMaintenance = false;
         this.isMakePlain = false;
         this.isMerge = false;
-        this.isSquash = false;
-        this.isSquashResume = false;
-        this.remainingFolders.clear();
         this.folders.clear();
         this.columnTops.clear();
-    }
-
-    /**
-     * The budgeted sweep mode: reuse writer-side MOVE-TAIL and ordinary squash, without staging a whole day.
-     */
-    public void ofMaintenance(
-            TableToken tableToken,
-            int tableId,
-            long partitionTimestamp,
-            LongList folders,
-            long expectedMetadataVersion,
-            boolean isSquash
-    ) {
-        of(tableToken, tableId, partitionTimestamp, folders.getQuick(1), folders.getQuick(2), expectedMetadataVersion, 0);
-        this.isMaintenance = true;
-        this.isSquash = isSquash;
-        this.folders.add(folders);
     }
 
     /**
@@ -303,10 +259,6 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
     @Override
     public void setCommandCorrelationId(long correlationId) {
         this.correlationId = correlationId;
-    }
-
-    void setSquashResume(boolean isSquashResume) {
-        this.isSquashResume = isSquashResume;
     }
 
     @Override

@@ -128,6 +128,10 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         final long dstAuxOffset = columnTypeDriver.getAuxVectorOffset(appendOffsetRowCount);
         final long dstAuxSize = columnTypeDriver.getAuxVectorSize(sourceHi - sourceLo);
         if (mixedIOFlag) {
+            if (!isAllocatedAuxBytesKnown) {
+                // See ContiguousFileFixFrameColumn#append: reserve() ran through an earlier open of this file.
+                ensureAuxAllocated(dstAuxOffset + dstAuxSize);
+            }
             assertAuxWriteReserved(dstAuxOffset + dstAuxSize);
             writeShiftedAux(srcDataOffset - targetDataOffset, srcAuxAddr, sourceLo, sourceHi, appendOffsetRowCount);
             if (commitMode != CommitMode.NOSYNC) {
@@ -169,6 +173,10 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         if (mixedIOFlag) {
             // reserve() allocated the plan's full extent before this positioned write; mixed I/O needs no target
             // mapping. Only a file source has an fd to copy from, so only it takes the kernel's fd-to-fd path.
+            if (!isAllocatedDataBytesKnown) {
+                // See ContiguousFileFixFrameColumn#append: reserve() ran through an earlier open of this file.
+                ensureDataAllocated(targetDataOffset + srcDataSize);
+            }
             assertDataWriteReserved(targetDataOffset + srcDataSize);
             if (isFileSource) {
                 final long sourceFd = sourceColumn.getPrimaryFd();

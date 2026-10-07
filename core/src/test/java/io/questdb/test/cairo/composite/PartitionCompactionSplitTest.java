@@ -71,14 +71,14 @@ public class PartitionCompactionSplitTest extends AbstractCairoTest {
     public void testSquashAtIdleBoundary() throws Exception {
         final int compositeMask = rnd.nextInt(ALL_FOLDERS + 1);
         LOG.info().$("compositeMask=").$(compositeMask).$();
-        assertSquash(compositeMask, Micros.HOUR_MICROS);
+        assertSquash(compositeMask, 30 * Micros.MINUTE_MICROS);
     }
 
     @Test
-    public void testSquashAfterIdleTimeout() throws Exception {
+    public void testSquashBetweenIdleTimeouts() throws Exception {
         final int compositeMask = rnd.nextInt(ALL_FOLDERS + 1);
         LOG.info().$("compositeMask=").$(compositeMask).$();
-        assertSquash(compositeMask, 75 * Micros.MINUTE_MICROS);
+        assertSquash(compositeMask, 45 * Micros.MINUTE_MICROS);
     }
 
     private static void assertData() throws Exception {
@@ -99,7 +99,7 @@ public class PartitionCompactionSplitTest extends AbstractCairoTest {
         Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
     }
 
-    private static void assertMerged(LongList snapshot, boolean wasPrefixComposite) throws Exception {
+    private static void assertMerged(LongList snapshot) throws Exception {
         try (TableReader reader = engine.getReader("x")) {
             final TxReader tx = reader.getTxFile();
             Assert.assertEquals("one merged day plus the active day", 2, tx.getPartitionCount());
@@ -111,11 +111,7 @@ public class PartitionCompactionSplitTest extends AbstractCairoTest {
                 rows += snapshot.getQuick(i * SNAPSHOT_STRIDE + 1);
             }
             Assert.assertEquals(rows, tx.getPartitionSize(0));
-            if (wasPrefixComposite) {
-                Assert.assertNotEquals(snapshot.getQuick(2), tx.getPartitionNameTxn(0));
-            } else {
-                Assert.assertEquals("a plain prefix must be appended to, not recopied", snapshot.getQuick(2), tx.getPartitionNameTxn(0));
-            }
+            Assert.assertNotEquals("the merged day must be a freshly built folder", snapshot.getQuick(2), tx.getPartitionNameTxn(0));
             assertSnapshotFolder(tx, 1, snapshot, FOLDER_COUNT, false);
         }
         assertData();
@@ -196,11 +192,11 @@ public class PartitionCompactionSplitTest extends AbstractCairoTest {
                     Assert.assertEquals(0, ff.mergeBuildCount);
                     Assert.assertEquals(Integer.bitCount(rewrittenMask), ff.rewriteBuildCount);
                 }
-                setCurrentMicros(writtenAt + 121 * Micros.MINUTE_MICROS + Micros.SECOND_MICROS);
+                setCurrentMicros(writtenAt + 90 * Micros.MINUTE_MICROS + Micros.SECOND_MICROS);
                 job.run();
-                Assert.assertEquals("squash must not stage another whole-day copy", 0, ff.mergeBuildCount);
+                Assert.assertEquals("the whole day must be merged by one staged copy", 1, ff.mergeBuildCount);
                 Assert.assertEquals(Integer.bitCount(rewrittenMask), ff.rewriteBuildCount);
-                assertMerged(snapshot, (compositeMask & 1) != 0);
+                assertMerged(snapshot);
             }
         });
     }
@@ -211,7 +207,7 @@ public class PartitionCompactionSplitTest extends AbstractCairoTest {
             final long writtenAt = MicrosFormatUtils.parseTimestamp("2020-01-10T00:00:00.000000Z");
             final LongList snapshot = createSplitTable(ff, writtenAt, compositeMask, 0);
             try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, ff, configuration.getMicrosecondClock())) {
-                setCurrentMicros(writtenAt + Micros.HOUR_MICROS - 1);
+                setCurrentMicros(writtenAt + 30 * Micros.MINUTE_MICROS - 1);
                 job.run();
                 assertSplit(snapshot, compositeMask, 0);
                 Assert.assertEquals(0, ff.mergeBuildCount);
@@ -219,13 +215,13 @@ public class PartitionCompactionSplitTest extends AbstractCairoTest {
 
                 setCurrentMicros(writtenAt + idleMicros);
                 job.run();
-                Assert.assertEquals("ordinary squash must not stage a whole-day copy", 0, ff.mergeBuildCount);
-                Assert.assertEquals("consume sources without pre-rewriting them", 0, ff.rewriteBuildCount);
-                assertMerged(snapshot, (compositeMask & 1) != 0);
+                Assert.assertEquals("squash must not wait for the 60-minute single-folder timeout", 1, ff.mergeBuildCount);
+                Assert.assertEquals("merge the whole run instead of rewriting individual folders", 0, ff.rewriteBuildCount);
+                assertMerged(snapshot);
 
                 setCurrentMicros(currentMicros + Micros.HOUR_MICROS);
                 job.run();
-                Assert.assertEquals("a squashed plain folder has nothing left to compact", 0, ff.mergeBuildCount);
+                Assert.assertEquals("a merged plain folder has nothing left to compact", 1, ff.mergeBuildCount);
                 Assert.assertEquals(0, ff.rewriteBuildCount);
             }
         });
@@ -311,8 +307,6 @@ public class PartitionCompactionSplitTest extends AbstractCairoTest {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
-        // These tests isolate idle and hot-time selection, not the large-folder MOVE-TAIL path.
-        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1G");
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_SQUASH_IDLE_TIMEOUT, "30m");
         ff.mergeBuildCount = 0;
         ff.rewriteBuildCount = 0;

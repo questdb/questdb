@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
-import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMAR;
@@ -63,7 +62,7 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
     private final FilesFacade ff;
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     private final RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
-    private final SupersededSealedFileRemover supersededSealedFileRemover = new SupersededSealedFileRemover();
+    private final PostingSupersededFileRemover supersededFileRemover;
     private DirectIntList decodeColumns;
     private SymbolColumnIndexer indexer;
     private byte indexerType = -1;
@@ -73,6 +72,7 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
         this.ff = ff;
         this.ddlMem = Vm.getPMARInstance(configuration);
         this.decoder = configuration.newParquetPartitionDecoder();
+        this.supersededFileRemover = new PostingSupersededFileRemover(ff);
     }
 
     /**
@@ -295,7 +295,7 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
             partitionDir.trimTo(dirLen);
         }
         if (IndexType.isPosting(indexType)) {
-            supersededSealedFileRemover.remove(partitionDir, dirLen, columnName, columnNameTxn);
+            supersededFileRemover.remove(partitionDir, dirLen, columnName, columnNameTxn);
         }
     }
 
@@ -320,55 +320,6 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
             }
         } finally {
             partitionDir.trimTo(dirLen);
-        }
-    }
-
-    /**
-     * Deletes the sealed generations of one posting index that its live head superseded - the pre-seal files the
-     * build started from. On a published partition that is the purge job's, once no reader can still pin them; here
-     * nobody reads the directory yet, so they go straight away instead of being published into the partition.
-     */
-    private class SupersededSealedFileRemover implements PostingIndexUtils.SealedFileVisitor {
-        private CharSequence columnName;
-        private long columnNameTxn;
-        private Path dir;
-        private int dirLen;
-        private long liveSealTxn;
-
-        @Override
-        public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-            if (postingColumnNameTxn == columnNameTxn && sealTxn != liveSealTxn) {
-                ff.removeQuiet(PostingIndexUtils.coverDataFileName(
-                        dir.trimTo(dirLen), columnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn));
-                dir.trimTo(dirLen);
-            }
-        }
-
-        @Override
-        public void onValueFile(long postingColumnNameTxn, long sealTxn) {
-            if (postingColumnNameTxn == columnNameTxn && sealTxn != liveSealTxn) {
-                ff.removeQuiet(PostingIndexUtils.valueFileName(dir.trimTo(dirLen), columnName, postingColumnNameTxn, sealTxn));
-                dir.trimTo(dirLen);
-            }
-        }
-
-        void remove(Path dir, int dirLen, CharSequence columnName, long columnNameTxn) {
-            try {
-                liveSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(ff, PostingIndexUtils.keyFileName(dir.trimTo(dirLen), columnName, columnNameTxn));
-                if (liveSealTxn < 0) {
-                    // No readable head: keep everything rather than guess which generation is live.
-                    return;
-                }
-                this.dir = dir;
-                this.dirLen = dirLen;
-                this.columnName = columnName;
-                this.columnNameTxn = columnNameTxn;
-                PostingIndexUtils.scanSealedFiles(ff, dir, dirLen, columnName, this);
-            } finally {
-                this.dir = null;
-                this.columnName = null;
-                dir.trimTo(dirLen);
-            }
         }
     }
 }

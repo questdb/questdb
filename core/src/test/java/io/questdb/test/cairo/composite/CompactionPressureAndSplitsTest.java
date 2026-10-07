@@ -27,20 +27,19 @@ package io.questdb.test.cairo.composite;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Utf8s;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class CompactionPressureAndSplitsTest extends AbstractCairoTest {
@@ -98,68 +97,22 @@ public class CompactionPressureAndSplitsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBudgetResumeDoesNotWaitForMaintenanceFileTimesToBecomeIdle() throws Exception {
-        final AtomicBoolean hasSquashed = new AtomicBoolean();
-        final AtomicLong ticks = new AtomicLong(MicrosecondClockImpl.INSTANCE.getTicks() + 2 * Micros.HOUR_MICROS);
-        final var ff = warmMaintenanceFacade(hasSquashed, ticks);
-        assertMemoryLeak(ff, () -> {
-            createFiveFolders();
-            appendNextDay();
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TIME_BUDGET, "0ms");
-            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, ff, ticks::incrementAndGet)) {
-                job.run();
-                hasSquashed.set(true);
-                for (int remaining = 4; remaining >= 2; remaining--) {
-                    job.run();
-                    try (TableReader reader = getReader("x")) {
-                        Assert.assertEquals("maintenance mtime must not restart the idle window", remaining, reader.getPartitionCount());
-                    }
-                }
-            }
-            assertRows();
-        });
-    }
-
-    @Test
-    public void testSourceUpdateInvalidatesBudgetResume() throws Exception {
-        final AtomicBoolean hasSquashed = new AtomicBoolean();
-        final AtomicLong ticks = new AtomicLong(MicrosecondClockImpl.INSTANCE.getTicks() + 2 * Micros.HOUR_MICROS);
-        final var ff = warmMaintenanceFacade(hasSquashed, ticks);
-        assertMemoryLeak(ff, () -> {
-            createFiveFolders();
-            appendNextDay();
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TIME_BUDGET, "0ms");
-            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, ff, ticks::incrementAndGet)) {
-                job.run();
-                hasSquashed.set(true);
-                execute("UPDATE x SET i = -42 WHERE ts IN '2024-01-01'");
-                drainWalQueue();
-                final long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
-                job.run();
-                Assert.assertEquals(writtenBefore, node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows());
-                try (TableReader reader = getReader("x")) {
-                    Assert.assertEquals("a source's column-version change must invalidate the resume proof", 5, reader.getPartitionCount());
-                }
-            }
-            assertQuery("SELECT count() c FROM x WHERE i = -42").noRandomAccess().expectSize().returns("c\n40080\n");
-        });
-    }
-
-    @Test
-    public void testHotSplitBlocksIdleSquash() throws Exception {
+    public void testIdleSquashIgnoresHotCommitWindow() throws Exception {
         assertMemoryLeak(() -> {
             createFiveFolders();
             appendNextDay();
+            // The default window: the day's splits were written by the last 6 commits, so by commit count they are
+            // all still hot - and the table makes no more commits to cool them.
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 10);
             final long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
-            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, configuration.getFilesFacade(), idleClock())) {
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, configuration.getFilesFacade(), MicrosecondClockImpl.INSTANCE)) {
                 job.run();
             }
             try (TableReader reader = getReader("x")) {
-                Assert.assertEquals("a recently written split must block the whole-day squash", 6, reader.getPartitionCount());
+                Assert.assertEquals("a split written within the squash idle timeout must block the whole-day squash", 6, reader.getPartitionCount());
             }
             Assert.assertEquals(writtenBefore, node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows());
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
+            // Idle past the timeout, the day folds whatever the commit window says.
             try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, configuration.getFilesFacade(), idleClock())) {
                 job.run();
             }
@@ -171,7 +124,7 @@ public class CompactionPressureAndSplitsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNextDayRetainsFiveFoldersAndSweepResumesAtBudget() throws Exception {
+    public void testNextDayRetainsFiveFoldersAndSweepMergesTheDay() throws Exception {
         assertMemoryLeak(() -> {
             createFiveFolders();
             // The deprecated mid-partition limit must not collapse this day when the next day appears.
@@ -180,42 +133,55 @@ public class CompactionPressureAndSplitsTest extends AbstractCairoTest {
             try (TableReader reader = getReader("x")) {
                 Assert.assertEquals(6, reader.getPartitionCount());
             }
-            // A zero budget still allows the first atomic pair, then stops before another copy.
+            // The sweep folds the idle day whole, in one staged copy, however small the time budget.
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TIME_BUDGET, "0ms");
-            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, configuration.getFilesFacade(), idleClock())) {
-                for (int remaining = 5; remaining >= 2; remaining--) {
-                    job.run();
-                    try (TableReader reader = getReader("x")) {
-                        Assert.assertEquals("one pair per sweep, resuming from committed state", remaining, reader.getPartitionCount());
-                    }
-                    assertRows();
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testCheckpointDefersPairSquashAndThenResumes() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
-        assertMemoryLeak(() -> {
-            createFiveFolders();
-            appendNextDay();
-            execute("CHECKPOINT CREATE");
-            try {
-                try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, configuration.getFilesFacade(), idleClock())) {
-                    job.run();
-                }
-                try (TableReader reader = getReader("x")) {
-                    Assert.assertEquals(6, reader.getPartitionCount());
-                }
-            } finally {
-                execute("CHECKPOINT RELEASE");
-            }
             try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, configuration.getFilesFacade(), idleClock())) {
                 job.run();
             }
             try (TableReader reader = getReader("x")) {
-                Assert.assertEquals(2, reader.getPartitionCount());
+                Assert.assertEquals("the day's five folders must merge into one", 2, reader.getPartitionCount());
+                Assert.assertFalse(reader.getTxFile().isPartitionComposite(0));
+            }
+            assertRows();
+        });
+    }
+
+    @Test
+    public void testSweepMergeDuringCheckpointKeepsRetiredFolders() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        assertMemoryLeak(() -> {
+            createFiveFolders();
+            appendNextDay();
+            final ObjList<String> dayFolders = new ObjList<>();
+            try (TableReader reader = getReader("x"); Path path = new Path()) {
+                final TxReader tx = reader.getTxFile();
+                for (int i = 0; i < tx.getPartitionCount() - 1; i++) {
+                    path.of(configuration.getDbRoot()).concat(reader.getTableToken().getDirName());
+                    TableUtils.setPathForNativePartition(path, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(),
+                            tx.getPartitionTimestampByIndex(i), tx.getPartitionNameTxn(i));
+                    dayFolders.add(path.toString());
+                }
+            }
+            Assert.assertEquals(5, dayFolders.size());
+            execute("CHECKPOINT CREATE");
+            try {
+                // The merge writes a new directory and never touches the day's folders, so a checkpoint does not
+                // have to hold it back - only the retired folders have to outlive the checkpoint.
+                try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, configuration.getFilesFacade(), idleClock())) {
+                    job.run();
+                }
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(2, reader.getPartitionCount());
+                }
+                try (Path path = new Path()) {
+                    for (int i = 0, n = dayFolders.size(); i < n; i++) {
+                        Assert.assertTrue("a retired folder must outlive the checkpoint: " + dayFolders.getQuick(i),
+                                configuration.getFilesFacade().exists(path.of(dayFolders.getQuick(i)).$()));
+                    }
+                }
+                assertRows();
+            } finally {
+                execute("CHECKPOINT RELEASE");
             }
             assertRows();
         });
@@ -252,18 +218,6 @@ public class CompactionPressureAndSplitsTest extends AbstractCairoTest {
         try (TableReader reader = getReader("x")) {
             Assert.assertEquals("fixture must create five native folders", 5, reader.getPartitionCount());
         }
-    }
-
-    private static TestFilesFacadeImpl warmMaintenanceFacade(AtomicBoolean hasSquashed, AtomicLong ticks) {
-        return new TestFilesFacadeImpl() {
-            @Override
-            public long getLastModified(LPSZ path) {
-                if (hasSquashed.get() && Utf8s.containsAscii(path, "2024-01-01")) {
-                    return ticks.get() / Micros.MILLI_MICROS;
-                }
-                return super.getLastModified(path);
-            }
-        };
     }
 
     private static Clock idleClock() {

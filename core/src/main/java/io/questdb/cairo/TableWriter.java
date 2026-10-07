@@ -3192,80 +3192,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Rechecks a sweep snapshot before running cheap compaction steps or budgeted, ordinary pair squashes.
-     * A queued request owns no staging copy. It must not commit an open data transaction or drop lag rows.
-     */
-    public void maintainPartitionFromSweep(long partitionTimestamp, LongList folders, long expectedMetadataVersion, boolean isSquash, boolean isSquashResume, LongList remainingFolders) {
-        if (inTransaction() || txWriter.getLagRowCount() > 0 || getMetadataVersion() != expectedMetadataVersion) {
-            return;
-        }
-        final int folderCount = folders.size() / CompositePartitionSwapCommand.LONGS_PER_FOLDER;
-        if (folderCount == 0) {
-            return;
-        }
-        final int lo = txWriter.getPartitionIndex(folders.getQuick(0));
-        final int hi = lo + folderCount;
-        if (lo < 0 || hi > txWriter.getPartitionCount() || (isSquash && hi == txWriter.getPartitionCount())) {
-            return;
-        }
-        final long lastCommitTxn = txWriter.getTxn();
-        for (int p = 0; p < folderCount; p++) {
-            final int offset = p * CompositePartitionSwapCommand.LONGS_PER_FOLDER;
-            final int index = lo + p;
-            if (txWriter.getPartitionTimestampByIndex(index) != folders.getQuick(offset)
-                    || txWriter.getPartitionNameTxn(index) != folders.getQuick(offset + 1)
-                    || compositePartitionGeneration(index) != folders.getQuick(offset + 2)
-                    || txWriter.getPartitionSize(index) != folders.getQuick(offset + 3)
-                    || columnVersionWriter.getMaxPartitionVersion(folders.getQuick(offset)) != folders.getQuick(offset + 4)
-                    || txWriter.isPartitionReadOnly(index) || txWriter.isPartitionRemote(index) || txWriter.isPartitionParquet(index)
-                    || (isSquash && !isSquashResume && !isColdSquashPartition(index, lastCommitTxn))) {
-                return;
-            }
-        }
-        if (isSquash && (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(lo)) != partitionTimestamp
-                || (lo > 0 && txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(lo - 1)) == partitionTimestamp)
-                || txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(hi)) == partitionTimestamp)) {
-            return;
-        }
-        final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudgetMs() * Micros.MILLI_MICROS;
-        for (int p = 0; p < folderCount; p++) {
-            final int index = txWriter.getPartitionIndex(folders.getQuick(p * CompositePartitionSwapCommand.LONGS_PER_FOLDER));
-            int result = COMPACTION_NONE;
-            if (txWriter.isPartitionComposite(index)) {
-                do {
-                    result = compactPhysicalPartition(index, true, !isSquash, Long.MAX_VALUE, deadline, PartitionCompactionPolicy.REASON_NONE);
-                } while (result == COMPACTION_JOINED && configuration.getMicrosecondClock().getTicks() < deadline);
-                if (result == COMPACTION_MOVED_TAIL) {
-                    finishMovedTailPrefix(index, true, PartitionCompactionPolicy.REASON_AGE, deadline);
-                    if (index == txWriter.getPartitionCount() - 2) {
-                        closeActivePartition(false);
-                        openLastPartition();
-                    }
-                    processPartitionRemoveCandidates();
-                    return;
-                }
-                if (result == COMPACTION_REWRITTEN && index == txWriter.getPartitionCount() - 1) {
-                    closeActivePartition(false);
-                    openLastPartition();
-                }
-            }
-            if (result != COMPACTION_NONE && result != COMPACTION_SKIPPED_HOT
-                    && configuration.getMicrosecondClock().getTicks() >= deadline) {
-                if (isSquash) {
-                    captureRemainingSquashFolders(partitionTimestamp, remainingFolders);
-                }
-                processPartitionRemoveCandidates();
-                return;
-            }
-        }
-        if (isSquash) {
-            squashPartitionRange(1, lo, hi, lastCommitTxn, deadline, true, true);
-            captureRemainingSquashFolders(partitionTimestamp, remainingFolders);
-        }
-        processPartitionRemoveCandidates();
-    }
-
-    /**
      * MAKE-PLAIN plus TRIM-FILES on one partition, on behalf of {@code PartitionCompactionScanJob}. The sweep sends
      * this for a partition a writer left in MAKE-PLAIN's shape - one piece at row 0 with dead space above it - and
      * then stopped ingesting, so the per-commit path that would have retried it never runs again.
@@ -4307,15 +4233,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 o3FinishInFlight = false;
             }
         }
-        try {
-            if (sealPostingIndexForPartition(partitionTimestamp, false)) {
-                restorePostingIndexersToLastPartition();
-            }
-        } catch (Throwable e) {
-            LOG.critical().$("composite partition swap succeeded but posting-index reseal failed `").$(e).$('`').$();
-            distressed = true;
-            throw e;
-        }
+        // No posting index reseal: the build sealed every POSTING index of the directory, covered values included,
+        // off this writer - see NativePartitionIndexBuilder.
 
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
@@ -4468,15 +4387,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // The splits this merge folded may have been the earliest ones the squash scan starts from.
         minSplitPartitionTimestamp = findMinSplitPartitionTimestamp();
 
-        try {
-            if (sealPostingIndexForPartition(logicalPartitionTimestamp, false)) {
-                restorePostingIndexersToLastPartition();
-            }
-        } catch (Throwable e) {
-            LOG.critical().$("logical partition merge succeeded but posting-index reseal failed `").$(e).$('`').$();
-            distressed = true;
-            throw e;
-        }
+        // No posting index reseal: the build sealed every POSTING index of the directory, covered values included,
+        // off this writer - see NativePartitionIndexBuilder.
 
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
@@ -6048,24 +5960,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void cancelRowAndBump() {
         rowCancel();
         masterRef++;
-    }
-
-    private void captureRemainingSquashFolders(long logicalTimestamp, LongList sink) {
-        sink.clear();
-        final int lo = squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(logicalTimestamp);
-        int hi = lo;
-        while (hi < txWriter.getPartitionCount()
-                && txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(hi)) == logicalTimestamp) {
-            hi++;
-        }
-        if (hi - lo <= 1 || hi == txWriter.getPartitionCount()) {
-            return;
-        }
-        for (int i = lo; i < hi; i++) {
-            final long ts = txWriter.getPartitionTimestampByIndex(i);
-            sink.add(ts, txWriter.getPartitionNameTxn(i), compositePartitionGeneration(i), txWriter.getPartitionSize(i));
-            sink.add(columnVersionWriter.getMaxPartitionVersion(ts));
-        }
     }
 
     private void checkColumnName(CharSequence name) {
@@ -9914,13 +9808,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getPartitionNameTxn(partitionIndex) < lastCommitTxn - hotCommits;
     }
 
-    private boolean isColdSmallSquashTarget(int partitionIndex, long lastCommitTxn, boolean isKnownCold) {
+    private boolean isColdSmallSquashTarget(int partitionIndex, long lastCommitTxn) {
         if (!txWriter.isPartitionComposite(partitionIndex) || txWriter.isPartitionReadOnly(partitionIndex)) {
             return false;
         }
         final long writerTxn = getGeometry().getWriterTxn(partitionIndex);
         final long splitMinSize = configuration.getPartitionO3SplitMinSize();
-        if (writerTxn < 0 || (!isKnownCold && writerTxn >= lastCommitTxn) || splitMinSize <= 0) {
+        if (writerTxn < 0 || writerTxn >= lastCommitTxn || splitMinSize <= 0) {
             return false;
         }
         final int sizeMultiple = configuration.getPartitionCompactionSquashTargetSizeMultiple();
@@ -17139,10 +17033,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void squashPartitionRange(int cap, int partitionIndexLo, int partitionIndexHi, long lastCommitTxn, long deadlineMicros, boolean isAllCold) {
-        squashPartitionRange(cap, partitionIndexLo, partitionIndexHi, lastCommitTxn, deadlineMicros, isAllCold, false);
-    }
-
-    private void squashPartitionRange(int cap, int partitionIndexLo, int partitionIndexHi, long lastCommitTxn, long deadlineMicros, boolean isAllCold, boolean isKnownCold) {
         while (partitionIndexHi - partitionIndexLo > Math.max(1, cap)) {
             if (isCheckpointInProgress()) {
                 return;
@@ -17167,7 +17057,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 return;
             }
             final int before = txWriter.getPartitionCount();
-            squashSplitPartitions(selected, selected + 2, 1, false, lastCommitTxn, isKnownCold);
+            squashSplitPartitions(selected, selected + 2, 1, false, lastCommitTxn);
             final int removed = before - txWriter.getPartitionCount();
             if (removed == 0) {
                 return;
@@ -17253,10 +17143,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force, long lastCommitTxn) {
-        squashSplitPartitions(partitionIndexLo, partitionIndexHi, optimalPartitionCount, force, lastCommitTxn, false);
-    }
-
-    private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force, long lastCommitTxn, boolean isKnownCold) {
         if (partitionIndexHi <= partitionIndexLo + Math.max(1, optimalPartitionCount)) {
             // Nothing to do
             return;
@@ -17311,7 +17197,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         // Forced squash always requires a plain target. Ordinary squash cleans a cold, small target once,
         // then appends sources' live ranges directly; a hot or large accumulator keeps the append-only path.
-        if (force || isColdSmallSquashTarget(targetPartitionIndex, lastCommitTxn, isKnownCold)) {
+        if (force || isColdSmallSquashTarget(targetPartitionIndex, lastCommitTxn)) {
             final long targetSeqTxn = nativePartitionSeqTxn(targetPartitionIndex);
             compactPartitionToPlain(targetPartitionIndex, "squash");
             // Maintenance must not make an old accumulator look like it took the last data commit.

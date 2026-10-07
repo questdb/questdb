@@ -113,6 +113,11 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         if (mixedIOFlag) {
             // reserve() allocated the plan's full extent before this positioned write; mixed I/O needs no target
             // mapping. Only a file source has an fd to copy from, so only it takes the kernel's fd-to-fd path.
+            if (!isAllocatedBytesKnown) {
+                // A frame too wide to keep its columns open reserved through an earlier open of this file: learn the
+                // length that reservation left, allocating only if it falls short.
+                ensureAllocated(dstOffset + size);
+            }
             assertWriteReserved(dstOffset + size);
             if (sourceStorageType == COLUMN_CONTIGUOUS_FILE) {
                 copyFromFile(sourceColumn, srcOffset, dstOffset, size);
