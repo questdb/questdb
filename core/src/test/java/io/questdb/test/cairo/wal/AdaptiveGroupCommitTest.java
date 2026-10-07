@@ -989,6 +989,16 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
      * {@code localDurableSeqTxn} covers every prior data commit before the structural txn is sequenced.
      */
     @Test
+    public void testDropAndViewChangeFlushTheSequencerLogV1() throws Exception {
+        assertDropAndViewChangeFlushTheSequencerLog(0);
+    }
+
+    @Test
+    public void testDropAndViewChangeFlushTheSequencerLogV2() throws Exception {
+        assertDropAndViewChangeFlushTheSequencerLog(16);
+    }
+
+    @Test
     public void testDurableAppendsMoveTheDurableFrontierAdaptiveW0() throws Exception {
         assertDurableAppendsMoveTheDurableFrontier("adaptive", "0");
     }
@@ -1364,6 +1374,28 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
      * compares {@code now - pendingSince >= W}; the WalPurgeJob's broad sweep includes the adaptive
      * group-commit flush of idle writers).
      */
+    private void assertDropAndViewChangeFlushTheSequencerLog(int seqPartTxnCount) throws Exception {
+        // No WAL writer batch follows a drop or a view change, so under a window they must flush the log themselves.
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, seqPartTxnCount);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
+        final WalFdatasyncFacade ff = new WalFdatasyncFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("create table base_t (ts timestamp, x int, y int) timestamp(ts) partition by day wal");
+            execute("create table drop_t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into drop_t values (1, 1)");
+            execute("create view v as (select ts, x from base_t)");
+
+            ff.reset();
+            execute("alter view v as (select ts, y from base_t)");
+            Assert.assertTrue("ALTER VIEW left its sequencer record unflushed", ff.sequencerFdatasyncs() > 0);
+
+            ff.reset();
+            execute("drop table drop_t");
+            Assert.assertTrue("DROP TABLE left its sequencer record unflushed", ff.sequencerFdatasyncs() > 0);
+        });
+    }
+
     private void assertDurableAppendsMoveTheDurableFrontier(String commitMode, String groupWindow) throws Exception {
         // In a mode that promises durability, every record is covered by the frontier once its statement returns,
         // whatever kind of record it is. NOSYNC does not track the frontier.
