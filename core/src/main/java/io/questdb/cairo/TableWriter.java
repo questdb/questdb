@@ -7462,18 +7462,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // column append memories keep describing that native partition with
                         // offsets that a later mid-partition O3 append (which writes through its
                         // own fds) silently outgrows. The next truncating close
-                        // (doClose -> freeColumns -> MemoryCMARWImpl.close(true)) then trims
+                        // (doClose -> freeColumns -> MemoryPMARImpl.close(true)) then trims
                         // every .d back to ceilPageSize(staleOffset) and discards the appended
                         // rows; a reader or column converter mapping the committed row count
                         // SIGBUSes past the shortened file.
                         //
-                        // Close WITHOUT truncating, as removePartition and
-                        // convertPartitionNativeToParquet already do when the last partition
-                        // turns parquet on their paths, and reset the open-partition marker so
-                        // the writer is in the same state as a freshly opened one over a table
-                        // whose last partition is parquet.
+                        // Close the partition now and reset the open-partition marker, so the
+                        // writer is in the same state as a freshly opened one over a table whose
+                        // last partition is parquet. Nothing reopens the native partition after
+                        // this, so when the memories still describe the partition's current
+                        // version, the close trims the whole append pages the writer
+                        // pre-allocated; left in place, they stay on disk until the partition is
+                        // rewritten. The trim size comes from _txn, not from the append memories,
+                        // as in the split branch of o3ConsumePartitionUpdateSink: a stale memory
+                        // offset cannot cut committed rows.
+                        //
+                        // _txn describes the open files only while it lists this partition as
+                        // native under the name txn openPartition used. Otherwise the memories
+                        // hold a superseded version: convertPartitionNativeToParquet leaves them
+                        // open when squashPartitionForce makes the partition last after
+                        // lastPartitionConverted was computed, and _txn then counts the parquet
+                        // rows. Positioning those files at that count reads past their data, so
+                        // close without truncating; the purge removes the superseded version.
                         drainPendingPostingSealPurgesBeforeIndexerRelease();
-                        closeActivePartition(false);
+                        final int openPartitionRawIndex = txWriter.findAttachedPartitionRawIndexByLoTimestamp(lastOpenPartitionTs);
+                        if (openPartitionRawIndex > -1
+                                && !txWriter.isPartitionParquetByRawIndex(openPartitionRawIndex)
+                                && txWriter.getPartitionNameTxnByRawIndex(openPartitionRawIndex) == lastOpenPartitionTxnName) {
+                            closeActivePartition(txWriter.getPartitionSizeByRawIndex(openPartitionRawIndex));
+                        } else {
+                            closeActivePartition(false);
+                        }
                         lastOpenPartitionTs = Long.MIN_VALUE;
                         lastOpenPartitionIsReadOnly = false;
                     }
