@@ -207,6 +207,33 @@ public class QwpEgressQueryTimeoutTest extends AbstractReusedServerQwpEgressTest
     }
 
     @Test
+    public void testStatementCompletingPastClientTimeoutReportsExecDone() throws Exception {
+        // INSERT AS SELECT, UPDATE and CREATE TABLE AS SELECT run to completion inside
+        // execute(): while they write, the engine checks only for cancellation. One that
+        // outlives the client's timeout has taken effect, so the server must answer
+        // EXEC_DONE rather than STATUS_QUERY_TIMEOUT, or a client retry would apply it
+        // twice. CROSS JOIN sleep(0.3) makes each statement overrun the 100ms timeout.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                serverMain.execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                try (QwpQueryClient client = connectClient()) {
+                    RecordingHandler handler = assertExecDonePastTimeout(client,
+                            "INSERT INTO t SELECT x, x::timestamp FROM long_sequence(3) CROSS JOIN sleep(0.3)");
+                    Assert.assertEquals(3, handler.rowsAffected);
+                    serverMain.assertSql("SELECT count() FROM t", "count\n3\n");
+
+                    handler = assertExecDonePastTimeout(client, "UPDATE t SET x = x + 10 FROM sleep(0.3)");
+                    Assert.assertEquals(3, handler.rowsAffected);
+                    serverMain.assertSql("SELECT sum(x) FROM t", "sum\n36\n");
+
+                    assertExecDonePastTimeout(client, "CREATE TABLE c AS (SELECT x FROM t CROSS JOIN sleep(0.3))");
+                    serverMain.assertSql("SELECT count() FROM c", "count\n3\n");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testStatementTimingOutOnBusyWriterReportsLimitExceeded() throws Exception {
         // Without a client timeout, a statement that times out waiting for the
         // table writer (SqlTimeoutException) reports STATUS_LIMIT_EXCEEDED -- a
@@ -229,6 +256,20 @@ public class QwpEgressQueryTimeoutTest extends AbstractReusedServerQwpEgressTest
         });
     }
 
+    private static RecordingHandler assertExecDonePastTimeout(QwpQueryClient client, String sql) {
+        final long timeoutMs = 100;
+        RecordingHandler handler = new RecordingHandler();
+        long startNanos = System.nanoTime();
+        client.execute(sql, null, handler, false, timeoutMs);
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+        // Without an overrun the test would pass vacuously.
+        Assert.assertTrue("the statement must outlive the timeout, took " + elapsedMs + "ms", elapsedMs > timeoutMs);
+        Assert.assertNull("a completed statement must not fail: " + handler.errorMessage, handler.errorMessage);
+        Assert.assertTrue("expected EXEC_DONE for: " + sql, handler.isExecDone);
+        Assert.assertFalse(client.hasTerminalFailure());
+        return handler;
+    }
+
     private static QwpQueryClient connectClient() {
         QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";");
         try {
@@ -245,7 +286,9 @@ public class QwpEgressQueryTimeoutTest extends AbstractReusedServerQwpEgressTest
         byte errorStatus;
         int failoverResetCount;
         boolean isEnded;
+        boolean isExecDone;
         long rowCount;
+        long rowsAffected;
 
         @Override
         public void onBatch(QwpColumnBatch batch) {
@@ -261,6 +304,12 @@ public class QwpEgressQueryTimeoutTest extends AbstractReusedServerQwpEgressTest
         public void onError(byte status, String message) {
             errorStatus = status;
             errorMessage = message;
+        }
+
+        @Override
+        public void onExecDone(short opType, long rowsAffected) {
+            isExecDone = true;
+            this.rowsAffected = rowsAffected;
         }
 
         @Override

@@ -810,18 +810,27 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     }
 
     /**
-     * Waits for the async writer operation of a non-SELECT statement. A query
-     * that carried a per-query timeout waits at most what is left of it -- its
-     * circuit breaker holds the timeout -- and fails with a timeout once it runs
-     * out. Like {@code /exec} with {@code Statement-Timeout}, that does not
-     * withdraw the operation: the writer may still apply it. Without a per-query
-     * timeout this is {@link OperationFuture#await()} with its server-side limits.
+     * Waits for the writer operation of a non-SELECT statement. INSERT, INSERT AS
+     * SELECT, CREATE TABLE AS SELECT, DROP, and an UPDATE or ALTER that finds the
+     * writer free all complete inside {@code execute()}. Such a statement has taken
+     * effect, so this method returns at once whatever its timeout, as {@code /exec}
+     * does. A statement queued behind a busy writer waits at most what is left of a
+     * per-query timeout -- its circuit breaker holds the timeout -- and fails with a
+     * timeout once it runs out. Like {@code /exec} with {@code Statement-Timeout},
+     * that does not withdraw the operation: the writer may still apply it. Without
+     * a per-query timeout this is {@link OperationFuture#await()} with its
+     * server-side limits.
      */
     private static void awaitOperation(
             OperationFuture fut,
             SqlExecutionContextImpl sqlCtx,
             QwpEgressProcessorState state
     ) throws SqlException {
+        if (fut.getStatus() == OperationFuture.QUERY_COMPLETE) {
+            // The statement has taken effect. Report it as done even past its
+            // timeout, or a client that retries it would apply it twice.
+            return;
+        }
         final long remainingMillis = state.hasQueryTimeout()
                 ? sqlCtx.getCircuitBreaker().getRemainingTimeoutMillis()
                 : Long.MAX_VALUE;
