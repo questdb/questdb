@@ -41,6 +41,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -62,21 +63,30 @@ import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
  * Transaction record: 28 bytes
  * <p>
  * See the format of the header and transaction record in {@link TableTransactionLogFile}
+ * <p>
+ * A power loss can leave the tail of the log torn: the header can reach the disk ahead of the records it
+ * publishes, and a record can be split by a sector boundary. Such records were never acknowledged, so
+ * {@link #open(Path)} drops them. It relies on two invariants: the bytes past the published tail are zero
+ * on disk before a record is written over them, and {@link #UNSYNCED_FROM_TXN_OFFSET_64} names the first
+ * record that a completed flush may not have covered.
  */
 public class TableTransactionLogV1 implements TableTransactionLogFile {
     /**
-     * Header slot (in the reserved area, clear of V2's checksum fields) where every publish copies
-     * {@code MAX_TXN_OFFSET_64}. A binary that predates the {@code _txnlog.c} sidecar advances the tail
-     * without it, so a copy that disagrees with the tail on open means another writer appended and the
-     * sidecar's entries may name records it never saw. Both fields sit in the header's first sector, so
-     * a power cut cannot land one without the other.
+     * The slot {@link #UNSYNCED_FROM_TXN_OFFSET_64} took over. {@code TableSnapshotRestore} still moves it
+     * along when it rolls the tail back, which only ever lowers it.
      */
     public static final long CRC_TAIL_OFFSET_64 = HEADER_SEQ_PART_SIZE_32 + Integer.BYTES + 2 * Long.BYTES;
+    /**
+     * Header slot, in the reserved area and clear of V2's checksum fields, holding the first txn whose
+     * record may not be on disk: every record below it was covered by a completed flush, or by the scan of
+     * an earlier open. Zero in a file this binary never wrote, whose records are then trusted as before. It shares the header's first sector with {@code MAX_TXN_OFFSET_64}, so a power loss
+     * cannot persist one without the other.
+     */
+    public static final long UNSYNCED_FROM_TXN_OFFSET_64 = HEADER_SEQ_PART_SIZE_32 + Integer.BYTES + 2 * Long.BYTES;
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV1.class);
     private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
     public static long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
     private final CairoConfiguration configuration;
-    private final TxnLogCrcSidecar crcSidecar = new TxnLogCrcSidecar();
     private final FilesFacade ff;
     private final AtomicLong maxTxn = new AtomicLong();
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
@@ -106,17 +116,10 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             long txnMaxTimestamp,
             long txnRowCount
     ) {
-        txnMem.putLong(structureVersion);
-        txnMem.putInt(walId);
-        txnMem.putInt(segmentId);
-        txnMem.putInt(segmentTxn);
-        txnMem.putLong(timestamp);
-
+        putRecord(structureVersion, walId, segmentId, segmentTxn, timestamp);
         Unsafe.storeFence();
         long maxTxn = this.maxTxn.incrementAndGet();
-        recordCrcBeforePublish(maxTxn);
         txnMem.putLong(MAX_TXN_OFFSET_64, maxTxn);
-        txnMem.putLong(CRC_TAIL_OFFSET_64, maxTxn);
         sync0();
         // Transactions are 1 based here
         return maxTxn;
@@ -124,11 +127,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
     @Override
     public void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
-        txnMem.putLong(newStructureVersion);
-        txnMem.putInt(STRUCTURAL_CHANGE_WAL_ID);
-        txnMem.putInt(-1);
-        txnMem.putInt(-1);
-        txnMem.putLong(timestamp);
+        putRecord(newStructureVersion, STRUCTURAL_CHANGE_WAL_ID, -1, -1, timestamp);
     }
 
     @Override
@@ -140,65 +139,56 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             }
         }
         txnMem.close(false);
-        crcSidecar.close();
     }
 
     @Override
     public void create(Path path, long tableCreateTimestamp) {
         final int pathLength = path.size();
         openSmallFile(ff, path, pathLength, txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
-        // A previous lineage's published records may still be the durable image of this file. The new
-        // lineage reuses their txn numbers, so its CRCs must not reach the medium while those records can
-        // still be read back: flush the reset in every mode. A fresh file has nothing to shadow.
-        final boolean isReplacingLineage = txnMem.size() >= MAX_TXN_OFFSET_64 + Long.BYTES
-                && txnMem.getLong(MAX_TXN_OFFSET_64) != 0;
+        // A previous lineage's records may still be in the file and on disk. The new lineage writes over
+        // them, so zero them and flush in every mode: a torn record must tear over zeros.
+        final boolean isReplacingLineage = (txnMem.size() >= MAX_TXN_OFFSET_64 + Long.BYTES
+                && txnMem.getLong(MAX_TXN_OFFSET_64) != 0)
+                || hasNonZeroBytes(HEADER_SIZE, txnMem.size());
 
         txnMem.jumpTo(0L);
         txnMem.putInt(WAL_SEQUENCER_FORMAT_VERSION_V1);
         txnMem.putLong(0L);
         txnMem.putLong(tableCreateTimestamp);
         txnMem.putInt(0);
-        txnMem.putLong(CRC_TAIL_OFFSET_64, 0L);
+        txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, 1L);
         if (isReplacingLineage) {
+            zeroFrom(HEADER_SIZE);
             txnMem.sync(false);
             ff.fdatasync(txnMem.getFd());
         } else {
             sync0();
         }
         txnMem.jumpTo(HEADER_SIZE);
-
-        // A table created by this binary is covered from its very first txn: nothing predates the
-        // sidecar here, so the watermark is 1 rather than lastTxn + 1 as on the open() path.
-        try {
-            crcSidecar.ofNewLineage(ff, path.concat(WalUtils.TXNLOG_CRC_FILE_NAME), 1L);
-        } finally {
-            path.trimTo(pathLength);
-        }
     }
 
     @Override
     public long endMetadataChangeEntry() {
         // Transactions are 1 based here
         long nextTxn = maxTxn.incrementAndGet();
-        recordCrcBeforePublish(nextTxn);
         txnMem.putLong(MAX_TXN_OFFSET_64, nextTxn);
-        txnMem.putLong(CRC_TAIL_OFFSET_64, nextTxn);
         return nextTxn;
     }
 
     @Override
     public void fdatasyncTxnLog() {
-        // Keep the adaptive batch's CRC coverage durable before flushing the txnlog. A missing
-        // sidecar entry reads unverified; the txnlog flush, not the sidecar, provides durability.
-        crcSidecar.fdatasync();
         if (txnMem.isOpen()) {
+            // The caller holds the sequencer write lock, so no record is half-written past this tail.
+            final long flushedTxn = maxTxn.get();
             ff.fdatasync(txnMem.getFd());
+            txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, flushedTxn + 1);
         }
     }
 
     @Override
     public void fullSync() {
         txnMem.sync(false);
+        markFlushed();
     }
 
     @Override
@@ -253,62 +243,121 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             openSmallFile(ff, path, path.size(), txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
         }
 
-        long lastTxn = txnMem.getLong(MAX_TXN_OFFSET_64);
+        final long lastTxn = recoverTail(path, txnMem.getLong(MAX_TXN_OFFSET_64));
         maxTxn.set(lastTxn);
-        // lastTxn + 1 is the next txn to be written. On first creation it becomes the watermark: records
-        // already on disk predate this sidecar and carry no CRC, so they must stay classified as legacy
-        // rather than torn. A sidecar that already exists keeps its own watermark, and the sidecar retires
-        // every entry from this txn on, because a crash can leave entries the header never published.
-        final int seqDirLen = path.size();
-        try {
-            path.concat(WalUtils.TXNLOG_CRC_FILE_NAME);
-            final long crcTail = txnMem.getLong(CRC_TAIL_OFFSET_64);
-            if (crcTail == lastTxn) {
-                crcSidecar.of(ff, path, lastTxn + 1);
-            } else {
-                LOG.info().$("txnlog tail moved outside CRC coverage, restarting it [path=").$(path)
-                        .$(", maxTxn=").$(lastTxn)
-                        .$(", crcTail=").$(crcTail)
-                        .I$();
-                // Another writer moved the tail -- an older binary, say -- or a crash fell between the two
-                // header stores. An entry this binary stamped but never published can now sit below the
-                // tail and name a record that writer put there, which would read as torn.
-                // Restart coverage after the tail instead, as on the first upgrade, and adopt the tail
-                // only once the reset took, so the next open does not repeat it.
-                crcSidecar.ofNewLineage(ff, path, lastTxn + 1);
-                if (crcSidecar.firstCoveredTxn() == lastTxn + 1) {
-                    txnMem.putLong(CRC_TAIL_OFFSET_64, lastTxn);
-                }
-            }
-        } finally {
-            path.trimTo(seqDirLen);
-        }
         txnMem.jumpTo(HEADER_SIZE);
         long maxStructureVersion = txnMem.getLong(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
         txnMem.jumpTo(HEADER_SIZE + lastTxn * RECORD_SIZE);
         return maxStructureVersion;
     }
 
-    /**
-     * Appends the stamped CRC for {@code txn} before the caller publishes the txn in the header.
-     * Missing or unstamped sidecar entries read unverified, so SYNC and ASYNC submit asynchronous
-     * writeback and NOSYNC skips it; ADAPTIVE retains its existing per-commit or deferred batch flush.
-     * The slot is always fresh: opening the sidecar durably retired every entry past the published tail.
-     */
-    private void recordCrcBeforePublish(long txn) {
-        final long recordOffset = HEADER_SIZE + (txn - 1) * RECORD_SIZE;
-        final int commitMode = configuration.getCommitMode();
-        assert !crcSidecar.hasEntry(txn) : "unpublished txn has a stamped CRC [txn=" + txn + ']';
-        crcSidecar.append(txn, txnMem.addressOf(recordOffset), RECORD_SIZE);
-        if (commitMode != CommitMode.NOSYNC) {
-            // ADAPTIVE W>0 defers the device flush to fdatasyncTxnLog().
-            final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE
-                    && configuration.getAdaptiveCommitGroupWindowUs() > 0;
-            crcSidecar.sync(commitMode == CommitMode.SYNC || commitMode == CommitMode.ASYNC || deferDeviceFlush);
-            if (commitMode == CommitMode.ADAPTIVE && !deferDeviceFlush) {
-                crcSidecar.fdatasync();
+    private boolean hasNonZeroBytes(long lo, long hi) {
+        long offset = lo;
+        for (; offset + Long.BYTES <= hi; offset += Long.BYTES) {
+            if (txnMem.getLong(offset) != 0) {
+                return true;
             }
         }
+        for (; offset < hi; offset++) {
+            if (txnMem.getByte(offset) != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isDurableMode() {
+        final int commitMode = configuration.getCommitMode();
+        return commitMode == CommitMode.ADAPTIVE || commitMode == CommitMode.SYNC;
+    }
+
+    /**
+     * Whether the record at {@code txn} is not wholly on disk. A sector holds a record's bytes whole or
+     * not at all, the bytes past the tail were zero, and the commit timestamp is stored last, so a torn
+     * record shows zeros where the written record has none: a zero wal id, a timestamp whose upper half is
+     * zero, or a structure version whose lower half is zero and does not follow the previous record. The
+     * previous record is intact: the scan starts after a flushed one and stops at the first torn one.
+     */
+    private boolean isTornRecord(long txn) {
+        final long offset = HEADER_SIZE + (txn - 1) * RECORD_SIZE;
+        if (offset + RECORD_SIZE > txnMem.size()) {
+            return true;
+        }
+        final int walId = txnMem.getInt(offset + TX_LOG_WAL_ID_OFFSET);
+        if (walId == 0) {
+            return true;
+        }
+        if (txn == 1) {
+            // Record 1 shares the header's sector, so it reaches the disk with the header that publishes it.
+            return false;
+        }
+        final long timestamp = txnMem.getLong(offset + TX_LOG_COMMIT_TIMESTAMP_OFFSET);
+        final long prevTimestamp = txnMem.getLong(offset - RECORD_SIZE + TX_LOG_COMMIT_TIMESTAMP_OFFSET);
+        if ((timestamp >>> 32) == 0 && ((prevTimestamp >>> 32) != 0 || (timestamp == 0 && prevTimestamp != 0))) {
+            return true;
+        }
+        final long structureVersion = txnMem.getLong(offset + TX_LOG_STRUCTURE_VERSION_OFFSET);
+        if ((structureVersion & 0xFFFFFFFFL) != 0) {
+            return false;
+        }
+        final long prevStructureVersion = txnMem.getLong(offset - RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
+        if (walId == STRUCTURAL_CHANGE_WAL_ID) {
+            return structureVersion != prevStructureVersion + 1;
+        }
+        return walId > 0 && structureVersion != prevStructureVersion;
+    }
+
+    // Every record up to the tail is on disk.
+    private void markFlushed() {
+        txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, maxTxn.get() + 1);
+    }
+
+    // Store order matters: a writeback that catches the record half-stored must show a zero timestamp.
+    private void putRecord(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp) {
+        txnMem.putLong(structureVersion);
+        txnMem.putInt(walId);
+        txnMem.putInt(segmentId);
+        txnMem.putInt(segmentTxn);
+        Unsafe.storeFence();
+        txnMem.putLong(timestamp);
+    }
+
+    /**
+     * Drops a torn tail left by a power loss and returns the txn the log ends at. Scans the records from
+     * the first one a flush may not have covered, cuts the log before the first torn one, zeroes everything
+     * past the tail, and makes that durable before the hint moves past the records it kept. A clean open
+     * scans nothing and finds only zeros past the tail.
+     */
+    private long recoverTail(Path path, long publishedTxn) {
+        final long unsyncedFrom = txnMem.getLong(UNSYNCED_FROM_TXN_OFFSET_64);
+        // A file this binary never wrote has no hint: its records are trusted, as before.
+        final long scanFrom = unsyncedFrom > 0 ? Math.max(1, Math.min(unsyncedFrom, publishedTxn + 1)) : publishedTxn + 1;
+        long tail = publishedTxn;
+        for (long txn = scanFrom; txn <= publishedTxn; txn++) {
+            if (isTornRecord(txn)) {
+                tail = txn - 1;
+                break;
+            }
+        }
+        final long tailOffset = HEADER_SIZE + tail * RECORD_SIZE;
+        final boolean isDirtyPastTail = hasNonZeroBytes(tailOffset, txnMem.size());
+        if (tail != publishedTxn) {
+            LOG.info().$("dropping torn sequencer txnlog tail [path=").$(path)
+                    .$(", publishedTxn=").$(publishedTxn)
+                    .$(", keptTxn=").$(tail)
+                    .I$();
+            txnMem.putLong(MAX_TXN_OFFSET_64, tail);
+        }
+        if (isDirtyPastTail) {
+            zeroFrom(tailOffset);
+        }
+        // A cut or zeroed bytes are flushed in every mode: a record written over them must tear over zeros.
+        // The kept records are flushed only where the hint is a durability promise.
+        if (tail != publishedTxn || isDirtyPastTail || (scanFrom <= publishedTxn && isDurableMode())) {
+            ff.fdatasync(txnMem.getFd());
+        }
+        txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, tail + 1);
+        return tail;
     }
 
     private void sync0() {
@@ -325,23 +374,25 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             if (commitMode == CommitMode.ADAPTIVE && !deferDeviceFlush) {
                 ff.fdatasync(txnMem.getFd());
             }
+            // The hint moves only past records a synchronous flush covered: here under SYNC and ADAPTIVE W=0,
+            // in fdatasyncTxnLog() under ADAPTIVE W>0. Under NOSYNC and ASYNC the next open scans them.
+            if (!deferDeviceFlush && commitMode != CommitMode.ASYNC) {
+                markFlushed();
+            }
+        }
+    }
+
+    private void zeroFrom(long offset) {
+        final long size = txnMem.size();
+        if (offset < size) {
+            Vect.memset(txnMem.addressOf(offset), size - offset, 0);
         }
     }
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
         private long address;
-        // Read-only view of the _txnlog.c CRC sidecar. Absent (fd <= -1) on a table written before the
-        // sidecar existed, in which case crcFirstCoveredTxn stays Long.MAX_VALUE and every record is
-        // classified legacy -- exactly the pre-sidecar behaviour.
-        private long crcAddress;
-        private long crcBuf;
-        private long crcFd = -1;
-        private long crcFirstCoveredTxn = Long.MAX_VALUE;
-        private long crcMappedSize;
-        private long lastReadCrc;
         private long fd;
         private FilesFacade ff;
-        private boolean isCrcMappingFailed;
         private long txn;
         private long txnCount = -1;
         private long txnLo;
@@ -358,11 +409,6 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
         @Override
         public void close() {
-            closeCrcSidecar();
-            if (crcBuf != 0) {
-                Unsafe.free(crcBuf, TxnLogCrcSidecar.ENTRY_SIZE, MemoryTag.NATIVE_DEFAULT);
-                crcBuf = 0;
-            }
             if (fd > 0) {
                 ff.close(fd);
                 fd = 0;
@@ -486,20 +532,6 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
                     : TableUtils.openRO(ff, path, WalUtils.TXNLOG_FILE_NAME, LOG);
         }
 
-        private void closeCrcSidecar() {
-            if (crcAddress != 0) {
-                ff.munmap(crcAddress, crcMappedSize, MemoryTag.MMAP_TX_LOG_CURSOR);
-                crcAddress = 0;
-            }
-            crcMappedSize = 0;
-            isCrcMappingFailed = false;
-            if (crcFd > -1) {
-                ff.close(crcFd);
-                crcFd = -1;
-            }
-            crcFirstCoveredTxn = Long.MAX_VALUE;
-        }
-
         private long getMappedLen() {
             return txnCount * RECORD_SIZE + HEADER_SIZE;
         }
@@ -508,130 +540,9 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             if (txnOffset + 2 * RECORD_SIZE <= mappedLen) {
                 txnOffset += RECORD_SIZE;
                 txn++;
-                verifyRecordChecksum();
                 return true;
             }
             return false;
-        }
-
-        /**
-         * V1's CRC lives in the _txnlog.c sidecar rather than a reserved slot, but the verdict comes
-         * from the same place V2's does, so a torn record cannot be fatal on one format and invisible
-         * on the other.
-         */
-        private void verifyRecordChecksum() {
-            if (!readApplicableCrc(txn)) {
-                // No applicable entry: none written, the stamp does not name this txn, or the read
-                // failed. The sidecar's pages flush independently of _txnlog's, so after a crash an
-                // entry can be missing or half-landed at ANY txn -- none of which says anything about
-                // the RECORD. Read it unverified.
-                return;
-            }
-            // Stamped for this txn, so the CRC is authoritative and a disagreement is real corruption
-            // -- INCLUDING a zeroed CRC, which is why applicability is a separate answer from the value.
-            TxnLogRecordVerifier.verify(
-                    txn,
-                    address + txnOffset,
-                    RECORD_SIZE,
-                    lastReadCrc,
-                    txnOffset
-            );
-        }
-
-        // Reads from the mapping when it covers the field, so a healthy open costs no pread; falls back to
-        // pread when nothing is mapped (empty file, failed fstat or mmap).
-        private int readSidecarInt(FilesFacade ff, long offset) {
-            if (offset + Integer.BYTES <= crcMappedSize) {
-                return Unsafe.getInt(crcAddress + offset);
-            }
-            return ff.read(crcFd, crcBuf, Integer.BYTES, offset) == Integer.BYTES
-                    ? Unsafe.getUnsafe().getInt(crcBuf)
-                    : -1;
-        }
-
-        private long readSidecarLong(FilesFacade ff, long offset) {
-            if (offset + Long.BYTES <= crcMappedSize) {
-                return Unsafe.getLong(crcAddress + offset);
-            }
-            return ff.read(crcFd, crcBuf, Long.BYTES, offset) == Long.BYTES
-                    ? Unsafe.getUnsafe().getLong(crcBuf)
-                    : 0L;
-        }
-
-        /**
-         * Reads the mapped {@code [crc][stamp]} pair. Returns whether the entry APPLIES to this txn,
-         * leaving the CRC in {@link #lastReadCrc}. A failed mapping falls back to one pread rather than
-         * discarding checksum coverage.
-         * <p>
-         * Applicability and value are deliberately separate answers. Returning the CRC alone cannot
-         * distinguish "no applicable entry" from "an entry stamped for this txn whose CRC is zero" --
-         * and the second is corruption, since calculateCvAreaChecksum never returns 0 for a record it
-         * hashed. Collapsing them silently skips detection.
-         * <p>
-         * The mapping only covers bytes the file actually contains: a crash can leave the sidecar
-         * shorter than the published txnlog. An incomplete entry reads unverified, just like a short
-         * pread. Published entries are immutable within a txnlog lineage, so reading the stamp with an
-         * acquire fence suffices to observe the CRC the writer stored before publishing that stamp.
-         */
-        private boolean readApplicableCrc(long txn) {
-            lastReadCrc = 0;
-            if (crcFd <= -1 || txn < crcFirstCoveredTxn) {
-                return false;
-            }
-            final long index = txn - crcFirstCoveredTxn;
-            if (index < 0 || index > (Long.MAX_VALUE - TxnLogCrcSidecar.BODY_OFFSET - TxnLogCrcSidecar.ENTRY_SIZE) / TxnLogCrcSidecar.ENTRY_SIZE) {
-                return false;
-            }
-            final long offset = TxnLogCrcSidecar.BODY_OFFSET + index * TxnLogCrcSidecar.ENTRY_SIZE;
-            final long entryAddress;
-            if (isCrcMappingFailed) {
-                if (ff.read(crcFd, crcBuf, TxnLogCrcSidecar.ENTRY_SIZE, offset) != TxnLogCrcSidecar.ENTRY_SIZE) {
-                    return false;
-                }
-                entryAddress = crcBuf;
-            } else {
-                if (offset > crcMappedSize - TxnLogCrcSidecar.ENTRY_SIZE) {
-                    return false;
-                }
-                entryAddress = crcAddress + offset;
-            }
-            // The stamp gates the CRC: only a stamp naming THIS txn proves the pair landed whole.
-            if (Unsafe.getLong(entryAddress + TxnLogCrcSidecar.ENTRY_STAMP_OFFSET) != txn) {
-                return false;
-            }
-            Unsafe.loadFence();
-            // A checksum uses the full 64-bit range.
-            lastReadCrc = Unsafe.getLong(entryAddress);
-            return true;
-        }
-
-        private void openCrcSidecar(FilesFacade ff, boolean bypassFdCache, Path path) {
-            final int len = path.size();
-            try {
-                // Same fd-cache policy as the txnlog itself: the sidecar is a sequencer file and must
-                // not be the one thing that quietly stays cached when the rest does not.
-                path.concat(WalUtils.TXNLOG_CRC_FILE_NAME);
-                crcFd = bypassFdCache ? ff.openRONoCache(path.$()) : ff.openRO(path.$());
-                if (crcFd > -1) {
-                    // Map before validating: the apply job opens a cursor on every pass, and reading the
-                    // header from the mapping saves four preads per open.
-                    refreshCrcMapping();
-                    // Validate the FULL header, not just the magic. Accepting a sidecar whose entry
-                    // size differs from the compiled-in one would compute misaligned offsets, read
-                    // non-zero garbage as a CRC, and report "torn" on a perfectly healthy table.
-                    if (readSidecarLong(ff, 0) == TxnLogCrcSidecar.MAGIC
-                            && readSidecarInt(ff, 8) == TxnLogCrcSidecar.FILE_VERSION
-                            && readSidecarInt(ff, 12) == TxnLogCrcSidecar.ENTRY_SIZE) {
-                        crcFirstCoveredTxn = readSidecarLong(ff, 16);
-                    } else {
-                        // Unrecognisable sidecar: treat as absent rather than fatal. It carries no
-                        // durability claim, so the cost is lost detection, never a failed read.
-                        closeCrcSidecar();
-                    }
-                }
-            } finally {
-                path.trimTo(len);
-            }
         }
 
         @NotNull
@@ -653,46 +564,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             }
             this.txnLo = txnLo;
             txn = txnLo;
-            if (crcBuf == 0) {
-                crcBuf = Unsafe.malloc(TxnLogCrcSidecar.ENTRY_SIZE, MemoryTag.NATIVE_DEFAULT);
-            }
-            openCrcSidecar(ff, bypassFdCache, path);
             return this;
-        }
-
-        private void refreshCrcMapping() {
-            if (crcFd <= -1) {
-                return;
-            }
-            // Refresh only when opening or extending the txnlog snapshot, never for an individual entry.
-            // Writers may trim unused preallocation on close, but retain every published entry while
-            // cursors are live. Lineage replacement, like replacement of _txnlog itself, requires readers
-            // to close first. Map the real file length, not a size inferred from the txnlog's max txn.
-            final long size = ff.length(crcFd);
-            if (size < 0) {
-                isCrcMappingFailed = true;
-                return;
-            }
-            if (size == 0) {
-                if (crcAddress != 0) {
-                    ff.munmap(crcAddress, crcMappedSize, MemoryTag.MMAP_TX_LOG_CURSOR);
-                    crcAddress = 0;
-                }
-                crcMappedSize = 0;
-            } else if (size != crcMappedSize) {
-                final long newAddress = crcAddress == 0
-                        ? ff.mmap(crcFd, size, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR)
-                        : ff.mremap(crcFd, crcAddress, crcMappedSize, size, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
-                if (newAddress == FilesFacade.MAP_FAILED) {
-                    // Preserve verification through the existing read path. A later extension retries
-                    // the mapping, and close() still releases the old mapping after a failed mremap.
-                    isCrcMappingFailed = true;
-                    return;
-                }
-                crcAddress = newAddress;
-                crcMappedSize = size;
-            }
-            isCrcMappingFailed = false;
         }
 
         private void remap(long newTxnCount) {
@@ -704,7 +576,6 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
                 throw CairoException.critical(Os.errno()).put("cannot remap transaction log [fd=").put(fd).put(']');
             }
             address = newAddr;
-            refreshCrcMapping();
         }
     }
 }
