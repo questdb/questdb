@@ -69,77 +69,12 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testCrashBeforeNextSavePointRecoversFromLastSavePoint() throws Exception {
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1_000_000_000L);
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, Long.MAX_VALUE);
-        // A power loss takes no save point at writer close, so the crash below must not get one either.
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
-        // Retry a held purge on every job run, so the job would remove the file as soon as nothing held it.
-        setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
-        setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT, 1);
-        runWithCrashFacade(() -> {
-            // DEDUP sends every commit through the O3 path, which appends to the partition in place and reseals
-            // its covering index there, so each commit supersedes the .pv and covers the previous one sealed.
-            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (v), v LONG) TIMESTAMP(ts) "
-                    + "PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)");
-            execute(passSql(0));
-            // The first apply takes the save point the crash recovers from.
-            drainWalQueue();
-            final TableToken token = engine.verifyTableName("t");
-            final String tableDir = Paths.get(root, token.getDirName()).toString();
+        crashBeforeNextSavePoint(true);
+    }
 
-            final List<String> savePointFiles;
-            final boolean[] kept;
-            final int held;
-            try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
-                // Files superseded inside the first commit are not the save point's; they go at once.
-                runPurgeJob(job);
-                Assert.assertEquals(0, job.getOutstandingPurgeTasks());
-                savePointFiles = sealedFiles(tableDir);
-                Assert.assertFalse("the save point has no .pv", savePointFiles.isEmpty());
-                kept = new boolean[savePointFiles.size()];
-
-                markDurableBaseline();
-                final long epochs = TestUtils.getMetricValue(engine, EPOCH_METRIC);
-                for (int pass = 1; pass <= PASSES; pass++) {
-                    execute(passSql(pass));
-                    drainWalQueue();
-                    runPurgeJob(job);
-                }
-                Assert.assertEquals("save point after the first apply", epochs, TestUtils.getMetricValue(engine, EPOCH_METRIC));
-                held = job.getOutstandingPurgeTasks();
-
-                final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-                for (int i = 0, n = savePointFiles.size(); i < n; i++) {
-                    final String file = savePointFiles.get(i);
-                    kept[i] = ff.exists(Path.getThreadLocal(file).$());
-                    // Make a removal durable, as a journal commit before the power loss would.
-                    final long dirFd = ff.openRONoCache(Path.getThreadLocal(Paths.get(file).getParent().toString()).$());
-                    Assert.assertTrue(dirFd > -1);
-                    ff.fsyncAndClose(dirFd);
-                }
-            }
-
-            recoverAfterCrash(new TableToken[]{token});
-            Assert.assertFalse("recovery suspended the table", anyTableSuspended(token));
-            final int rows = ROWS_PER_PASS * (PASSES + 1);
-            assertQuery("SELECT count() FROM t").noRandomAccess().expectSize().returns("count\n" + rows + "\n");
-            for (int k = 0; k < SYMBOLS; k++) {
-                long sum = 0;
-                for (int v = k; v < rows; v += SYMBOLS) {
-                    sum += v;
-                }
-                assertQuery("SELECT count(), sum(v) FROM t WHERE s = '" + (char) ('a' + k) + "'")
-                        .noRandomAccess()
-                        .expectSize()
-                        .returns("count\tsum\n" + (rows + SYMBOLS - 1 - k) / SYMBOLS + "\t" + sum + "\n");
-            }
-            // Only the reseal of the save point's files waits; the later ones went at once.
-            Assert.assertEquals(1, held);
-            for (int i = 0; i < kept.length; i++) {
-                Assert.assertTrue("removed before the next save point: " + savePointFiles.get(i), kept[i]);
-            }
-        });
+    @Test
+    public void testKillBeforeNextSavePointRecoversFromLastSavePoint() throws Exception {
+        crashBeforeNextSavePoint(false);
     }
 
     @Test
@@ -405,6 +340,106 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                     .expectSize()
                     .returns("count\tsum\n" + count[k] + "\t" + sum[k] + "\n");
         }
+    }
+
+    // A power loss or a kill after four in-place reseals since the save point. Recovery reads the save point's
+    // .pv; the next start's purge job replays the rows the crash left open without keeping readers out; after the
+    // next save point the partition holds one posting generation.
+    private void crashBeforeNextSavePoint(boolean powerLoss) throws Exception {
+        setUpAdaptive();
+        runWithCrashFacade(() -> {
+            // DEDUP sends every commit through the O3 path, which appends to the partition in place and reseals
+            // its covering index there, so each commit supersedes the .pv and covers the previous one sealed.
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (v), v LONG) TIMESTAMP(ts) "
+                    + "PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)");
+            execute(passSql(0));
+            // The first apply takes the save point the crash recovers from.
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("t");
+            final String tableDir = Paths.get(root, token.getDirName()).toString();
+
+            final List<String> savePointFiles;
+            final boolean[] kept;
+            final int held;
+            try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                // Files superseded inside the first commit are not the save point's; they go at once.
+                runPurgeJob(job);
+                Assert.assertEquals(0, job.getOutstandingPurgeTasks());
+                savePointFiles = sealedFiles(tableDir);
+                Assert.assertFalse("the save point has no .pv", savePointFiles.isEmpty());
+                kept = new boolean[savePointFiles.size()];
+
+                if (powerLoss) {
+                    markDurableBaseline();
+                }
+                final long epochs = TestUtils.getMetricValue(engine, EPOCH_METRIC);
+                int pass = 1;
+                for (; pass <= PASSES / 2; pass++) {
+                    execute(passSql(pass));
+                    drainWalQueue();
+                    runPurgeJob(job);
+                }
+                // A reader up to the crash holds the purge of the next .pv open: a window above the save point.
+                try (TableReader ignore = getReader(token)) {
+                    for (; pass <= PASSES; pass++) {
+                        execute(passSql(pass));
+                        drainWalQueue();
+                        runPurgeJob(job);
+                    }
+                    held = job.getOutstandingPurgeTasks();
+                }
+                Assert.assertEquals("save point after the first apply", epochs, TestUtils.getMetricValue(engine, EPOCH_METRIC));
+
+                final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                for (int i = 0, n = savePointFiles.size(); i < n; i++) {
+                    kept[i] = ff.exists(Path.getThreadLocal(savePointFiles.get(i)).$());
+                }
+                // Make every removal durable, as a journal commit before the power loss would.
+                fsyncTableDirs(tableDir);
+            }
+            // The reseal of the save point's files waits for the pin, the one the reader held waits for the reader,
+            // the others went at once.
+            Assert.assertEquals(2, held);
+            for (int i = 0; i < kept.length; i++) {
+                Assert.assertTrue("removed before the next save point: " + savePointFiles.get(i), kept[i]);
+            }
+
+            if (powerLoss) {
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                engine.releaseCrashOrphanedWriters();
+                discardPurgeQueue();
+                recoverAfterCrash(new TableToken[]{token});
+                evictPurgeLogScoreboard();
+            } else {
+                kill(token);
+            }
+            // The next start's purge job replays the open rows of its log and stays up, as on a server.
+            try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                if (!powerLoss) {
+                    engine.notifyWalTxnRepublisher(token);
+                    drainWalQueue();
+                }
+                Assert.assertFalse("recovery suspended the table", anyTableSuspended(token));
+                runPurgeJob(job);
+                assertRowsThroughIndex(PASSES);
+
+                // The next save point, then the purge jobs of another start.
+                node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 1);
+                execute(passSql(PASSES + 1));
+                drainWalQueue();
+                node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, Long.MAX_VALUE);
+                runPurgeJob(job);
+            }
+            try (
+                    PostingSealPurgeJob job = new PostingSealPurgeJob(engine);
+                    O3PartitionPurgeJob partitionPurge = new O3PartitionPurgeJob(engine, 1)
+            ) {
+                runPurgeJobs(job, partitionPurge);
+            }
+            assertRowsThroughIndex(PASSES + 1);
+            assertOnePostingGenerationPerPartition(tableDir, powerLoss ? "power loss" : "kill");
+        });
     }
 
     // A kill keeps every byte written but loses the process: its purge queue, scoreboards and sequencer state.
