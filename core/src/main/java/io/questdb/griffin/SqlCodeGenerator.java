@@ -228,6 +228,7 @@ import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor
 import io.questdb.griffin.engine.join.ArrayUnnestSource;
 import io.questdb.griffin.engine.join.AsOfJoinDenseDualSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactoryBase;
 import io.questdb.griffin.engine.join.AsOfJoinDenseSingleSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinIndexedRecordCursorFactory;
@@ -6817,20 +6818,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
                             }
                             // Auto-select a faster single-symbol algo when the master is confidently small
-                            // relative to the slave (crossover ~2% master/slave ratio): the index-accelerated
-                            // scan if the slave symbol is indexed (O(master lookups) vs Dense O(slave scan)),
-                            // otherwise memoized (fast on sparse/illiquid symbols, dense-ts-cliff guarded).
-                            // Unknown estimate -> fall through to Dense (do no harm).
+                            // relative to the slave: the index-accelerated scan if the slave symbol is
+                            // indexed (O(master lookups) vs Dense O(slave scan)), otherwise memoized (fast on
+                            // sparse/illiquid symbols, dense-ts-cliff guarded). Unknown estimate -> fall
+                            // through to Dense (do no harm).
                             if (configuration.isSqlAsOfAutoAlgoEnabled()) {
-                                long slaveN = estimateBaseRowCount(slave, executionContext);
-                                long masterN = estimateBaseRowCount(master, executionContext);
-                                long masterLimit = masterLimitOrMinus1(model.getJoinModels().getQuick(0));
-                                long effMaster = masterLimit >= 0
-                                        ? (masterN >= 0 ? Math.min(masterN, masterLimit) : masterLimit)
-                                        : masterN;
-                                int bp = configuration.getSqlAsOfIndexMaxMasterBp();
+                                final long slaveN = estimateBaseRowCount(slave, executionContext);
+                                final long masterLimit = masterLimitOrMinus1(model.getJoinModels().getQuick(0));
+                                final boolean isSlaveIndexed = slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex);
+                                final long effMaster;
+                                final int bp;
+                                if (isSlaveIndexed) {
+                                    // The index path costs one lookup per master row, so it is sized by the
+                                    // rows the master returns: the rows its intervals select, not its table.
+                                    effMaster = capByLimit(estimateRowCount(master, executionContext), masterLimit);
+                                    bp = IndexType.isPosting(slaveMetadata.getColumnIndexType(slaveSymbolColumnIndex))
+                                            ? configuration.getSqlAsOfIndexPostingMaxMasterBp()
+                                            : configuration.getSqlAsOfIndexMaxMasterBp();
+                                } else {
+                                    // Memoized keeps the whole-table master estimate: its cost depends on how
+                                    // far back each key's predecessor lies, not on the master row count alone,
+                                    // and a time-sliced or symbol-filtered master is where it loses to Dense.
+                                    effMaster = capByLimit(estimateBaseRowCount(master, executionContext), masterLimit);
+                                    bp = configuration.getSqlAsOfIndexMaxMasterBp();
+                                }
                                 if (slaveN > 0 && effMaster >= 0 && effMaster * 10000L <= slaveN * (long) bp) {
-                                    if (slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex)) {
+                                    if (isSlaveIndexed) {
                                         return new AsOfJoinIndexedRecordCursorFactory(
                                                 configuration,
                                                 joinMetadata,
@@ -6893,26 +6906,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         } else {
                             // Default multi-key ASOF: forward-scan Dense. Resilient to timestamp density
                             // and key cardinality (O(n), no per-master back-scan cliff).
+                            final AsOfJoinDenseRecordCursorFactoryBase denseJoin;
                             if (isDualSymbolJoin(symbolShortCircuit, listColumnFilterA)) {
                                 // Two static-symbol keys: pack both into a long map key and skip the generic
                                 // RecordSink/memeq per row (see AsOfJoinDenseDualSymbolRecordCursorFactory).
-                                return createDualSymbolDenseJoin(joinMetadata, master, slave, joinColumnSplit, symbolShortCircuit, slaveContext, toleranceInterval);
+                                denseJoin = createDualSymbolDenseJoin(joinMetadata, master, slave, joinColumnSplit, symbolShortCircuit, slaveContext, toleranceInterval);
+                            } else {
+                                int[][] denseSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
+                                denseJoin = new AsOfJoinDenseRecordCursorFactory(
+                                        configuration,
+                                        joinMetadata,
+                                        master,
+                                        createRecordCopierMaster(masterMetadata),
+                                        slave,
+                                        createRecordCopierSlave(slaveMetadata),
+                                        joinColumnSplit,
+                                        keyTypes,
+                                        slaveContext,
+                                        toleranceInterval,
+                                        denseSymbolKeyIndices != null ? denseSymbolKeyIndices[0] : null,
+                                        denseSymbolKeyIndices != null ? denseSymbolKeyIndices[1] : null
+                                );
                             }
-                            int[][] denseSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
-                            return new AsOfJoinDenseRecordCursorFactory(
-                                    configuration,
-                                    joinMetadata,
-                                    master,
-                                    createRecordCopierMaster(masterMetadata),
-                                    slave,
-                                    createRecordCopierSlave(slaveMetadata),
-                                    joinColumnSplit,
-                                    keyTypes,
-                                    slaveContext,
-                                    toleranceInterval,
-                                    denseSymbolKeyIndices != null ? denseSymbolKeyIndices[0] : null,
-                                    denseSymbolKeyIndices != null ? denseSymbolKeyIndices[1] : null
-                            );
+                            maybeEnableMultiKeyPrelude(denseJoin, model, master, slave, executionContext);
+                            return denseJoin;
                         }
                     } else if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
                         RecordCursorFactory slaveBase = slave.getBaseFactory();
@@ -7128,6 +7145,97 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(joinMetadata);
             throw t;
         }
+    }
+
+    private static long capByLimit(long rowCount, long limit) {
+        if (limit < 0) {
+            return rowCount;
+        }
+        return rowCount >= 0 ? Math.min(rowCount, limit) : limit;
+    }
+
+    // True when the factory, or a projection it wraps, drops rows by a predicate whose selectivity
+    // the planner cannot size: a row filter, or an index lookup it has not counted.
+    private static boolean hasUnsizedFilter(RecordCursorFactory factory) {
+        RecordCursorFactory current = factory;
+        while (current != null) {
+            if (current.supportsFilterStealing() || current.usesIndex()
+                    || (current instanceof PageFrameRecordCursorFactory && ((PageFrameRecordCursorFactory) current).hasFilter())) {
+                return true;
+            }
+            if (!current.isProjection()) {
+                return false;
+            }
+            current = current.getBaseFactory();
+        }
+        return false;
+    }
+
+    // The multi-key Dense default scans every slave row between the first and the last master row.
+    // When the master may be small - its rows fit the Fast budget, or a filter the planner cannot size
+    // stands between it and its table - serve it by Fast's per-row back-scan first, bounded by a
+    // master-row and a back-scan budget, and hand over to the Dense scan once either runs out. A
+    // master known to be large keeps plain Dense.
+    private void maybeEnableMultiKeyPrelude(
+            AsOfJoinDenseRecordCursorFactoryBase denseJoin,
+            IQueryModel model,
+            RecordCursorFactory master,
+            RecordCursorFactory slave,
+            SqlExecutionContext executionContext
+    ) {
+        if (!configuration.isSqlAsOfAutoAlgoEnabled() || configuration.getSqlAsOfAdaptiveBackScanBudget() >= 0) {
+            // an explicit server-wide prelude budget keeps its own behaviour
+            return;
+        }
+        final int masterBp = configuration.getSqlAsOfMultiKeyFastMaxMasterBp();
+        final int backScanPct = configuration.getSqlAsOfMultiKeyFastMaxBackScanPct();
+        if (masterBp <= 0 || backScanPct <= 0) {
+            return;
+        }
+        final long slaveN = estimateBaseRowCount(slave, executionContext);
+        if (slaveN <= 0) {
+            return;
+        }
+        final long masterRowBudget = Math.max(1, slaveN * masterBp / 10000L);
+        final long masterLimit = masterLimitOrMinus1(model.getJoinModels().getQuick(0));
+        final long effMaster = capByLimit(estimateRowCount(master, executionContext), masterLimit);
+        if (effMaster < 0) {
+            return;
+        }
+        final boolean isSmall = effMaster <= masterRowBudget;
+        if (!isSmall && !hasUnsizedFilter(master)) {
+            return;
+        }
+        final long backScanBudget = slaveN * backScanPct / 100L;
+        denseJoin.enableAdaptivePrelude(
+                backScanBudget,
+                masterRowBudget,
+                "fast master<=" + masterRowBudget + (isSmall ? " master~" + effMaster : " filtered") + " backscan<=" + backScanBudget
+        );
+    }
+
+    // Plan-time estimate of the rows a join side returns: the tightest upper bound the factory, or a
+    // projection or filter it wraps, can give (an interval scan counts the rows its intervals select),
+    // else the base table's row count. -1 when unknown.
+    private long estimateRowCount(RecordCursorFactory factory, SqlExecutionContext executionContext) {
+        RecordCursorFactory current = factory;
+        while (true) {
+            final long rowCount = current.estimateRowCountUpperBound(executionContext);
+            if (rowCount >= 0) {
+                return rowCount;
+            }
+            if (!current.isProjection() && !current.supportsFilterStealing()) {
+                break;
+            }
+            final RecordCursorFactory base = current.getBaseFactory();
+            if (base == null) {
+                break;
+            }
+            current = base;
+        }
+        // the innermost factory reached knows its table even when a projection above it does not
+        final long rowCount = estimateBaseRowCount(current, executionContext);
+        return rowCount >= 0 ? rowCount : estimateBaseRowCount(factory, executionContext);
     }
 
     // Cheap plan-time base-table row-count estimate. Returns -1 when unknown (subquery/join/no token).

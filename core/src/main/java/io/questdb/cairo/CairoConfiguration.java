@@ -763,6 +763,26 @@ public interface CairoConfiguration {
     int getSqlAsOfIndexMaxMasterBp();
 
     /**
+     * Like {@link #getSqlAsOfIndexMaxMasterBp()}, for a slave symbol with a POSTING index. A posting
+     * lookup decodes a block per master row, so it repays only a smaller master than a bitmap lookup.
+     */
+    int getSqlAsOfIndexPostingMaxMasterBp();
+
+    /**
+     * Back-scan budget of the Fast prelude on a multi-key Dense ASOF, in percent of the slave's rows.
+     * The prelude serves master rows by Fast's per-row back-scan and hands over to the Dense scan once
+     * the back-scans have walked this many slave rows in total.
+     */
+    int getSqlAsOfMultiKeyFastMaxBackScanPct();
+
+    /**
+     * Master-row budget of the Fast prelude on a multi-key Dense ASOF, in basis points of the slave's
+     * rows (/10000). Past it the master is not small and the join hands over to the Dense scan; at 0
+     * the prelude is off.
+     */
+    int getSqlAsOfMultiKeyFastMaxMasterBp();
+
+    /**
      * Equal-timestamp run length past which the memoized ASOF cursor abandons memoization for a
      * resilient Dense forward scan (guards the dense-timestamp cliff).
      */

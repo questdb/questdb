@@ -86,6 +86,33 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
         this.columnSizeShifts = columnSizeShifts;
     }
 
+    /**
+     * For an interval scan, the number of rows the intervals select, counted the way the scan
+     * would find them: per partition, from the partition's timestamp bounds and two binary
+     * searches on its timestamp column (or the Parquet row group statistics). Index and row
+     * filters can only drop rows from there, so it is a bound for them too. A full scan, or an
+     * interval scan whose intervals are evaluated only when the cursor opens, answers -1 and leaves
+     * the planner to its whole-table count.
+     */
+    @Override
+    public long estimateRowCountUpperBound(SqlExecutionContext executionContext) {
+        if (!partitionFrameCursorFactory.isIntervalScan() || !partitionFrameCursorFactory.isIntervalScanStatic()) {
+            // a full scan, or intervals that take bind variable values only when the cursor opens
+            return -1;
+        }
+        try (PartitionFrameCursor cursor = partitionFrameCursorFactory.getCursor(executionContext, columnIndexes, ORDER_ASC)) {
+            if (!cursor.supportsSizeCalculation()) {
+                return -1;
+            }
+            final RecordCursor.Counter counter = new RecordCursor.Counter();
+            cursor.calculateSize(counter);
+            return counter.get();
+        } catch (SqlException | CairoException e) {
+            // e.g. a bind variable the intervals depend on has no value yet at compile time
+            return -1;
+        }
+    }
+
     @Override
     public String getBaseColumnName(int columnIndex) {
         return partitionFrameCursorFactory.getMetadata().getColumnName(columnIndexes.getQuick(columnIndex));

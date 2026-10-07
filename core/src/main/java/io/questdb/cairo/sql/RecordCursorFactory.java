@@ -112,6 +112,23 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return null;
     }
 
+    /**
+     * A plan-time upper bound on the number of rows this factory's cursor returns, or -1 when the
+     * factory cannot tell. It must be cheap: it may read table metadata, partition row counts, the
+     * timestamps that bound an interval inside the partitions it touches and index metadata, but it
+     * must not open a record cursor or read column data beyond that. The planner uses it to choose
+     * between algorithms that return the same rows, so a wrong answer costs speed, never results.
+     * <p>
+     * The default answers -1. A factory that only drops rows by a predicate it cannot size keeps
+     * the default; the planner then asks its base factory, whose bound is still a bound.
+     *
+     * @param executionContext the SQL execution context the query is compiled in
+     * @return an upper bound on the row count, or -1 when unknown
+     */
+    default long estimateRowCountUpperBound(SqlExecutionContext executionContext) {
+        return -1;
+    }
+
     default PageFrameSequence<?> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
         return null;
     }

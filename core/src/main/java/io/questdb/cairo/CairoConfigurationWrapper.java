@@ -960,6 +960,21 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlAsOfIndexPostingMaxMasterBp() {
+        return getDelegate().getSqlAsOfIndexPostingMaxMasterBp();
+    }
+
+    @Override
+    public int getSqlAsOfMultiKeyFastMaxBackScanPct() {
+        return getDelegate().getSqlAsOfMultiKeyFastMaxBackScanPct();
+    }
+
+    @Override
+    public int getSqlAsOfMultiKeyFastMaxMasterBp() {
+        return getDelegate().getSqlAsOfMultiKeyFastMaxMasterBp();
+    }
+
+    @Override
     public int getSqlAsOfMemoizedDenseRunThreshold() {
         return getDelegate().getSqlAsOfMemoizedDenseRunThreshold();
     }

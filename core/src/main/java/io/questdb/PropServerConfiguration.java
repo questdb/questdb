@@ -475,6 +475,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlAsOfAdaptiveBackScanBudget;
     private final boolean sqlAsOfAutoAlgo;
     private final int sqlAsOfIndexMaxMasterBp;
+    private final int sqlAsOfIndexPostingMaxMasterBp;
+    private final int sqlAsOfMultiKeyFastMaxBackScanPct;
+    private final int sqlAsOfMultiKeyFastMaxMasterBp;
     private final int sqlAsOfMemoizedDenseRunThreshold;
     private final boolean queryWithinLatestByOptimisationEnabled;
     private final boolean qwpBrowserTlsTerminationEnabled;
@@ -1785,6 +1788,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlAsOfAdaptiveBackScanBudget = getLong(properties, env, PropertyKey.CAIRO_SQL_ASOF_ADAPTIVE_BACKSCAN_BUDGET, -1);
             this.sqlAsOfAutoAlgo = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ASOF_AUTO_ALGO, true);
             this.sqlAsOfIndexMaxMasterBp = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_INDEX_MAX_MASTER_BP, 200);
+            this.sqlAsOfIndexPostingMaxMasterBp = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_INDEX_POSTING_MAX_MASTER_BP, 20);
+            this.sqlAsOfMultiKeyFastMaxBackScanPct = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_MULTIKEY_FAST_MAX_BACKSCAN_PCT, 25);
+            this.sqlAsOfMultiKeyFastMaxMasterBp = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_MULTIKEY_FAST_MAX_MASTER_BP, 10);
             this.sqlAsOfMemoizedDenseRunThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_MEMOIZED_DENSE_RUN_THRESHOLD, 4096);
             this.matViewRefreshMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 0);
             this.walApplyMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES, 0);
@@ -5041,6 +5047,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlAsOfIndexMaxMasterBp() {
             return sqlAsOfIndexMaxMasterBp;
+        }
+
+        @Override
+        public int getSqlAsOfIndexPostingMaxMasterBp() {
+            return sqlAsOfIndexPostingMaxMasterBp;
+        }
+
+        @Override
+        public int getSqlAsOfMultiKeyFastMaxBackScanPct() {
+            return sqlAsOfMultiKeyFastMaxBackScanPct;
+        }
+
+        @Override
+        public int getSqlAsOfMultiKeyFastMaxMasterBp() {
+            return sqlAsOfMultiKeyFastMaxMasterBp;
         }
 
         @Override

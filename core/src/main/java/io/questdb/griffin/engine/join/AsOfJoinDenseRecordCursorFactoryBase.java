@@ -81,6 +81,8 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
     protected static final ArrayColumnTypes TYPES_KEY = new ArrayColumnTypes();
     protected static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
     private final long toleranceInterval;
+    // Why the planner turned the Fast prelude on, for EXPLAIN; null when it did not.
+    private CharSequence adaptivePreludeReason;
     protected AsOfJoinDenseRecordCursorBase cursor;
 
     public AsOfJoinDenseRecordCursorFactoryBase(
@@ -93,6 +95,23 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
         super(metadata, joinContext, masterFactory, slaveFactory);
         this.toleranceInterval = toleranceInterval;
 
+    }
+
+    /**
+     * Serves master rows by Fast's per-row back-scan until the back-scans have walked
+     * {@code backScanBudget} slave rows in total, or until more than {@code masterRowBudget} master
+     * rows have been served, whichever comes first; then the Dense forward scan takes over for the
+     * rest of the master. Both algorithms return the same rows, so the switch moves only cost.
+     *
+     * @param backScanBudget  slave rows the prelude's back-scans may walk in total, &gt;= 0
+     * @param masterRowBudget master rows the prelude may serve, or -1 for no limit
+     * @param reason          the planner's reason, shown by EXPLAIN
+     */
+    public void enableAdaptivePrelude(long backScanBudget, long masterRowBudget, CharSequence reason) {
+        assert backScanBudget >= 0;
+        cursor.setAdaptiveBackScanBudget(backScanBudget);
+        cursor.setAdaptiveMasterRowBudget(masterRowBudget);
+        this.adaptivePreludeReason = reason;
     }
 
     @Override
@@ -135,6 +154,9 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
     @Override
     public void toPlan(PlanSink sink) {
         putFactoryType(sink);
+        if (adaptivePreludeReason != null) {
+            sink.attr("prelude").val(adaptivePreludeReason);
+        }
         sink.attr("condition").val(joinContext);
         sink.child(masterFactory);
         sink.child(slaveFactory);
@@ -159,6 +181,9 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
         private long adaptiveBackScanBudget = -1;
         private long adaptiveBackScanUsed;
         private boolean adaptiveDenseMode;
+        // -1 = no limit; otherwise the prelude hands over to Dense once it has served more master rows
+        private long adaptiveMasterRowBudget = -1;
+        private long adaptiveMasterRows;
 
         protected AsOfJoinDenseRecordCursorBase(
                 int columnSplit,
@@ -179,7 +204,8 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                 // Fast keyed loop with correct frame save/restore (AbstractKeyedAsOfJoinRecordCursor),
                 // driving performKeyMatching (the targeted back-scan) below.
                 boolean has = super.hasNext();
-                if (adaptiveBackScanUsed > adaptiveBackScanBudget) {
+                if (adaptiveBackScanUsed > adaptiveBackScanBudget
+                        || (adaptiveMasterRowBudget >= 0 && ++adaptiveMasterRows > adaptiveMasterRowBudget)) {
                     switchToDenseMode();
                 }
                 return has;
@@ -206,6 +232,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
             reopenAndClearDenseScanMaps();
             resetDenseScanState();
             adaptiveBackScanUsed = 0;
+            adaptiveMasterRows = 0;
             adaptiveDenseMode = false;
             super.of(masterCursor, slaveCursor, circuitBreaker);
         }
@@ -216,6 +243,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
             clearDenseScanMapsIfOpen();
             resetDenseScanState();
             adaptiveBackScanUsed = 0;
+            adaptiveMasterRows = 0;
             adaptiveDenseMode = false;
         }
 
@@ -280,6 +308,10 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
 
         public void setAdaptiveBackScanBudget(long budget) {
             this.adaptiveBackScanBudget = budget;
+        }
+
+        public void setAdaptiveMasterRowBudget(long budget) {
+            this.adaptiveMasterRowBudget = budget;
         }
     }
 
