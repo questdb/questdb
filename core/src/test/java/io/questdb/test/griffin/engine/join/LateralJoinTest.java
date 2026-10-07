@@ -1554,6 +1554,94 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // systimestamp() is not a runtime constant, so the plan cannot check WHERE t.ts <= systimestamp()
+    // once per execution, and LateralJoinRewriter skips that conjunct for t.id >= $1, whose value the
+    // plan checks: for $1 = 5, order 1 returns 10 100, and a NULL $1 fails the execution.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithBindVariableAfterRowVaryingFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createTypedCorrelatedRightJoinTables();
+            final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.ts <= systimestamp() AND t.id >= $1) l ORDER BY 1, 2, 3";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .assertBinds(nullCheckBindCases(sql.indexOf("$1"), 5));
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 5);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Lateral Null Check");
+        });
+    }
+
+    // A row-varying operand, such as one over systimestamp(), takes no single value per execution,
+    // so the plan cannot check it for NULL once, and the filter may keep the refunds that match no
+    // trade per outer row: with a NULL $1, each filter below returns 1 null 101, 2 null 100 and
+    // 2 null 101, which the decorrelated query would lose. Such a filter fails to compile, also on a
+    // computed sub-query column, whose type only the code generator knows.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithRowVaryingNullFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createTypedCorrelatedRightJoinTables();
+            bindVariableService.clear();
+            bindVariableService.setInt(0, Numbers.INT_NULL);
+            final String[][] cases = {
+                    {"trades", "t.ts <= dateadd('h', $1, systimestamp())"},
+                    {"trades", "t.id = CASE WHEN systimestamp() > 0::timestamp THEN NULL::int END"},
+                    {"(SELECT id + 0 id, x, ts FROM trades)", "t.id >= CASE WHEN systimestamp() > 0::timestamp THEN NULL::int END"}
+            };
+            for (String[] c : cases) {
+                final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM " + c[0] + " t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + c[1] + ") l";
+                assertQuery(sql)
+                        .fails(sql.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+            }
+        });
+    }
+
+    // A text bind variable converts to the type of the column it is compared with: '0.0.0.0' is the
+    // NULL of an IPv4 column, and 'NaN' that of a DOUBLE column. Against such a NULL, WHERE keeps the
+    // refunds that match no trade per outer row, which the decorrelated query would lose, so the
+    // execution fails, as it does for a NULL text compared with a SYMBOL column. A value that converts
+    // to no NULL drops them: order 1 returns 10 100. The plan checks the filter on the NULL of the
+    // column type once per execution.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithTextBindVariableFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createTypedCorrelatedRightJoinTables();
+            final String[][] cases = {
+                    {"trades", "t.ip >= $1", "1.1.1.1", "0.0.0.0"},
+                    {"trades", "t.ip = $1", "1.1.1.1", "0.0.0.0"},
+                    {"trades", "t.d >= $1", "5", "NaN"},
+                    {"(SELECT id, x, d + 0 d, ts FROM trades)", "t.d >= $1", "5", "NaN"},
+                    {"trades", "t.sym = $1", "abc", null}
+            };
+            for (String[] c : cases) {
+                final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM " + c[0] + " t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + c[1] + ") l ORDER BY 1, 2, 3";
+                final String value = c[2];
+                final String nullText = c[3];
+                final ObjList<BindVarTuple> binds = new ObjList<>();
+                binds.add(BindVarTuple.ok("non-NULL value", "id\ttid\trid\n1\t10\t100\n", bindVariableService -> bindVariableService.setStr(0, value)));
+                binds.add(BindVarTuple.fails(
+                        "NULL text",
+                        sql.indexOf("$1"),
+                        "is not supported in a correlated lateral sub-query when this value is NULL",
+                        bindVariableService -> bindVariableService.setStr(0, nullText)
+                ));
+                binds.add(BindVarTuple.ok("non-NULL value again", "id\ttid\trid\n1\t10\t100\n", bindVariableService -> bindVariableService.setStr(0, value)));
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .expectSize()
+                        .assertBinds(binds);
+            }
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "1.1.1.1");
+            final String ipSql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.ip >= $1) l ORDER BY 1, 2, 3";
+            assertQuery(ipSql)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Lateral Null Check checks: [__qdb_null_probe>=$0::string]\n");
+        });
+    }
+
     // A constant operand needs no check when the query runs: 5::int, abs(-5) and abs(-10) are not
     // NULL, so they drop the refunds that match no trade.
     @Test

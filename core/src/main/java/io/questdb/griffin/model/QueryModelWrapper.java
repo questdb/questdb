@@ -123,7 +123,7 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public void addLateralNullCheck(ExpressionNode check) {
+    public void addLateralNullCheck(ExpressionNode check, int columnType) {
         throw new UnsupportedOperationException();
     }
 
@@ -425,6 +425,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public ObjList<QueryColumn> getLateralCountTemplates() {
         return delegate.getLateralCountTemplates();
+    }
+
+    @Override
+    public IntList getLateralNullCheckTypes() {
+        return delegate.getLateralNullCheckTypes();
     }
 
     @Override

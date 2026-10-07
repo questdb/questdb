@@ -37,8 +37,9 @@ import io.questdb.std.ObjList;
  *     <li>the column, as the filter reads it</li>
  *     <li>a probe, the conjunct with the column replaced, which the code generator evaluates on the
  *     NULL record of the type, or null when the conjunct drops those rows for every type with NULL</li>
- *     <li>a NULL check, "value = NULL", when the conjunct drops those rows only while a value that
- *     reads no column is not NULL, which the code generator then checks once per execution</li>
+ *     <li>a NULL check, also the conjunct with the column replaced, when the conjunct drops those rows
+ *     only while a value that reads no column does not convert to the NULL of the column type, which
+ *     the code generator then evaluates once per execution on the NULL record of the type</li>
  * </ul>
  * When no candidate drops those rows, the code generator fails the query with the error. A join that
  * the rewriter checks more than once holds a chain of such checks, each of which must hold.

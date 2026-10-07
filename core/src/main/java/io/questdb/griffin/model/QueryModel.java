@@ -80,6 +80,7 @@ public class QueryModel implements IQueryModel {
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
     private final ObjList<IQueryModel> joinModels = new ObjList<>();
     private final ObjList<QueryColumn> lateralCountTemplates = new ObjList<>();
+    private final IntList lateralNullCheckTypes = new IntList();
     private final ObjList<ExpressionNode> lateralNullChecks = new ObjList<>();
     private final ObjList<ExpressionNode> latestBy = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap modelAliasIndexes = new LowerCaseCharSequenceIntHashMap();
@@ -311,8 +312,9 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
-    public void addLateralNullCheck(ExpressionNode check) {
+    public void addLateralNullCheck(ExpressionNode check, int columnType) {
         lateralNullChecks.add(check);
+        lateralNullCheckTypes.add(columnType);
     }
 
     @Override
@@ -422,6 +424,7 @@ public class QueryModel implements IQueryModel {
         alias = null;
         latestByType = LATEST_BY_NONE;
         lateralNullChecks.clear();
+        lateralNullCheckTypes.clear();
         lateralNullRejection = null;
         latestBy.clear();
         joinCriteria = null;
@@ -854,6 +857,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public ObjList<QueryColumn> getLateralCountTemplates() {
         return lateralCountTemplates;
+    }
+
+    @Override
+    public IntList getLateralNullCheckTypes() {
+        return lateralNullCheckTypes;
     }
 
     @Override

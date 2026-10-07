@@ -123,6 +123,19 @@ import static io.questdb.std.GenericLexer.unquote;
 import static io.questdb.std.Numbers.IPv4_NULL;
 
 public class SqlOptimiser implements Mutable {
+    // The probe column of isFalseOnNullRecord() and of LateralNullCheckRecordCursorFactory holds the
+    // NULL of its type, which reads no symbol table
+    public static final SymbolTableSource NULL_REJECTING_PROBE_SYMBOL_TABLES = new SymbolTableSource() {
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return null;
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return null;
+        }
+    };
     public static final int REWRITE_STATUS_FORCE_INNER_MODEL = 64;
     public static final int REWRITE_STATUS_OUTER_VIRTUAL_IS_SELECT_CHOOSE = 32;
     public static final int REWRITE_STATUS_USE_DISTINCT_MODEL = 16;
@@ -169,18 +182,6 @@ public class SqlOptimiser implements Mutable {
     private static final int NOT_OP_NOT = 1;
     private static final int NOT_OP_NOT_EQ = 9;
     private static final int NOT_OP_OR = 3;
-    // The probe column of isFalseOnNullRecord() holds the NULL of its type, which reads no symbol table
-    private static final SymbolTableSource NULL_REJECTING_PROBE_SYMBOL_TABLES = new SymbolTableSource() {
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            return null;
-        }
-
-        @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            return null;
-        }
-    };
     // these are bit flags
     private static final int SAMPLE_BY_REWRITE_NO_WRAP = 0;
     private static final int SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES = 2;
@@ -16335,15 +16336,7 @@ public class SqlOptimiser implements Mutable {
             int columnType,
             SqlExecutionContext sqlExecutionContext
     ) {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata(
-                NULL_REJECTING_PROBE_COLUMN,
-                columnType,
-                IndexType.NONE,
-                0,
-                false,
-                null
-        ));
+        final GenericRecordMetadata metadata = nullProbeMetadata(columnType);
         Function function = null;
         Record nullRecord = null;
         try {
@@ -16369,6 +16362,20 @@ public class SqlOptimiser implements Mutable {
                 && (Chars.equalsIgnoreCase(node.token, "count")
                 || Chars.equalsIgnoreCase(node.token, "count_distinct")
                 || Chars.equalsIgnoreCase(node.token, "approx_count_distinct"));
+    }
+
+    // Returns the metadata of NULL_REJECTING_PROBE_COLUMN of the type, the only column a probe reads
+    static GenericRecordMetadata nullProbeMetadata(int columnType) {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata(
+                NULL_REJECTING_PROBE_COLUMN,
+                columnType,
+                IndexType.NONE,
+                0,
+                false,
+                null
+        ));
+        return metadata;
     }
 
     static IQueryModel replaceAndTransferDependents(IQueryModel oldModel, IQueryModel newModel) {

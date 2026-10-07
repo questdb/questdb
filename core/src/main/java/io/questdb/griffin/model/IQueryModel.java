@@ -202,7 +202,7 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void addLateralCountTemplate(QueryColumn template);
 
-    void addLateralNullCheck(ExpressionNode check);
+    void addLateralNullCheck(ExpressionNode check, int columnType);
 
     void addLatestBy(ExpressionNode latestBy);
 
@@ -320,8 +320,12 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     ObjList<QueryColumn> getLateralCountTemplates();
 
-    // Boolean expressions that the code generator evaluates once per execution, failing the query
-    // when one is true; see LateralJoinRewriter.runtimeNullCheckOperand()
+    // The type of the column that each of getLateralNullChecks() reads
+    IntList getLateralNullCheckTypes();
+
+    // Filter conjuncts that read NULL_REJECTING_PROBE_COLUMN instead of a column, which the code
+    // generator evaluates once per execution on the NULL of the column type, failing the query when
+    // one is true; see LateralJoinRewriter.runtimeNullCheckOperand()
     ObjList<ExpressionNode> getLateralNullChecks();
 
     // The filter conjuncts of a RIGHT or FULL join model whose null rejection the code generator

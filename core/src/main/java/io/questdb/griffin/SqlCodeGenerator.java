@@ -514,6 +514,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final MemoryCARW jitIRMem;
     private final CompiledFilterIRSerializer jitIRSerializer = new CompiledFilterIRSerializer();
     private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+    // the type of the probe column of each of lateralNullChecks
+    private final IntList lateralNullCheckTypes = new IntList();
     // the lateral NULL checks of the models that the outermost generate() call has generated so far
     private final ObjList<ExpressionNode> lateralNullChecks = new ObjList<>();
     // this list is used to generate record sinks
@@ -933,6 +935,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (parserIndex == 0) {
                 sharedFactoryCache.clear();
                 lateralNullChecks.clear();
+                lateralNullCheckTypes.clear();
                 generationState.begin(model, expressionNodePool);
             } else {
                 hasEntered = generationState.enterRegion(model, expressionNodePool);
@@ -1783,26 +1786,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * clause re-attaches by name). Requiring the metadata timestamp to equal timestampIndex rejects such
      * reordered bases, which would otherwise feed the aggregates rows out of timestamp order.
      */
-    // True when the expression holds a scalar sub-query. The sub-query runs once per execution, as
-    // an expression cannot read the rows of the query around it.
-    private static boolean hasSubQuery(ExpressionNode node) {
-        if (node == null) {
-            return false;
-        }
-        if (node.type == ExpressionNode.QUERY) {
-            return true;
-        }
-        if (node.paramCount < 3) {
-            return hasSubQuery(node.lhs) || hasSubQuery(node.rhs);
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (hasSubQuery(node.args.getQuick(i))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private static boolean isBaseTimestampAscending(RecordCursorFactory factory, int timestampIndex) {
         return factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD
                 && factory.getMetadata().getTimestampIndex() == timestampIndex;
@@ -2045,53 +2028,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
-    // Compiles the checks that LateralJoinRewriter attached to models of the query, each one
-    // "value = NULL". A constant check is decided here: true fails the query, false needs no check.
-    // A check over a runtime constant, such as a bind variable, or over a scalar sub-query, which a
-    // cursor function compares without reporting a runtime constant, runs once per execution in a
-    // LateralNullCheckRecordCursorFactory on top of the plan. A value that can change from row to
-    // row is not checked, as before. Takes ownership of the factory.
+    // Compiles the checks that LateralJoinRewriter attached to models of the query, each a filter
+    // conjunct that reads NULL_REJECTING_PROBE_COLUMN of the column type instead of the column, over
+    // an operand that takes one value per execution. A LateralNullCheckRecordCursorFactory on top of
+    // the plan evaluates them once per execution on the NULL record of the type, and fails the query
+    // when one is true, as the filter would then keep the rows that a RIGHT or FULL join NULL-extends.
+    // Takes ownership of the factory.
     private RecordCursorFactory applyLateralNullChecks(RecordCursorFactory factory, SqlExecutionContext executionContext) throws SqlException {
-        ObjList<Function> checks = null;
-        IntList positions = null;
+        final ObjList<Function> checks = new ObjList<>();
+        final ObjList<Record> nullRecords = new ObjList<>();
+        final IntList positions = new IntList();
         try {
+            GenericRecordMetadata metadata = null;
             for (int i = 0, n = lateralNullChecks.size(); i < n; i++) {
                 final ExpressionNode node = lateralNullChecks.getQuick(i);
-                final Function check = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
-                if (check.isConstant()) {
-                    final boolean isNull;
-                    try {
-                        check.init(null, executionContext);
-                        isNull = check.getBool(null);
-                    } finally {
-                        Misc.free(check);
-                    }
-                    if (isNull) {
-                        throw SqlException.$(node.position, LateralNullCheckRecordCursorFactory.NULL_VALUE_ERROR);
-                    }
-                } else if (check.isRuntimeConstant() || hasSubQuery(node)) {
-                    if (checks == null) {
-                        checks = new ObjList<>();
-                        positions = new IntList();
-                    }
-                    checks.add(check);
-                    positions.add(node.position);
-                } else {
-                    Misc.free(check);
-                }
+                metadata = SqlOptimiser.nullProbeMetadata(lateralNullCheckTypes.getQuick(i));
+                checks.add(functionParser.parseFunction(node, metadata, executionContext));
+                nullRecords.add(NullRecordFactory.getInstance(metadata));
+                positions.add(node.position);
             }
-            if (checks == null) {
-                return factory;
-            }
-            final RecordCursorFactory checked = new LateralNullCheckRecordCursorFactory(factory, checks, positions);
-            checks = null;
-            return checked;
+            return new LateralNullCheckRecordCursorFactory(factory, checks, nullRecords, positions, metadata);
         } catch (Throwable th) {
             Misc.freeObjList(checks);
+            Misc.freeObjListIfCloseable(nullRecords);
             Misc.free(factory);
             throw th;
         } finally {
             lateralNullChecks.clear();
+            lateralNullCheckTypes.clear();
         }
     }
 
@@ -2434,6 +2398,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         ExpressionNode nullCheck = null;
+        int nullCheckType = ColumnType.UNDEFINED;
         if (master != null) {
             final RecordMetadata masterMetadata = master.getMetadata();
             for (int i = 0, n = check.size(); i < n; i++) {
@@ -2453,6 +2418,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                     if (nullCheck == null) {
                         nullCheck = check.getNullCheck(i);
+                        nullCheckType = columnType;
                     }
                 }
             }
@@ -2460,22 +2426,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (nullCheck == null) {
             throw SqlException.position(slaveModel.getJoinKeywordPosition()).put(check.getError());
         }
-        collectLateralNullCheck(nullCheck);
+        collectLateralNullCheck(nullCheck, nullCheckType);
     }
 
-    private void collectLateralNullCheck(ExpressionNode check) {
+    private void collectLateralNullCheck(ExpressionNode check, int columnType) {
         for (int i = 0, n = lateralNullChecks.size(); i < n; i++) {
             if (lateralNullChecks.getQuick(i) == check) {
                 return;
             }
         }
         lateralNullChecks.add(check);
+        lateralNullCheckTypes.add(columnType);
     }
 
     private void collectLateralNullChecks(IQueryModel model) {
         final ObjList<ExpressionNode> checks = model.getLateralNullChecks();
+        final IntList checkTypes = model.getLateralNullCheckTypes();
         for (int i = 0, n = checks.size(); i < n; i++) {
-            collectLateralNullCheck(checks.getQuick(i));
+            collectLateralNullCheck(checks.getQuick(i), checkTypes.getQuick(i));
         }
     }
 

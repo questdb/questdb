@@ -28,13 +28,16 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlOptimiser;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -44,9 +47,11 @@ import io.questdb.std.ObjList;
  * Fails a query, once per execution, when one of its checks is true. LateralJoinRewriter accepts a
  * correlated lateral sub-query whose RIGHT or FULL join loses the rows that it NULL-extends when a
  * WHERE comparison, such as {@code t.id >= $1}, drops those rows anyway. The comparison drops them
- * only while its value, here {@code $1}, is not NULL, and the value of a bind variable, a function
- * such as {@code now()} or a scalar sub-query is known only when the query runs. Each check is
- * {@code value = NULL}; when one is true, the plan would return wrong rows, so the query fails.
+ * only while its value, here {@code $1}, does not convert to the NULL of the column type, and the
+ * value of a bind variable, a function such as {@code now()} or a scalar sub-query is known only
+ * when the query runs. Each check is the comparison with the column replaced by a probe column,
+ * which it evaluates on the NULL record of the column type; when one is true, the comparison would
+ * keep the rows that the join NULL-extends, and the plan would lose them, so the query fails.
  * <p>
  * The checks run when a cursor opens, and the factory then returns the base cursor itself, so rows
  * pass through without any per-row cost. The code generator places this factory at the top of the
@@ -58,13 +63,24 @@ public class LateralNullCheckRecordCursorFactory extends AbstractRecordCursorFac
             "is not supported in a correlated lateral sub-query when this value is NULL";
     private final RecordCursorFactory base;
     private final ObjList<Function> checks;
+    private final ObjList<Record> nullRecords;
     private final IntList positions;
+    // names the probe column, the only column that each check reads, in the plan
+    private final RecordMetadata probeMetadata;
 
-    public LateralNullCheckRecordCursorFactory(RecordCursorFactory base, ObjList<Function> checks, IntList positions) {
+    public LateralNullCheckRecordCursorFactory(
+            RecordCursorFactory base,
+            ObjList<Function> checks,
+            ObjList<Record> nullRecords,
+            IntList positions,
+            RecordMetadata probeMetadata
+    ) {
         super(base.getMetadata());
         this.base = base;
         this.checks = checks;
+        this.nullRecords = nullRecords;
         this.positions = positions;
+        this.probeMetadata = probeMetadata;
     }
 
     @Override
@@ -154,7 +170,10 @@ public class LateralNullCheckRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Lateral Null Check");
+        // the checks read the probe column, not a column of this factory
+        sink.setMetadata(probeMetadata);
         sink.meta("checks").val(checks);
+        sink.setMetadata(null);
         sink.child(base);
     }
 
@@ -166,8 +185,8 @@ public class LateralNullCheckRecordCursorFactory extends AbstractRecordCursorFac
     private void runChecks(SqlExecutionContext executionContext) throws SqlException {
         for (int i = 0, n = checks.size(); i < n; i++) {
             final Function check = checks.getQuick(i);
-            check.init(null, executionContext);
-            if (check.getBool(null)) {
+            check.init(SqlOptimiser.NULL_REJECTING_PROBE_SYMBOL_TABLES, executionContext);
+            if (check.getBool(nullRecords.getQuick(i))) {
                 throw SqlException.$(positions.getQuick(i), NULL_VALUE_ERROR);
             }
         }
@@ -177,5 +196,6 @@ public class LateralNullCheckRecordCursorFactory extends AbstractRecordCursorFac
     protected void _close() {
         Misc.free(base);
         Misc.freeObjList(checks);
+        Misc.freeObjListIfCloseable(nullRecords);
     }
 }
