@@ -151,12 +151,11 @@ public class WalSyscallCountTest extends AbstractCairoTest {
 
     private static String expected(String commitMode, boolean isV2, boolean isCommit) {
         if (isCommit) {
-            // A V2 commit msyncs the open part file ahead of the header, in the header's grade: one more than
-            // base, which synced the header alone.
-            final int msyncs = isV2 ? 6 : 5;
+            // A V2 commit in SYNC msyncs the open part file ahead of the header: one more than base, which
+            // synced the header alone and left the record it publishes to writeback.
             return switch (commitMode) {
-                case "async" -> "calls: msyncAsync=" + msyncs + "; opened: ";
-                case "sync" -> "calls: msyncSync=" + msyncs + "; opened: ";
+                case "async" -> "calls: msyncAsync=5; opened: ";
+                case "sync" -> "calls: msyncSync=" + (isV2 ? 6 : 5) + "; opened: ";
                 default -> "calls: ; opened: ";
             };
         }

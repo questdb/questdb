@@ -370,7 +370,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         if (commitMode != CommitMode.NOSYNC) {
             // Part file must be durable before the header that points to it.
             // A crash after the header sync but before the part file is written back
-            // would leave maxTxn=N pointing at a zeroed/partial record.
+            // would leave maxTxn=N pointing at a zeroed/partial record. ASYNC promises nothing across a
+            // power loss, and its MS_ASYNC orders nothing, so it syncs the header alone, as base does.
             //
             // Deferred 2 (group commit, W>0): push the sequencer files to the page cache with msync(MS_ASYNC)
             // — writeback-only, NO device flush — and DEFER the fdatasync (the device flush) to the batched
@@ -381,7 +382,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             // device-durable. Other modes (and ADAPTIVE W=0) keep their exact existing sync grade.
             final boolean deferDeviceFlush = isDeviceFlushDeferred();
             final boolean async = commitMode == CommitMode.ASYNC || deferDeviceFlush;
-            if (txnPartMem.isOpen()) {
+            if (txnPartMem.isOpen() && commitMode != CommitMode.ASYNC) {
                 txnPartMem.sync(async);
             }
             txnMem.sync(async);
