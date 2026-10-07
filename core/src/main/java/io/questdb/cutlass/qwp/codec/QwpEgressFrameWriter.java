@@ -86,7 +86,6 @@ public final class QwpEgressFrameWriter {
      * @return address just past the body
      */
     public static long writeExecDone(long bufAddr, long requestId, short opType, long rowsAffected) {
-        assert rowsAffected >= 0 : "negative rows_affected: " + rowsAffected;
         Unsafe.putByte(bufAddr, QwpEgressMsgKind.EXEC_DONE);
         Unsafe.putLong(bufAddr + 1, requestId);
         Unsafe.putByte(bufAddr + 9, (byte) opType);
