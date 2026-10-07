@@ -122,6 +122,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             fixedRowCount -= prevTransientRowCount;
             transientRowCount = prevTransientRowCount + 1; // When row cancel finishes 1 is subtracted. Add 1 to compensate.
             partitionDeltaCount -= getPartitionHasDelta(getPartitionCount() - 1) ? 1 : 0;
+            partitionDeltaActiveCount -= isPartitionDeltaActive(getPartitionCount() - 1) ? 1 : 0;
             attachedPartitions.setPos(attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION);
             prevTransientRowCount = getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
         }
@@ -322,6 +323,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         fixedRowCount = 0;
         attachedPartitions.clear();
         partitionDeltaCount = 0;
+        partitionDeltaActiveCount = 0;
         recordStructureVersion++;
         truncateVersion++;
         partitionTableVersion++;
@@ -336,6 +338,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             final int size = attachedPartitions.size();
             final int lim = size - LONGS_PER_TX_ATTACHED_PARTITION;
             partitionDeltaCount -= getPartitionHasDeltaByRawIndex(indexRaw) ? 1 : 0;
+            partitionDeltaActiveCount -= isPartitionDeltaActiveByRawIndex(indexRaw) ? 1 : 0;
             if (indexRaw < lim) {
                 attachedPartitions.arrayCopy(indexRaw + LONGS_PER_TX_ATTACHED_PARTITION, indexRaw, lim - indexRaw);
             }
@@ -440,6 +443,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     public void setPartitionDeltaActiveByRawIndex(int indexRaw) {
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        if (!isPartitionDeltaActiveByRawIndex(indexRaw)) {
+            partitionDeltaActiveCount++;
         }
         attachedPartitions.setQuick(indexRaw + PARTITION_VERSION_OFFSET, getPartitionOffset3(indexRaw) | PARTITION_DELTA_WRITE_BIT);
     }
@@ -717,6 +723,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         if (maxTimestamp == Long.MIN_VALUE && PartitionBy.isPartitioned(partitionBy)) {
             attachedPartitions.clear();
             partitionDeltaCount = 0;
+            partitionDeltaActiveCount = 0;
         }
         return calculateTxRecordSize(symbolColumnCount * Long.BYTES, attachedPartitions.size() * Long.BYTES);
     }
@@ -925,6 +932,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
                 for (int i = maxTimestampPartitionIndex, n = getPartitionCount() - 1; i < n; i++) {
                     rowCount += getPartitionSize(i);
                     partitionDeltaCount -= getPartitionHasDelta(i + 1) ? 1 : 0;
+                    partitionDeltaActiveCount -= isPartitionDeltaActive(i + 1) ? 1 : 0;
                 }
                 attachedPartitions.setPos((maxTimestampPartitionIndex + 1) * LONGS_PER_TX_ATTACHED_PARTITION);
                 recordStructureVersion++;

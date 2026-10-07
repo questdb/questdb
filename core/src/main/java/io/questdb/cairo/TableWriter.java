@@ -8562,7 +8562,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void initDeltaPartitions(long minTimestamp, long maxTimestamp) {
-        if (minTimestamp > maxTimestamp) {
+        // O(1) exit for tables without delta-active partitions: skips the walk on each WAL apply.
+        if (minTimestamp > maxTimestamp || !txWriter.hasAnyDeltaActive()) {
             return;
         }
         int i = txWriter.findAttachedPartitionIndexByLoTimestamp(minTimestamp);
@@ -15358,7 +15359,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * interval, so the test is conservative (never a false negative).
      */
     private boolean timestampRangeOverlapsDeltaActivePartition(long minTs, long maxTs) {
-        if (minTs > maxTs) {
+        // O(1) exit for tables without delta-active partitions: skips the walk on each WAL apply.
+        if (minTs > maxTs || !txWriter.hasAnyDeltaActive()) {
             return false;
         }
 

@@ -105,6 +105,54 @@ public class TxReaderDeltaTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeltaActiveCount() throws Exception {
+        withTxn((writer, reader, path) -> {
+            appendPartition(writer, 0);
+            // DELTA_SWITCH sets delta-write mode before any Delta data exists. A repeated set counts once.
+            writer.setPartitionDeltaActiveByTimestamp(0);
+            writer.setPartitionDeltaActiveByTimestamp(0);
+            commit(writer);
+            Assert.assertTrue(writer.hasAnyDeltaActive());
+            Assert.assertFalse(writer.hasAnyDelta());
+            Assert.assertTrue(reader.unsafeLoadAll());
+            Assert.assertEquals(1, reader.getDeltaActiveCount());
+            Assert.assertFalse(reader.hasAnyDelta());
+            final long partitionVersion = reader.getPartitionTableVersion();
+
+            // Extending the list reloads the former last partition.
+            appendPartition(writer, Micros.DAY_MICROS);
+            Assert.assertTrue(reader.unsafeLoadAll());
+            Assert.assertEquals(partitionVersion, reader.getPartitionTableVersion());
+            Assert.assertEquals(1, reader.getDeltaActiveCount());
+
+            // The last partition's offset-3 word refreshes without a version change.
+            writer.setPartitionDeltaActiveByTimestamp(Micros.DAY_MICROS);
+            commit(writer);
+            Assert.assertTrue(reader.unsafeLoadAll());
+            Assert.assertEquals(partitionVersion, reader.getPartitionTableVersion());
+            Assert.assertEquals(2, reader.getDeltaActiveCount());
+
+            try (TxReader copy = new TxReader(configuration.getFilesFacade())) {
+                copy.loadAllFrom(reader);
+                Assert.assertTrue(copy.hasAnyDeltaActive());
+                copy.clear();
+                Assert.assertFalse(copy.hasAnyDeltaActive());
+            }
+
+            writer.removeAttachedPartitions(0);
+            commit(writer);
+            Assert.assertTrue(writer.hasAnyDeltaActive());
+            Assert.assertTrue(reader.unsafeLoadAll());
+            Assert.assertEquals(1, reader.getDeltaActiveCount());
+
+            writer.truncate(writer.getColumnVersion(), new ObjList<>());
+            Assert.assertFalse(writer.hasAnyDeltaActive());
+            Assert.assertTrue(reader.unsafeLoadAll());
+            Assert.assertEquals(0, reader.getDeltaActiveCount());
+        });
+    }
+
+    @Test
     public void testFailedReload() throws Exception {
         withTxn((writer, reader, path) -> {
             appendPartition(writer, 0);
@@ -114,8 +162,10 @@ public class TxReaderDeltaTest extends AbstractCairoTest {
             reader.versionReadsUntilFailure = 3;
             Assert.assertFalse(reader.unsafeLoadAll());
             Assert.assertFalse(reader.hasAnyDelta());
+            Assert.assertFalse(reader.hasAnyDeltaActive());
             Assert.assertTrue(reader.unsafeLoadAll());
             Assert.assertTrue(reader.hasAnyDelta());
+            Assert.assertTrue(reader.hasAnyDeltaActive());
         });
     }
 
@@ -184,6 +234,7 @@ public class TxReaderDeltaTest extends AbstractCairoTest {
             Assert.assertTrue(reader.unsafeLoadAll());
             reader.isFlagReadAllowed = false;
             Assert.assertFalse(reader.hasAnyDelta());
+            Assert.assertFalse(reader.hasAnyDeltaActive());
             reader.isFlagReadAllowed = true;
 
             setDelta(writer, 2);
@@ -191,6 +242,23 @@ public class TxReaderDeltaTest extends AbstractCairoTest {
             Assert.assertTrue(reader.unsafeLoadAll());
             reader.isFlagReadAllowed = false;
             Assert.assertTrue(reader.hasAnyDelta());
+            Assert.assertTrue(reader.hasAnyDeltaActive());
+        });
+    }
+
+    @Test
+    public void testWriterReloadDropsActiveTail() throws Exception {
+        withTxn((writer, reader, path) -> {
+            appendPartition(writer, 0);
+            // Delta-write mode without Delta data: only the delta-active count holds the tail.
+            writer.updatePartitionSizeByTimestamp(Micros.DAY_MICROS, 1);
+            writer.setPartitionDeltaActiveByTimestamp(Micros.DAY_MICROS);
+            Assert.assertTrue(writer.hasAnyDeltaActive());
+            Assert.assertFalse(writer.hasAnyDelta());
+
+            Assert.assertTrue(writer.unsafeLoadAll());
+            Assert.assertEquals(1, writer.getPartitionCount());
+            Assert.assertFalse(writer.hasAnyDeltaActive());
         });
     }
 
@@ -263,12 +331,22 @@ public class TxReaderDeltaTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isPartitionDeltaActiveByRawIndex(int indexRaw) {
+            Assert.assertTrue("aggregate lookup must not scan partition flags", isFlagReadAllowed);
+            return super.isPartitionDeltaActiveByRawIndex(indexRaw);
+        }
+
+        @Override
         public long unsafeReadVersion() {
             final long version = super.unsafeReadVersion();
             if (versionReadsUntilFailure > 0 && --versionReadsUntilFailure == 0) {
                 return version + 1;
             }
             return version;
+        }
+
+        private int getDeltaActiveCount() {
+            return partitionDeltaActiveCount;
         }
 
         private long getPartitionVersionOffset() {
