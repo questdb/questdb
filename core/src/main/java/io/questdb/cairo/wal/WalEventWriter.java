@@ -621,14 +621,18 @@ class WalEventWriter implements Closeable {
         // power loss that kept the original in one file and the replacement in the other either suspends
         // the table on a record that disagrees with its index entry, or applies the original record without
         // the new column's null flag. Nothing names this record until the caller sequences it, so flushing
-        // both files here, in any order, leaves a sequenced txn only the replacement to meet. NOSYNC and
-        // ASYNC promise nothing across a power loss and skip it. SYNC and ADAPTIVE pay it once per writer per
-        // concurrent ADD COLUMN ... SYMBOL, next to the fsync that nulling the new column already costs.
-        // MS_ASYNC plus the barrier is the pair ADAPTIVE uses for every commit's private files.
-        if (CommitMode.isPowerLossDurable(configuration.getCommitMode())) {
+        // both files here, in any order, leaves a sequenced txn only the replacement to meet. SYNC and
+        // ADAPTIVE pay it once per writer per concurrent ADD COLUMN ... SYMBOL, next to the fsync that nulling
+        // the new column already costs. MS_ASYNC plus the barrier is the pair ADAPTIVE uses for every commit's
+        // private files. NOSYNC and ASYNC promise nothing across a power loss and take no barrier; ASYNC still
+        // pushes both files with MS_ASYNC, the grade of its every commit.
+        final int commitMode = configuration.getCommitMode();
+        if (commitMode != CommitMode.NOSYNC) {
             eventMem.sync(true);
             eventIndexMem.sync(true);
-            barrierFsync();
+            if (CommitMode.isPowerLossDurable(commitMode)) {
+                barrierFsync();
+            }
         }
         return segmentTxn;
     }
