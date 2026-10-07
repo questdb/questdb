@@ -14634,11 +14634,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // lastPartitionSquashed == false means a partition survives after the
             // target. openLastPartition would therefore re-open the wrong partition,
             // and it no-ops outright once that last partition is parquet (see
-            // openLastPartitionAndSetAppendPosition). This branch is defensive: the
-            // writer used to keep an earlier partition open when an O3 commit made a
-            // parquet partition the last one, but finishO3Commit now closes it and
-            // resets lastOpenPartitionTs in that commit. Close WITHOUT truncating,
-            // then re-open the TARGET. openPartition also re-runs
+            // openLastPartitionAndSetAppendPosition). With a parquet last partition,
+            // this branch runs when lastOpenPartitionTs is stale:
+            // convertPartitionNativeToParquet closes a converted last partition without
+            // resetting it, and finishO3Commit resets it only when it finds a partition
+            // open. Once that day is native again, a squash of its splits matches the
+            // stale value and opens the day behind the parquet last partition; the
+            // transition close in the next O3 commit's finishO3Commit releases it.
+            // Close WITHOUT truncating, then re-open the TARGET. openPartition also re-runs
             // configureFollowerAndWriter / configureCoveringIfNeeded /
             // populateDenseIndexerList, so the reseal below and the next commit see
             // live column memories and a dense indexer list that matches indexCount.

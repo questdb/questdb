@@ -36,6 +36,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Files;
@@ -942,6 +943,52 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             2020-02-04T00:00:00.000000Z\t1640\t2020-02-04
                             2020-02-05T00:00:00.000000Z\t720\t2020-02-05
                             """, timestampType.getTypeName()));
+        });
+    }
+
+    @Test
+    public void testSquashIntoConvertedPartitionBehindParquetLastThenO3Merge() throws Exception {
+        // Converting the last partition to parquet leaves lastOpenPartitionTs on 2020-02-04. Once
+        // 2020-02-04 is native again, the squash of an O3 split opens it in the writer behind the
+        // parquet 2020-02-05, and a later O3 merge supersedes the version the writer holds.
+        // finishO3Commit must release that version without trimming it to the merged row count:
+        // the trim would truncate s.d and v.d under a reader that still reads that version.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            execute("CREATE TABLE x (s STRING, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT rpad('s', 64, 's'), rpad('v', 48, 'v'), timestamp_sequence('2020-02-04', 60_000_000L) FROM long_sequence(1440)");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-02-04'");
+            execute("ALTER TABLE x SET FORMAT PARQUET");
+            execute("INSERT INTO x SELECT rpad('s', 64, 's'), rpad('v', 48, 'v'), timestamp_sequence('2020-02-05', 60_000_000L) FROM long_sequence(720)");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-02-04'");
+            // splits 2020-02-04, and the same commit squashes the split back in
+            execute("INSERT INTO x SELECT rpad('s', 64, 's'), rpad('v', 48, 'v'), timestamp_sequence('2020-02-04T20:01', 1_000_000L) FROM long_sequence(200)");
+            drainWalQueue();
+
+            try (
+                    RecordCursorFactory factory = select("SELECT s, v FROM x");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                // merges into 2020-02-04 while the cursor holds the version before the merge
+                execute("INSERT INTO x SELECT rpad('s', 64, 's'), rpad('v', 48, 'v'), timestamp_sequence('2020-02-04T05:00:30', 60_000_000L) FROM long_sequence(10)");
+                drainWalQueue();
+                Assert.assertFalse("the merge suspended the table", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+
+                long length = 0;
+                final Record record = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    length += record.getStrLen(0) + record.getVarcharSize(1);
+                }
+                Assert.assertEquals(2_360L * (64 + 48), length);
+            }
+
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n2370\n");
         });
     }
 
