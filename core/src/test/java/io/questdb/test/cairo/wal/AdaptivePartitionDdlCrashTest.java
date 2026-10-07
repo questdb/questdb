@@ -35,6 +35,9 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
+import io.questdb.cutlass.line.udp.LineUdpLexer;
+import io.questdb.cutlass.line.udp.LineUdpParserImpl;
 import io.questdb.cutlass.text.ParallelCsvFileImporter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -43,7 +46,9 @@ import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -73,7 +78,8 @@ import java.util.stream.Stream;
  * Each operation runs through the WAL and directly in the writer of a hard-suspended table, the way
  * {@code FORCE DROP PARTITION} always runs: with the writer free, queued behind a busy writer, and with the
  * writer busy at dispatch but free by the time the statement is queued; a direct change is not in the WAL at
- * all. COPY and {@code RESUME WAL FROM TXN} change the table outside the WAL by themselves.
+ * all. COPY, {@code RESUME WAL FROM TXN} and the UDP line protocol change the table outside the WAL by
+ * themselves.
  * <p>
  * The crash is a process kill: everything written reached the page cache, nothing is synced on the way
  * out. A clean close would take a save point, so the close-time save point is switched off, except in the
@@ -128,7 +134,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                     // TRUNCATE is not forced through on a suspended table.
                     case TRUNCATE -> params.add(new Object[]{history, operation, OperationPath.WAL});
                     // These change the table outside the WAL by themselves.
-                    case COPY_INTO_EXISTING_TABLE, RESUME_WAL_FROM_TXN ->
+                    case COPY_INTO_EXISTING_TABLE, RESUME_WAL_FROM_TXN, UDP ->
                             params.add(new Object[]{history, operation, OperationPath.OWN});
                     // The second engine of ENROLLED_ON_WRITER_OPEN cannot create or drop tables.
                     case COPY_INTO_NEW_TABLE -> {
@@ -293,6 +299,21 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         Assert.assertEquals(tracker.getSeqTxn(), tracker.getDurableEpochSeqTxn());
     }
 
+    private static void udpParse(LineUdpParserImpl parser, String lines) {
+        final byte[] bytes = lines.getBytes(StandardCharsets.UTF_8);
+        final long mem = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
+        try (LineUdpLexer lexer = new LineUdpLexer(4096)) {
+            for (int i = 0; i < bytes.length; i++) {
+                Unsafe.putByte(mem + i, bytes[i]);
+            }
+            lexer.withParser(parser);
+            lexer.parse(mem, mem + bytes.length);
+            lexer.parseLast();
+        } finally {
+            Unsafe.free(mem, bytes.length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
     private CairoEngine apply(CairoEngine e) throws Exception {
         final String before = partitions(e);
         switch (operation) {
@@ -328,6 +349,22 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                     failSavePointsAfter = -1;
                 }
                 return e;
+            }
+            case UDP -> {
+                startOperation();
+                try (LineUdpParserImpl parser = new LineUdpParserImpl(e, new DefaultLineUdpReceiverConfiguration())) {
+                    udpParse(parser, """
+                            t,s=u1 v=101i 1704585600000000000
+                            t,s=u2 v=102i 1704589200000000000
+                            t,s=u3 v=103i 1704672000000000000
+                            """);
+                    parser.commitAll();
+                    // An idle tick: nothing to commit.
+                    parser.commitAll();
+                } finally {
+                    failSavePointsAfter = -1;
+                }
+                Assert.assertEquals("save points of the UDP commit", history == History.NOSYNC ? 0 : 1, savePoints.get());
             }
             default -> applySql(e, sql(e));
         }
@@ -580,7 +617,9 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         RESUME_WAL_FROM_TXN,
         SQUASH,
         TRUNCATE,
-        TTL
+        TTL,
+        // The UDP line protocol writes the table through its writer, outside the WAL.
+        UDP
     }
 
     public enum OperationPath {
