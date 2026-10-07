@@ -26,6 +26,7 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
@@ -38,9 +39,11 @@ import io.questdb.cutlass.text.ParallelCsvFileImporter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -67,14 +70,15 @@ import java.util.concurrent.atomic.AtomicInteger;
  * later save point, restarts, and requires the rows, the partition list and the WAL apply position to equal
  * what the table showed before the crash, which is the result of the same statements without a crash.
  * Each operation runs through the WAL and directly in the writer of a hard-suspended table, the way
- * {@code FORCE DROP PARTITION} always runs, once with the writer free and once queued behind a busy writer; a
- * direct change is not in the WAL at all. COPY and {@code RESUME WAL FROM TXN} change the table outside the
- * WAL by themselves.
+ * {@code FORCE DROP PARTITION} always runs: with the writer free, queued behind a busy writer, and with the
+ * writer busy at dispatch but free by the time the statement is queued; a direct change is not in the WAL at
+ * all. COPY and {@code RESUME WAL FROM TXN} change the table outside the WAL by themselves.
  * <p>
  * The crash is a process kill: everything written reached the page cache, nothing is synced on the way
- * out. A clean close would take a save point, so the close-time save point is switched off, and the restart
- * is a fresh {@link CairoEngine}, which runs startup recovery before the WAL apply resumes. The NOSYNC
- * history is the control: nothing is rewound there.
+ * out. A clean close would take a save point, so the close-time save point is switched off, except in the
+ * histories that restart cleanly, where the close must take the save point the operation still owes. The
+ * restart is a fresh {@link CairoEngine}, which runs startup recovery before the WAL apply resumes. The
+ * NOSYNC history is the control: nothing is rewound there.
  */
 @RunWith(Parameterized.class)
 public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
@@ -124,8 +128,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                     // These change the table outside the WAL by themselves.
                     case COPY_INTO_EXISTING_TABLE, RESUME_WAL_FROM_TXN ->
                             params.add(new Object[]{history, operation, OperationPath.OWN});
-                    // A table COPY creates is always enrolled when the importer opens its writer, and the second
-                    // engine of ENROLLED_ON_WRITER_OPEN cannot create or drop tables.
+                    // The second engine of ENROLLED_ON_WRITER_OPEN cannot create or drop tables.
                     case COPY_INTO_NEW_TABLE -> {
                         if (history != History.ENROLLED_ON_WRITER_OPEN) {
                             params.add(new Object[]{history, operation, OperationPath.OWN});
@@ -135,6 +138,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                         params.add(new Object[]{history, operation, OperationPath.WAL});
                         params.add(new Object[]{history, operation, OperationPath.SUSPENDED});
                         params.add(new Object[]{history, operation, OperationPath.SUSPENDED_BUSY_WRITER});
+                        params.add(new Object[]{history, operation, OperationPath.SUSPENDED_WRITER_FREES_UP});
                     }
                 }
             }
@@ -146,8 +150,8 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
     public void testCrashAfterOperation() throws Exception {
         final boolean startsNosync = history == History.NOSYNC || history == History.ENROLLED_ON_WRITER_OPEN;
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, startsNosync ? "nosync" : "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, history == History.INLINE_SAVE_POINTS_ONLY ? -1 : NO_PERIODIC_SAVE_POINT_MS);
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, history.periodicOff() ? -1 : NO_PERIODIC_SAVE_POINT_MS);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, history.cleanRestart() ? "true" : "false");
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
         setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, "true");
         inputRoot = temp.newFolder().getAbsolutePath();
@@ -171,8 +175,15 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                     }
                 }
                 insertDay(e, "2024-01-04", 30);
+                if (history.cleanRestart()) {
+                    // A direct operation does not move the seqTxn, so only the save point it owes makes the
+                    // close take one.
+                    takeSavePoint(e);
+                }
                 apply(e);
-                insertDay(e, "2024-01-05", 40);
+                if (!history.cleanRestart()) {
+                    insertDay(e, "2024-01-05", 40);
+                }
                 final String expected = snapshot(e);
 
                 e = restart(e);
@@ -211,7 +222,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         return sink.toString();
     }
 
-    // Startup in a fresh engine, as after a process kill: pooled writers are closed without a save point.
+    // Startup in a fresh engine. Pooled writers close without a save point unless the history restarts cleanly.
     private static CairoEngine restart(CairoEngine e) {
         e.releaseAllReaders();
         e.releaseAllWriters();
@@ -239,6 +250,16 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, NO_PERIODIC_SAVE_POINT_MS);
         final SeqTxnTracker tracker = e.getTableSequencerAPI().getTxnTracker(e.verifyTableName("t"));
         Assert.assertEquals("the apply job must take a save point", tracker.getSeqTxn(), tracker.getDurableEpochSeqTxn());
+    }
+
+    // A save point at the current seqTxn, as the apply job takes after a batch.
+    private static void takeSavePoint(CairoEngine e) {
+        final TableToken token = e.verifyTableName("t");
+        try (TableWriter writer = e.getWriter(token, "test")) {
+            writer.advanceDurableEpoch(e.getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+        }
+        final SeqTxnTracker tracker = e.getTableSequencerAPI().getTxnTracker(token);
+        Assert.assertEquals(tracker.getSeqTxn(), tracker.getDurableEpochSeqTxn());
     }
 
     private void apply(CairoEngine e) throws Exception {
@@ -272,12 +293,18 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
             default -> applySql(e, sql(e));
         }
         Assert.assertNotEquals("the operation must change the partitions", before, partitions(e));
+        if (operation == Operation.ATTACH_LIST_SECOND_FAILS) {
+            final String rows = snapshot(e);
+            Assert.assertTrue("the first partition must attach", rows.contains("\ts11\t"));
+            Assert.assertFalse("the second partition must not attach", rows.contains("\ts1\t"));
+        }
     }
 
     private void applySql(CairoEngine e, String sql) throws Exception {
         if (path == OperationPath.WAL) {
             startOperation();
             try {
+                // A failing statement fails in the apply job, which skips it.
                 alter(e, sql);
             } finally {
                 failSavePointsAfter = -1;
@@ -288,19 +315,42 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         e.execute("ALTER TABLE t SUSPEND WAL");
         startOperation();
         try {
-            if (path == OperationPath.SUSPENDED) {
-                e.execute(sql);
-            } else {
-                // The writer is busy, so the change is queued and runs when the holder ticks the writer.
-                try (
-                        TableWriter writer = e.getWriter(e.verifyTableName("t"), "test");
-                        SqlCompiler compiler = e.getSqlCompiler();
-                        SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(e);
-                        OperationFuture future = compiler.compile(sql, ctx).execute(new SCSequence())
-                ) {
-                    writer.tick(true);
-                    future.await();
+            switch (path) {
+                case SUSPENDED -> e.execute(sql);
+                case SUSPENDED_BUSY_WRITER -> {
+                    // The writer is busy, so the change is queued and runs when the holder ticks the writer.
+                    try (
+                            TableWriter writer = e.getWriter(e.verifyTableName("t"), "test");
+                            SqlCompiler compiler = e.getSqlCompiler();
+                            SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(e);
+                            OperationFuture future = compiler.compile(sql, ctx).execute(new SCSequence())
+                    ) {
+                        writer.tick(true);
+                        future.await();
+                    }
                 }
+                case SUSPENDED_WRITER_FREES_UP -> {
+                    // The writer is busy at dispatch and free before the change is queued, so the statement
+                    // applies it in the writer itself.
+                    final TableWriter[] holder = {e.getWriter(e.verifyTableName("t"), "test")};
+                    OperationDispatcher.setAsyncEnqueueObserver(() -> holder[0] = Misc.free(holder[0]));
+                    try (
+                            SqlCompiler compiler = e.getSqlCompiler();
+                            SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(e);
+                            OperationFuture future = compiler.compile(sql, ctx).execute(new SCSequence())
+                    ) {
+                        future.await();
+                    } finally {
+                        OperationDispatcher.setAsyncEnqueueObserver(null);
+                        Misc.free(holder[0]);
+                    }
+                }
+                default -> throw new AssertionError(path);
+            }
+            Assert.assertNotEquals("the statement must fail", Operation.ATTACH_LIST_SECOND_FAILS, operation);
+        } catch (CairoException | SqlException ex) {
+            if (operation != Operation.ATTACH_LIST_SECOND_FAILS) {
+                throw ex;
             }
         } finally {
             failSavePointsAfter = -1;
@@ -324,7 +374,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
 
     private void prepare(CairoEngine e) throws SqlException {
         switch (operation) {
-            case ATTACH_COPIED_DIR, ATTACH_MOVED_DIR, ATTACH_WITH_COPY_SETTING -> {
+            case ATTACH_COPIED_DIR, ATTACH_LIST_SECOND_FAILS, ATTACH_MOVED_DIR, ATTACH_WITH_COPY_SETTING -> {
                 alter(e, "ALTER TABLE t DETACH PARTITION LIST '" + PARTITION + "'");
                 final FilesFacade ff = e.getConfiguration().getFilesFacade();
                 final TableToken token = e.verifyTableName("t");
@@ -341,6 +391,10 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                 if (operation == Operation.ATTACH_WITH_COPY_SETTING) {
                     setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_COPY, "true");
                 }
+                if (operation == Operation.ATTACH_LIST_SECOND_FAILS) {
+                    // Detached, not attachable.
+                    alter(e, "ALTER TABLE t DETACH PARTITION LIST '2024-01-01'");
+                }
             }
             case CONVERT_TO_NATIVE -> alter(e, "ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '" + PARTITION + "'");
             default -> {
@@ -352,6 +406,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         return switch (operation) {
             case ATTACH_COPIED_DIR, ATTACH_MOVED_DIR, ATTACH_WITH_COPY_SETTING ->
                     "ALTER TABLE t ATTACH PARTITION LIST '" + PARTITION + "'";
+            case ATTACH_LIST_SECOND_FAILS -> "ALTER TABLE t ATTACH PARTITION LIST '" + PARTITION + "', '2024-01-01'";
             case CONVERT_TO_NATIVE -> "ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '" + PARTITION + "'";
             case CONVERT_TO_PARQUET -> "ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '" + PARTITION + "'";
             case DETACH -> "ALTER TABLE t DETACH PARTITION LIST '" + PARTITION + "'";
@@ -372,10 +427,10 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         };
     }
 
-    // The save points of the operation are counted from here; under SAVE_POINT_FAILS they fail.
+    // The save points of the operation are counted from here; in the histories where they fail, they fail.
     private void startOperation() {
         savePoints.set(0);
-        if (history == History.SAVE_POINT_FAILS) {
+        if (history.failsSavePoint()) {
             failSavePointsAfter = 0;
         }
     }
@@ -391,13 +446,32 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         INLINE_SAVE_POINTS_ONLY,
         // The save point after the operation fails with an I/O error; the next apply batch must take one.
         SAVE_POINT_FAILS,
+        // As SAVE_POINT_FAILS with the periodic save point off: the next apply batch must still take one.
+        SAVE_POINT_FAILS_NO_PERIODIC,
+        // The save point after the operation fails, nothing is written after it, and the restart is clean: the
+        // writer's close must take the save point, also when the operation did not move the seqTxn.
+        SAVE_POINT_FAILS_CLEAN_RESTART,
         // The control: nothing is rewound after a crash.
-        NOSYNC
+        NOSYNC;
+
+        boolean cleanRestart() {
+            return this == SAVE_POINT_FAILS_CLEAN_RESTART;
+        }
+
+        boolean failsSavePoint() {
+            return this == SAVE_POINT_FAILS || this == SAVE_POINT_FAILS_NO_PERIODIC || this == SAVE_POINT_FAILS_CLEAN_RESTART;
+        }
+
+        boolean periodicOff() {
+            return this == INLINE_SAVE_POINTS_ONLY || this == SAVE_POINT_FAILS_NO_PERIODIC;
+        }
     }
 
     public enum Operation {
         // The .attachable directory is a copy of .detached, renamed into place by the attach.
         ATTACH_COPIED_DIR,
+        // ATTACH of two partitions whose second is not attachable: the statement fails after attaching the first.
+        ATTACH_LIST_SECOND_FAILS,
         // The .attachable directory is the moved .detached, so the attach consumes the only copy.
         ATTACH_MOVED_DIR,
         // cairo.attach.partition.copy=true: the attach copies and leaves .attachable in place.
@@ -425,6 +499,8 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         SUSPENDED,
         // As SUSPENDED, queued behind a writer another thread holds.
         SUSPENDED_BUSY_WRITER,
+        // As SUSPENDED, with the writer busy at dispatch and free by the time the change would be queued.
+        SUSPENDED_WRITER_FREES_UP,
         WAL
     }
 }
