@@ -38,6 +38,18 @@ public class TypeConformanceTypesTest {
     private static final Set<String> DECLARABLE = Set.of("SAMPLE BY FILL(value)", "memoized virtual column", "ILP column kind");
 
     @Test
+    public void testGuardedSitesAndTheirRefusals() {
+        // the add-a-type tool's decisions name the twelve guarded sites; each raises the guard's
+        // refusal, except ILP, which keeps the cast error it raised before the guard
+        Assert.assertEquals(Set.of("memoized virtual column", "SAMPLE BY FILL(PREV)", "SAMPLE BY FILL(LINEAR)", "SAMPLE BY FILL(value)",
+                "COPY bind snapshot", "ILP column kind", "WAL columnar append", "QWP WAL append", "Parquet conversion", "between", "= NULL",
+                "copier conversion"), TypeConformanceInvariants.declarableSites());
+        final TypeConformanceTypes.Entry type = TypeConformanceTypes.byLabel("INT");
+        Assert.assertEquals("no family arm for INT at SAMPLE BY FILL(value)", TypeConformanceInvariants.refusalOf(type, "SAMPLE BY FILL(value)"));
+        Assert.assertEquals("cast error from protocol type", TypeConformanceInvariants.refusalOf(type, "ILP column kind"));
+    }
+
+    @Test
     public void testLaterTypeLineWithDeclaredRefusals() {
         // the sixth field lists the guarded sites the type is refused at on purpose
         final String[] six = TypeConformanceTypes.parseLaterTypeLine(

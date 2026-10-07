@@ -77,8 +77,8 @@ import java.util.regex.Pattern;
  * ({@link #castRule}, {@link #widened}); the SQL and storage classes state each path's checks;</li>
  * <li>a path that reaches a guarded site the type declares it is refused at fails there with the
  * site's refusal ({@link #assertDeclaredRefusal}), under the memory-leak check of the test that
- * runs the path, so the refusing factory's cleanup is checked too. The site map
- * ({@link #SITES_FILE}) gives each guarded site's refusal.</li>
+ * runs the path, so the refusing factory's cleanup is checked too. The add-a-type tool's
+ * decisions ({@link #PLACES_FILE}) give each guarded site's refusal.</li>
  * </ol>
  * Every failure message names the type, the value row, the path and the mode.
  */
@@ -88,13 +88,13 @@ public final class TypeConformanceInvariants {
     public static final String POLICY_NOT_NULL = "NOT_NULL";
     public static final String POLICY_SENTINEL = "SENTINEL";
     /**
-     * The site map the add-a-type tool reads, relative to the repository root: one row per site
-     * where a type's behaviour could differ from its family's, with the refusal a guarded site
-     * raises in its {@code message} column.
+     * The decisions the add-a-type tool keeps per place, relative to the repository root. A
+     * guarded site's row is decided {@code refused}, with the site's label as its reason, or
+     * {@code <label>: <refusal>} for a site that keeps the error it raised before the guard.
      */
-    public static final String SITES_FILE = "utils/type-probe/sites.tsv";
-    private static final String DECLARE_OR_ADMIT = "declare-or-admit";
+    public static final String PLACES_FILE = "utils/type-probe/places.tsv";
     private static final String FAMILY_ARM_REFUSAL = "no family arm for <type> at ";
+    private static final String KEPT_REFUSAL_SEPARATOR = ": ";
     private static final String MIX_PREFIX = "mix|";
     private static final String TYPE_PLACEHOLDER = "<type>";
     // the guarded sites a type can declare it is refused at, by label, with each one's refusal
@@ -206,7 +206,7 @@ public final class TypeConformanceInvariants {
      * declares none of the sites, so the path's other invariants apply.
      *
      * @param error what the path failed with, null when it ran
-     * @param sites the guarded sites the path reaches, labelled as {@link #SITES_FILE} labels them
+     * @param sites the guarded sites the path reaches, labelled as {@link #PLACES_FILE} labels them
      */
     public static boolean assertDeclaredRefusal(TypeConformanceTypes.Entry type, String row, String path, String mode, @Nullable CharSequence error, String... sites) {
         if (!isDeclaredRefused(type, sites)) {
@@ -373,10 +373,8 @@ public final class TypeConformanceInvariants {
     }
 
     /**
-     * The guarded sites a type can declare it is refused at: the family-arm rows of
-     * {@link #SITES_FILE} whose decision is {@code declare-or-admit}, each labelled as its refusal
-     * names it ({@code no family arm for <type> at <site>}) or, for a site that keeps an earlier
-     * error text, by its own label.
+     * The guarded sites a type can declare it is refused at: the labels of the rows of
+     * {@link #PLACES_FILE} decided {@code refused}.
      */
     public static synchronized Set<String> declarableSites() {
         if (declarableSites == null) {
@@ -493,14 +491,15 @@ public final class TypeConformanceInvariants {
     }
 
     /**
-     * The refusal a guarded site raises for the type: the site's {@code message} cell of
-     * {@link #SITES_FILE}, with the type's name in place of {@code <type>}.
+     * The refusal a guarded site raises for the type: {@code no family arm for <type> at <site>},
+     * or the error a site that keeps one names in {@link #PLACES_FILE}, with the type's name in
+     * place of {@code <type>}.
      */
     public static String refusalOf(TypeConformanceTypes.Entry type, String site) {
         declarableSites();
         final String message = declarableSites.get(site);
         if (message == null) {
-            throw new IllegalStateException(site + " is not a guarded site of " + SITES_FILE);
+            throw new IllegalStateException(site + " is not a guarded site of " + PLACES_FILE);
         }
         return message.replace(TYPE_PLACEHOLDER, ColumnType.nameOf(type.columnType));
     }
@@ -568,7 +567,7 @@ public final class TypeConformanceInvariants {
     }
 
     private static Map<String, String> readDeclarableSites() {
-        final File file = findSitesFile();
+        final File file = findPlacesFile();
         final List<String> lines;
         try {
             lines = Files.readAllLines(file.toPath(), StandardCharsets.UTF_8);
@@ -579,12 +578,10 @@ public final class TypeConformanceInvariants {
             throw new IllegalStateException(file + " is empty");
         }
         final List<String> header = Arrays.asList(lines.get(0).split("\t", -1));
-        final int siteColumn = header.indexOf("site");
-        final int kindColumn = header.indexOf("kind");
-        final int messageColumn = header.indexOf("message");
         final int decisionColumn = header.indexOf("decision");
-        if (siteColumn < 0 || kindColumn < 0 || messageColumn < 0 || decisionColumn < 0) {
-            throw new IllegalStateException(file + ": the header must name the site, kind, message and decision columns: " + lines.get(0));
+        final int reasonColumn = header.indexOf("reason");
+        if (decisionColumn < 0 || reasonColumn < 0) {
+            throw new IllegalStateException(file + ": the header must name the decision and reason columns: " + lines.get(0));
         }
         final Map<String, String> sites = new HashMap<>();
         for (int i = 1, n = lines.size(); i < n; i++) {
@@ -592,12 +589,13 @@ public final class TypeConformanceInvariants {
             if (cells.length != header.size()) {
                 throw new IllegalStateException(file + ":" + (i + 1) + ": " + cells.length + " cells, the header has " + header.size());
             }
-            if (!"family-arm".equals(cells[kindColumn]) || !DECLARE_OR_ADMIT.equals(cells[decisionColumn])) {
+            if (!"refused".equals(cells[decisionColumn])) {
                 continue;
             }
-            final String message = cells[messageColumn];
-            final String label = message.startsWith(FAMILY_ARM_REFUSAL) ? message.substring(FAMILY_ARM_REFUSAL.length()) : cells[siteColumn];
-            sites.putIfAbsent(label, message);
+            final String reason = cells[reasonColumn];
+            final int separator = reason.indexOf(KEPT_REFUSAL_SEPARATOR);
+            final String label = separator < 0 ? reason : reason.substring(0, separator);
+            sites.putIfAbsent(label, separator < 0 ? FAMILY_ARM_REFUSAL + label : reason.substring(separator + KEPT_REFUSAL_SEPARATOR.length()));
         }
         return Collections.unmodifiableMap(sites);
     }
@@ -609,15 +607,15 @@ public final class TypeConformanceInvariants {
         return "F32".equals(type.laterTier) ? Float.isNaN(Float.intBitsToFloat((int) bits[0])) : Double.isNaN(Double.longBitsToDouble(bits[0]));
     }
 
-    // the repository root of the test checkout: the first directory up from the working one that holds the site map
-    private static File findSitesFile() {
+    // the repository root of the test checkout: the first directory up from the working one that holds the decisions
+    private static File findPlacesFile() {
         for (File dir = new File(System.getProperty("user.dir")).getAbsoluteFile(); dir != null; dir = dir.getParentFile()) {
-            final File file = new File(dir, SITES_FILE);
+            final File file = new File(dir, PLACES_FILE);
             if (file.isFile()) {
                 return file;
             }
         }
-        throw new IllegalStateException("no " + SITES_FILE + " above " + System.getProperty("user.dir"));
+        throw new IllegalStateException("no " + PLACES_FILE + " above " + System.getProperty("user.dir"));
     }
 
     private static Pattern glob(String pattern) {

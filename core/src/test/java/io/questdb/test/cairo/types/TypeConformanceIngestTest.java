@@ -482,7 +482,7 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
      * read the rows from a table the kit writes with SQL, where every row of a later type is raw
      * bits except the NULL row, so the literal INSERT's error is that row's.
      */
-    // the guarded sites, labelled as the site map labels them, that a path reaches with a value of the type
+    // the guarded sites, labelled as the tool's decisions label them, that a path reaches with a value of the type
     private static String[] guardedSitesOf(String path) {
         return switch (path) {
             case "ingest.ilp-http", "ingest.ilp-tcp", "ingest.ilp-udp" -> new String[]{"ILP column kind"};

@@ -3,7 +3,8 @@
     python3 -m unittest discover -s utils/type-probe
 
 The parsers run on outputs cut from real runs (testdata/); the facts checks and the registration
-run on the checkout the tests sit in, the registration on a copy of its anchored files.
+run on the checkout the tests sit in, the registration on a copy of its anchored files; the
+failure mapping on a few places made here, and on one scan of the checkout (audit.py).
 """
 
 import contextlib
@@ -16,10 +17,13 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import audit
 import type_probe as tp
 
 DATA = Path(__file__).resolve().parent / 'testdata'
 REPO = Path(__file__).resolve().parents[2]
+JAVA = 'core/src/main/java/io/questdb/'
+_SCAN = []
 
 
 def data(name):
@@ -27,7 +31,32 @@ def data(name):
 
 
 def fixture_sites():
-    return tp.SiteMap.load(DATA / 'sites.tsv')
+    """A few places, with the refused decisions of the guards among them."""
+    def place(file, method, form, anchor, line=10, last=20, values=()):
+        return audit.Place(file=JAVA + file, line=line, method=method, form=form, anchor=anchor, values=frozenset(values), last_line=last)
+
+    places = [
+        place('cutlass/line/tcp/QwpWalAppender.java', 'appendToWalColumnar', 'value-test', 'qwp'),
+        place('cutlass/line/LineUtils.java', 'columnKind', 'value-switch', 'ilp'),
+        place('griffin/SqlCodeGenerator.java', 'isFixedSizePrevSlotEligible', 'value-switch', 'prev'),
+        place('griffin/engine/groupby/SampleByFillValueRecordCursorFactory.java', 'createPlaceHolderFunction', 'value-test', 'value'),
+        place('cairo/wal/WalColumnarRowAppender.java', 'unsupportedColumnType', 'value-test', 'wal'),
+        place('griffin/SqlCodeGenerator.java', 'generateCastFunction', 'tag-enum-switch', 'union', 3000, 3200),
+        place('griffin/SqlCodeGenerator.java', 'generateCastFunction', 'tag-switch', 'inner', 3100, 3110),
+        place('griffin/engine/orderby/SortKeyEncoder.java', 'keyKind', 'value-switch', 'key'),
+        place('cairo/wal/WalColumnarRowAppender.java', 'putFixedColumn', 'value-switch', 'policy', 500, 600, ['NullPolicy.SENTINEL']),
+    ]
+    refused = {'qwp': 'QWP WAL append', 'ilp': 'ILP column kind: cast error from protocol type', 'prev': 'SAMPLE BY FILL(PREV)',
+               'value': 'SAMPLE BY FILL(value)', 'wal': 'WAL columnar append'}
+    decisions = [audit.Decision(*p.key(), 'refused', refused[p.anchor]) for p in places if p.anchor in refused]
+    return tp.Sites(audit.Vocabulary(), places, decisions, REPO)
+
+
+def real_sites():
+    """The places of the checkout and its places.tsv, scanned once for the whole run."""
+    if not _SCAN:
+        _SCAN.append(tp.Sites.load(tp.Tree(REPO)))
+    return _SCAN[0]
 
 
 def valid_facts(tree, name='PROBE_INT', like='INT'):
@@ -100,7 +129,7 @@ class ParserTest(unittest.TestCase):
         self.assertEqual('= NULL', tp.find_refusals('no family arm for X at = NULL: add the arm')[0][2])
 
 
-class SiteMapTest(unittest.TestCase):
+class SitesTest(unittest.TestCase):
     def test_refusal_drops_a_stack_frame_on_its_line(self):
         text = ('expected:<[]> but was:<[comparator: uint32 is not handled: CairoException: [0] no compare arm for '
                 'UINT32 at ORDER BY: add a compare arm or declare the type ordered like its family at '
@@ -109,49 +138,65 @@ class SiteMapTest(unittest.TestCase):
                            'add a compare arm or declare the type ordered like its family')], tp.find_refusals(text))
 
     def test_declarable_sites(self):
+        sites = fixture_sites()
         self.assertEqual({'ILP column kind', 'QWP WAL append', 'SAMPLE BY FILL(PREV)', 'SAMPLE BY FILL(value)', 'WAL columnar append'},
-                         set(fixture_sites().declarable()))
+                         set(sites.declarable()))
+        self.assertEqual('no family arm for <type> at QWP WAL append', sites.declarable()['QWP WAL append'].message)
+        # a guard that keeps the error it raised before raises that
+        self.assertEqual('cast error from protocol type', sites.declarable()['ILP column kind'].message)
 
-    def test_refusal_maps_to_the_guard_row(self):
+    def test_refusal_maps_to_the_guard_or_the_place_of_its_lead(self):
         sites = fixture_sites()
         self.assertEqual('SAMPLE BY FILL(value)', sites.by_refusal('no family arm', 'SAMPLE BY FILL(value)').site)
-        self.assertEqual('QWP WAL append #1', sites.by_refusal('no family arm', 'QWP WAL append').site)
-        self.assertEqual('RecordComparatorCompiler.comparatorOpcode compare arm', sites.by_refusal('no compare arm', 'ORDER BY').site)
-        self.assertEqual('UNION cast pair switch', sites.by_refusal('no UNION cast', 'UNION').site)
+        self.assertEqual(('RecordComparatorCompiler.comparatorOpcode', 'add-writer-arm'),
+                         (sites.by_refusal('no compare arm', 'ORDER BY').site, sites.by_refusal('no compare arm', 'ORDER BY').decision))
+        self.assertEqual('SqlCodeGenerator.generateCastFunction', sites.by_refusal('no UNION cast', 'UNION').site)
         self.assertIsNone(sites.by_refusal('no family arm', 'nowhere'))
 
-    def test_kept_text_maps_to_the_declarable_row(self):
-        row = fixture_sites().by_kept_text('table: dst_w1, column: v; cast error from protocol type: LONG to column type: UINT32')
-        self.assertEqual('ILP column kind', row.site)
-        self.assertEqual('declare-or-admit', row.decision)
-        self.assertEqual('ColumnTypeConverter.convertFromFixedSize tag switch #1', fixture_sites().by_kept_text('error: unsupported conversion').site)
-
-    def test_kept_text_shared_by_several_sites_takes_the_value_rows_method(self):
-        sites = tp.SiteMap.load(REPO / tp.SITES_FILE)
-        text = 'bind error: [0] bind variable cannot be used [contextType=41, index=0]'
-        self.assertEqual('BindVariableServiceImpl.setBoolean0 tag switch', sites.by_kept_text(text, 'setBoolean').site)
-        self.assertEqual('BindVariableServiceImpl.setVarchar0 tag switch', sites.by_kept_text(text, 'setVarchar').site)
-        # a value row no method names leaves the first row of the text
-        self.assertEqual(sites.by_kept_text(text).site, sites.by_kept_text(text, 'r2').site)
-
-    def test_location_and_instrument(self):
+    def test_kept_text_maps_to_its_site(self):
         sites = fixture_sites()
-        self.assertEqual(['UNION cast pair switch'], [r.site for r in sites.by_location('core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java', 'generateCastFunction')])
-        self.assertEqual('ILP column kind', sites.by_instrument('ingest.ilp-tcp')[0].site)
+        site = sites.by_kept_text('table: dst_w1, column: v; cast error from protocol type: LONG to column type: UINT32')
+        self.assertEqual(('ILP column kind', 'declare-or-admit'), (site.site, site.decision))
+        self.assertEqual('ColumnTypeConverter.convertFromFixedSize', sites.by_kept_text('error: unsupported conversion').site)
 
-    def test_committed_site_map_reads(self):
-        sites = tp.SiteMap.load(REPO / tp.SITES_FILE)
-        self.assertGreater(len(sites.rows), 400)
-        self.assertIn('ILP column kind', sites.declarable())
-        self.assertTrue(all(r.decision in tp.DECISIONS + ('-',) for r in sites.rows))
+    def test_kit_path_names_its_places_by_value_row(self):
+        sites = real_sites()
+        self.assertEqual('setBoolean0', sites.by_instrument('sql.bind_value', 'setBoolean')[0].method)
+        self.assertEqual('setVarchar0', sites.by_instrument('sql.bind_value', 'setVarchar')[0].method)
+        self.assertEqual('ILP column kind', sites.by_kit_guard('ingest.ilp-tcp').site)
+
+    def test_the_innermost_place_at_a_line(self):
+        sites = fixture_sites()
+        file = JAVA + 'griffin/SqlCodeGenerator.java'
+        self.assertEqual('SqlCodeGenerator.generateCastFunction tag-switch', sites.at(file, 3105).site)
+        self.assertEqual(('SqlCodeGenerator.generateCastFunction tag-enum-switch', 'name-yourself'),
+                         (sites.at(file, 3150).site, sites.at(file, 3150).decision))
+        # a switch over the NULL policy asks for the arm the per-row writer reads
+        self.assertEqual('add-writer-arm', sites.at(JAVA + 'cairo/wal/WalColumnarRowAppender.java', 550).decision)
+        self.assertIsNone(sites.at(file, 1))
+
+    def test_committed_places_read(self):
+        sites = real_sites()
+        self.assertEqual({'memoized virtual column', 'SAMPLE BY FILL(PREV)', 'SAMPLE BY FILL(LINEAR)', 'SAMPLE BY FILL(value)',
+                          'COPY bind snapshot', 'ILP column kind', 'WAL columnar append', 'QWP WAL append', 'Parquet conversion',
+                          'between', '= NULL', 'copier conversion'}, set(sites.declarable()))
+        self.assertEqual([], audit.check(REPO, sites.places, sites.decisions))
+
+    def test_every_hint_names_existing_code(self):
+        guards = tp.guard_labels(real_sites().decisions)
+        for prefix, file, method, decision in tp.LAYERS + tuple((t, f, m, d) for t, f, m, d in tp.KEPT_TEXTS) + tp.LEADS:
+            self.assertIn(method, [name for name, _first, _last in tp.method_spans(REPO / file)], f'{prefix}: {file} {method}')
+            self.assertIn(decision, tp.DECISIONS)
+        for prefix, label in tp.KIT_GUARDS:
+            self.assertIn(label, guards, prefix)
 
 
 class FactsTest(unittest.TestCase):
     tree = tp.Tree(REPO)
-    sites = tp.SiteMap.load(REPO / tp.SITES_FILE)
+    guards = tp.guard_labels(audit.load_decisions(REPO / audit.PLACES_FILE))
 
     def problems(self, facts):
-        return tp.validate_facts(facts, self.tree, self.sites)
+        return tp.validate_facts(facts, self.tree, self.guards)
 
     def assertProblem(self, facts, field, fragment):
         problems = self.problems(facts)
@@ -282,7 +327,7 @@ class RegistrationTest(unittest.TestCase):
         tp.write_generated(self.tree, self.facts, [])
         before = self.snapshot()
         # the second run validates against the registered tree, then writes the same
-        self.assertEqual([], tp.validate_facts(self.facts, self.tree, tp.SiteMap.load(REPO / tp.SITES_FILE)))
+        self.assertEqual([], tp.validate_facts(self.facts, self.tree, tp.guard_labels(audit.load_decisions(REPO / audit.PLACES_FILE))))
         self.assertEqual([], tp.register(self.tree, self.facts, []))
         tp.write_generated(self.tree, self.facts, [])
         self.assertEqual(before, self.snapshot())
@@ -307,7 +352,7 @@ class RegistrationTest(unittest.TestCase):
         first = f'{tp.CAIRO_DIR}/ProbeIntTypeDriver.java'
         line = next(i for i, l in enumerate(self.tree.read(first).split('\n'), 1) if l.strip() == 'nullConstant,')
         diag = tp.Diag(first, line, 0, 'cannot find symbol: variable nullConstant')
-        item = tp.build_item('build-java', diag, tp.SiteMap.load(REPO / tp.SITES_FILE), self.tree, f'{tp.CAIRO_DIR}/ProbeUintTypeDriver.java')
+        item = tp.build_item('build-java', diag, fixture_sites(), self.tree, f'{tp.CAIRO_DIR}/ProbeUintTypeDriver.java')
         self.assertEqual(('fill-driver-answer', ''), (item.decision, item.site))
 
     def test_existing_wire_kind_adds_none(self):
@@ -363,7 +408,7 @@ class WorklistTest(unittest.TestCase):
     def test_one_item_per_location_whatever_the_test_order(self):
         def at(type_label, message):
             return tp.Item('kit', 'implement-pair', '`kit:sql.cast@single-nojit#-`',
-                           f'type={type_label} row=- path=sql.cast mode=single-nojit: {message}', 'TypeDrivers.find tag enum switch')
+                           f'type={type_label} row=- path=sql.cast mode=single-nojit: {message}', 'TypeDrivers.find')
         other, own = at('nn_int', '5 casts break an invariant'), at('uint32', '9 casts break an invariant')
         for order in ([other, own], [own, other]):
             self.assertEqual([own], tp.sort_items(order, 'uint32'))
@@ -380,34 +425,34 @@ class WorklistTest(unittest.TestCase):
         long = tp.ascii_message('x' * 300)
         self.assertEqual(200, len(long))
         self.assertTrue(long.endswith('...'))
-        # a manual entry keeps its whole text; a coverage failure keeps every line
-        self.assertEqual(300, len(tp.Item('manual', 'manual', 'here', 'x' * 300).line().split(' | ')[2]))
+        # a place keeps its whole description; a coverage failure keeps every line
+        self.assertEqual(300, len(tp.Item('namesake', 'decide-place', 'here', 'x' * 300).line().split(' | ')[2]))
         self.assertEqual('expected:<BYTE -> CHAR / SHORT -> CHAR>',
                          tp.Item('coverage', 'implement-pair', 'here', 'expected:<BYTE -> CHAR\nSHORT -> CHAR>').line().split(' | ')[2])
 
     def test_render(self):
         items = tp.sort_items([
-            tp.Item('manual', 'manual', 'README "Manual list", item 2', 'second'),
-            tp.Item('build-java', 'name-yourself', '`core/b.java:20`', 'switch | not covered', 'UNION cast pair switch'),
+            tp.Item('namesake', 'decide-place', '`core/c.java:12`', 'second'),
+            tp.Item('build-java', 'name-yourself', '`core/b.java:20`', 'switch | not covered', 'SqlCodeGenerator.generateCastFunction tag-enum-switch'),
             tp.Item('build-java', 'name-yourself', '`core/b.java:3`', 'the same switch'),
             tp.Item('build-java', 'name-yourself', '`core/b.java:20`', 'repeat of the first'),
-            tp.Item('manual', 'manual', 'README "Manual list", item 10', 'tenth'),
+            tp.Item('namesake', 'decide-place', '`core/c.java:9`', 'first'),
         ])
         text = tp.render_worklist('NN_INT', '/x/NN_INT.toml', 'ab12', '`b` at `c`', __import__('datetime').datetime(2026, 10, 4, 10, 2), 400, items, ['the kit did not run'])
         lines = text.split('\n')
         self.assertEqual('# Worklist: NN_INT', lines[0])
         self.assertIn('- Facts: `/x/NN_INT.toml` (sha256 ab12)', lines)
         self.assertIn('- Run: 2026-10-04 10:02, 6 min 40 s', lines)
-        self.assertIn('- Items: 4 (build-java 2, build-rust 0, build-c 0, refusal 0, kit 0, coverage 0, manual 2)', lines)
+        self.assertIn('- Items: 4 (build-java 2, build-rust 0, build-c 0, refusal 0, kit 0, coverage 0, namesake 2)', lines)
         self.assertIn('- Note: the kit did not run', lines)
         headings = [l for l in lines if l.startswith('## ')]
-        self.assertEqual(['## build-java (2)', '## build-rust (0)', '## build-c (0)', '## refusal (0)', '## kit (0)', '## coverage (0)', '## manual (2)'], headings)
+        self.assertEqual(['## build-java (2)', '## build-rust (0)', '## build-c (0)', '## refusal (0)', '## kit (0)', '## coverage (0)', '## namesake (2)'], headings)
         body = [l for l in lines if l.startswith('- [ ]')]
         self.assertEqual([
             '- [ ] name-yourself | `core/b.java:3` | the same switch',
-            '- [ ] name-yourself | `core/b.java:20` | switch / not covered | site: UNION cast pair switch',
-            '- [ ] manual | README "Manual list", item 2 | second',
-            '- [ ] manual | README "Manual list", item 10 | tenth',
+            '- [ ] name-yourself | `core/b.java:20` | switch / not covered | site: SqlCodeGenerator.generateCastFunction tag-enum-switch',
+            '- [ ] decide-place | `core/c.java:9` | first',
+            '- [ ] decide-place | `core/c.java:12` | second',
         ], body)
         for line in body:
             self.assertRegex(line, r'^- \[ \] (' + '|'.join(tp.DECISIONS) + r') \| [^|]+ \| [^|]+( \| site: [^|]+)?$')
@@ -416,7 +461,7 @@ class WorklistTest(unittest.TestCase):
         sites = fixture_sites()
         items = [i for f in tp.parse_surefire(data('TEST-ingest.xml')) for i in tp.failure_items(f, sites, {'kit': {'refused_sites': []}})]
         self.assertEqual([
-            ('refusal', 'declare-or-admit', 'QWP WAL append #1'),
+            ('refusal', 'declare-or-admit', 'QWP WAL append'),
             ('kit', 'declare-or-admit', 'ILP column kind'),
             ('kit', 'declare-or-admit', 'ILP column kind'),
         ], [(i.group, i.decision, i.site) for i in items])
@@ -425,8 +470,8 @@ class WorklistTest(unittest.TestCase):
         coverage = tp.sort_items([i for f in tp.parse_surefire(data('TEST-coverage.xml')) for i in tp.failure_items(f, sites, self.facts, tree)])
         # the two pairs refused at UNION are one place to decide, located at the UNION cast switch
         self.assertEqual([
-            ('refusal', 'implement-pair', 'UNION cast pair switch'),
-            ('coverage', 'implement-pair', 'SortKeyEncoder.keyKind family switch'),
+            ('refusal', 'implement-pair', 'SqlCodeGenerator.generateCastFunction'),
+            ('coverage', 'implement-pair', 'SortKeyEncoder.keyKind value-switch'),
         ], [(i.group, i.decision, i.site) for i in coverage])
         self.assertRegex(coverage[0].location, r'^`core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java:\d+`$')
         self.assertIn('no UNION cast for NN_INT to STRING at UNION', coverage[0].message)
@@ -454,92 +499,92 @@ class WorklistTest(unittest.TestCase):
         self.assertEqual(['`kit:sql.cast@single-nojit#-`', '`kit:sql.copy_bind@single-nojit#r2`'], [i.location for i in items])
         self.assertEqual('type=UINT32 row=r2 path=sql.copy_bind mode=single-nojit: second\nmore of the second', items[1].message)
 
-    def test_failure_on_a_path_no_row_names_maps_to_its_layer(self):
-        def item(path):
+    def test_failure_on_a_path_no_place_names_maps_to_its_layer(self):
+        def item(path, sites=None):
             failure = tp.Failure('io.questdb.test.cairo.types.TypeConformanceSqlTest', 'testQueries[UINT32]',
                                  f'type=UINT32 row=null path={path} mode=nonwal-day: the value arrived as NULL', '')
-            found = tp.failure_items(failure, fixture_sites(), self.facts)[0]
+            found = tp.failure_items(failure, sites or fixture_sites(), self.facts)[0]
             return found.decision, found.site
-        self.assertEqual(('add-writer-arm', 'PGPipelineEntry.outColumnOpcode wire-kind switch'), item('pg.binary'))
-        self.assertEqual(('add-writer-arm', 'ExportQueryProcessor.csvOpcode wire-kind switch'), item('http.csv'))
-        self.assertEqual(('fill-driver-answer', 'TypeDrivers.find tag enum switch'), item('storage.insert'))
-        self.assertEqual(('implement-pair', 'TypeDrivers.find tag enum switch'), item('sql.cast'))
-        # a path a row names maps to that row
+        self.assertEqual(('add-writer-arm', 'PGPipelineEntry.outColumnOpcode'), item('pg.binary'))
+        self.assertEqual(('add-writer-arm', 'ExportQueryProcessor.csvOpcode'), item('http.csv'))
+        self.assertEqual(('fill-driver-answer', 'TypeDrivers.find'), item('storage.insert'))
+        self.assertEqual(('implement-pair', 'TypeDrivers.find'), item('sql.cast'))
+        # a path that reaches a guard maps to the guard; one places.tsv names maps to that place
         self.assertEqual(('declare-or-admit', 'ILP column kind'), item('ingest.ilp-tcp'))
+        self.assertIn(item('storage.alter', real_sites()), {('implement-pair', 'DecimalColumnTypeConverter.getLoader tag-switch'),
+                                                            ('implement-pair', 'converters.Java_io_questdb_griffin_ConvertersNative_fixedToFixed c-switch')})
 
     def test_order_and_conversion_failures_map_to_their_arms(self):
-        sites = tp.SiteMap.load(REPO / tp.SITES_FILE)
-
         def item(path):
             failure = tp.Failure('io.questdb.test.cairo.types.TypeConformanceSqlTest', 'testQueries[UINT32]',
                                  f'type=UINT32 row=null path={path} mode=single-nojit: NULL sorts mid-range', '')
-            found = tp.failure_items(failure, sites, self.facts)[0]
+            found = tp.failure_items(failure, fixture_sites(), self.facts)[0]
             return found.decision, found.site
         # both orders go to the comparator, whose compare arm decides where NULL sorts
-        self.assertEqual(('add-writer-arm', 'RecordComparatorCompiler.comparatorOpcode family switch'), item('sql.order_asc'))
+        self.assertEqual(('add-writer-arm', 'RecordComparatorCompiler.comparatorOpcode'), item('sql.order_asc'))
         self.assertEqual(item('sql.order_asc'), item('sql.order_desc'))
-        self.assertEqual(('implement-pair', 'RecordToRowCopierUtils.copyOpcode accessorOpcodeOf #1'), item('sql.insert_convert'))
+        self.assertEqual(('implement-pair', 'RecordToRowCopierUtils.copyOpcode'), item('sql.insert_convert'))
 
     def test_coverage_failure_naming_two_methods_gives_two_items(self):
         # ProtocolOpcodeCoverageTest lists every opcode function that does not handle the type
-        sites = tp.SiteMap.load(REPO / tp.SITES_FILE)
         message = 'expected:<[]> but was:<[fixedTargetOpcode: nn_int is not handled, columnKind: nn_int is not handled]>'
         failure = tp.Failure('io.questdb.test.cutlass.ProtocolOpcodeCoverageTest', 'testOpcodeFunctionsHandleEveryType', message, message)
-        items = tp.failure_items(failure, sites, self.facts)
-        self.assertEqual(['ILP column kind', 'ParquetColumnTypeConverter.fixedTargetOpcode family switch'], sorted(i.site for i in items))
+        items = tp.failure_items(failure, real_sites(), self.facts)
+        self.assertEqual(['ILP column kind', 'ParquetColumnTypeConverter.fixedTargetOpcode value-test'], sorted(i.site for i in items))
 
     def test_coverage_failure_maps_to_the_relation_its_test_checks(self):
-        sites = tp.SiteMap.load(REPO / tp.SITES_FILE)
+        sites = fixture_sites()
 
         def item(cls, test, message):
             failure = tp.Failure(f'io.questdb.test.griffin.{cls}', test, message, message)
             found = tp.failure_items(failure, sites, self.facts)[0]
             return found.decision, found.location, found.site
-        self.assertEqual(('implement-pair', '`RelationCoverageTest#testCopierHasAnArmForEveryAdmittedPair`',
-                          'RecordToRowCopierUtils.copyOpcode accessorOpcodeOf #1'),
+        self.assertEqual(('implement-pair', '`RelationCoverageTest#testCopierHasAnArmForEveryAdmittedPair`', 'RecordToRowCopierUtils.copyOpcode'),
                          item('RelationCoverageTest', 'testCopierHasAnArmForEveryAdmittedPair', 'expected:<BYTE -> CHAR'))
-        self.assertEqual(('implement-pair', '`RelationCoverageTest#testCaseEscalationHasAnImplementation`', 'CASE cast pair switch'),
+        self.assertEqual(('implement-pair', '`RelationCoverageTest#testCaseEscalationHasAnImplementation`', 'CaseCommon.castRow'),
                          item('RelationCoverageTest', 'testCaseEscalationHasAnImplementation', 'expected:<> but was:<NN_INT -> LONG: no cast'))
         # the soundness tests the kit step runs with the coverage tests: an answer of their switches
-        self.assertEqual(('name-yourself', '`OverloadSoundnessTest#testDeclaredWideningRowsAreImplemented`',
-                          'OverloadSoundnessTest.isExplicitCast test tag switch'),
+        self.assertEqual(('name-yourself', '`OverloadSoundnessTest#testDeclaredWideningRowsAreImplemented`', 'OverloadSoundnessTest.isExplicitCast'),
                          item('OverloadSoundnessTest', 'testDeclaredWideningRowsAreImplemented', 'no widening row leads to DECIMAL'))
-        self.assertEqual(('implement-pair', '`ColumnConversionSoundnessTest#testEveryAdmittedConversionHasAConverter`',
-                          'ColumnTypeConverter.convertFromFixedSize tag switch #1'),
+        self.assertEqual(('implement-pair', '`ColumnConversionSoundnessTest#testEveryAdmittedConversionHasAConverter`', 'ColumnTypeConverter.convertFromFixedSize'),
                          item('ColumnConversionSoundnessTest', 'testEveryAdmittedConversionHasAConverter', 'UINT32 -> BYTE: x'))
-        self.assertEqual(('fill-driver-answer', '`FunctionReachTest#testLaterTypesReachNoOtherTypesFunction`', 'TypeDrivers.find tag enum switch'),
+        self.assertEqual(('fill-driver-answer', '`FunctionReachTest#testLaterTypesReachNoOtherTypesFunction`', 'TypeDrivers.find'),
                          item('FunctionReachTest', 'testLaterTypesReachNoOtherTypesFunction', 'expected:<> but was:<nn_int -> !=(BYTE, nn_int)'))
-        self.assertEqual(('fill-driver-answer', '`TypeDriverTest#testSizesMatchReferenceTables`', 'TypeDrivers.find tag enum switch'),
+        self.assertEqual(('fill-driver-answer', '`TypeDriverTest#testSizesMatchReferenceTables`', 'TypeDrivers.find'),
                          item('TypeDriverTest', 'testSizesMatchReferenceTables', 'isFixedSize 41 expected:<false> but was:<true>'))
-        # a test with no entry of its own takes the first row its instrument names
-        self.assertEqual('SortKeyEncoder.keyKind family switch',
-                         item('GeneratedAccessorCoverageTest', 'testEveryAccessorHasAKey', 'NN_INT has no key kind')[2])
-
-    def test_every_layer_site_is_in_the_site_map(self):
-        sites = tp.SiteMap.load(REPO / tp.SITES_FILE)
-        for prefix, label, decision in tp.LAYER_SITES:
-            self.assertIsNotNone(sites.by_label(label), label)
-            self.assertIn(decision, tp.DECISIONS)
+        self.assertEqual('SortKeyEncoder.keyKind', item('GeneratedAccessorCoverageTest', 'testEveryAccessorHasAKey', 'NN_INT has no key kind')[2])
 
     def test_build_items(self):
-        sites = fixture_sites()
+        sites = real_sites()
         tree = tp.Tree(REPO)
         driver = f'{tp.CAIRO_DIR}/NnIntTypeDriver.java'
         diag = tp.Diag(driver, 41, 0, 'cannot find symbol: variable setNull')
         self.assertEqual('fill-driver-answer', tp.build_item('build-java', diag, sites, tree, driver).decision)
-        union = next(r for r in sites.rows if r.site == 'UNION cast pair switch')
-        line = next(i for i, l in enumerate(tree.read(union.file).split('\n'), 1) if re.match(r'^\s+(?:private|public|static)\b.*\bgenerateCastFunction\(', l))
-        item = tp.build_item('build-java', tp.Diag(union.file, line + 3, 0, 'the switch expression does not cover all possible input values'), sites, tree, driver)
-        self.assertEqual(('name-yourself', 'UNION cast pair switch'), (item.decision, item.site))
+        union = JAVA + 'griffin/SqlCodeGenerator.java'
+        pair = next(p for p in sites.places if p.file == union and p.method == 'generateCastFunction' and p.form == 'tag-enum-switch')
+        item = tp.build_item('build-java', tp.Diag(union, pair.line, 0, 'the switch expression does not cover all possible input values'), sites, tree, driver)
+        self.assertEqual(('name-yourself', 'SqlCodeGenerator.generateCastFunction tag-enum-switch'), (item.decision, item.site))
+        test_switch = 'core/src/test/java/io/questdb/test/griffin/OverloadSoundnessTest.java'
+        line = next(first for name, first, _last in tp.method_spans(REPO / test_switch) if name == 'isExplicitCast')
+        item = tp.build_item('build-java', tp.Diag(test_switch, line + 1, 0, 'the switch expression does not cover all possible input values'), sites, tree, driver)
+        self.assertEqual(('name-yourself', 'OverloadSoundnessTest.isExplicitCast test switch'), (item.decision, item.site))
         item = tp.build_item('build-java', tp.Diag('core/src/main/java/io/questdb/std/Os.java', 1, 0, 'odd'), sites, tree, driver)
         self.assertEqual(('fill-driver-answer', 'unmapped'), (item.decision, item.site))
 
-    def test_manual_list(self):
-        items = tp.manual_items(data('readme-manual.md'))
-        self.assertEqual(['README "Manual list", item 1', 'README "Manual list", item 2', 'README "Manual list", item 3'], [i.location for i in items])
-        self.assertTrue(items[0].message.startswith('`WalWriter` column setup: decide whether'))
-        done = tp.manual_items(data('readme-manual.md'), data('manual-done.md'))
-        self.assertEqual(['README "Manual list", item 1', 'README "Manual list", item 3'], [i.location for i in done])
+    def test_namesake_items(self):
+        sites = real_sites()
+        facts = valid_facts(tp.Tree(REPO))
+        items = tp.namesake_items(sites, facts)
+        view = audit.like(sites.vocabulary, sites.places, sites.decisions, 'INT', set(), REPO, 'PROBE_INT', 'PROBE_INT')
+        # the facts share INT's values but its wire kind, which is the type's own
+        self.assertGreater(len(items), len(view.open('names')))
+        self.assertTrue(all(i.group == 'namesake' and i.decision == 'decide-place' for i in items))
+        self.assertTrue(all(re.match(r'^`core/[^`]+:\d+`$', i.location) for i in items))
+        self.assertFalse(any('WireKind.INT' in i.message for i in items))
+        # a decision for every type closes its place
+        first = next(p for p in sites.places if p.form == 'tag-table')
+        closed = tp.Sites(sites.vocabulary, sites.places, sites.decisions + [audit.Decision(*first.key(), 'not-reached', 'r')], REPO)
+        self.assertEqual(len(items) - 1, len(tp.namesake_items(closed, facts)))
 
 
 class KitStepTest(unittest.TestCase):
@@ -604,7 +649,7 @@ class ExitCodeTest(unittest.TestCase):
 
     def test_codes(self):
         self.assertEqual(0, tp.exit_code([], []))
-        self.assertEqual(1, tp.exit_code([tp.Item('manual', 'manual', 'x', 'y')], []))
+        self.assertEqual(1, tp.exit_code([tp.Item('namesake', 'decide-place', 'x', 'y')], []))
         self.assertEqual(1, tp.exit_code([], ['build-c']))
 
     def test_bad_command_line(self):

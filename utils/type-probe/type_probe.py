@@ -2,12 +2,15 @@
 """Lists the work of adding a column type to QuestDB.
 
     type_probe.py init <NAME> --like <EXISTING> --tag <n>
-    type_probe.py run <facts.toml> [--out DIR] [--skip-native] [--skip-kit] [--manual-done FILE]
+    type_probe.py run <facts.toml> [--out DIR] [--skip-native] [--skip-kit]
+    type_probe.py audit <summary | like TYPE | places | check> [options]
 
 `init` prints a facts file for a new type, copied from an existing type's type driver. `run`
 registers the type the facts file declares, writes its type driver, builds Java, Rust and C,
-runs the conformance kit and the coverage tests with the type declared, and writes every
-place that needs a decision into worklist.md. README.md next to this file is the manual.
+runs the conformance kit and the coverage tests with the type declared, reads the code for the
+places a type like the new one's namesake must decide (audit.py), and writes every place that
+needs a decision into worklist.md. `audit` runs audit.py. README.md next to this file is the
+manual.
 
 Exit codes: 0 the worklist is empty; 1 it has items, or a step was skipped; 2 the facts file,
 an anchor or the command line is wrong; 3 a step failed in a way the tool cannot parse.
@@ -26,57 +29,85 @@ import sys
 import time
 import tomllib
 import xml.etree.ElementTree as ElementTree
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
+
+import audit
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 
-SITES_FILE = 'utils/type-probe/sites.tsv'
-README_FILE = 'utils/type-probe/README.md'
 LATER_TYPES_FILE = 'core/src/test/resources/io/questdb/test/cairo/types/later-types.txt'
 CAIRO_DIR = 'core/src/main/java/io/questdb/cairo'
 SUREFIRE_DIR = 'core/target/surefire-reports'
 
-GROUPS = ('build-java', 'build-rust', 'build-c', 'refusal', 'kit', 'coverage', 'manual')
-DECISIONS = ('name-yourself', 'implement-pair', 'add-writer-arm', 'fill-driver-answer', 'declare-or-admit', 'manual')
+GROUPS = ('build-java', 'build-rust', 'build-c', 'refusal', 'kit', 'coverage', 'namesake')
+DECISIONS = ('name-yourself', 'implement-pair', 'add-writer-arm', 'fill-driver-answer', 'declare-or-admit', 'decide-place')
 COVERAGE_TESTS = (
     'RelationCoverageTest', 'ProtocolOpcodeCoverageTest', 'GeneratedAccessorCoverageTest', 'FunctionReachTest',
     'RelationRulesTest', 'TypeDriverTest', 'OverloadSoundnessTest', 'ColumnConversionSoundnessTest',
 )
 # the kit paths that hold an invariant for a type with no recording: every path of the kit
 KIT_PATHS = ('storage.*', 'sql.*', 'ingest.*', 'http.*', 'pg.*', 'lv.*')
-# The site a kit or coverage failure maps to when no row of the site map names its path or test:
-# the layer the path or the test checks, (path or test prefix, site label, decision), first match
-# wins. A label missing from the site map is a defect of the tool.
-LAYER_SITES = (
-    ('http.csv', 'ExportQueryProcessor.csvOpcode wire-kind switch', 'add-writer-arm'),
-    ('http.json', 'JsonQueryProcessorState.jsonOpcode wire-kind switch', 'add-writer-arm'),
-    ('pg.', 'PGPipelineEntry.outColumnOpcode wire-kind switch', 'add-writer-arm'),
-    ('ingest.csv', 'TypeManager.getTypeAdapter wire-kind switch', 'add-writer-arm'),
-    ('ingest.qwp-egress', 'QwpResultBatchBuffer.appendOpcode wire-kind switch', 'add-writer-arm'),
-    ('sql.cast', 'TypeDrivers.find tag enum switch', 'implement-pair'),
-    ('sql.insert_convert', 'RecordToRowCopierUtils.copyOpcode accessorOpcodeOf #1', 'implement-pair'),
-    # the comparator's rows name sql.order_asc; the descending order goes to the same arm
-    ('sql.order_desc', 'RecordComparatorCompiler.comparatorOpcode family switch', 'add-writer-arm'),
+JAVA = 'core/src/main/java/io/questdb/'
+# Where a kit or coverage failure that names no place of its own is located: the code the path or
+# the test checks, (path or test prefix, file, method, decision), first match wins. These are
+# hints for reading a failure, not places: the audit lists the places.
+LAYERS = (
+    ('http.csv', f'{JAVA}cutlass/http/processors/ExportQueryProcessor.java', 'csvOpcode', 'add-writer-arm'),
+    ('http.json', f'{JAVA}cutlass/http/processors/JsonQueryProcessorState.java', 'jsonOpcode', 'add-writer-arm'),
+    ('pg.', f'{JAVA}cutlass/pgwire/PGPipelineEntry.java', 'outColumnOpcode', 'add-writer-arm'),
+    ('ingest.csv', f'{JAVA}cutlass/text/types/TypeManager.java', 'getTypeAdapter', 'add-writer-arm'),
+    ('ingest.qwp-egress', f'{JAVA}cutlass/qwp/codec/QwpResultBatchBuffer.java', 'appendOpcode', 'add-writer-arm'),
+    ('sql.cast', f'{JAVA}cairo/TypeDrivers.java', 'find', 'implement-pair'),
+    ('sql.insert_convert', f'{JAVA}griffin/RecordToRowCopierUtils.java', 'copyOpcode', 'implement-pair'),
+    # both orders go to the comparator, whose compare arm decides where NULL sorts
+    ('sql.order_', f'{JAVA}griffin/engine/orderby/RecordComparatorCompiler.java', 'comparatorOpcode', 'add-writer-arm'),
     # a coverage test that checks one relation against its implementation, by test method
-    ('RelationCoverageTest#testCaseEscalation', 'CASE cast pair switch', 'implement-pair'),
-    ('RelationCoverageTest#testCopier', 'RecordToRowCopierUtils.copyOpcode accessorOpcodeOf #1', 'implement-pair'),
-    ('RelationCoverageTest#testUnion', 'UNION cast pair switch', 'implement-pair'),
-    ('RelationCoverageTest#testExplicitCast', 'TypeDrivers.find tag enum switch', 'implement-pair'),
-    ('FunctionReachTest#testLaterTypes', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
-    ('RelationRulesTest', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
-    ('TypeDriverTest', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
+    ('RelationCoverageTest#testCaseEscalation', f'{JAVA}griffin/engine/functions/conditional/CaseCommon.java', 'castRow', 'implement-pair'),
+    ('RelationCoverageTest#testCopier', f'{JAVA}griffin/RecordToRowCopierUtils.java', 'copyOpcode', 'implement-pair'),
+    ('RelationCoverageTest#testUnion', f'{JAVA}griffin/SqlCodeGenerator.java', 'generateCastFunction', 'implement-pair'),
+    ('RelationCoverageTest#testExplicitCast', f'{JAVA}cairo/TypeDrivers.java', 'find', 'implement-pair'),
+    ('FunctionReachTest#testLaterTypes', f'{JAVA}cairo/TypeDrivers.java', 'find', 'fill-driver-answer'),
+    ('RelationRulesTest', f'{JAVA}cairo/TypeDrivers.java', 'find', 'fill-driver-answer'),
+    ('TypeDriverTest', f'{JAVA}cairo/TypeDrivers.java', 'find', 'fill-driver-answer'),
     # the soundness tests pin an answer per tag in their own switches, which the build lists first
-    ('OverloadSoundnessTest#testOwnSignature', 'OverloadSoundnessTest.ownSignatureTag test tag switch', 'name-yourself'),
-    ('OverloadSoundnessTest', 'OverloadSoundnessTest.isExplicitCast test tag switch', 'name-yourself'),
-    ('ColumnConversionSoundnessTest', 'ColumnTypeConverter.convertFromFixedSize tag switch #1', 'implement-pair'),
+    ('OverloadSoundnessTest#testOwnSignature', 'core/src/test/java/io/questdb/test/griffin/OverloadSoundnessTest.java', 'ownSignatureTag', 'name-yourself'),
+    ('OverloadSoundnessTest', 'core/src/test/java/io/questdb/test/griffin/OverloadSoundnessTest.java', 'isExplicitCast', 'name-yourself'),
+    ('ColumnConversionSoundnessTest', f'{JAVA}cairo/ColumnTypeConverter.java', 'convertFromFixedSize', 'implement-pair'),
+    ('GeneratedAccessorCoverageTest', f'{JAVA}griffin/engine/orderby/SortKeyEncoder.java', 'keyKind', 'implement-pair'),
     # the type's own answers: its NULL, its column function, its relations
-    ('storage.', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
-    ('sql.', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
-    ('ingest.', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
-    ('http.', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
-    ('lv.', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
+    ('storage.', f'{JAVA}cairo/TypeDrivers.java', 'find', 'fill-driver-answer'),
+    ('sql.', f'{JAVA}cairo/TypeDrivers.java', 'find', 'fill-driver-answer'),
+    ('ingest.', f'{JAVA}cairo/TypeDrivers.java', 'find', 'fill-driver-answer'),
+    ('http.', f'{JAVA}cairo/TypeDrivers.java', 'find', 'fill-driver-answer'),
+    ('lv.', f'{JAVA}cairo/TypeDrivers.java', 'find', 'fill-driver-answer'),
+)
+# the guarded site a kit path reaches with a value of the type, whose refusal its failure may not
+# name (ILP over TCP drops the row): (path prefix, guard label of places.tsv)
+KIT_GUARDS = (
+    ('ingest.ilp-', 'ILP column kind'),
+    ('ingest.qwp', 'QWP WAL append'),
+    ('sql.between_timestamp', 'between'),
+    ('sql.copy_bind', 'COPY bind snapshot'),
+    ('sql.eq_null_double', '= NULL'),
+    ('sql.fill_linear', 'SAMPLE BY FILL(LINEAR)'),
+    ('sql.fill_prev', 'SAMPLE BY FILL(PREV)'),
+    ('sql.fill_value', 'SAMPLE BY FILL(value)'),
+    ('sql.memoized', 'memoized virtual column'),
+    ('storage.parquet_convert', 'Parquet conversion'),
+)
+# error texts an existing site raises, which locate a failure that holds one: (text, file, method, decision)
+KEPT_TEXTS = (
+    ('unknown QuestDB column tag code', 'core/rust/qdb-core/src/col_type.rs', 'try_from', 'name-yourself'),
+    ('unsupported conversion', f'{JAVA}cairo/ColumnTypeConverter.java', 'convertFromFixedSize', 'implement-pair'),
+    ('unsupported CASE value type', f'{JAVA}griffin/engine/functions/conditional/CaseCommon.java', 'getCaseFunctionConstructor', 'implement-pair'),
+    ('inconvertible types', f'{JAVA}griffin/RecordToRowCopierUtils.java', 'copyOpcode', 'implement-pair'),
+)
+# the place each refusal lead other than the family-arm guard's names: (lead, file, method, decision)
+LEADS = (
+    ('no UNION cast', f'{JAVA}griffin/SqlCodeGenerator.java', 'generateCastFunction', 'implement-pair'),
+    ('no compare arm', f'{JAVA}griffin/engine/orderby/RecordComparatorCompiler.java', 'comparatorOpcode', 'add-writer-arm'),
 )
 MESSAGE_LIMIT = 200
 COVERAGE_MESSAGE_LIMIT = 2000
@@ -311,100 +342,112 @@ class Tree:
         return None
 
 
-# ------------------------------------------------------------------ the site map
+# ------------------------------------------------------------------ the places
 
 @dataclass
-class SiteRow:
+class Site:
+    """What an item names: a label, the decision it asks for, its file and method, and for a guarded
+    site the refusal it raises (<type> standing for the type's name)."""
     site: str
-    kind: str
-    file: str
-    method: str
-    message: str
     decision: str
-    instrument: str = ''
-
-    def refusal_label(self):
-        """The label a refusal at this row names: the format's site, or the row's own label."""
-        if self.message.startswith(FAMILY_ARM_REFUSAL):
-            return self.message[len(FAMILY_ARM_REFUSAL):]
-        return self.site
+    file: str = ''
+    method: str = ''
+    message: str = ''
 
 
-class SiteMap:
-    """utils/type-probe/sites.tsv: one row per site where a type could differ from its family."""
+def label_of(place):
+    return f'{Path(place.file).stem}.{place.method} {place.form}'
 
-    def __init__(self, rows):
-        self.rows = rows
+
+def build_decision(place):
+    """The decision a compiler error at a place asks for: an arm in a switch over a value whose
+    arm writes per row (the NULL policy, the wire kind), else the type named in its switch or
+    table, else a type driver answer."""
+    if place.form == 'value-switch' and any(v.startswith(('NullPolicy.', 'WireKind.')) for v in place.values):
+        return 'add-writer-arm'
+    if place.form in ('tag-switch', 'tag-enum-switch', 'tag-table', 'value-switch', 'rust-match', 'c-switch'):
+        return 'name-yourself'
+    return 'fill-driver-answer'
+
+
+def guard_labels(decisions):
+    """The labels of the guarded sites places.tsv decides refused: the sites a type may declare."""
+    return {d.reason.split(': ', 1)[0] for d in decisions if d.decision == 'refused'}
+
+
+class Sites:
+    """The places audit.py finds in the tree and the decisions of places.tsv, read as the worklist
+    needs them: the guarded sites a type may declare refused and the refusal each raises, the
+    place a compiler error sits in, the places a test or kit path is decided to name."""
+
+    def __init__(self, vocabulary, places, decisions, root=REPO):
+        self.root = Path(root)
+        self.vocabulary = vocabulary
+        self.places = places
+        self.decisions = decisions
+        by_key = {p.key(): p for p in places}
+        self.guards = {}
+        self.claims = []
+        for d in decisions:
+            p = by_key.get(d.key())
+            if p is None:
+                continue
+            if d.decision == 'refused':
+                label, _, kept = d.reason.partition(': ')
+                self.guards.setdefault(label, Site(label, 'declare-or-admit', p.file, p.method, kept or FAMILY_ARM_REFUSAL + label))
+            elif d.decision == 'test':
+                self.claims.append((d.reason, Site(label_of(p), 'implement-pair', p.file, p.method)))
 
     @staticmethod
-    def load(path):
-        lines = Path(path).read_text(encoding='utf-8').splitlines()
-        if not lines:
-            raise ToolError(f'{path} is empty')
-        header = lines[0].split('\t')
-        for col in ('site', 'kind', 'file', 'method', 'message', 'decision'):
-            if col not in header:
-                raise ToolError(f'{path}: the header has no {col} column')
-        rows = []
-        for n, line in enumerate(lines[1:], 2):
-            cells = line.split('\t')
-            if len(cells) != len(header):
-                raise ToolError(f'{path}:{n}: {len(cells)} cells, the header has {len(header)}')
-            rec = dict(zip(header, cells))
-            rows.append(SiteRow(rec['site'], rec['kind'], rec['file'], rec['method'], rec['message'],
-                                rec['decision'], rec.get('instrument', '')))
-        return SiteMap(rows)
+    def load(tree):
+        v, places = audit.scan(tree.root)
+        return Sites(v, places, audit.load_decisions(tree.path(audit.PLACES_FILE)), tree.root)
 
     def declarable(self):
-        """The guarded sites a type can declare refused: family-arm rows decided declare-or-admit."""
-        out = {}
-        for r in self.rows:
-            if r.kind == 'family-arm' and r.decision == 'declare-or-admit':
-                out.setdefault(r.refusal_label(), r)
-        return out
+        return dict(self.guards)
 
-    def by_label(self, label):
-        for r in self.rows:
-            if r.site == label:
-                return r
-        return None
-
-    def by_location(self, file, method):
-        return [r for r in self.rows if r.file == file and method and r.method == method]
+    def at(self, file, line):
+        """The innermost place around a line of a file, or None."""
+        hits = [p for p in self.places if p.file == file and p.line <= line <= max(p.last_line, p.line)]
+        if not hits:
+            return None
+        p = min(hits, key=lambda q: max(q.last_line, q.line) - q.line)
+        return Site(label_of(p), build_decision(p), p.file, p.method)
 
     def by_refusal(self, lead, site):
-        """The row a refusal names: the guard's own row, or the row whose message holds the lead."""
+        """The site a refusal names: the guard of its label, or the place its lead belongs to."""
         if lead == 'no family arm':
-            rows = [r for r in self.rows if r.message.startswith(FAMILY_ARM_REFUSAL) and r.refusal_label() == site]
-            own = [r for r in rows if r.site == site]
-            return (own or rows or [None])[0]
-        rows = [r for r in self.rows if r.message.startswith(lead + ' for <type> at')]
-        named = [r for r in rows if r.message.endswith(' at ' + site)]
-        return (named or rows or [None])[0]
+            return self.guards.get(site)
+        return next((Site(f'{Path(f).stem}.{m}', d, f, m) for lead_, f, m, d in LEADS if lead_ == lead), None)
 
-    def by_kept_text(self, text, value_row=''):
-        """The row whose kept refusal text the failure text holds, a declarable row first. Of the
-        rows that keep the same text, the one whose method the kit's value row names (setBoolean:
-        setBoolean0) comes first."""
-        hits = [r for r in self.rows if r.message and not r.message.startswith('no ') and r.message in text]
-        hits.sort(key=lambda r: (r.decision != 'declare-or-admit', r.kind != 'family-arm', -len(r.message),
-                                 not (value_row and r.method.startswith(value_row))))
-        return hits[0] if hits else None
+    def by_kept_text(self, text):
+        """The site whose earlier error text a failure holds: a guard that keeps one, else KEPT_TEXTS."""
+        for guard in self.guards.values():
+            if not guard.message.startswith(FAMILY_ARM_REFUSAL) and guard.message in text:
+                return guard
+        return next((Site(f'{Path(f).stem}.{m}', d, f, m) for kept, f, m, d in KEPT_TEXTS if kept in text), None)
 
     def by_layer(self, path):
-        """(row, decision) of the layer a kit path or test checks (LAYER_SITES)."""
-        for prefix, label, decision in LAYER_SITES:
+        """(site, decision) of the code a kit path or test checks (LAYERS), or (None, None)."""
+        for prefix, file, method, decision in LAYERS:
             if path.startswith(prefix):
-                row = self.by_label(label)
-                if row is None:
-                    raise ToolError(f'{SITES_FILE} has no row "{label}", which the tool maps {prefix} to')
-                return row, decision
+                return Site(f'{Path(file).stem}.{method}', decision, file, method), decision
         return None, None
 
-    def by_instrument(self, path):
-        """The rows whose instrument names the kit path or test, a declarable row first."""
-        rows = [r for r in self.rows if r.instrument.split(' ', 1)[-1] == path]
-        return sorted(rows, key=lambda r: (r.decision != 'declare-or-admit', r.kind != 'family-arm'))
+    def by_instrument(self, ref, value_row=''):
+        """The places places.tsv decides a test or kit path names; of several, the one whose method
+        the kit's value row names (setBoolean: setBoolean0) first."""
+        sites = [site for r, site in self.claims if r in (ref, f'kit:{ref}')]
+        return sorted(sites, key=lambda site: not (value_row and site.method.startswith(value_row)))
+
+    def by_kit_guard(self, path):
+        """The guarded site a kit path reaches (KIT_GUARDS), or None."""
+        return next((self.guards.get(label) for prefix, label in KIT_GUARDS if path.startswith(prefix)), None)
+
+    def by_method(self, method):
+        """The first place of a method of this name, the one a coverage message names."""
+        p = next((q for q in self.places if q.method == method), None)
+        return Site(label_of(p), 'implement-pair', p.file, p.method) if p else None
 
 
 # ------------------------------------------------------------------ the facts file
@@ -433,8 +476,9 @@ def registered(tree, facts):
     return isinstance(t.get('name'), str) and tree.tags().get(t['name']) == t.get('tag')
 
 
-def validate_facts(facts, tree, sites):
-    """Every problem of a facts file, as `facts: <field>: <problem>` lines; empty when valid."""
+def validate_facts(facts, tree, guards):
+    """Every problem of a facts file, as `facts: <field>: <problem>` lines; empty when valid.
+    `guards` holds the labels of the guarded sites a type may declare refused."""
     problems = []
     for section, names in FACT_FIELDS.items():
         if section not in facts or not isinstance(facts[section], dict):
@@ -528,10 +572,9 @@ def validate_facts(facts, tree, sites):
     if not isinstance(refused, list):
         problems.append('facts: kit.refused_sites: not a list')
     else:
-        declarable = sites.declarable()
         for s in refused:
-            if s not in declarable:
-                problems.append(f'facts: kit.refused_sites: {s!r} names no guarded site of {SITES_FILE}')
+            if s not in guards:
+                problems.append(f'facts: kit.refused_sites: {s!r} names no guarded site of {audit.PLACES_FILE}')
     # a field init left undecided is reported once, as undecided
     pending = [f'{sec}.{key}' for sec in FACT_FIELDS for key, value in facts[sec].items()
                if isinstance(value, str) and 'CHANGE-ME' in value]
@@ -1095,8 +1138,8 @@ class Item:
     site: str = ''
 
     def line(self):
-        # a manual entry is the README's whole text; a coverage failure lists a line per case
-        if self.group == 'manual':
+        # a place keeps its whole description; a coverage failure lists a line per case
+        if self.group == 'namesake':
             message = ascii_message(self.message, None)
         elif self.group == 'coverage':
             message = ascii_message(self.message, COVERAGE_MESSAGE_LIMIT, is_every_line=True)
@@ -1165,21 +1208,20 @@ def site_location(tree, row):
 
 
 def build_item(group, diag, sites, tree, driver_file):
-    """A compiler diagnostic as a worklist item: its site row's decision, or a driver answer, in
-    the type driver of the run's type or of another type later-types.txt declares (two types added
-    together build each other's drivers)."""
+    """A compiler diagnostic as a worklist item: the decision the place it sits in asks for, or a
+    driver answer in the type driver of the run's type or of another type later-types.txt declares
+    (two types added together build each other's drivers). A test's own exhaustive switch over the
+    tag, which pins an answer per tag, takes the type's answer."""
     location = f'`{diag.file}:{diag.line}' + (f':{diag.col}' if diag.col else '') + '`'
     if diag.file == driver_file or diag.file in later_driver_files(tree):
         return Item(group, 'fill-driver-answer', location, diag.message)
-    method = enclosing_method(tree.path(diag.file), diag.line)
-    rows = sites.by_location(diag.file, method)
-    if not rows:
+    if diag.file.startswith('core/src/test/'):
+        method = enclosing_method(tree.path(diag.file), diag.line)
+        return Item(group, 'name-yourself', location, diag.message, f'{Path(diag.file).stem}.{method} test switch')
+    site = sites.at(diag.file, diag.line)
+    if site is None:
         return Item(group, 'fill-driver-answer', location, diag.message, 'unmapped')
-    row = rows[0]
-    decision = 'name-yourself' if row.kind == 'pair-switch' else row.decision
-    if decision not in DECISIONS:
-        decision = 'fill-driver-answer'
-    return Item(group, decision, location, diag.message, row.site)
+    return Item(group, site.decision, location, diag.message, site.site)
 
 
 def kit_segments(failure):
@@ -1208,74 +1250,67 @@ def failure_items(failure, sites, facts, tree=None):
     declared = set(facts['kit']['refused_sites'])
     cls = failure.classname.rsplit('.', 1)[-1]
     test = re.sub(r'\[.*$', '', failure.name)
-    for lead, _type, site, _decision in find_refusals(text):
-        if lead == 'no family arm' and site in declared:
+    for lead, _type, label, _decision in find_refusals(text):
+        if lead == 'no family arm' and label in declared:
             continue
-        row = sites.by_refusal(lead, site)
-        if lead == 'no family arm':
-            decision = 'declare-or-admit'
-        elif lead == 'no UNION cast':
-            decision = 'implement-pair'
-        else:
-            decision = row.decision if row else 'add-writer-arm'
-        items.append(Item('refusal', decision, site_location(tree, row) or f'`{cls}#{test}`',
-                          f'{lead} for {_type} at {site}: {_decision}', row.site if row else 'unmapped'))
+        site = sites.by_refusal(lead, label)
+        decision = 'declare-or-admit' if lead == 'no family arm' else (site.decision if site else 'add-writer-arm')
+        items.append(Item('refusal', decision, site_location(tree, site) or f'`{cls}#{test}`',
+                          f'{lead} for {_type} at {label}: {_decision}', site.site if site else 'unmapped'))
     if items:
         return items
     contexts = KIT_CONTEXT.findall(text)
-    kept = sites.by_kept_text(text, contexts[0][1] if contexts else '')
+    kept = sites.by_kept_text(text)
+    message = failure.message or failure.text
     if cls.startswith('TypeConformance') and cls != 'TypeConformanceTypesTest':
         if contexts:
-            _t, row_label, path, mode = contexts[0]
-            location = f'`kit:{path}@{mode}#{row_label}`'
+            _t, value_row, path, mode = contexts[0]
+            location = f'`kit:{path}@{mode}#{value_row}`'
         else:
-            path = ''
+            value_row, path = '', ''
             location = f'`kit:{cls}#{test}`'
-        message = failure.message or failure.text
-        if kept:
-            return [Item('kit', kept.decision if kept.decision in DECISIONS else 'implement-pair', location, message, kept.site)]
-        rows = sites.by_instrument(path) if path else []
-        if rows:
-            row = rows[0]
-            return [Item('kit', row.decision if row.decision in DECISIONS else 'implement-pair', location, message, row.site)]
-        row, decision = sites.by_layer(path or cls)
-        if row is not None:
-            return [Item('kit', decision, location, message, row.site)]
-        return [Item('kit', 'implement-pair', location, message, 'unmapped')]
+        named = sites.by_instrument(path, value_row) if path else []
+        site = kept or (named[0] if named else None) or sites.by_kit_guard(path)
+        if site is None:
+            site, _decision = sites.by_layer(path or cls)
+        return [Item('kit', site.decision if site else 'implement-pair', location, message, site.site if site else 'unmapped')]
     location = f'`{cls}#{test}`'
-    message = failure.message or failure.text
     # a precise match (a kept text, or each function a coverage test names) is located at its site;
-    # a test that only names the layer stays located at itself, so each failing test is an item
-    rows = [kept] if kept is not None else []
-    if not rows:
+    # a test that only names the code it checks stays located at itself, so each failing test is an item
+    found = [kept] if kept is not None else []
+    if not found:
         for method in dict.fromkeys(re.findall(r'\b([a-z][A-Za-z0-9]*): \S+ is not handled', text)):
-            row = next((r for r in sites.rows if r.method == method), None)
-            if row is not None:
-                rows.append(row)
-    if rows:
-        return [Item('coverage', 'implement-pair', site_location(tree, row) or location, message, row.site) for row in rows]
-    row, decision = sites.by_layer(f'{cls}#{test}')
-    if row is None:
-        row = next(iter(sites.by_instrument(cls)), None)
-        decision = row.decision if row is not None and row.decision in DECISIONS else 'implement-pair'
-    return [Item('coverage', decision, location, message, row.site if row else 'unmapped')]
+            site = sites.guards.get('ILP column kind') if method == 'columnKind' else sites.by_method(method)
+            if site is not None:
+                found.append(site)
+    if found:
+        return [Item('coverage', 'implement-pair', site_location(tree, site) or location, message, site.site) for site in found]
+    site, decision = sites.by_layer(f'{cls}#{test}')
+    if site is None:
+        named = sites.by_instrument(cls)
+        site = named[0] if named else None
+        decision = 'implement-pair'
+    return [Item('coverage', decision, location, message, site.site if site else 'unmapped')]
 
 
-def manual_items(readme_text, done_text=None):
-    """The README's manual list, one item per entry, less the entries ticked in a done copy."""
-    section = re.search(r'^## (?:\d+\. )?Manual list\s*$(.*?)(?=^## |\Z)', readme_text, re.M | re.S)
-    if not section:
-        raise ToolError(f'{README_FILE} has no "Manual list" section')
-    entries = re.findall(r'^(\d+)\. (.+?)(?=^\d+\. |\Z)', section.group(1), re.M | re.S)
-    ticked = set()
-    if done_text:
-        for m in re.finditer(r'^- \[[xX]\] (?:manual \| )?README "Manual list", item (\d+)', done_text, re.M):
-            ticked.add(int(m.group(1)))
-    items = []
-    for number, body in entries:
-        if int(number) in ticked:
-            continue
-        items.append(Item('manual', 'manual', f'README "Manual list", item {number}', ' '.join(body.split())))
+def namesake_items(sites, facts):
+    """The places of the view by namesake (audit.py `like`) still open for the type: those that
+    name its namesake, the existing type its accessor family is named after, those that switch on
+    a value its facts share, and the tables by tag. A place closes when its code names the type,
+    or by a decision in places.tsv for the type or for every type. The problems of places.tsv
+    come first, located at the file."""
+    t, ph, rel = facts['type'], facts['physical'], facts['relations']
+    name, namesake = t['name'], ph['accessor']
+    wire = name if ph['wire_kind'] == 'new' else ph['wire_kind']
+    values = {f'Accessor.{ph["accessor"]}', f'Arithmetic.{ph["arithmetic"]}', f'Movement.{ph["movement"]}',
+              f'NullPolicy.{ph["null_policy"]}', f'WireKind.{wire}', f'RelationKind.{rel["relation_kind"]}',
+              f'CastTarget.{rel["cast_target"]}'}
+    view = audit.like(sites.vocabulary, sites.places, sites.decisions, namesake, values, sites.root, own=name, type_name=name)
+    items = [Item('namesake', 'decide-place', f'`{audit.PLACES_FILE}`', problem)
+             for problem in audit.check(sites.root, sites.places, sites.decisions)]
+    for i in view.open():
+        items.append(Item('namesake', 'decide-place', f'`{i.place.where()}`',
+                          f'{audit.GROUP_COUNTS[i.group].format(n=namesake)}: {audit.describe(i)}'))
     return items
 
 
@@ -1298,9 +1333,6 @@ def sort_items(items, label=''):
         m = re.match(r'^(.*?):(\d+)(?::(\d+))?$', loc)
         if m:
             return GROUPS.index(item.group), m.group(1), int(m.group(2)), int(m.group(3) or 0), item.decision
-        m = re.match(r'^README "Manual list", item (\d+)$', loc)
-        if m:
-            return GROUPS.index(item.group), '', int(m.group(1)), 0, item.decision
         return GROUPS.index(item.group), loc, 0, 0, item.decision
 
     return sorted(unique.values(), key=key)
@@ -1356,8 +1388,11 @@ def cmd_run(args, tree):
     t0 = time.monotonic()
     facts_path = Path(args.facts).resolve()
     facts = load_facts(facts_path)
-    sites = SiteMap.load(tree.path(SITES_FILE))
-    problems = validate_facts(facts, tree, sites)
+    try:
+        decisions = audit.load_decisions(tree.path(audit.PLACES_FILE))
+    except audit.UsageError as e:
+        raise ToolError(str(e))
+    problems = validate_facts(facts, tree, guard_labels(decisions))
     if problems:
         raise UsageError(problems)
     name = facts['type']['name']
@@ -1368,6 +1403,9 @@ def cmd_run(args, tree):
     write_generated(tree, facts, log)
     (out / 'logs' / 'register.log').write_text('\n'.join(log) + '\n', encoding='utf-8')
     driver_file = f'{CAIRO_DIR}/{camel(name)}TypeDriver.java'
+    # the places as the code stands with the type registered, so a place that names it is closed
+    v, places = audit.scan(tree.root)
+    sites = Sites(v, places, decisions, tree.root)
 
     items, notes, skipped = [], [], []
     cp = classpath(tree, out)
@@ -1393,8 +1431,7 @@ def cmd_run(args, tree):
         for report in reports:
             for failure in parse_surefire(report):
                 items += failure_items(failure, sites, facts, tree)
-    done = Path(args.manual_done).read_text(encoding='utf-8') if args.manual_done else None
-    items += manual_items(tree.read(README_FILE), done)
+    items += namesake_items(sites, facts)
     items = sort_items(items, facts['type']['sql_names'][0])
     sha = hashlib.sha256(facts_path.read_bytes()).hexdigest()
     text = render_worklist(name, facts_path, sha, tree_description(tree), started, time.monotonic() - t0, items, notes)
@@ -1415,12 +1452,15 @@ def main(argv=None):
     p_run.add_argument('--out')
     p_run.add_argument('--skip-native', action='store_true')
     p_run.add_argument('--skip-kit', action='store_true')
-    p_run.add_argument('--manual-done')
+    p_audit = sub.add_parser('audit', help='run audit.py: the places that decide by a type, and places.tsv')
+    p_audit.add_argument('rest', nargs=argparse.REMAINDER)
     try:
         args = ap.parse_args(argv)
     except SystemExit as e:
         return 2 if e.code else 0
     tree = Tree(os.environ.get('TYPE_PROBE_TREE', REPO))
+    if args.command == 'audit':
+        return audit.main(['--repo', str(tree.root)] + args.rest)
     try:
         return cmd_init(args, tree) if args.command == 'init' else cmd_run(args, tree)
     except UsageError as e:

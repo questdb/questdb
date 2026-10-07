@@ -58,8 +58,8 @@ import java.util.Set;
  * {@code tag | DDL | NULL policy | paths [| arithmetic tier [| refused sites]]}, and checks it with
  * {@link TypeConformanceInvariants} instead of a recording. The arithmetic tier comes from the type
  * driver ({@code TypeDriver.getArithmetic()}); a tier on the line must match it. The refused sites,
- * comma-separated, are the guarded sites the type is refused at on purpose, labelled as the site
- * map ({@link TypeConformanceInvariants#SITES_FILE}) labels them: a path that reaches one must fail
+ * comma-separated, are the guarded sites the type is refused at on purpose, labelled as the tool's
+ * decisions ({@link TypeConformanceInvariants#PLACES_FILE}) label them: a path that reaches one must fail
  * with that site's refusal. A tag registered later without a resource line is still listed, so
  * every kit class fails on it with a message that names it.
  */
@@ -151,7 +151,7 @@ public final class TypeConformanceTypes {
         for (int i = 0, n = sites.size(); i < n; i++) {
             if (!declarableSites.contains(sites.getQuick(i))) {
                 throw new IllegalStateException("bad line in " + LATER_TYPES_RESOURCE + ": " + sites.getQuick(i)
-                        + " is not a guarded site of " + TypeConformanceInvariants.SITES_FILE + ": " + line);
+                        + " is not a guarded site of " + TypeConformanceInvariants.PLACES_FILE + ": " + line);
             }
         }
         return fields;
@@ -237,7 +237,7 @@ public final class TypeConformanceTypes {
         } catch (IOException e) {
             throw new IllegalStateException(e);
         }
-        // the site map is read only when a line declares a refused site
+        // the decisions are read only when a line declares a refused site
         boolean hasRefusedSites = false;
         for (int i = 0, n = declarations.size(); i < n; i++) {
             final String[] parts = declarations.getQuick(i).split("\\|", -1);

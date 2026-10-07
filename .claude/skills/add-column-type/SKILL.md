@@ -10,30 +10,33 @@ allowed-tools: Bash, Read, Edit, Write, Grep, Glob
 **Usage:** `/add-column-type <NAME> --like <EXISTING> [--facts FILE]`
 
 Adds the column type `<NAME>` to the checkout by following the worklist of
-`utils/type-probe/type_probe.py`. The tool lists every place the type needs a decision; this skill
-makes those decisions one item at a time and changes nothing the worklist does not name. The
-manual is `utils/type-probe/README.md`; read its sections 3 to 7 and 9 before the first edit.
+`utils/type-probe/type_probe.py`. The worklist names the places the compiler, the conformance kit,
+the coverage tests and the audit (`audit.py`, which reads the code for every place that decides by
+a type) reach for the type; this skill makes those decisions one item at a time and changes nothing
+the worklist does not name. The manual is `utils/type-probe/README.md`; read its sections 3 to 8
+before the first edit.
 
 ## Rules
 
 - Work on a throwaway branch. The tool edits the tree in place.
-- Change only what an item of `worklist.md` names: the file and line of a build item, the site of
-  a refusal, kit or coverage item, or the facts file. Write each edit into an edit log, with the
-  worklist line it answers. An edit that answers no item is a decision outside the worklist: stop
-  and ask.
+- Change only what an item of `worklist.md` names: the file and line of a build or namesake item,
+  the site of a refusal, kit or coverage item, the facts file, or a row of
+  `utils/type-probe/places.tsv`. Write each edit into an edit log, with the worklist line it
+  answers. An edit that answers no item is a decision outside the worklist: stop and ask.
 - An answer may sit away from the item's line, and is still the item's answer: a new class the
   answer uses (the type's function base class, constant, column function, memoizer, import
   adapter), a cast factory with its line in `function_list.txt`, the writer arm in the per-row
   writer of the class the item names, a copier arm in each of the three copiers, the conversion
-  rows of a `storage.alter` item. README section 7, "Some answers go where no single row names
+  rows of a `storage.alter` item. README section 6, "Some answers go where no single place names
   them", says where. Log such an edit against the item it answers.
 - Never edit a recording, a golden table or a test's expectation to make an item go away. A kit or
-  coverage item is work on the type, at the site it names. The tests that pin an answer for every
-  tag check the existing types only, so they list nothing for a new type. The one expected list a
-  type writes is `FunctionReachTest`'s, and only for reaches it states as meant.
+  coverage item is work on the type, at the site it names. The one expected list a type writes is
+  `FunctionReachTest`'s, and only for reaches it states as meant.
 - Never declare a guarded-site refusal (`refused_sites`) to silence an item without saying so in
   the edit log: a declared refusal is a deliberate answer, "this type is refused here". One label
   can cover several paths: `ILP column kind` covers ILP over TCP, HTTP and UDP.
+- A `places.tsv` row is a decision with a reason a reviewer can check: never write one to close an
+  item you have not read at its place.
 - Run the tool again after each batch of items, with a new `--out` directory per run, so every
   worklist is kept.
 
@@ -51,8 +54,8 @@ manual is `utils/type-probe/README.md`; read its sections 3 to 7 and 9 before th
    - `fill-driver-answer`: write the type driver's answer the line names (the generated
      `<Name>TypeDriver.java`), or the answer a test reports the driver gets wrong; for a kit path
      the line maps to `TypeDrivers.find`, the type's NULL, column function or relations.
-   - `name-yourself`: add the type to the switch or match the line names, in the arm or refusal
-     group its facts imply.
+   - `name-yourself`: add the type to the switch, match or table the line names, in the arm or
+     refusal group its facts imply.
    - `add-writer-arm`: give the type's wire kind, NULL policy or order its arm. The item names the
      switch that chooses an opcode; the arm that writes the value goes where that opcode is read,
      in the per-row writer of the same class.
@@ -64,10 +67,14 @@ manual is `utils/type-probe/README.md`; read its sections 3 to 7 and 9 before th
      `sql.insert_convert` runs each such conversion under all three and lists any difference.
    - `declare-or-admit`: either add the site's label to `refused_sites` (the type is refused there
      on purpose; the kit then checks the refusal) or admit the type with its own arm at the site.
-   - `manual`: check the site the entry names; tick it in the manual-done file, as the worklist
-     prints it (`- [x] manual | README "Manual list", item N`), and pass the file with
-     `--manual-done`. The tool reads a tick by its item number only, so a tick on a wrong number
-     silences another item.
+   - `decide-place`: read the place. Where the type needs its own path, name it in the code (an
+     arm, a comparison, a table entry), which closes the item. Where its namesake's path, or the
+     default it takes, is right for it, add a row to `places.tsv` with the place's key, the
+     decision (`no-change`, or `not-reached` when no type but the ones the place names reaches it,
+     for every type), a reason, and the type's name (empty for a decision that holds for every
+     type). `python3 utils/type-probe/type_probe.py audit like <NAMESAKE> --type <NAME> --rows`
+     prints the rows of the open places with the key filled in. A precedent another type recorded
+     at the place is shown with the item: read it, do not copy it unread.
    The kit and the coverage tests run only when every build group is empty. The kit step runs the
    new type alone first (about two minutes) and the whole kit (about ten) only once that pass is
    green. To iterate on one kit class, run it for the type alone:
@@ -76,17 +83,19 @@ manual is `utils/type-probe/README.md`; read its sections 3 to 7 and 9 before th
    -Dquestdb.test.kit.types=<name>`.
 4. Repeat 2 and 3 until the run exits 0. A `site: unmapped` item at a line you wrote is your own
    compile error (it reads `fill-driver-answer`): fix it. A `site: unmapped` item anywhere else is
-   a defect of the site map, not of the type: report it. Add one type at a time: the kit runs every
-   type of `later-types.txt`, so a type left unfinished puts its failures into the next type's
-   worklist (each names its type).
+   a failure the tool cannot locate: read it and report it. Add one type at a time: the kit runs
+   every type of `later-types.txt`, so a type left unfinished puts its failures into the next
+   type's worklist (each names its type).
 
 ## Answers that go stale
 
-A later decision can make an earlier answer wrong. A manual decision or a `declare-or-admit` that
-admits the type somewhere (a cast, a widening, a function such as `between`) changes what the type
-reaches, so `FunctionReachTest`'s list and the soundness tests' answers (`OverloadSoundnessTest`,
+A later decision can make an earlier answer wrong. A decision that admits the type somewhere (a
+cast, a widening, a function such as `between`) changes what the type reaches, so
+`FunctionReachTest`'s list and the soundness tests' answers (`OverloadSoundnessTest`,
 `ColumnConversionSoundnessTest`) can go stale. The kit step runs all three, so a stale answer comes
 back as a coverage item at the test: answer it there, from the type's relations as they now stand.
+An edit at a place that `places.tsv` decides changes its key: the run lists the old row as gone,
+and the place as open again.
 
 ## Checks the tool does not make
 
@@ -101,6 +110,12 @@ Exit 0 does not cover these; check each by hand before reporting done:
 - Rust unit tests. `ColumnTypeTag::VALUES` (`core/rust/qdb-core/src/col_type.rs`) and
   `test_lookup_driver` (`col_driver/mod.rs`) list the tags by hand, so their tests skip a new type
   without failing. Add it to both and run `cargo test --lib` in `core/rust/qdb-core`.
+- `TypeRelationGoldenTest`. Its tables cover every tag, so the new tag adds a row and a column;
+  run it and add them, reading each cell against the type's relations.
+- Places a type reaches through a relation (a UNION or CASE with a column of another type), not
+  through its own tag: `RelationCoverageTest` reports an admitted pair without an implementation,
+  but not one the code refuses with "unsupported cast"; try the type's UNION and CASE with each
+  type its relations admit.
 
 ## The worklist format
 
@@ -108,12 +123,13 @@ Exit 0 does not cover these; check each by hand before reporting done:
 - [ ] <decision> | <location> | <message>[ | site: <label>]
 ```
 
-Groups in order: `build-java`, `build-rust`, `build-c`, `refusal`, `kit`, `coverage`, `manual`.
+Groups in order: `build-java`, `build-rust`, `build-c`, `refusal`, `kit`, `coverage`, `namesake`.
 Exit codes: 0 empty, 1 items or a skipped step, 2 invalid facts, anchor or command line, 3 a step
-the tool cannot parse.
+the tool cannot parse or an unreadable `places.tsv`.
 
 ## Done
 
 The run exits 0 with no skipped step: every build is clean, the kit and the coverage tests pass with
-the type in `later-types.txt`, and the manual list is worked; and the checks above are made. Report
-the runs, the items worked, the edit log and what the checks found.
+the type in `later-types.txt`, and every place of the view by namesake is closed; and the checks
+above are made. Report the runs, the items worked, the edit log, the `places.tsv` rows added and
+what the checks found.
