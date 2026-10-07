@@ -295,6 +295,22 @@ public class Mig1002Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testRepairsNullFlagOfColumnAbsentFromOlderPartitionsWithoutExplicitColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-05T00:00:00Z', 1), ('2024-01-06T00:00:00Z', 2)");
+            execute("ALTER TABLE t ADD COLUMN s SYMBOL");
+            execute("INSERT INTO t VALUES ('2024-01-07T00:00:00Z', 3, 'A')");
+            execute("ALTER TABLE t DROP PARTITION LIST '2024-01-06'");
+            unsetSymbolNullFlag("t", "s");
+            runMig1002("t");
+            Assert.assertTrue(containsSymbolNullValue("t", "s"));
+            assertQuery("SELECT x, s FROM t LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n1\t\n3\tA\n");
+        });
+    }
+
+    @Test
     public void testRepairsNullFlagOfConvertedColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE stale (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");

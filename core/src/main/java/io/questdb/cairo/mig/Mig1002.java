@@ -41,6 +41,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -119,6 +120,13 @@ public final class Mig1002 {
                         }
                     }
 
+                    final LongList columnTopPartitions = new LongList(columnCount);
+                    columnTopPartitions.setAll(columnCount, Long.MIN_VALUE);
+                    for (int i = 0, n = pendingColumns.size(); i < n; i++) {
+                        final int columnIndex = pendingColumns.getQuick(i);
+                        columnTopPartitions.setQuick(columnIndex, cvReader.getColumnTopPartitionTimestamp(columnIndex));
+                    }
+
                     final IntList foundColumns = new IntList();
                     final ParquetMetaFileReader parquetMetadata = new ParquetMetaFileReader();
                     for (int i = 0, n = txReader.getPartitionCount(); i < n && pendingColumns.size() > 0; i++) {
@@ -128,7 +136,7 @@ public final class Mig1002 {
                         foundColumns.clear();
                         path.trimTo(plen);
                         collectNullEvidence(
-                                migrationContext, metaMem, txReader, cvReader, parquetMetadata,
+                                migrationContext, metaMem, txReader, cvReader, columnTopPartitions, parquetMetadata,
                                 timestampType, partitionBy, i, columnNames, pendingColumns, foundColumns
                         );
                         for (int j = 0, m = foundColumns.size(); j < m; j++) {
@@ -191,6 +199,7 @@ public final class Mig1002 {
             MemoryCMR metaMem,
             TxReader txReader,
             ColumnVersionReader cvReader,
+            LongList columnTopPartitions,
             ParquetMetaFileReader parquetMetadata,
             int timestampType,
             int partitionBy,
@@ -202,7 +211,11 @@ public final class Mig1002 {
         final long partitionTimestamp = txReader.getPartitionTimestampByIndex(partitionIndex);
         for (int i = 0, n = pendingColumns.size(); i < n; i++) {
             final int columnIndex = pendingColumns.getQuick(i);
-            if (cvReader.getColumnTop(partitionTimestamp, columnIndex) != 0) {
+            final int recordIndex = cvReader.getRecordIndex(partitionTimestamp, columnIndex);
+            final boolean hasColumnTop = recordIndex > -1
+                    ? cvReader.getColumnTopByIndex(recordIndex) != 0
+                    : columnTopPartitions.getQuick(columnIndex) > partitionTimestamp;
+            if (hasColumnTop) {
                 foundColumns.add(columnIndex);
             }
         }
