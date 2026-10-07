@@ -78,9 +78,11 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     public static final long CRC_TAIL_OFFSET_64 = HEADER_SEQ_PART_SIZE_32 + Integer.BYTES + 2 * Long.BYTES;
     /**
      * Header slot, in the reserved area and clear of V2's checksum fields, holding the first txn whose
-     * record may not be on disk: every record below it was covered by a completed flush, or by the scan of
-     * an earlier open. Zero in a file this binary never wrote, whose records are then trusted as before. It shares the header's first sector with {@code MAX_TXN_OFFSET_64}, so a power loss
-     * cannot persist one without the other.
+     * record may not be on disk: every record below it was covered by a completed flush. Negative after an
+     * open that scanned records without flushing them (NOSYNC, ASYNC): a later open in such a mode trusts
+     * the records below the absolute value, an open in a durable mode scans the whole log. Zero in a file
+     * this binary never wrote, whose records are then trusted as before. It shares the header's first
+     * sector with {@code MAX_TXN_OFFSET_64}, so a power loss cannot persist one without the other.
      */
     public static final long UNSYNCED_FROM_TXN_OFFSET_64 = HEADER_SEQ_PART_SIZE_32 + Integer.BYTES + 2 * Long.BYTES;
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV1.class);
@@ -344,8 +346,14 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
      */
     private long recoverTail(Path path, long publishedTxn) {
         final long unsyncedFrom = txnMem.getLong(UNSYNCED_FROM_TXN_OFFSET_64);
+        final boolean isDurableMode = isDurableMode();
         // A file this binary never wrote has no hint: its records are trusted, as before.
-        final long scanFrom = unsyncedFrom > 0 ? Math.max(1, Math.min(unsyncedFrom, publishedTxn + 1)) : publishedTxn + 1;
+        final long scanFrom;
+        if (unsyncedFrom > 0 || (unsyncedFrom < 0 && !isDurableMode)) {
+            scanFrom = Math.max(1, Math.min(Math.abs(unsyncedFrom), publishedTxn + 1));
+        } else {
+            scanFrom = unsyncedFrom < 0 ? 1 : publishedTxn + 1;
+        }
         long tail = publishedTxn;
         for (long txn = scanFrom; txn <= publishedTxn; txn++) {
             if (isTornRecord(txn)) {
@@ -364,10 +372,11 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         }
         // A cut is flushed in every mode: a record written over it must tear over zeros. The kept records are
         // flushed only where the hint is a durability promise.
-        if (isCut || (scanFrom <= publishedTxn && isDurableMode())) {
+        if (isCut || (scanFrom <= publishedTxn && isDurableMode)) {
             ff.fdatasync(txnMem.getFd());
         }
-        txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, tail + 1);
+        final boolean isFlushed = isDurableMode || (unsyncedFrom >= 0 && (isCut || scanFrom > publishedTxn));
+        txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, isFlushed ? tail + 1 : -(tail + 1));
         return tail;
     }
 
