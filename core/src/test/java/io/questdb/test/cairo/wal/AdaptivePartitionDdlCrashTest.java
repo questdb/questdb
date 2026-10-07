@@ -61,6 +61,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 
 /**
  * A process crash right after a partition operation must not change what the table holds. After a crash,
@@ -103,6 +104,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
     };
     private static final long NO_PERIODIC_SAVE_POINT_MS = 3_600_000L;
     private static final String PARTITION = "2024-01-02";
+    private static final String THREE_PARTITIONS = "'2024-01-01', '2024-01-02', '2024-01-03'";
     // Every save point writes a manifest; counting its opens counts the save points.
     private static final AtomicInteger savePoints = new AtomicInteger();
     // The number of save points after which a save point fails with an I/O error; -1 never fails.
@@ -262,6 +264,17 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         return snapshot.toString();
     }
 
+    // Partition directories on disk beyond one per attached partition, not counting detached and attachable ones.
+    private static long supersededPartitionDirs(CairoEngine e) throws Exception {
+        final StringSink sink = new StringSink();
+        e.print("SELECT count() FROM table_partitions('t') WHERE attached", sink);
+        final java.nio.file.Path tableDir = java.nio.file.Path.of(e.getConfiguration().getDbRoot(), e.verifyTableName("t").getDirName());
+        try (Stream<java.nio.file.Path> dirs = java.nio.file.Files.list(tableDir)) {
+            return dirs.filter(d -> d.getFileName().toString().matches("\\d{4}-\\d{2}-\\d{2}(\\.\\d+)?")).count()
+                    - Long.parseLong(sink.toString().split("\n")[1]);
+        }
+    }
+
     private static void takePeriodicSavePoint(CairoEngine e) throws SqlException {
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         alter(e, "INSERT INTO t VALUES ('2024-01-03T12:00:00.000000Z', 's99', 99)");
@@ -328,11 +341,14 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
     }
 
     private void applySql(CairoEngine e, String sql) throws Exception {
+        final long supersededBefore = supersededPartitionDirs(e);
         if (path == OperationPath.WAL) {
             startOperation();
             try {
                 // A failing statement fails in the apply job, which skips it.
                 alter(e, sql);
+                assertSavePointsOfOneStatement();
+                assertSupersededDirsRemoved(e, supersededBefore);
             } finally {
                 failSavePointsAfter = -1;
             }
@@ -382,7 +398,30 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         } finally {
             failSavePointsAfter = -1;
         }
+        assertSavePointsOfOneStatement();
+        assertSupersededDirsRemoved(e, supersededBefore);
         alter(e, "ALTER TABLE t RESUME WAL");
+    }
+
+    // One statement takes one save point at most, however many partitions it changes, and none outside ADAPTIVE.
+    private void assertSavePointsOfOneStatement() {
+        if (!history.failsSavePoint()) {
+            Assert.assertTrue("save points of one statement: " + savePoints.get(), savePoints.get() <= (history == History.NOSYNC ? 0 : 1));
+        }
+    }
+
+    // DETACH and CONVERT remove the partition directories they supersede before the statement returns, after
+    // its save point.
+    private void assertSupersededDirsRemoved(CairoEngine e, long supersededBefore) throws Exception {
+        switch (operation) {
+            case CONVERT_TO_NATIVE, CONVERT_TO_PARQUET, DETACH -> {
+                if (!history.failsSavePoint()) {
+                    Assert.assertTrue("superseded partition directories left behind", supersededPartitionDirs(e) <= supersededBefore);
+                }
+            }
+            default -> {
+            }
+        }
     }
 
     // A process kill in the middle of an operation: the writers close without a save point.
@@ -432,7 +471,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                     alter(e, "ALTER TABLE t DETACH PARTITION LIST '2024-01-01'");
                 }
             }
-            case CONVERT_TO_NATIVE -> alter(e, "ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '" + PARTITION + "'");
+            case CONVERT_TO_NATIVE -> alter(e, "ALTER TABLE t CONVERT PARTITION TO PARQUET LIST " + THREE_PARTITIONS);
             default -> {
             }
         }
@@ -443,9 +482,13 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
             case ATTACH_COPIED_DIR, ATTACH_MOVED_DIR, ATTACH_WITH_COPY_SETTING ->
                     "ALTER TABLE t ATTACH PARTITION LIST '" + PARTITION + "'";
             case ATTACH_LIST_SECOND_FAILS -> "ALTER TABLE t ATTACH PARTITION LIST '" + PARTITION + "', '2024-01-01'";
-            case CONVERT_TO_NATIVE -> "ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '" + PARTITION + "'";
-            case CONVERT_TO_PARQUET -> "ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '" + PARTITION + "'";
-            case DETACH -> "ALTER TABLE t DETACH PARTITION LIST '" + PARTITION + "'";
+            // The WHERE form picks its partitions when the WAL applies it; applied directly to a WAL table it
+            // matches none.
+            case CONVERT_TO_NATIVE -> path == OperationPath.WAL
+                    ? "ALTER TABLE t CONVERT PARTITION TO NATIVE WHERE ts < '2024-01-04'"
+                    : "ALTER TABLE t CONVERT PARTITION TO NATIVE LIST " + THREE_PARTITIONS;
+            case CONVERT_TO_PARQUET -> "ALTER TABLE t CONVERT PARTITION TO PARQUET LIST " + THREE_PARTITIONS;
+            case DETACH -> "ALTER TABLE t DETACH PARTITION LIST " + THREE_PARTITIONS;
             case DROP -> "ALTER TABLE t DROP PARTITION LIST '" + PARTITION + "'";
             case FORCE_DROP -> "ALTER TABLE t FORCE DROP PARTITION LIST '" + PARTITION + "'";
             case SQUASH -> {

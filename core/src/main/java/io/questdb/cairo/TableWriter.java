@@ -298,6 +298,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Object parquetSealPurgeLock = new Object();
     private final int partitionBy;
     private final DateFormat partitionDirFmt;
+    // (timestamp, nameTxn) of partition directories the last durable epoch may still name; see
+    // removePartitionDirAfterSavePoint().
+    private final LongList partitionRemovalsAfterSavePoint = new LongList();
     private final LongList partitionRemoveCandidates = new LongList();
     private final Path path;
     // Adaptive durable-epoch marker + its scratch path, lazily created on the first
@@ -1950,16 +1953,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 closeActivePartition(false);
             }
 
-            // Under adaptive, advance the durable epoch now so the just-converted partition version is
-            // the recovery anchor (no replay of the pre-convert version) and the epoch pin moves past this
-            // txn. Otherwise the stale pre-convert pin makes checkScoreboardHasReadersBeforeLastCommitted-
-            // Txn() defer the old-dir purge below to the async O3PartitionPurgeJob, leaking the superseded
-            // partition dir until the next cadence epoch. Best-effort: on failure the convert stays durable
-            // (WAL) and the purge falls back to async. WAL-only: the durable epoch is a WAL-apply mechanism.
-            advanceDurableEpochAfter("partition convert");
-
             // remove old partition dir
-            safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
+            removePartitionDirAfterSavePoint(partitionTimestamp, partitionNameTxn);
         } catch (Throwable e) {
             handleHousekeepingException(e);
         }
@@ -2112,16 +2107,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 closeActivePartition(false);
             }
 
-            // Under adaptive, advance the durable epoch now so the just-converted partition version is
-            // the recovery anchor (no replay of the pre-convert version) and the epoch pin moves past this
-            // txn. Otherwise the stale pre-convert pin makes checkScoreboardHasReadersBeforeLastCommitted-
-            // Txn() defer the old-dir purge below to the async O3PartitionPurgeJob, leaking the superseded
-            // partition dir until the next cadence epoch. Best-effort: on failure the convert stays durable
-            // (WAL) and the purge falls back to async. WAL-only: the durable epoch is a WAL-apply mechanism.
-            advanceDurableEpochAfter("partition convert");
-
             // remove old partition dir
-            safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
+            removePartitionDirAfterSavePoint(partitionTimestamp, partitionNameTxn);
 
             if (lastPartitionConverted) {
                 // Open last partition as read-only
@@ -2317,12 +2304,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
         }
-        // Under adaptive, advance the durable epoch so the detach is the recovery anchor and the epoch
-        // pin moves past this txn; otherwise the stale pre-detach pin defers the in-table partition-dir
-        // purge below to the async O3PartitionPurgeJob, leaking the detached base dir until the next
-        // cadence epoch. Best-effort; WAL-only (the durable epoch is a WAL-apply mechanism).
-        advanceDurableEpochAfter("detach partition");
-        safeDeletePartitionDir(timestamp, partitionNameTxn);
+        removePartitionDirAfterSavePoint(timestamp, partitionNameTxn);
         return AttachDetachStatus.OK;
     }
 
@@ -14128,6 +14110,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    // On an enrolled adaptive table the last durable epoch may still name the superseded directory, so it is
+    // removed after the statement's epoch moves the pin past it: one epoch per statement, however many
+    // partitions it changes. AlterOperation takes that epoch.
+    private void removePartitionDirAfterSavePoint(long timestamp, long partitionNameTxn) {
+        if (enrolledAdaptive) {
+            partitionRemovalsAfterSavePoint.add(timestamp, partitionNameTxn);
+        } else {
+            safeDeletePartitionDir(timestamp, partitionNameTxn);
+        }
+    }
+
     private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
         // Do not remove detached partitions, they are probably about to be attached
         // Do not remove wal and sequencer directories either
@@ -16191,6 +16184,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void advanceDurableEpochAfter(CharSequence operation) {
         if (enrolledAdaptive) {
             advanceDurableEpochBestEffort(operation);
+            if (partitionRemovalsAfterSavePoint.size() > 0) {
+                // The epoch moved the pin past these directories; after a failed epoch the async purge takes them.
+                partitionRemoveCandidates.clear();
+                partitionRemoveCandidates.addAll(partitionRemovalsAfterSavePoint);
+                partitionRemovalsAfterSavePoint.clear();
+                processPartitionRemoveCandidates();
+            }
         }
     }
 
