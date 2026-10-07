@@ -41,15 +41,19 @@ import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class VirtualFunctionRecordCursor implements RecordCursor {
+// Final: peekRecordBlock() exposes the base's rows and the record's values as the rows hasNext()
+// returns. A subclass that changed the rows in hasNext() or getRecord() would offer blocks that
+// bypass it.
+public final class VirtualFunctionRecordCursor implements RecordCursor {
     // the most rows of a block whose computed columns are evaluated column-wise in one go
     private static final int KERNEL_BLOCK_ROWS = 4096;
-    protected final VirtualFunctionRecord recordA;
+    private final VirtualFunctionRecord recordA;
     private final ObjList<Function> functions;
     private final int memoizerCount;
     private final ObjList<MemoizerFunction> memoizers;
@@ -57,7 +61,7 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     private final VirtualFunctionRecord recordB;
     private final boolean supportsRandomAccess;
     private final int virtualColumnReservedSlots;
-    protected RecordCursor baseCursor;
+    private RecordCursor baseCursor;
     // per column, the base column it reads unchanged, for block pass-through, or -1 for a column the
     // record computes; null until first asked
     private IntList blockBaseColumns;
@@ -68,6 +72,8 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     private long[] kernelAddresses;
     // evaluates the computed columns it has loops for over a block's rows, or null for none
     private GroupByBatchKernels kernels;
+    // the query's, which the kernels' buffers are charged to
+    private MemoryTracker memoryTracker;
 
     public VirtualFunctionRecordCursor(
             @NotNull PriorityMetadata priorityMetadata,
@@ -100,9 +106,11 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     @Override
     public void close() {
         if (kernels != null) {
-            // the buffers go with the cursor; the next block allocates them again
+            // the buffers go with the cursor, and the tracker, which of() binds again; the next
+            // block allocates them again
             kernels.clear();
         }
+        memoryTracker = null;
         baseCursor = Misc.free(baseCursor);
         for (int i = 0, n = functions.size(); i < n; i++) {
             functions.getQuick(i).cursorClosed();
@@ -169,7 +177,11 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
         return ((SymbolFunction) functions.getQuick(columnIndex)).newSymbolTable();
     }
 
-    public void of(RecordCursor cursor) {
+    public void of(RecordCursor cursor, @Nullable MemoryTracker memoryTracker) {
+        this.memoryTracker = memoryTracker;
+        if (kernels != null) {
+            kernels.setMemoryTracker(memoryTracker);
+        }
         baseCursor = cursor;
         recordA.of(baseCursor.getRecord());
         if (recordB != null) {
@@ -313,6 +325,7 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
         if (allowed) {
             kernels = GroupByBatchKernels.compileProjection(functions, virtualColumnReservedSlots, KERNEL_BLOCK_ROWS);
             if (kernels != null) {
+                kernels.setMemoryTracker(memoryTracker);
                 kernelAddresses = new long[n];
             }
         }

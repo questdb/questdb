@@ -131,7 +131,7 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
         try {
             internalSymbolTableSource.of(cursor);
             Function.init(functions, internalSymbolTableSource, executionContext, null);
-            this.cursor.of(cursor);
+            this.cursor.of(cursor, executionContext.getMemoryTracker());
             return this.cursor;
         } catch (Throwable th) {
             cursor.close();

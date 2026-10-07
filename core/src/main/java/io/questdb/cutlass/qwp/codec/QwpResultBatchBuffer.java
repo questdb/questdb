@@ -83,6 +83,10 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      * scratch grow-and-write path can never see a negative or wrap-around length.
      */
     private static final long MAX_ARRAY_ELEMENTS = (Integer.MAX_VALUE - 1024) / 8L;
+    // resetForNewQuery(): the block fill's per-column arrays kept for the next query, at most for
+    // this many columns, and the per-SYMBOL-column connection id runs at most this long
+    private static final int BLOCK_ARRAYS_RETAINED_COLUMNS = 256;
+    private static final int BLOCK_SYMBOL_IDS_RETAINED = 1024;
     // appendBlockSymbols(): the rows filled row by row from a row with a new symbol key, before
     // the column by column fill is tried again
     private static final int SYMBOL_ROWS_AFTER_NEW_KEY = 64;
@@ -705,6 +709,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         for (int i = 0, n = scratches.size(); i < n; i++) {
             scratches.getQuick(i).resetForNewQuery();
         }
+        shrinkBlockArrays();
     }
 
     /**
@@ -1037,6 +1042,9 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         final long[] rowIndexes = blockSymbolRowIndexes;
         int dictSize = connDict.size();
         for (int r = lo; r < hi; r++) {
+            // the block's record at row r, positioned once for the SYMBOL columns it reads: a
+            // join's record positions its slave, and a projection's clears its memos, per call
+            Record record = null;
             for (int s = 0; s < symbolColumnCount; s++) {
                 final int ci = symbolColumns[s];
                 final long address = addresses[2 * s];
@@ -1050,7 +1058,10 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                         lastConnIds[s] = appendSymbolKey(scs[ci], key, sts[ci]);
                     }
                 } else {
-                    appendCell(block.getRecordAt(r), ci, scs[ci], QwpConstants.TYPE_SYMBOL, qts[ci], defs[ci], sts[ci]);
+                    if (record == null) {
+                        record = block.getRecordAt(r);
+                    }
+                    appendCell(record, ci, scs[ci], QwpConstants.TYPE_SYMBOL, qts[ci], defs[ci], sts[ci]);
                 }
             }
             final int newDictSize = connDict.size();
@@ -1150,6 +1161,34 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         }
         for (int i = 0; i < count; i++) {
             keys[i] = SymbolTable.VALUE_IS_NULL;
+        }
+    }
+
+    /**
+     * Drops the block fill's arrays a query grew past what the next one is likely to need, as the
+     * scratches shrink their buffers: the per-column ones of a schema wider than
+     * {@link #BLOCK_ARRAYS_RETAINED_COLUMNS} columns, and each SYMBOL column's connection id run
+     * longer than {@link #BLOCK_SYMBOL_IDS_RETAINED}. The block fill allocates them again as needed.
+     */
+    private void shrinkBlockArrays() {
+        if (blockRecordColumns.length > BLOCK_ARRAYS_RETAINED_COLUMNS) {
+            blockRecordColumns = EMPTY_INTS;
+        }
+        if (blockSymbolColumns.length > BLOCK_ARRAYS_RETAINED_COLUMNS) {
+            blockSymbolAddresses = EMPTY_LONGS;
+            blockSymbolColumns = EMPTY_INTS;
+            blockSymbolRowIndexes = EMPTY_LONGS;
+            blockSymbolIds = new int[0][];
+        }
+        if (blockSymbolLastKeys.length > BLOCK_ARRAYS_RETAINED_COLUMNS) {
+            blockSymbolLastKeys = EMPTY_INTS;
+            blockSymbolLastConnIds = EMPTY_INTS;
+        }
+        final int[][] ids = blockSymbolIds;
+        for (int s = 0, n = ids.length; s < n; s++) {
+            if (ids[s] != null && ids[s].length > BLOCK_SYMBOL_IDS_RETAINED) {
+                ids[s] = null;
+            }
         }
     }
 

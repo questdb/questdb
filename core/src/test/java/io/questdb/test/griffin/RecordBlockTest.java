@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.window.AsyncWindowRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Long256;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
@@ -358,6 +359,34 @@ public class RecordBlockTest extends AbstractCairoTest {
             // a computed SYMBOL column would be read ahead of the other columns: no blocks
             assertSupportsBlocks(false, "select v::symbol vs, l from at where l > 100");
             Assert.assertEquals(0, assertBlocksMatchRows(engine, sqlExecutionContext, "select v::symbol vs, l from at where l > 100", rnd));
+        });
+    }
+
+    @Test
+    public void testProjectionKernelBuffersAreChargedToTheQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            createAllTypes();
+            // a plain scan, which allocates nothing of its own for native frames
+            final String query = "select ts, (db + l) / 2 mid, l * 3 l3 from at";
+            try (RecordCursorFactory factory = select(query)) {
+                // twice: the second open reuses the factory's cursor and its compiled kernels
+                for (int k = 0; k < 2; k++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        // the query's tracker, which the query registry binds while the cursor is open
+                        final MemoryTracker tracker = sqlExecutionContext.getMemoryTracker();
+                        Assert.assertNotNull(tracker);
+                        // a scan offers no block before its first row
+                        Assert.assertTrue(cursor.hasNext());
+                        final long usedBefore = tracker.getUsed();
+                        final RecordBlock block = cursor.peekRecordBlock(1000);
+                        Assert.assertNotNull(block);
+                        // computed column-wise into the kernels' buffers
+                        Assert.assertNotEquals(0, block.getColumnAddress(1));
+                        Assert.assertNotEquals(0, block.getColumnAddress(2));
+                        Assert.assertTrue("the kernel buffers are charged to the query", tracker.getUsed() > usedBefore);
+                    }
+                }
+            }
         });
     }
 
