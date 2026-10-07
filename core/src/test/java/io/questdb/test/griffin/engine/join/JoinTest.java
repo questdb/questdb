@@ -4530,6 +4530,35 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImpliedKeyOverMixedTypeUnionColumn() throws Exception {
+        // getQueryColumnType() read a.f as BYTE from the union's first branch, although the union widens it to
+        // INT. isFilterEqualToKeyMatch() then accepted the implied a.f = bq2.g as a join key, and code generation
+        // failed with "join column type mismatch".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ab2 (w INT, f BYTE)");
+            execute("INSERT INTO ab2 VALUES (1, 1)");
+            execute("CREATE TABLE ai (w INT, f INT)");
+            execute("INSERT INTO ai VALUES (3, 3)");
+            execute("CREATE TABLE bq2 (g BYTE, x INT)");
+            execute("INSERT INTO bq2 VALUES (1, 2), (2, 2)");
+            execute("CREATE TABLE dq (y INT)");
+            execute("INSERT INTO dq VALUES (1), (2), (3)");
+            execute("CREATE TABLE cq2 (k BYTE)");
+            execute("INSERT INTO cq2 VALUES (1), (0)");
+            assertQuery("""
+                    SELECT a.w, a.f, bq2.g, dq.y, cq2.k ck
+                    FROM (SELECT w, f FROM ab2 UNION ALL SELECT w, f FROM ai) a
+                    JOIN bq2 ON bq2.x > 1 RIGHT JOIN dq ON dq.y = a.w JOIN cq2 ON a.f = cq2.k AND bq2.g = cq2.k
+                    WHERE a.w > 0 ORDER BY 1, 2, 3, 4, 5""")
+                    .noLeakCheck()
+                    .returns("""
+                            w\tf\tg\ty\tck
+                            1\t1\t1\t1\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testInSubQueryWithJoinOnClause() throws Exception {
         // A JOIN nested in a lambda IN sub-query (e.g. "x IN (SELECT ... JOIN ... ON ...)",
         // HORIZON JOIN as first reported) used to drain the shared parser arg stack and consume
@@ -13389,6 +13418,64 @@ public class JoinTest extends AbstractCairoTest {
                             2\t10\t5\t1\t1\t10
                             3\t20\t6\t3\t3\t20
                             """);
+        });
+    }
+
+    @Test
+    public void testRightJoinAfterInnerOverMixedTypeUnion() throws Exception {
+        // getQueryColumnType() read a.x as BYTE from the union's first branch, although the union widens it to
+        // INT. a.x != 0 then looked NULL-rejecting, the INNER join keyed on the derived a.w = bq.k, and that key
+        // dropped the (3, 8) pairs, so the RIGHT JOIN NULL-extended dq 8 and the row matched cq's NULL row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ab (w INT, x BYTE)");
+            execute("INSERT INTO ab VALUES (1, 5)");
+            execute("CREATE TABLE abs (w INT, x SHORT)");
+            execute("INSERT INTO abs VALUES (1, 5)");
+            execute("CREATE TABLE ab8 (w INT, x BYTE)");
+            execute("INSERT INTO ab8 VALUES (3, 8)");
+            execute("CREATE TABLE ai (w INT, x INT)");
+            execute("INSERT INTO ai VALUES (3, 8)");
+            execute("CREATE TABLE bq (k INT, x INT)");
+            execute("INSERT INTO bq VALUES (1, 2), (2, 2)");
+            execute("CREATE TABLE dq (y INT)");
+            execute("INSERT INTO dq VALUES (5), (8)");
+            execute("CREATE TABLE cq (k INT)");
+            execute("INSERT INTO cq VALUES (1), (null)");
+            execute("CREATE VIEW av AS (SELECT w, x FROM ab UNION ALL SELECT w, x FROM ai)");
+
+            final String head = "SELECT a.w, a.x, bq.k, dq.y, cq.k ck FROM ";
+            final String tail = """
+                     a JOIN bq ON bq.x > 1 RIGHT JOIN dq ON dq.y = a.x JOIN cq ON a.w = cq.k AND bq.k = cq.k
+                    WHERE a.x != 0 ORDER BY 1, 2, 3, 4, 5""";
+            final String expected = """
+                    w\tx\tk\ty\tck
+                    1\t5\t1\t5\t1
+                    """;
+            for (String source : new String[]{
+                    "(SELECT w, x FROM ab UNION ALL SELECT w, x FROM ai)",
+                    "av",
+                    "(SELECT w, x FROM abs UNION ALL SELECT w, x FROM ai)"
+            }) {
+                assertQuery(head + source + tail).noLeakCheck().returns(expected);
+            }
+            assertQuery(head + "(SELECT w, x FROM ab UNION ALL SELECT w, x FROM ab UNION ALL SELECT w, x FROM ai)" + tail)
+                    .noLeakCheck()
+                    .returns("""
+                            w\tx\tk\ty\tck
+                            1\t5\t1\t5\t1
+                            1\t5\t1\t5\t1
+                            """);
+            // a union whose branches share the BYTE type keeps the derived key
+            execute("CREATE TABLE dqb (y BYTE)");
+            execute("INSERT INTO dqb VALUES (5), (8)");
+            assertQuery("""
+                    SELECT a.w, a.x, bq.k, dqb.y, cq.k ck
+                    FROM (SELECT w, x FROM ab UNION ALL SELECT w, x FROM ab8) a
+                    JOIN bq ON bq.x > 1 RIGHT JOIN dqb ON dqb.y = a.x JOIN cq ON a.w = cq.k AND bq.k = cq.k
+                    WHERE a.x != 0 ORDER BY 1, 2, 3, 4, 5""")
+                    .noLeakCheck()
+                    .withPlanContaining("condition: bq.k=a.w")
+                    .returns(expected);
         });
     }
 

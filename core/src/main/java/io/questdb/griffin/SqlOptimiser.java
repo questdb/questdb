@@ -6493,8 +6493,29 @@ public class SqlOptimiser implements Mutable {
                     column = model.getAliasToColumnMap().get(alias);
                 }
             }
+            if (column != null && model.getUnionModel() != null) {
+                return getSetOperationColumnType(model, column);
+            }
         }
         return column != null ? column.getColumnType() : -1;
+    }
+
+    // A set operation outputs each column in the type that it widens over the branches, which match columns by
+    // position. Returns the type when every branch has the column in that same type, and -1 when the branches
+    // differ, so no caller reads the type of one branch as the type of the output.
+    private int getSetOperationColumnType(IQueryModel model, QueryColumn column) {
+        final int index = model.getColumns().indexOf(column);
+        final int type = getQueryColumnType(model, column);
+        if (index < 0 || type < 0) {
+            return -1;
+        }
+        for (IQueryModel branch = model.getUnionModel(); branch != null; branch = branch.getUnionModel()) {
+            final ObjList<QueryColumn> branchColumns = branch.getColumns();
+            if (index >= branchColumns.size() || getQueryColumnType(branch, branchColumns.getQuick(index)) != type) {
+                return -1;
+            }
+        }
+        return type;
     }
 
     /**
