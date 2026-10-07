@@ -155,6 +155,11 @@ public class WalSyscallCountTest extends AbstractCairoTest {
             drainWalQueue();
             engine.releaseInactive();
             engine.getTableSequencerAPI().releaseAll();
+            // Reopen the sequencer and a WAL writer: a file written only on open must show up too.
+            execute("INSERT INTO x (ts, v) VALUES (5000000, 4)");
+            drainWalQueue();
+            engine.releaseInactive();
+            engine.getTableSequencerAPI().releaseAll();
 
             final Path tableDir = Paths.get(root, engine.verifyTableName("x").getDirName());
             final Set<String> foreign = new TreeSet<>();

@@ -53,7 +53,8 @@ import java.util.List;
  * it was only MS_ASYNC'd), the new segment's file names and its entry in the WAL directory.
  * <p>
  * Nothing is written back by the kernel here: only the product's own barriers make bytes durable. The txn
- * was acknowledged (ADAPTIVE) or its commit returned (SYNC), so it must survive the crash.
+ * was acknowledged (ADAPTIVE) or its commit returned (SYNC), so it must survive the crash. So must the
+ * ALTER itself once it returns.
  */
 @RunWith(Parameterized.class)
 public class WalSegmentRollCrashTest extends AbstractAdaptiveCrashTest {
@@ -88,6 +89,57 @@ public class WalSegmentRollCrashTest extends AbstractAdaptiveCrashTest {
             }
         }
         return params;
+    }
+
+    /**
+     * The DDL itself must survive the crash once it returns, whether or not the apply job ran before the
+     * crash, with a V1 and a V2 sequencer log. The sequencer must sync the header after it publishes the
+     * record, and a V2 log the part file holding the record ahead of the header: otherwise the ALTER is lost,
+     * the table keeps a column its sequencer has no txn for, or the table comes back suspended. Each case
+     * crashes on its own, right after its DDL, so that no later flush can make it durable.
+     */
+    @Test
+    public void testAcknowledgedDdlSurvivesCrash() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, groupWindowUs);
+        node1.setProperty(PropertyKey.CAIRO_WAL_COMMIT_WRITEBACK_DRAIN, false);
+        runWithCrashFacade(() -> {
+            crashFf.modelSharedJournal = false;
+            List<String> expected = null;
+            // Applied before the crash or not, with a V1 or a V2 log. The first case gives the expected schema.
+            for (String table : new String[]{"applied_v1", "applied_v2", "pending_v1", "pending_v2"}) {
+                node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, table.endsWith("v2") ? 1000 : 0);
+                execute("CREATE TABLE " + table + " (ts TIMESTAMP, v LONG, d INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO " + table + " VALUES (0, 1, 1)");
+                drainWalQueue();
+                final TableToken token = engine.verifyTableName(table);
+                final List<String> before = columns(table);
+                markDurableBaseline();
+                execute("ALTER TABLE " + table + " " + ddl);
+                Assert.assertEquals(2, engine.getTableSequencerAPI().lastTxn(token));
+                if (table.startsWith("applied")) {
+                    drainWalQueue();
+                    if (expected == null) {
+                        expected = columns(table);
+                        Assert.assertNotEquals("the DDL must change the schema", before, expected);
+                    }
+                }
+
+                recoverAfterCrash(new TableToken[]{token});
+
+                final String what = "an acknowledged DDL must survive the crash [table=" + table + ']';
+                Assert.assertFalse(
+                        what + ": " + engine.getTableSequencerAPI().getTxnTracker(token).getErrorMessage(),
+                        engine.getTableSequencerAPI().isSuspended(token)
+                );
+                Assert.assertEquals(what, 2, engine.getTableSequencerAPI().lastTxn(token));
+                Assert.assertEquals(what, expected, columns(table));
+                execute("INSERT INTO " + table + " (ts, v) VALUES (1, 2)");
+                drainWalQueue();
+                assertQuery("SELECT v FROM " + table + " ORDER BY v").expectSize().returns("v\n1\n2\n");
+                releaseEngineHandles();
+            }
+        });
     }
 
     @Test
@@ -148,5 +200,9 @@ public class WalSegmentRollCrashTest extends AbstractAdaptiveCrashTest {
             assertQuery("SELECT v FROM x ORDER BY v").expectSize().returns("v\n1\n2\n");
             releaseEngineHandles();
         });
+    }
+
+    private List<String> columns(String table) {
+        return readColumn("table_columns('" + table + "')", "concat(\"column\", ' ', type)");
     }
 }
