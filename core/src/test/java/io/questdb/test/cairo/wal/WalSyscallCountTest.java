@@ -59,8 +59,9 @@ import java.util.stream.Stream;
  * with this test): the same kinds, the same number of times, on the same files. A file that rides along
  * with every commit or every apply pass shows up here as extra opens, maps and msyncs.
  * <p>
- * In every mode, ADAPTIVE included, a WAL table keeps only files the base version writes. A file written
- * through a mapping makes no system call on a NOSYNC commit, so only the file set can see it there.
+ * In every mode, ADAPTIVE included, a WAL table keeps only files the base version writes in its WAL segments
+ * and in {@code txn_seq}. A file written through a mapping makes no system call on a NOSYNC commit, so only
+ * the file set can see it there.
  */
 @RunWith(Parameterized.class)
 public class WalSyscallCountTest extends AbstractCairoTest {
@@ -68,6 +69,9 @@ public class WalSyscallCountTest extends AbstractCairoTest {
     // The files base writes in a WAL segment: the event file and its index, the segment _meta and the column
     // files (.d, plus .i for var-size columns).
     private static final Pattern SEGMENT_FILE = Pattern.compile("_event|_event\\.i|_meta|[a-z]+\\.[di]");
+    // The files base writes in txn_seq: the txn log, its metadata index and data, the sequencer _meta and its
+    // versions, the WAL index, and the numbered V2 part files.
+    private static final Pattern SEQ_FILE = Pattern.compile("_txnlog|_txnlog\\.meta\\.[di]|_meta(\\.[0-9]+)?|_wal_index\\.d|[0-9]+");
     private static final int WARMUP = 5;
     private final String commitMode;
     private final boolean isV2;
@@ -124,6 +128,7 @@ public class WalSyscallCountTest extends AbstractCairoTest {
                     addForeignFiles(tableDir, walDir, SEGMENT_FILE, foreign);
                 }
             }
+            addForeignFiles(tableDir, tableDir.resolve(WalUtils.SEQ_DIR), SEQ_FILE, foreign);
             Assert.assertEquals("files base does not write [mode=" + commitMode + ", v2=" + isV2 + ']', "[]", foreign.toString());
         });
     }
