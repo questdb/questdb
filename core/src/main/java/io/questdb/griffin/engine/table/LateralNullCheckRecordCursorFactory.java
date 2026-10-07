@@ -53,6 +53,10 @@ import io.questdb.std.ObjList;
  * which it evaluates on the NULL record of the column type; when one is true, the comparison would
  * keep the rows that the join NULL-extends, and the plan would lose them, so the query fails.
  * <p>
+ * A check over a scalar sub-query runs the sub-query once per execution and passes its value to
+ * the filter functions over the same sub-query, its receivers, so that the filter reads the value
+ * that the check has seen and the sub-query does not run twice.
+ * <p>
  * The checks run when a cursor opens, and the factory then returns the base cursor itself, so rows
  * pass through without any per-row cost. The code generator places this factory at the top of the
  * plan, and it forwards the factory properties that a top-level consumer reads, as QueryProgress
@@ -67,13 +71,19 @@ public class LateralNullCheckRecordCursorFactory extends AbstractRecordCursorFac
     private final IntList positions;
     // names the probe column, the only column that each check reads, in the plan
     private final RecordMetadata probeMetadata;
+    // the index in checks of the check that passes its value to each of receivers
+    private final IntList receiverChecks;
+    // functions of the base factory, which owns them
+    private final ObjList<Function> receivers;
 
     public LateralNullCheckRecordCursorFactory(
             RecordCursorFactory base,
             ObjList<Function> checks,
             ObjList<Record> nullRecords,
             IntList positions,
-            RecordMetadata probeMetadata
+            RecordMetadata probeMetadata,
+            ObjList<Function> receivers,
+            IntList receiverChecks
     ) {
         super(base.getMetadata());
         this.base = base;
@@ -81,6 +91,8 @@ public class LateralNullCheckRecordCursorFactory extends AbstractRecordCursorFac
         this.nullRecords = nullRecords;
         this.positions = positions;
         this.probeMetadata = probeMetadata;
+        this.receivers = receivers;
+        this.receiverChecks = receiverChecks;
     }
 
     @Override
@@ -189,11 +201,17 @@ public class LateralNullCheckRecordCursorFactory extends AbstractRecordCursorFac
             if (check.getBool(nullRecords.getQuick(i))) {
                 throw SqlException.$(positions.getQuick(i), NULL_VALUE_ERROR);
             }
+            for (int j = 0, m = receivers.size(); j < m; j++) {
+                if (receiverChecks.getQuick(j) == i) {
+                    check.offerStateTo(receivers.getQuick(j));
+                }
+            }
         }
     }
 
     @Override
     protected void _close() {
+        // the base frees the receivers
         Misc.free(base);
         Misc.freeObjList(checks);
         Misc.freeObjListIfCloseable(nullRecords);

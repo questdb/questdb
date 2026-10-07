@@ -27,15 +27,19 @@ package io.questdb.test.griffin.engine.join;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlOptimiser;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.engine.table.LateralNullCheckRecordCursorFactory;
 import io.questdb.griffin.model.QueryModelWrapper;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.BindVarTuple;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -1788,6 +1792,40 @@ public class LateralJoinTest extends AbstractCairoTest {
                             id\ttid\trid
                             1\t10\t100
                             """);
+        });
+    }
+
+    // The lateral NULL check runs the scalar sub-query and passes its value to the filter, so the
+    // sub-query runs once per execution and the filter never uses a value that the check did not
+    // see. EXPLAIN opens the cursor, so the check has passed its value on.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithScalarSubQueryFilterPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id >= (SELECT min(id) FROM trades)) l")
+                    .noLeakCheck()
+                    .assertsPlanContaining("""
+                            Lateral Null Check checks: [__qdb_null_probe [thread-safe] >= cursor\s
+                                Async Group By workers: 1
+                                  vectorized: true
+                                  values: [min(id)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades [state-shared]]
+                            """);
+        });
+    }
+
+    // A sub-query that is NULL in some executions only must give the NULL check and the filter the
+    // same value: when the check sees 0 and the filter NULL, the filter drops every row, and the
+    // query returns no row instead of failing or returning 1 10 100.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithScalarSubQueryFilterRandomNull() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            assertScalarSubQueryFilterNeverEmpty("t.id >= (SELECT CASE WHEN rnd_int(0, 1, 0) = 0 THEN NULL::int ELSE 0 END FROM long_sequence(1))");
+            assertScalarSubQueryFilterNeverEmpty("t.ts >= (SELECT CASE WHEN rnd_int(0, 1, 0) = 0 THEN NULL::timestamp ELSE 0::timestamp END FROM long_sequence(1))");
         });
     }
 
@@ -17387,6 +17425,30 @@ public class LateralJoinTest extends AbstractCairoTest {
                 (4, 3, 40.0, 400.0, '2024-01-01T02:30:00.000000Z'),
                 (5, 3, 50.0, 500.0, '2024-01-01T02:45:00.000000Z')
                 """);
+    }
+
+    // Runs the query 60 times, with the filter on a sub-query that rnd_int() makes NULL in about
+    // half the executions. Each execution fails on a NULL value or returns 1 10 100.
+    private void assertScalarSubQueryFilterNeverEmpty(String filter) throws Exception {
+        final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + filter + ") l ORDER BY 1, 2, 3";
+        sqlExecutionContext.setRandom(new Rnd(42, 4242));
+        int okCount = 0;
+        int nullValueCount = 0;
+        try (RecordCursorFactory factory = select(sql)) {
+            for (int i = 0; i < 60; i++) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    println(factory, cursor);
+                    TestUtils.assertEquals("execution " + i, "id\ttid\trid\n1\t10\t100\n", sink);
+                    okCount++;
+                } catch (SqlException e) {
+                    Assert.assertEquals(sql.indexOf("SELECT CASE"), e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), LateralNullCheckRecordCursorFactory.NULL_VALUE_ERROR);
+                    nullValueCount++;
+                }
+            }
+        }
+        Assert.assertTrue(filter, okCount > 0);
+        Assert.assertTrue(filter, nullValueCount > 0);
     }
 
     // Trade 10 matches refund 100 only for o.k = 1. Every other refund, and trade 10 for

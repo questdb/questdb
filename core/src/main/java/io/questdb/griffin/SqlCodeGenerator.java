@@ -528,6 +528,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final RecordComparatorCompiler recordComparatorCompiler;
     private final IntList recordFunctionPositions = new IntList();
     private final PageFrameReduceTaskFactory reduceTaskFactory;
+    // the sub-query that each of scalarSubQueryConsumers reads
+    private final ObjList<IQueryModel> scalarSubQueryConsumerModels = new ObjList<>();
+    // the functions over a scalar sub-query that the outermost generate() call has parsed so far,
+    // which applyLateralNullChecks() links to the NULL checks of the same sub-query
+    private final ObjList<Function> scalarSubQueryConsumers = new ObjList<>();
     // Cache of factories generated for shared models (models with shared refs).
     // Key: the delegate QueryModel; Value: the primary factory.
     // When a QueryModelWrapper is encountered, we look up its delegate here.
@@ -727,8 +732,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return result;
     }
 
+    // FunctionParser reports each function that it creates over a scalar sub-query operand
+    public void addScalarSubQueryConsumer(IQueryModel subQueryModel, Function function) {
+        if (whereClauseParserDepth > 0) {
+            scalarSubQueryConsumerModels.add(subQueryModel);
+            scalarSubQueryConsumers.add(function);
+        }
+    }
+
     @Override
     public void clear() {
+        scalarSubQueryConsumerModels.clear();
+        scalarSubQueryConsumers.clear();
         for (int i = 0, n = whereClauseParsers.size(); i < n; i++) {
             whereClauseParsers.getQuick(i).clear();
         }
@@ -751,6 +766,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     @Override
     public void close() {
+        scalarSubQueryConsumerModels.clear();
+        scalarSubQueryConsumers.clear();
         generationState.setPreparationHook(null);
         generationState.clear();
         sharedFactoryCache.clear();
@@ -936,6 +953,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 sharedFactoryCache.clear();
                 lateralNullChecks.clear();
                 lateralNullCheckTypes.clear();
+                scalarSubQueryConsumerModels.clear();
+                scalarSubQueryConsumers.clear();
                 generationState.begin(model, expressionNodePool);
             } else {
                 hasEntered = generationState.enterRegion(model, expressionNodePool);
@@ -950,6 +969,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } finally {
             generationState.exitRegion(hasEntered);
             whereClauseParserDepth--;
+            if (parserIndex == 0) {
+                // the factory owns the functions, so drop the references whatever the outcome
+                scalarSubQueryConsumerModels.clear();
+                scalarSubQueryConsumers.clear();
+            }
             // The borrowed models own scalar sub-query factories until buildIntervalModel() hands
             // them downstream; free them here so a throw before that handoff does not leak the
             // open factory. On the success path ownership was already transferred, so this is a
@@ -1873,6 +1897,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && directionMatchesScan(getOrderByDirectionOrDefault(model, 0), scanDirection);
     }
 
+    // the scalar sub-query that is a direct operand of the lateral NULL check, or null
+    private static IQueryModel scalarSubQueryModel(ExpressionNode check) {
+        if (check.paramCount < 3) {
+            if (check.lhs != null && check.lhs.type == ExpressionNode.QUERY) {
+                return check.lhs.queryModel;
+            }
+            if (check.rhs != null && check.rhs.type == ExpressionNode.QUERY) {
+                return check.rhs.queryModel;
+            }
+            return null;
+        }
+        for (int i = 0, n = check.args.size(); i < n; i++) {
+            final ExpressionNode arg = check.args.getQuick(i);
+            if (arg.type == ExpressionNode.QUERY) {
+                return arg.queryModel;
+            }
+        }
+        return null;
+    }
+
     private static long tolerance(IQueryModel slaveModel, int leftTimestamp, int rightTimestampType) throws SqlException {
         ExpressionNode tolerance = slaveModel.getAsOfJoinTolerance();
         long toleranceInterval = Numbers.LONG_NULL;
@@ -2033,21 +2077,38 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // an operand that takes one value per execution. A LateralNullCheckRecordCursorFactory on top of
     // the plan evaluates them once per execution on the NULL record of the type, and fails the query
     // when one is true, as the filter would then keep the rows that a RIGHT or FULL join NULL-extends.
+    // A check over a scalar sub-query owns the value of the sub-query: the filter functions over the
+    // same sub-query reuse it, so the filter never reads a value that the check has not seen.
     // Takes ownership of the factory.
     private RecordCursorFactory applyLateralNullChecks(RecordCursorFactory factory, SqlExecutionContext executionContext) throws SqlException {
         final ObjList<Function> checks = new ObjList<>();
         final ObjList<Record> nullRecords = new ObjList<>();
         final IntList positions = new IntList();
+        final ObjList<Function> receivers = new ObjList<>();
+        final IntList receiverChecks = new IntList();
+        // the checks parse after this point and report themselves, but must not receive a value
+        final int consumerCount = scalarSubQueryConsumers.size();
         try {
             GenericRecordMetadata metadata = null;
             for (int i = 0, n = lateralNullChecks.size(); i < n; i++) {
                 final ExpressionNode node = lateralNullChecks.getQuick(i);
                 metadata = SqlOptimiser.nullProbeMetadata(lateralNullCheckTypes.getQuick(i));
-                checks.add(functionParser.parseFunction(node, metadata, executionContext));
+                final Function check = functionParser.parseFunction(node, metadata, executionContext);
+                checks.add(check);
                 nullRecords.add(NullRecordFactory.getInstance(metadata));
                 positions.add(node.position);
+                final IQueryModel subQueryModel = scalarSubQueryModel(node);
+                if (subQueryModel != null) {
+                    for (int j = 0; j < consumerCount; j++) {
+                        final Function consumer = scalarSubQueryConsumers.getQuick(j);
+                        if (scalarSubQueryConsumerModels.getQuick(j) == subQueryModel && consumer.getClass() == check.getClass()) {
+                            receivers.add(consumer);
+                            receiverChecks.add(i);
+                        }
+                    }
+                }
             }
-            return new LateralNullCheckRecordCursorFactory(factory, checks, nullRecords, positions, metadata);
+            return new LateralNullCheckRecordCursorFactory(factory, checks, nullRecords, positions, metadata, receivers, receiverChecks);
         } catch (Throwable th) {
             Misc.freeObjList(checks);
             Misc.freeObjListIfCloseable(nullRecords);
