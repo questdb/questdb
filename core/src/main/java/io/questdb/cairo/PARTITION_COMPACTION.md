@@ -2,146 +2,98 @@
 
 ## The problem
 
-Merge-append never overwrites. When it rewrites a hot piece, it appends the new copy at the end of
-the folder's column files and abandons the old copy where it lay. The abandoned rows stay on disk
-forever. A folder's size grows with how many times it has been merged, not with how many rows it
-actually holds. Nothing cleans that up.
-
-## Compaction is not squash
-
-Squash turns a logical partition into exactly one piece, right now - a fixed target, used by DETACH,
-ATTACH, parquet conversion and the partition switch. Compaction works on one physical folder at a
-time, decided by waste rather than piece count, and can tidy up one folder while leaving others alone.
+Merge-append never overwrites. When it rewrites a piece it appends the new copy at the end of the folder's
+column files and abandons the old copy where it lay. A folder's size grows with how many times it has been
+merged, not with how many rows it holds. Compaction reclaims that.
 
 ## Vocabulary
 
-- **folder** - one physical partition: one directory, one `(dirTs, nameTxn)`, one set of column files,
-  one geometry chain.
+- **folder** - one physical partition: one directory, one `(dirTs, nameTxn)`, one set of column files, one
+  geometry chain. A **logical partition** (one day, say) is the run of folders sharing a start: the main
+  folder plus the siblings a MOVE-TAIL or an O3 split left (`2024-01-01T050000-...`).
 - **piece** - a window onto part of a folder's files. Several pieces can share one folder.
-- **`E`** - how far the folder's files have ever been written, in rows. Only goes up.
+- **`E`** - how far the folder's files have ever been written, in rows. Only goes up until MAKE-PLAIN.
 - **dead rows** - rows in the files no piece points at any more: `E` minus live rows.
 
-## When to compact
+## Where compaction runs
 
-Checked every commit, per folder. A folder is a candidate only if it is composite (more than one
-piece, or its one piece does not start at row 0) and is not the table's last (active) logical
-partition - compacting the active partition would fight with the writer's own append state.
+1. **On commit, inside the partition task** - MOVE-TAIL only (`O3PartitionJob.moveTailToFreshPartition`).
+   The task that applies a commit to a composite folder decides, off the plan and dedup forecast it already
+   built, whether to leave the untouched prefix behind and write the tail pieces plus the commit's rows ONCE
+   into a fresh sibling at the first tail timestamp. It fires when the plan would leave the folder with dead
+   rows above `move.tail.dead.rows.percent` of live (default 10%) or more than `move.tail.piece.threshold`
+   pieces (default 1000), dead rows above `cairo.o3.partition.split.min.size`, and a prefix of leading
+   untouched pieces ending below everything the commit and the queued transactions write, more than
+   `move.tail.prefix.multiple` (default 2) times the tail plus incoming rows. The sink reports it as a split;
+   the writer inserts the sibling and republishes the prefix's geometry. A valid move wins over a fresh-version
+   rewrite; only geometry-generation exhaustion overrides it. This is the one path that acts on the active
+   partition.
+2. **On commit, on the writer thread** (`runCompaction`, after the split squash) - `PartitionCompactionPolicy`
+   picks one folder per commit and `compactPhysicalPartition` runs one move on it. Non-WAL tables have only
+   this path.
+3. **The background sweep** (`PartitionCompactionScanJob`, WAL tables only) - revisits partitions that went
+   cold with waste nobody will commit into again. `PARTITION_COMPACTION_JOB.md`.
 
-A folder with exactly one piece already at row 0 is never a candidate for the four rules below: every
-byte alive in it is already at the front, so nothing about it needs copying. That shape goes straight
-to MAKE-PLAIN instead.
+## When the per-commit policy picks a folder
 
-| rule | fires when |
+Candidates are composite folders (more than one piece, or one piece not starting at row 0, or `E` above the
+live rows) that are not the active logical partition - compacting it would fight the writer's append state.
+
+| reason | fires when |
 |---|---|
-| **waste ratio** | dead rows exceed a ratio of live rows AND a minimum size |
-| **piece count** | the folder (or its logical partition) has too many pieces - the cap is `max(piece.threshold, liveRows / avg.rows.piece.lim)`, never below the flat floor but scaled up for a large folder, since a piece's read cost is a fixed amount per piece regardless of folder size |
-| **age** | idle past a timeout, and still has waste or more than one piece |
-| **table pressure** | dead rows as a percentage of the whole table's live, user-visible rows cross a high-water mark AND the absolute dead bytes clear a minimum floor (or the absolute dead bytes alone cross a much higher ceiling); for example, 100 live rows plus 50 dead rows means 50% dead, despite the 150-row physical extent; picks the oldest wasteful folder first, and keeps compacting until a lower low-water mark is reached |
+| **waste ratio** | dead rows exceed `dead.rows.ratio` x live rows AND `dead.min.size` |
+| **piece count** | pieces exceed `max(piece.threshold, liveRows / avg.rows.piece.lim)` - a flat floor, scaled up for large folders |
+| **age** | idle past `idle.timeout` and still wasteful or multi-piece |
+| **table pressure** | the table's dead rows cross `table.dead.threshold.percent` of its live rows AND `table.dead.threshold` bytes (or `table.dead.trigger` bytes alone); oldest wasteful folder first, until `table.dead.stop.percent` |
 
-`PartitionCompactionPolicy` keeps composite partitions in a primitive max-heap instead of scanning the
-partition table on every commit. The heap stores each `(priority, partition timestamp)` pair as two adjacent
-longs in one backing array, without per-entry objects. A packed 64-bit priority puts waste-ratio candidates
-first (highest integer dead/live percentage, capped at 1000), piece-count candidates second (highest count,
-capped at 1,000,000),
-and age/table-pressure candidates last (oldest first). The age field stores seconds relative to a policy
-epoch: 30 bits preserve one-second ordering over ten years of history and leave about 24 years before the
-policy rebuilds the epoch. The policy also maintains the table's dead-row total incrementally as geometry
-changes.
+The policy keeps composite folders in a primitive max-heap keyed by a packed priority (waste-ratio
+candidates first, then piece count, then age/pressure oldest first) and maintains the table's dead-row total
+incrementally, so no commit scans the partition table. A declined folder backs off exponentially
+(`decline.backoff.*`). A folder written in the last `hot.commits` commits is reported hot; under table
+pressure REWRITE is withheld from it (`COMPACTION_SKIPPED_HOT`, no backoff) while the cheaper moves stay
+available.
 
-## How compaction works
+When nothing qualifies, the commit still JOINs any foldable folder and MAKE-PLAINs any folder in MAKE-PLAIN
+shape (`foldFoldableFolders`, `makePlainFoldableFolders`).
 
-Four ways to reclaim a folder's waste, cheapest first:
+## The moves, cheapest first
 
-| name | what it does | reader check needed |
+| move | what it does | reader wait |
 |---|---|---|
-| **JOIN** | merges pieces already adjacent in the files into one piece; copies nothing | no |
-| **MOVE-TAIL** | copies only the messy tail pieces into a new sibling folder, leaving the clean front untouched | no |
-| **MAKE-PLAIN** | lowers `E` to the row count so the folder stops being composite; no bytes move | yes |
-| **TRIM-FILES** | shortens every column file down to the live size, giving the dead bytes back to the filesystem | yes, its OWN check, after MAKE-PLAIN's commit - see below |
-| **REWRITE** | copies every live row into a fresh folder and deletes the old one | no (the delete has its own check) |
+| **JOIN** | merges pieces adjacent in both the piece list and the files into one; copies nothing | no |
+| **MOVE-TAIL** | copies the tail pieces into a new sibling folder; the prefix keeps its files, `E`, name txn and its own pieces - holes and nonzero offsets included - under a shorter geometry | no |
+| **MAKE-PLAIN** | a folder reduced to one piece at row 0: lowers `E` to the row count, so it stops being composite, then **TRIM-FILES** shortens every column file to that size in the same call | yes, see below |
+| **SQUASH** | for AGE and TABLE-PRESSURE reasons: folds a cold logical partition's siblings into one folder (`squashColdLogicalPartition`). The commit-time `squashSplitPartitions` is the only control on folder count: nothing gates a split, and cold siblings are folded back to `cairo.o3.partition.max.splits` as they cool past `hot.commits` | no |
+| **REWRITE** | copies every live row into a fresh folder, retires the old one | no (the delete has its own check) |
 
-Two pieces can only be merged (JOIN) or copied together (MOVE-TAIL, REWRITE) if they are neighbours in
-the folder's own piece list - a piece's range ends where the next piece in the list begins, not
-wherever the data happens to sit in the files.
+`compactPhysicalPartition` tries them in that order: JOIN always first, then MOVE-TAIL when a majority cold
+prefix exists (`PartitionCompactionPolicy.moveTailCut`, preferring a prefix that tiles from row 0 so
+MAKE-PLAIN can finish it for free), then MAKE-PLAIN when the shape allows, then SQUASH, then REWRITE unless
+the folder is hot. A MOVE-TAIL's prefix is finished in the same commit when it can be (`finishMovedTailPrefix`:
+MAKE-PLAIN, or REWRITE if still wasteful); a fragmented prefix otherwise stays composite for a later JOIN,
+SQUASH or REWRITE.
 
-**Choosing which one runs**, once a folder qualifies:
+Pieces can only be JOINed or copied together if they are neighbours in the folder's piece list.
 
-- If pieces are adjacent in the files, JOIN them first, always - it's free, and it may already leave
-  the folder simple enough that nothing else is needed.
-- If a clean front survives (first piece at row 0, a real share of the live rows) and there is a messy
-  tail, MOVE-TAIL splits the tail off into its own folder rather than recopying the whole thing.
-- Otherwise, REWRITE copies everything live into a fresh folder.
-- A folder already reduced to one piece at row 0, with real dead space above it, needs none of the
-  above - only MAKE-PLAIN, which runs TRIM-FILES in the same call (see below).
+## Reader safety
 
-### What MOVE-TAIL leaves behind
+No move writes below `E`. Live rows are always copied to a location nothing has pointed at, and only
+afterwards is `E` lowered or a file shortened - bookkeeping gated on a reader check.
 
-MOVE-TAIL leaves the old folder **still composite**: one piece at row 0, `E` unchanged, dead space
-above it. It is cleaned up by MAKE-PLAIN, which lowers `E` to the row count and stops the folder being
-composite, and by TRIM-FILES, which cuts the files down to that row count in the same call:
+MAKE-PLAIN waits until no reader is pinned below the transaction that published the current one-piece record,
+because readers below it still resolve the pieces MOVE-TAIL removed, which sit above row 0. TRIM-FILES needs
+no wait of its own: a `TableReader` maps a folder's files only as far as its highest live piece reaches
+(`PartitionGeometry#getLiveFileExtent`, `TableReader#mappedRowCount`), never to `E`, so once MAKE-PLAIN's
+check has cleared every live and arriving reader maps exactly the row count TRIM-FILES cuts to.
+`isRangeAvailable` pushes the scoreboard's max txn, so a reader arriving after the check sees the new shape.
 
-```
-MOVE-TAIL commits at T1
-      |
-      |  wait: no reader below T1        <- readers below T1 still resolve the pieces MOVE-TAIL removed,
-      v                                     which sit higher up the files than the one at row 0
-MAKE-PLAIN commits at T2                 (E -> row count, folder stops being composite)
-      |
-      v
-TRIM-FILES                               (files cut down to the row count - no wait of its own)
-```
+That is a claim about `TableReader` only. Writer-side consumers do size to `E` (squash, MOVE-TAIL, REWRITE,
+`O3PartitionJob`, `RebuildColumnBase`, `ConvertOperatorImpl`, `TableSnapshotRestore`, via
+`getPartitionPhysicalRowCount`); they are safe because they run on the writer thread or hold the scoreboard
+txn they were dispatched at. A new consumer that sizes to `E` and runs concurrently with TRIM-FILES needs its
+own check.
 
-TRIM-FILES needs no wait of its own because **a `TableReader` maps a folder's column files only as far as
-its highest live piece reaches** - `max(rowOffset + rowCount)` over the pieces of the geometry record it
-resolved, never `E` (see `PartitionGeometry#getLiveFileExtent` and `TableReader#mappedRowCount`). Nothing
-resolves a row outside a piece, so the dead space between the last live piece and `E` is bytes no
-`TableReader` can ask for.
-
-This is a claim about `TableReader` only, not about every consumer of a folder's files. Writer-side
-consumers do size to `E` - squash, MOVE-TAIL and REWRITE inside `TableWriter`, plus `O3PartitionJob`,
-`RebuildColumnBase`, `ConvertOperatorImpl` and `TableSnapshotRestore` (all via
-`getPartitionPhysicalRowCount`, which returns `E` for a composite folder). What keeps those safe is not
-live-extent mapping: they either run on the writer thread, serialised against TRIM-FILES, or hold the
-scoreboard txn they were dispatched at. A new consumer that sizes to `E` and can run concurrently with
-TRIM-FILES would need its own check - the argument below does not cover it.
-
-Once MAKE-PLAIN's own check has cleared - no reader below the transaction that published the
-current, one-piece record - every live and arriving reader resolves either that record or the plain folder
-MAKE-PLAIN just committed, and both map exactly the live row count. That is precisely what TRIM-FILES cuts
-to.
-
-`isRangeAvailable` pushes the scoreboard's max txn to the value asked for, so a reader arriving after the
-check takes that transaction or newer, and therefore resolves one of those two shapes.
-
-An earlier version of this design had readers map `E` for any composite folder. TRIM-FILES then needed a
-second wait, one transaction after MAKE-PLAIN's commit, for the readers sitting in `[T1, T2)` that still
-mapped `E` rows of the files it was about to shorten - `WalWriterFuzzTest#testWalWriteEqualTimestamp` hit
-that about once in twenty runs when the two were folded into one check. The cost of the second wait was
-that it could not decide whether to commit: when it did not clear, the folder was recorded as plain with
-its dead bytes still on disk, and `deadRows` then read 0, the folder was no longer composite, and
-MAKE-PLAIN never selected it again - a leak measured at 62 KB of a 328 KB partition. Mapping to the live
-extent removes the wait and the leak together.
-
-### What a checkpoint blocks
-
-A running CHECKPOINT is not a reader and the scoreboard check above does not stand in for it. Backup sizes
-a folder's column files by the physical row extent `E` its manifest copied out of the checkpoint, then
-reads those files from the LIVE db root - so TRIM-FILES must not shorten them while one is running
-(`TableWriter#processPartitionRemoveCandidates0` defers partition removal for the same reason).
-
-**A folder that cannot be trimmed must not be recorded as plain**, or its dead bytes are left with nothing
-to report them and nothing to reclaim them. So MAKE-PLAIN declines outright while a checkpoint is in
-progress, and the ordinary decline/backoff bookkeeping brings the folder back once the checkpoint is
-released - still composite, still one piece, still reporting its dead rows.
-
-## Reader safety, the general principle
-
-No compaction step ever writes below `E` (dangerously, into bytes a live reader might resolve): live
-rows are always moved to a fresh location first (which nothing has ever pointed at, so it is safe to
-write to without asking), and only afterward is `E` itself lowered or a file shortened - both pure
-bookkeeping moves, gated on a check that no reader still needs the old state. MAKE-PLAIN and TRIM-FILES
-share ONE check (see above): lowering `E` and shortening a file both wait for the readers that still see
-the pieces MOVE-TAIL removed, and nothing else - a `TableReader` maps only as far as its highest live
-piece reaches, so the bytes TRIM-FILES cuts are already unreachable for every `TableReader` of the
-current shape. The writer-side consumers that do size to `E` are covered by writer-thread serialisation
-and the scoreboard instead; see the list above before adding another.
+**Checkpoint.** A running CHECKPOINT is not a reader: backup sizes files by the `E` in its manifest and reads
+them from the live root. MAKE-PLAIN therefore declines while a checkpoint is in progress - a folder that cannot
+be trimmed must not be recorded as plain, or its dead bytes are reported by nothing and reclaimed by nothing.
+The ordinary decline/backoff brings it back afterwards.

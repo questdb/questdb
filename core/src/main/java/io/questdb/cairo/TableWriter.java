@@ -8683,7 +8683,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * JOIN (PARTITION_COMPACTION.md Sec.5): folds the longest run of {@code partitionIndex}'s pieces that are
+     * JOIN (PARTITION_COMPACTION.md): folds the longest run of {@code partitionIndex}'s pieces that are
      * neighbours both in ordinal order and in the directory's column files (adjacent {@code rowOffset}s).
      *
      * @return true when a run was folded and a transaction committed
@@ -10093,7 +10093,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * MAKE-PLAIN (PARTITION_COMPACTION.md Sec.5).
+     * MAKE-PLAIN (PARTITION_COMPACTION.md).
      *
      * @return true if the partition was made plain this call; false if a reader still resolves the geometry record this
      * shape came from, a checkpoint is running, or TRIM-FILES failed, leaving it to the caller's decline/backoff
@@ -10181,7 +10181,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * TRIM-FILES (PARTITION_COMPACTION.md Sec.5): shortens every real column's primary file, and a var-size column's
+     * TRIM-FILES (PARTITION_COMPACTION.md): shortens every real column's primary file, and a var-size column's
      * aux file, down to {@code liveRows} worth of bytes.
      *
      * @return false if a file could not be shortened, for example because Windows still has it mapped
@@ -10420,7 +10420,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * MOVE-TAIL (PARTITION_COMPACTION.md Sec.5): leaves the clean front's directory untouched and copies only the tail
+     * MOVE-TAIL (PARTITION_COMPACTION.md): leaves the clean front's directory untouched and copies only the tail
      * pieces into a new sibling {@code attachedPartitions} entry.
      *
      * @return {@link #COMPACTION_NONE} or {@link #COMPACTION_MOVED_TAIL}

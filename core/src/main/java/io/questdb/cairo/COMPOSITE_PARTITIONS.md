@@ -207,8 +207,9 @@ written fresh (REWRITE, `assembleFreshPartitionVersion`) instead goes through th
 
 ## Compaction of dead space
 
-All four moves are built and on by default - see `PARTITION_COMPACTION.md` for the rules and
-`PARTITION_COMPACTION_JOB.md` for the background job that drives them off the writer thread.
+On by default - see `PARTITION_COMPACTION.md` for the moves, the MOVE-TAIL the partition task runs as
+part of a commit and the per-commit policy, and `PARTITION_COMPACTION_JOB.md` for the background sweep that
+revisits cold partitions off the writer thread.
 Cheapest first; the writer tries one partition per commit, and each move is its own transaction.
 
 **JOIN** - pieces that are neighbours BOTH in timestamp order and in the files fold into one. Reads

@@ -1446,7 +1446,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * MOVE-TAIL (PARTITION_COMPACTION.md Sec.5), inside the partition task: leaves the clean front of the directory
+     * MOVE-TAIL (PARTITION_COMPACTION.md), inside the partition task: leaves the clean front of the directory
      * untouched and writes the tail pieces {@code [cut, n)} together with this commit's rows ONCE into a fresh sibling
      * partition, in timestamp order. The prefix keeps its directory, name txn and E under a geometry holding pieces
      * {@code [0, cut)} alone; the sink reports the result as a split, which {@code o3ConsumePartitionUpdateSink}

@@ -31,6 +31,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -47,11 +48,13 @@ import java.util.Arrays;
 public class O3CompositePlannerOrderFuzzTest {
 
     @Test
-    public void testPiecesAscendAcrossCommits() {
-        for (int iter = 0; iter < 20_000; iter++) {
-            final long s0 = 1000L + iter, s1 = 7L * iter + 3;
-            runOne(new Rnd(s0, s1), s0, s1);
-        }
+    public void testPiecesAscendAcrossCommits() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            for (int iter = 0; iter < 20_000; iter++) {
+                final long s0 = 1000L + iter, s1 = 7L * iter + 3;
+                runOne(new Rnd(s0, s1), s0, s1);
+            }
+        });
     }
 
     private static void runOne(Rnd rnd, long s0, long s1) {
