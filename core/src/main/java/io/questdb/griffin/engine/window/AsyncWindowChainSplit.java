@@ -97,10 +97,10 @@ public class AsyncWindowChainSplit {
      * it. A carry must be the group key's own, a running sum known to hold integers only (so that
      * combining it is exact, as the group key must be), and the output must show the key.
      *
-     * @param groupKeyIndex  the group key's index among the step's keys, -1 for none
-     * @param groupInput     the group key's column in the step's input, -1 for none
-     * @param groupOutput    the group key's column in the step's output, -1 when not shown
-     * @param isExactCarry   whether the group key's values are integers
+     * @param groupKeyIndex the group key's index among the step's keys, -1 for none
+     * @param groupInput    the group key's column in the step's input, -1 for none
+     * @param groupOutput   the group key's column in the step's output, -1 when not shown
+     * @param isExactCarry  whether the group key's values are integers
      */
     public AsyncWindowChainSplit thenGroupBy(int groupKeyIndex, int groupInput, int groupOutput, boolean isExactCarry) {
         final AsyncWindowChainSplit next = copy();

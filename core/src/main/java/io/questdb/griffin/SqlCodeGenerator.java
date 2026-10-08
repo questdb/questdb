@@ -840,7 +840,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return compileBooleanFilter(expr, metadata, executionContext);
     }
 
-    /** Compiles joined functions independently of child cursor construction and planner selection. */
+    /**
+     * Compiles joined functions independently of child cursor construction and planner selection.
+     */
     public HashJoinGroupByFunctions compileHashJoinGroupByFunctions(
             IQueryModel model,
             HashJoinGroupByMetadata metadata,
@@ -6017,7 +6019,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return tableFactory;
     }
 
-    /** Generates keyed or scalar aggregation over a shared immutable hash join build. */
+    /**
+     * Generates keyed or scalar aggregation over a shared immutable hash join build.
+     */
     private RecordCursorFactory generateHashJoinGroupBy(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         if (!executionContext.isParallelHashJoinGroupByEnabled()) {
             return null;
@@ -6245,7 +6249,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return columns;
     }
 
-    /** Peels pure projections above a filter, so that the frame boundary check sees the filter. */
+    /**
+     * Peels pure projections above a filter, so that the frame boundary check sees the filter.
+     */
     private static RecordCursorFactory hashJoinGroupByFrameInput(RecordCursorFactory factory) {
         RecordCursorFactory input = factory;
         while (!input.supportsPageFrameCursor() && input instanceof SelectedRecordCursorFactory selected) {
@@ -14270,7 +14276,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private static boolean isNumericForSign(int type) {
         return switch (ColumnType.tagOf(type)) {
-            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE -> true;
+            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT,
+                 ColumnType.DOUBLE -> true;
             default -> false;
         };
     }
@@ -16820,7 +16827,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return REORDER_DENIED;
             }
             switch (model.getSelectModelType()) {
-                case IQueryModel.SELECT_MODEL_NONE, IQueryModel.SELECT_MODEL_CHOOSE, IQueryModel.SELECT_MODEL_VIRTUAL -> {
+                case IQueryModel.SELECT_MODEL_NONE, IQueryModel.SELECT_MODEL_CHOOSE,
+                     IQueryModel.SELECT_MODEL_VIRTUAL -> {
                     // row by row
                 }
                 case IQueryModel.SELECT_MODEL_GROUP_BY -> {

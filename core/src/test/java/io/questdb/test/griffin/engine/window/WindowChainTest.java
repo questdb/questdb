@@ -190,7 +190,7 @@ public class WindowChainTest extends AbstractCairoTest {
                             + "            Index forward scan on: sym\n"
                             + "              filter: sym=1\n"
                             + "        Frame forward scan on: trade\n",
-                        "QUERY PLAN\n"
+                    "QUERY PLAN\n"
                             + "Async Window workers: 1\n"
                             + "  functions: [sum(size) over (rows between unbounded preceding and current row)]\n"
                             + "  keyShards: sym\n"
@@ -201,7 +201,7 @@ public class WindowChainTest extends AbstractCairoTest {
                             + "            Index forward scan on: sym\n"
                             + "              filter: sym=1\n"
                             + "        Frame forward scan on: trade\n",
-                        "QUERY PLAN\n"
+                    "QUERY PLAN\n"
                             + "Encode sort\n"
                             + "  keys: [sym, seqDecr]\n"
                             + "    SelectedRecord\n"
@@ -218,7 +218,7 @@ public class WindowChainTest extends AbstractCairoTest {
                             + "                Index forward scan on: sym\n"
                             + "                  symbolOrder: asc\n"
                             + "                Frame forward scan on: trade\n",
-                        "QUERY PLAN\n"
+                    "QUERY PLAN\n"
                             + "Encode sort\n"
                             + "  keys: [sym, seqDecr]\n"
                             + "    SelectedRecord\n"
@@ -233,7 +233,7 @@ public class WindowChainTest extends AbstractCairoTest {
                             + "                Index forward scan on: sym\n"
                             + "                  symbolOrder: asc\n"
                             + "                Frame forward scan on: trade\n",
-                        "QUERY PLAN\n"
+                    "QUERY PLAN\n"
                             + "Async Window workers: 1\n"
                             + "  functions: [lag(price, 1, NULL) over ()]\n"
                             + "  keyShards: sym\n"
@@ -252,7 +252,7 @@ public class WindowChainTest extends AbstractCairoTest {
                             + "                Index forward scan on: sym\n"
                             + "                  filter: sym=1\n"
                             + "            Frame forward scan on: trade\n",
-                        "QUERY PLAN\n"
+                    "QUERY PLAN\n"
                             + "Async Window workers: 1\n"
                             + "  functions: [lag(price, 1, NULL) over (partition by [sym])]\n"
                             + "  keyShards: sym\n"
@@ -272,7 +272,7 @@ public class WindowChainTest extends AbstractCairoTest {
                             + "            Index forward scan on: sym deferred: true\n"
                             + "              filter: sym='K1'\n"
                             + "        Frame forward scan on: trade\n",
-                        "QUERY PLAN\n"
+                    "QUERY PLAN\n"
                             + "Async Window workers: 1\n"
                             + "  functions: [lag(price, 1, NULL) over (partition by [sym])]\n"
                             + "  keyShards: sym\n"
@@ -630,6 +630,27 @@ public class WindowChainTest extends AbstractCairoTest {
                 } finally {
                     sqlExecutionContext.setParallelWindowEnabled(false);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testTableOrderKeptWhereVisible() throws Exception {
+        // each query sees the table's order somewhere, so the key-major walk must not be used
+        assertMemoryLeak(() -> {
+            createTrade(engine, sqlExecutionContext, 3_000);
+            final String rn = "SELECT sym, time, row_number() OVER (PARTITION BY sym ORDER BY time) rn FROM trade";
+            final String[] queries = {
+                    // a GROUP BY without the key: first() reads the earliest row of the table
+                    "SELECT rn, first(sym) f, count() c FROM (" + rn + ") ORDER BY rn",
+                    // a window above that is not partitioned by the key numbers the rows in table order
+                    "SELECT sym, rn, g FROM (SELECT sym, rn, sum(rn) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) g FROM (" + rn + ")) ORDER BY sym, rn, g",
+                    // descending orders, which the key-major walk's groups do not come in
+                    q73(allKeys()).replace("ORDER BY sym, pricegroup", "ORDER BY sym DESC, pricegroup"),
+                    q73(allKeys()).replace("ORDER BY sym, pricegroup", "ORDER BY sym, pricegroup DESC"),
+            };
+            for (String query : queries) {
+                assertMatchesSerial(engine, sqlExecutionContext, query, null);
             }
         });
     }

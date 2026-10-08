@@ -475,12 +475,12 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
      * and is not to be used or closed. Takes the step's copies also when it throws, and this
      * factory is then unchanged.
      *
-     * @param ownerStage  the query thread's copy of the step
+     * @param ownerStage   the query thread's copy of the step
      * @param workerStages one copy per worker slot, see {@link #getWorkerSlotCount()}
-     * @param metadata    the step's output
-     * @param recordSink  copies the step's output into a task's row buffer
-     * @param splitPlan   how keys may split over tasks, now that the step is part of the rows
-     * @param carryStage  see {@link AsyncWindowAtom#setCarryStage(int)}
+     * @param metadata     the step's output
+     * @param recordSink   copies the step's output into a task's row buffer
+     * @param splitPlan    how keys may split over tasks, now that the step is part of the rows
+     * @param carryStage   see {@link AsyncWindowAtom#setCarryStage(int)}
      */
     public AsyncWindowRecordCursorFactory withStage(
             @NotNull AsyncWindowStage ownerStage,
@@ -549,8 +549,10 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
             final AsyncWindowStage stage = ownerStages.getQuick(i);
             planMetadata = stage.getPlanMetadata();
             switch (stage.getKind()) {
-                case AsyncWindowStage.KIND_VIRTUAL -> sink.attr("then").val("project").optAttr("functions", stage.getFunctions(), true);
-                case AsyncWindowStage.KIND_WINDOW -> sink.attr("then").val("window").optAttr("functions", stage.getWindowFunctions(), true);
+                case AsyncWindowStage.KIND_VIRTUAL ->
+                        sink.attr("then").val("project").optAttr("functions", stage.getFunctions(), true);
+                case AsyncWindowStage.KIND_WINDOW ->
+                        sink.attr("then").val("window").optAttr("functions", stage.getWindowFunctions(), true);
                 case AsyncWindowStage.KIND_GROUP_BY -> {
                     sink.attr("then").val("group by");
                     sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(stage.getFunctions(), getMetadata()));
