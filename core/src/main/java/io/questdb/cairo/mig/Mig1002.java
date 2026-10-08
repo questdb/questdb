@@ -45,6 +45,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.COLUMN_VERSION_FILE_NAME;
@@ -209,11 +210,24 @@ public final class Mig1002 {
             IntList foundColumns
     ) {
         final long partitionTimestamp = txReader.getPartitionTimestampByIndex(partitionIndex);
+        final LongList versions = cvReader.getCachedColumnVersionList();
+        final int versionsSize = versions.size();
+        int recordIndex = versions.binarySearchBlock(ColumnVersionReader.BLOCK_SIZE_MSB, partitionTimestamp, Vect.BIN_SEARCH_SCAN_UP);
+        if (recordIndex < 0) {
+            recordIndex = versionsSize;
+        }
         for (int i = 0, n = pendingColumns.size(); i < n; i++) {
             final int columnIndex = pendingColumns.getQuick(i);
-            final int recordIndex = cvReader.getRecordIndex(partitionTimestamp, columnIndex);
-            final boolean hasColumnTop = recordIndex > -1
-                    ? cvReader.getColumnTopByIndex(recordIndex) != 0
+            while (recordIndex < versionsSize
+                    && versions.getQuick(recordIndex) == partitionTimestamp
+                    && versions.getQuick(recordIndex + ColumnVersionReader.COLUMN_INDEX_OFFSET) < columnIndex) {
+                recordIndex += ColumnVersionReader.BLOCK_SIZE;
+            }
+            final boolean hasRecord = recordIndex < versionsSize
+                    && versions.getQuick(recordIndex) == partitionTimestamp
+                    && versions.getQuick(recordIndex + ColumnVersionReader.COLUMN_INDEX_OFFSET) == columnIndex;
+            final boolean hasColumnTop = hasRecord
+                    ? versions.getQuick(recordIndex + ColumnVersionReader.COLUMN_TOP_OFFSET) != 0
                     : columnTopPartitions.getQuick(columnIndex) > partitionTimestamp;
             if (hasColumnTop) {
                 foundColumns.add(columnIndex);

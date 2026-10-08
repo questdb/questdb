@@ -311,6 +311,28 @@ public class Mig1002Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testRepairsNullFlagAcrossExplicitColumnVersionRecords() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-05T00:00:00Z', 1), ('2024-01-06T00:00:00Z', 2)");
+            execute("ALTER TABLE t ADD COLUMN a SYMBOL");
+            execute("ALTER TABLE t ADD COLUMN b SYMBOL");
+            execute("ALTER TABLE t ADD COLUMN c SYMBOL");
+            execute("INSERT INTO t VALUES ('2024-01-07T00:00:00Z', 3, 'x', 'y', 'z')");
+            execute("UPDATE t SET a = 'x', c = 'z' WHERE ts < '2024-01-07'");
+            unsetSymbolNullFlag("t", "a");
+            unsetSymbolNullFlag("t", "b");
+            unsetSymbolNullFlag("t", "c");
+            runMig1002("t");
+            Assert.assertFalse(containsSymbolNullValue("t", "a"));
+            Assert.assertTrue(containsSymbolNullValue("t", "b"));
+            Assert.assertFalse(containsSymbolNullValue("t", "c"));
+            assertQuery("SELECT x, b FROM t LATEST ON ts PARTITION BY b")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\tb\n2\t\n3\ty\n");
+        });
+    }
+
+    @Test
     public void testRepairsNullFlagOfConvertedColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE stale (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
