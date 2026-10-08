@@ -76,6 +76,9 @@ public class PivotFuseSourceTest extends AbstractCairoTest {
             // an aggregating subquery (the Manual Opt form of idx 26) is already parallel inside
             "SELECT * FROM (SELECT timestamp_floor('1h', ts) AS h, sym, avg(bid) AS v FROM quote GROUP BY h, sym) "
                     + "PIVOT (avg(v) FOR sym IN ('A', 'B') GROUP BY h) ORDER BY h",
+            // an implicitly aggregating subquery
+            "SELECT * FROM (SELECT timestamp_floor('1h', ts) AS h, sym, count_distinct(bsize) AS v FROM quote) "
+                    + "PIVOT (avg(v) FOR sym IN ('A', 'B') GROUP BY h) ORDER BY h",
             // a window function in the subquery
             "SELECT * FROM (SELECT timestamp_floor('1h', ts) AS h, sym, bid - lag(bid) OVER (PARTITION BY sym ORDER BY ts) AS d FROM quote) "
                     + "PIVOT (sum(d) FOR sym IN ('A', 'B') GROUP BY h) ORDER BY h",

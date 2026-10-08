@@ -101,7 +101,12 @@ public class DistinctGroupByKeyPruningTest extends AbstractCairoTest {
                                         Frame forward scan on: quote
                             """
             );
+            // a LIMIT on the group by itself: which groups survive depends on every key
+            final String limited = "SELECT DISTINCT sym FROM (" + A + " LIMIT 30)";
+            final String limitedPlan = plan(engine, sqlExecutionContext, limited);
             setProperty(PropertyKey.CAIRO_SQL_DISTINCT_GROUPBY_KEY_PRUNING_ENABLED, "true");
+            Assert.assertTrue(limitedPlan, limitedPlan.contains("keys: [sym,minute]"));
+            TestUtils.assertEquals(limitedPlan, plan(engine, sqlExecutionContext, limited));
             assertPlan(
                     query,
                     """
