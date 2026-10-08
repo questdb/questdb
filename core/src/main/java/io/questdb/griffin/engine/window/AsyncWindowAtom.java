@@ -35,13 +35,16 @@ import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -58,11 +61,14 @@ import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.griffin.engine.table.KeyMajorPageFrameRecordCursor;
 import io.questdb.griffin.engine.table.PageFrameRowToucher;
+import io.questdb.griffin.engine.table.AsyncFilterUtils;
 import io.questdb.griffin.engine.table.SelectedRecord;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -87,6 +93,15 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
     private final PerWorkerLocks perWorkerLocks;
+    // The scan's WHERE as the Async JIT Filter compiled it, which slices apply to a frame's row
+    // range at a time, see Slot.computeSlice(); null when there is none. The code is shared by
+    // the slots, and so is the bind variables' memory, which the query's thread writes before it
+    // dispatches.
+    private CompiledFilter compiledPrefilter;
+    private ObjList<Function> compiledPrefilterBindVarFunctions;
+    private MemoryCARW compiledPrefilterBindVarMemory;
+    // per execution, see initCompiledPrefilter(): bind variables the compiled filter cannot take
+    private boolean compiledPrefilterSuspended;
     // slot -1, the query's own thread, then the worker slots
     private final ObjList<Slot> slots;
     // tasks run on a worker thread, as opposed to one the query's thread stole; written by the
@@ -165,6 +180,46 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
      * plain scan, see {@link AsyncWindowShardCursor}: the query thread's, which the factory owns,
      * and one per worker slot, which this atom owns once the method returns, also when it throws.
      */
+    /**
+     * Gives the slices the JIT-compiled form of the prefilters (see {@link #setPrefilters}), the
+     * Async JIT Filter's: a slice of a native frame without column tops runs it over its rows,
+     * rather than the Java filter row by row. This atom owns the three once the method returns.
+     */
+    public void setCompiledPrefilter(@NotNull CompiledFilter compiledFilter, @NotNull MemoryCARW bindVarMemory, @NotNull ObjList<Function> bindVarFunctions) {
+        this.compiledPrefilter = compiledFilter;
+        this.compiledPrefilterBindVarMemory = bindVarMemory;
+        this.compiledPrefilterBindVarFunctions = bindVarFunctions;
+    }
+
+    public boolean hasCompiledPrefilter() {
+        return compiledPrefilter != null;
+    }
+
+    /**
+     * Writes the compiled prefilter's bind variables for an execution, before any slice of it
+     * runs. An execution whose bind variables it cannot take runs the Java prefilter.
+     */
+    void initCompiledPrefilter(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        if (compiledPrefilter != null) {
+            Function.init(compiledPrefilterBindVarFunctions, symbolTableSource, executionContext, null);
+            compiledPrefilterSuspended = !AsyncFilterUtils.prepareBindVarMemory(executionContext, symbolTableSource, compiledPrefilterBindVarFunctions, compiledPrefilterBindVarMemory);
+        }
+    }
+
+    // the compiled prefilter this execution's slices run, null for none
+    @Nullable
+    CompiledFilter getCompiledPrefilter() {
+        return compiledPrefilterSuspended ? null : compiledPrefilter;
+    }
+
+    long getCompiledPrefilterBindVarAddress() {
+        return compiledPrefilterBindVarMemory.getAddress();
+    }
+
+    int getCompiledPrefilterBindVarCount() {
+        return compiledPrefilterBindVarFunctions.size();
+    }
+
     public void setPrefilters(@NotNull Function ownerFilter, @NotNull ObjList<Function> workerFilters) {
         try {
             assert workerFilters.size() == slots.size() - 1;
@@ -185,6 +240,12 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         for (int i = 0, n = slots.size(); i < n; i++) {
             failure = Misc.freeBestEffort(failure, slots.getQuick(i));
         }
+        failure = Misc.freeBestEffort(failure, compiledPrefilter);
+        compiledPrefilter = null;
+        failure = Misc.freeBestEffort(failure, compiledPrefilterBindVarMemory);
+        compiledPrefilterBindVarMemory = null;
+        failure = Misc.freeObjListBestEffort(failure, compiledPrefilterBindVarFunctions);
+        compiledPrefilterBindVarFunctions = null;
         // idempotent: a failed constructor may close the atom before its owner does
         slots.clear();
         CairoException.rethrowCleanupFailure(failure);
@@ -451,6 +512,11 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         private Record serialInput;
         // the scan's WHERE, which a row must pass before the window sees it, or null
         private Function prefilter;
+        // a slice's column addresses and the rows that pass the compiled prefilter, see
+        // computeCompiledSlice(); allocated on first use, freed when the cursor closes
+        private final DirectLongList prefilterAuxAddresses = new DirectLongList(16, MemoryTag.NATIVE_OFFLOAD, true);
+        private final DirectLongList prefilterDataAddresses = new DirectLongList(16, MemoryTag.NATIVE_OFFLOAD, true);
+        private final DirectLongList prefilterRows = new DirectLongList(1024, MemoryTag.NATIVE_OFFLOAD, true);
         // rows the last computeSlice() output
         private long sliceRowCount;
         // the window functions start afresh at each key of a task, see setKeyStartReset()
@@ -677,6 +743,9 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             }
             failure = Misc.freeBestEffort(failure, pool);
             failure = Misc.freeBestEffort(failure, record);
+            failure = Misc.freeBestEffort(failure, prefilterAuxAddresses);
+            failure = Misc.freeBestEffort(failure, prefilterDataAddresses);
+            failure = Misc.freeBestEffort(failure, prefilterRows);
             if (ownsFunctions) {
                 failure = Misc.freeBestEffort(failure, prefilter);
                 failure = Misc.freeObjListBestEffort(failure, stages);
@@ -714,6 +783,9 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             if (prefilter != null) {
                 prefilter.cursorClosed();
             }
+            Misc.free(prefilterAuxAddresses);
+            Misc.free(prefilterDataAddresses);
+            Misc.free(prefilterRows);
         }
 
         /**
@@ -930,10 +1002,21 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 long rowHi,
                 RecordChain chain,
                 SqlExecutionCircuitBreaker circuitBreaker,
-                UnorderedPageFrameSequence<?> sequence
+                UnorderedPageFrameSequence<?> sequence,
+                @Nullable CompiledFilter compiledPrefilter,
+                long bindVarAddress,
+                int bindVarCount
         ) {
             streamFrameIndex = -1;
-            record.init(pool.navigateTo(frameIndex));
+            final PageFrameMemory frameMemory = pool.navigateTo(frameIndex);
+            record.init(frameMemory);
+            if (compiledPrefilter != null
+                    && prefilter != null
+                    && frameMemory.getFrameFormat() == PartitionFormat.NATIVE
+                    && !frameMemory.hasColumnTops()
+                    && !frameMemory.hasColumnTypeCasts()) {
+                return computeCompiledSlice(frameMemory, rowLo, rowHi, chain, circuitBreaker, sequence, compiledPrefilter, bindVarAddress, bindVarCount);
+            }
             long prevOffset = -1;
             long rowCount = 0;
             int checks = 0;
@@ -958,6 +1041,77 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
 
         long getSliceRowCount() {
             return sliceRowCount;
+        }
+
+        // computeSlice() with the compiled prefilter: it runs once over the slice's rows, the
+        // frame's column addresses moved to the slice's first row, and the window sees the rows
+        // it passes, in order, as the Java prefilter would pass them.
+        private long computeCompiledSlice(
+                PageFrameMemory frameMemory,
+                long rowLo,
+                long rowHi,
+                RecordChain chain,
+                SqlExecutionCircuitBreaker circuitBreaker,
+                UnorderedPageFrameSequence<?> sequence,
+                CompiledFilter compiledPrefilter,
+                long bindVarAddress,
+                int bindVarCount
+        ) {
+            final long sliceRows = rowHi - rowLo;
+            long prevOffset = -1;
+            long rowCount = 0;
+            if (sliceRows > 0) {
+                prefilterDataAddresses.reopen();
+                prefilterAuxAddresses.reopen();
+                PageFrameReduceTask.populateJitAddresses(frameMemory, frameAddressCache, prefilterDataAddresses, prefilterAuxAddresses);
+                final IntList columnTypes = frameAddressCache.getColumnTypes();
+                for (int c = 0, n = frameAddressCache.getColumnCount(); c < n; c++) {
+                    if (frameAddressCache.isVarSizeColumn(c)) {
+                        // the aux vector is indexed by row; the data vector by the aux entries
+                        final long auxAddress = prefilterAuxAddresses.get(c);
+                        if (auxAddress != 0) {
+                            prefilterAuxAddresses.set(c, auxAddress + ColumnType.getDriver(columnTypes.getQuick(c)).getAuxVectorOffset(rowLo));
+                        }
+                    } else {
+                        final long dataAddress = prefilterDataAddresses.get(c);
+                        if (dataAddress != 0) {
+                            prefilterDataAddresses.set(c, dataAddress + (rowLo << ColumnType.pow2SizeOf(columnTypes.getQuick(c))));
+                        }
+                    }
+                }
+                if (prefilterRows.getCapacity() < sliceRows) {
+                    prefilterRows.setCapacity(sliceRows);
+                }
+                prefilterRows.reopen();
+                final long passed = compiledPrefilter.call(
+                        prefilterDataAddresses.getAddress(),
+                        prefilterDataAddresses.size(),
+                        prefilterAuxAddresses.getAddress(),
+                        bindVarAddress,
+                        bindVarCount,
+                        prefilterRows.getAddress(),
+                        sliceRows
+                );
+                prefilterRows.setPos(passed);
+                int checks = 0;
+                for (long i = 0; i < passed; i++) {
+                    if (++checks == CHECK_BATCHES * BATCH_ROWS) {
+                        checks = 0;
+                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        if (!sequence.isActive()) {
+                            sliceRowCount = rowCount;
+                            return prevOffset;
+                        }
+                    }
+                    record.setRowIndex(rowLo + prefilterRows.get(i));
+                    if (computeNext(functionInput)) {
+                        prevOffset = chain.put(outputRecord, prevOffset);
+                        rowCount++;
+                    }
+                }
+            }
+            sliceRowCount = rowCount;
+            return prevOffset;
         }
 
         /**

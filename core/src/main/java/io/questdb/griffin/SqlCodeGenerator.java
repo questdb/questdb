@@ -13930,7 +13930,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     /**
      * Plans a streaming window without PARTITION BY over a plain scan of a table, with or without
-     * a WHERE (an Async Filter, whose filter the workers then apply themselves), as an Async Window
+     * a WHERE (an Async Filter, whose filter the workers then apply themselves, in its compiled
+     * form where the Async JIT Filter had one, see {@link AsyncWindowAtom}), as an Async Window
      * of disjoint row ranges ({@code rowSlices}, see {@link AsyncWindowShardCursor}): when every
      * function is a running aggregate whose slices the query's thread combines exactly (a running
      * DOUBLE sum folded in order, see {@link AsyncWindowSplitPlan#OP_FOLD}, integer sums and
@@ -14036,17 +14037,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         // the workers of a folded sum output its argument, see AsyncWindowFoldEcho
         swapInFoldEchoes(splitPlan, perWorkerFunctions);
-        // the filter is the workers' now: take it from the Async Filter, free its JIT parts
+        // The filter is the workers' now: take it from the Async Filter, and its JIT-compiled
+        // form, which the slices run over their rows where they can, see AsyncWindowAtom.
         Function ownerFilter = null;
+        CompiledFilter compiledFilter = null;
+        MemoryCARW bindVarMemory = null;
+        ObjList<Function> bindVarFunctions = null;
         if (scan != base) {
             ownerFilter = base.getFilter();
-            final CompiledFilter compiledFilter = base.getCompiledFilter();
-            final MemoryCARW bindVarMemory = base.getBindVarMemory();
-            final ObjList<Function> bindVarFunctions = base.getBindVarFunctions();
+            compiledFilter = base.getCompiledFilter();
+            bindVarMemory = base.getBindVarMemory();
+            bindVarFunctions = base.getBindVarFunctions();
             base.halfClose();
-            Misc.free(compiledFilter);
-            Misc.free(bindVarMemory);
-            Misc.freeObjList(bindVarFunctions);
+            if (compiledFilter == null || bindVarMemory == null || bindVarFunctions == null) {
+                compiledFilter = Misc.free(compiledFilter);
+                bindVarMemory = Misc.free(bindVarMemory);
+                Misc.freeObjList(bindVarFunctions);
+                bindVarFunctions = null;
+            }
         }
         final AsyncWindowRecordCursorFactory factory;
         try {
@@ -14072,7 +14080,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } catch (Throwable th) {
             Misc.free(ownerFilter);
             Misc.freeObjList(workerFilters);
+            Misc.free(compiledFilter);
+            Misc.free(bindVarMemory);
+            Misc.freeObjList(bindVarFunctions);
             throw th;
+        }
+        if (compiledFilter != null) {
+            factory.setCompiledPrefilter(compiledFilter, bindVarMemory, bindVarFunctions);
         }
         if (ownerFilter != null) {
             factory.setPrefilters(ownerFilter, workerFilters);
