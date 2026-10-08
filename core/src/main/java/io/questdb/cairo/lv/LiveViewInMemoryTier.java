@@ -59,7 +59,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  *     to the slow path on conflict.</li>
  * </ul>
  * Both paths use the same CAS primitive and release through one of the two
- * complementary methods; there is no fast-path-specific API.
+ * complementary methods; there is no fast-path-specific API. A symbol-cache
+ * rewind ({@link #tryRewindSymbolCache}) takes the sentinel on both slots at
+ * once, which proves that no reader pins either.
  * <p>
  * Refcounts live in a 16-byte off-heap region (one long per slot) so all CAS
  * traffic uses {@link Os#compareAndSwap(long, long, long)} — no
@@ -463,6 +465,60 @@ public class LiveViewInMemoryTier implements QuietCloseable {
             return slots[slotIdx];
         }
         return null;
+    }
+
+    /**
+     * Rewinds every SYMBOL column of the symbol cache to the LV table's committed symbol
+     * count ({@link LiveViewSymbolCache#rewind}), provided no reader pins either slot.
+     * Returns {@code false}, having changed nothing, when a reader pins one; the caller
+     * retries on a later cycle.
+     * <p>
+     * A rewind re-binds ids, and a reader resolves ids lock-free against its pinned slot,
+     * so the only safe moment is one with no pin anywhere. The writer sentinel on both
+     * slots proves that: each {@code 0 -> -1} CAS succeeds only on an unpinned slot, and
+     * while it is held a new reader spins instead of pinning. Releasing both through
+     * {@link #releaseWriteWithoutPublish} then re-stamps both horizons from the rewound
+     * cache before either slot can be pinned again, so no later reader of either slot can
+     * reach the re-bound band - not through {@code keyOf}, which the horizon bounds, nor
+     * through the symbol count.
+     * <p>
+     * The non-published slot cannot hand its rows to a reader either: a reader pins only
+     * the published slot, and the writer refills the other one before it publishes it.
+     * The published slot keeps its rows, so the caller must guarantee they carry no id the
+     * rewind takes back - a slot staged from disk, or one re-stamped after an in-step flush.
+     *
+     * @param committedCounts the LV table's committed symbol count per output column,
+     *                        indexed by column; only SYMBOL columns are read
+     * @return {@code true} when the cache was rewound, {@code false} when a reader pins a
+     * slot
+     */
+    public boolean tryRewindSymbolCache(IntList committedCounts) {
+        final int publishedIdx = this.publishedIdx;
+        if (tryAcquireWrite(publishedIdx) == null) {
+            return false;
+        }
+        final int otherIdx = 1 - publishedIdx;
+        if (tryAcquireWrite(otherIdx) == null) {
+            // Nothing changed, so there is no horizon to re-stamp.
+            releaseWriterSentinel(publishedIdx, "tryRewindSymbolCache");
+            return false;
+        }
+        try {
+            for (int i = 0, n = symbolCache.symbolColumnCount(); i < n; i++) {
+                final int col = symbolCache.symbolColumnIndexAt(i);
+                symbolCache.rewind(col, committedCounts.getQuick(col));
+            }
+        } finally {
+            // Re-stamps both horizons even when a rewind threw part-way: a column left
+            // half-rewound has re-bound nothing yet, and the horizons it gets are the
+            // store sizes it still has.
+            try {
+                releaseWriteWithoutPublish(otherIdx);
+            } finally {
+                releaseWriteWithoutPublish(publishedIdx);
+            }
+        }
+        return true;
     }
 
     /**

@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.StringTypeDriver;
+import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
@@ -38,8 +39,12 @@ import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewSymbolCache;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
@@ -51,6 +56,7 @@ import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
 import io.questdb.std.PerQueryMemoryTrackerProvider;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
@@ -695,6 +701,201 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
                             slot.newSymbolMaxId(col)
                     );
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolRewindWaitsForEveryPinThenRebindsTheBandInANewOrder() throws Exception {
+        // A recovery discarded a pass that interned acct-3 and acct-4 past the two committed
+        // symbols, so the cache would hand the next new value an id the flush's apply gives to
+        // another one. The rewind takes the band back, but only once no reader can resolve it:
+        // a pin on either slot defers it with nothing changed. After it, the values the drain
+        // meets next - here in a different order from the discarded pass - take the committed
+        // ids, and no stale reverse-index node can match a filter on a discarded value.
+        assertMemoryLeak(() -> {
+            final int col = 1;
+            final int committedCount = 2;
+            final SymbolMapReader empty = new UncommittedValuesReader(0);
+            final SymbolMapReader committed = new UncommittedValuesReader(committedCount);
+            final IntList committedCounts = new IntList();
+            committedCounts.extendAndSet(col, committedCount);
+            IntList types = new IntList(2);
+            types.add(ColumnType.TIMESTAMP);
+            types.add(ColumnType.SYMBOL);
+            try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE)) {
+                final LiveViewSymbolCache cache = tier.getSymbolCache();
+                // Two values a flush then committed, so the committed band holds strings too.
+                Assert.assertEquals(0, cache.intern(col, "acct-1", empty));
+                Assert.assertEquals(1, cache.intern(col, "acct-2", empty));
+                // The pass the recovery discards: it publishes acct-3 as a lead row first.
+                cache.onFlush();
+                cache.anchor(col, committedCount);
+                Assert.assertEquals(2, cache.intern(col, "acct-3", committed));
+                final int discardedIdx = 1 - tier.getPublishedIdx();
+                LiveViewInMemoryBuffer discarded = tier.tryAcquireWrite(discardedIdx);
+                Assert.assertNotNull(discarded);
+                discarded.putLong(0, 0, 1L);
+                discarded.putInt(0, col, 2);
+                discarded.setRowCount(1);
+                discarded.setLeadRowCount(1);
+                tier.publishSwap(discardedIdx);
+                final int pin = tier.acquireRead();
+                Assert.assertEquals(discardedIdx, pin);
+                Assert.assertEquals(3, tier.getSlot(pin).newSymbolMaxId(col));
+                Assert.assertEquals(3, cache.intern(col, "acct-4", committed));
+
+                // The recovery restages the other slot from disk and publishes it; the reader
+                // keeps the discarded slot pinned.
+                cache.onO3();
+                final int restagedIdx = 1 - discardedIdx;
+                Assert.assertNotNull(tier.tryAcquireWrite(restagedIdx));
+                tier.publishSwap(restagedIdx);
+                Assert.assertEquals(4, tier.getSlot(restagedIdx).newSymbolMaxId(col));
+
+                Assert.assertTrue(cache.hasStrandedIds(col, committedCount));
+                Assert.assertFalse("a pin on the old slot must defer the rewind", tier.tryRewindSymbolCache(committedCounts));
+                // Nothing changed for the pinned reader, and both sentinels dropped: the
+                // published slot is acquirable again and kept its horizon.
+                Assert.assertEquals("acct-3", cache.newSymbolValueOf(col, 2).toString());
+                Assert.assertEquals(2, cache.newSymbolKeyOf(col, "acct-3", committedCount, 3));
+                Assert.assertEquals(4, cache.newSymbolMaxIdExclusive(col));
+                Assert.assertTrue(cache.hasStrandedIds(col, committedCount));
+                Assert.assertEquals(4, tier.getSlot(restagedIdx).newSymbolMaxId(col));
+                Assert.assertNotNull(tier.tryAcquireWrite(restagedIdx));
+                tier.releaseWriteWithoutPublish(restagedIdx);
+
+                // A reader of the published slot defers it just the same.
+                final int publishedPin = tier.acquireRead();
+                Assert.assertEquals(restagedIdx, publishedPin);
+                tier.releaseRead(pin);
+                Assert.assertFalse("a pin on the published slot must defer the rewind", tier.tryRewindSymbolCache(committedCounts));
+                Assert.assertEquals("acct-4", cache.newSymbolValueOf(col, 3).toString());
+                tier.releaseRead(publishedPin);
+
+                Assert.assertTrue(tier.tryRewindSymbolCache(committedCounts));
+                Assert.assertFalse(cache.hasStrandedIds(col, committedCount));
+                Assert.assertTrue(cache.isInStepWith(col, committed));
+                // The band is forgotten and both horizons stop below it; the committed band
+                // keeps its strings for a reader whose disk table predates their commit.
+                Assert.assertNull(cache.newSymbolValueOf(col, 2));
+                Assert.assertNull(cache.newSymbolValueOf(col, 3));
+                Assert.assertEquals("acct-1", cache.newSymbolValueOf(col, 0).toString());
+                Assert.assertEquals("acct-2", cache.newSymbolValueOf(col, 1).toString());
+                Assert.assertEquals(committedCount, cache.newSymbolMaxIdExclusive(col));
+                Assert.assertEquals(committedCount, tier.getSlot(0).newSymbolMaxId(col));
+                Assert.assertEquals(committedCount, tier.getSlot(1).newSymbolMaxId(col));
+                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, cache.newSymbolKeyOf(col, "acct-3", committedCount, 4));
+                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, cache.newSymbolKeyOf(col, "acct-4", committedCount, 4));
+                Assert.assertEquals(1, cache.newSymbolKeyOf(col, "acct-2", 0, committedCount));
+
+                // The drain after the rewind meets acct-5 before acct-4. Each takes the id the
+                // flush's apply gives it, and the store accepts the re-assignment without
+                // tripping its increasing-order assertion (core tests run with -ea).
+                Assert.assertEquals(2, cache.intern(col, "acct-5", committed, true));
+                Assert.assertEquals(3, cache.intern(col, "acct-4", committed, true));
+                Assert.assertEquals(3, cache.intern(col, "acct-4", committed, true));
+                Assert.assertEquals("acct-5", cache.newSymbolValueOf(col, 2).toString());
+                Assert.assertEquals("acct-4", cache.newSymbolValueOf(col, 3).toString());
+                Assert.assertEquals(4, cache.newSymbolMaxIdExclusive(col));
+                Assert.assertEquals(2, cache.newSymbolKeyOf(col, "acct-5", committedCount, 4));
+                Assert.assertEquals(3, cache.newSymbolKeyOf(col, "acct-4", committedCount, 4));
+                // acct-3 is not in the new band: a WHERE on it cannot match acct-5's rows.
+                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, cache.newSymbolKeyOf(col, "acct-3", committedCount, 4));
+                // The flush that commits both, in the order the drain met them, leaves the cache
+                // in step with the table. The check compares only the ids assigned since the
+                // rewind, so it holds whatever the table committed below them.
+                Assert.assertTrue(cache.isInStepWith(col, new CommittedValuesReader("acct-1", "acct-2", "acct-5", "acct-4")));
+                Assert.assertTrue(cache.isInStepWith(col, new CommittedValuesReader("acct-0", "acct-9", "acct-5", "acct-4")));
+                // A commit that assigned them the other way round has the same count, and the
+                // check still refuses it: a WAL writer that kept acct-4 from the discarded pass
+                // through its rollback commits it ahead of acct-5.
+                Assert.assertFalse(cache.isInStepWith(col, new CommittedValuesReader("acct-1", "acct-2", "acct-4", "acct-5")));
+                // So does a commit of a value the drain never interned: that writer kept acct-3.
+                Assert.assertFalse(cache.isInStepWith(col, new CommittedValuesReader("acct-1", "acct-2", "acct-3", "acct-5", "acct-4")));
+                // A second rewind with nothing stranded changes nothing.
+                committedCounts.setQuick(col, committedCount + 2);
+                Assert.assertTrue(tier.tryRewindSymbolCache(committedCounts));
+                Assert.assertEquals("acct-5", cache.newSymbolValueOf(col, 2).toString());
+                Assert.assertEquals(4, cache.newSymbolMaxIdExclusive(col));
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolRewindAcrossAPageBoundaryKeepsTheIdsBelowIt() throws Exception {
+        // The id -> string store pages ids 256 at a time. A band that starts inside one page
+        // and runs into the next must be forgotten on both pages, while the ids of the first
+        // page below the committed count keep their strings.
+        assertMemoryLeak(() -> {
+            final int col = 1;
+            final int committedCount = 255;
+            final SymbolMapReader committed = new UncommittedValuesReader(committedCount);
+            final IntList committedCounts = new IntList();
+            committedCounts.extendAndSet(col, committedCount);
+            IntList types = new IntList(2);
+            types.add(ColumnType.TIMESTAMP);
+            types.add(ColumnType.SYMBOL);
+            try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE)) {
+                final LiveViewSymbolCache cache = tier.getSymbolCache();
+                cache.anchor(col, committedCount - 1);
+                Assert.assertEquals(committedCount - 1, cache.intern(col, "committed", committed));
+                Assert.assertEquals(committedCount, cache.intern(col, "discarded-0", committed));
+                Assert.assertEquals(committedCount + 1, cache.intern(col, "discarded-1", committed));
+                Assert.assertEquals(committedCount + 2, cache.intern(col, "discarded-2", committed));
+                cache.onO3();
+
+                Assert.assertTrue(tier.tryRewindSymbolCache(committedCounts));
+                Assert.assertEquals("committed", cache.newSymbolValueOf(col, committedCount - 1).toString());
+                for (int id = committedCount; id < committedCount + 3; id++) {
+                    Assert.assertNull("id " + id + " must be forgotten", cache.newSymbolValueOf(col, id));
+                }
+                Assert.assertEquals(committedCount, cache.newSymbolMaxIdExclusive(col));
+
+                Assert.assertEquals(committedCount, cache.intern(col, "discarded-2", committed, true));
+                Assert.assertEquals(committedCount + 1, cache.intern(col, "next", committed, true));
+                Assert.assertEquals("discarded-2", cache.newSymbolValueOf(col, committedCount).toString());
+                Assert.assertEquals("next", cache.newSymbolValueOf(col, committedCount + 1).toString());
+                Assert.assertNull(cache.newSymbolValueOf(col, committedCount + 2));
+                Assert.assertEquals(committedCount, cache.newSymbolKeyOf(col, "discarded-2", committedCount, committedCount + 2));
+                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, cache.newSymbolKeyOf(col, "discarded-0", committedCount, committedCount + 2));
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolRewindToTheStoreOriginRebasesTheStore() throws Exception {
+        // The first id a column ever assigns fixes the id -> string store's origin page. A
+        // discarded pass that was the column's first, over a committed count on a page
+        // boundary, is rewound to exactly that origin, so the store drops every page and the
+        // next assignment fixes the origin again, as after close.
+        assertMemoryLeak(() -> {
+            final int col = 1;
+            final int committedCount = 256;
+            final SymbolMapReader committed = new UncommittedValuesReader(committedCount);
+            final IntList committedCounts = new IntList();
+            committedCounts.extendAndSet(col, committedCount);
+            IntList types = new IntList(2);
+            types.add(ColumnType.TIMESTAMP);
+            types.add(ColumnType.SYMBOL);
+            try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE)) {
+                final LiveViewSymbolCache cache = tier.getSymbolCache();
+                cache.anchor(col, committedCount);
+                Assert.assertEquals(committedCount, cache.intern(col, "discarded-0", committed));
+                Assert.assertEquals(committedCount + 1, cache.intern(col, "discarded-1", committed));
+                cache.onO3();
+
+                Assert.assertTrue(tier.tryRewindSymbolCache(committedCounts));
+                Assert.assertEquals(committedCount, cache.newSymbolMaxIdExclusive(col));
+                Assert.assertNull(cache.newSymbolValueOf(col, committedCount));
+                Assert.assertNull(cache.newSymbolValueOf(col, committedCount + 1));
+                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, cache.newSymbolKeyOf(col, "discarded-0", committedCount, committedCount + 2));
+
+                Assert.assertEquals(committedCount, cache.intern(col, "kept", committed, true));
+                Assert.assertEquals("kept", cache.newSymbolValueOf(col, committedCount).toString());
+                Assert.assertNull(cache.newSymbolValueOf(col, committedCount + 1));
+                Assert.assertEquals(committedCount + 1, cache.newSymbolMaxIdExclusive(col));
+                Assert.assertEquals(committedCount, cache.newSymbolKeyOf(col, "kept", committedCount, committedCount + 1));
             }
         });
     }
@@ -1988,6 +2189,34 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         }
     }
 
+    // The committed symbol table an apply leaves behind, its values by id, so the in-step
+    // check can compare the ids a drain assigned against the ones the apply committed.
+    private static final class CommittedValuesReader extends UncommittedValuesReader {
+        private final ObjList<String> values = new ObjList<>();
+
+        private CommittedValuesReader(String... values) {
+            super(values.length);
+            for (String value : values) {
+                this.values.add(value);
+            }
+        }
+
+        @Override
+        public int keyOf(CharSequence value) {
+            for (int i = 0, n = values.size(); i < n; i++) {
+                if (Chars.equals(values.getQuick(i), value)) {
+                    return i;
+                }
+            }
+            return SymbolTable.VALUE_NOT_FOUND;
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            return key >= 0 && key < values.size() ? values.getQuick(key) : null;
+        }
+    }
+
     // Minimal single-row Record stub feeding copyRowFromRecord a TIMESTAMP (index 0)
     // and one column of each DECIMAL width (indexes 1..6): DECIMAL8, DECIMAL16,
     // DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256. The wide 128/256 values are stored
@@ -2118,6 +2347,76 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
 
     // Minimal single-row Record stub feeding copyRowFromRecord a TIMESTAMP, a
     // STRING, and a BINARY column (indexes 0, 1, 2). Rebind per row via of().
+    // A committed symbol table of a fixed count that holds none of the values a test interns,
+    // so every intern sees a value new to the lead. intern reads only keyOf and the count.
+    private static class UncommittedValuesReader implements SymbolMapReader {
+        private final int symbolCount;
+
+        private UncommittedValuesReader(int symbolCount) {
+            this.symbolCount = symbolCount;
+        }
+
+        @Override
+        public boolean containsNullValue() {
+            return false;
+        }
+
+        @Override
+        public int getSymbolCapacity() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getSymbolCount() {
+            return symbolCount;
+        }
+
+        @Override
+        public MemoryR getSymbolOffsetsColumn() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public MemoryR getSymbolValuesColumn() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isCached() {
+            return false;
+        }
+
+        @Override
+        public boolean isDeleted() {
+            return false;
+        }
+
+        @Override
+        public int keyOf(CharSequence value) {
+            return SymbolTable.VALUE_NOT_FOUND;
+        }
+
+        @Override
+        public StaticSymbolTable newSymbolTableView() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void updateSymbolCount(int count) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
     private static final class VarSizeRecord implements Record {
         private BinarySequence bin;
         private CharSequence str;

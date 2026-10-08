@@ -62,10 +62,25 @@ import io.questdb.std.QuietCloseable;
  *     lead becomes overlap and its stored ids already agree with disk.</li>
  * </ul>
  * <p>
+ * That equality only holds while every id the cache assigned reaches a flush. A
+ * recovery that discards an un-flushed pass - the mid-drain timeline restore, an O3
+ * hand-off whose replay commits fewer values than the pass interned - leaves
+ * {@code nextNewId} above the committed count, and {@link #anchor} only raises it, so
+ * the next new value would be assigned an id the flush's apply gives to another value.
+ * {@link #rewind} takes that band back. Because readers resolve ids without a lock,
+ * it runs only through {@link LiveViewInMemoryTier#tryRewindSymbolCache}, which proves
+ * no reader pins either slot. A rewind alone does not restore the equality, though: the
+ * view's WAL writer goes back to its pool after a rollback still holding the values the
+ * discarded pass appended, and its next commit assigns those first, in whatever order
+ * the next pass meets its new values. So after every apply that lands slot rows on disk,
+ * the refresh job checks {@link #isInStepWith}, which compares the values themselves, and
+ * never stamps a slot whose ids the disk does not share as a subset of disk.
+ * <p>
  * Threading: the refresh worker is the only writer ({@link #intern},
- * {@link #anchor}, {@link #onFlush}, {@link #onO3}). Cursors read the append-only
+ * {@link #anchor}, {@link #onFlush}, {@link #onO3}, {@link #rewind}). Cursors read the
  * {@code id -> string} lists through {@link #newSymbolValueOf} and the concurrent
- * {@code string -> id history} maps through {@link #newSymbolKeyOf}. A stored id
+ * {@code string -> id history} maps through {@link #newSymbolKeyOf}. Both are
+ * append-only except for {@link #rewind}. A stored id
  * and its reverse-index entry are assigned before the slot that carries the id is
  * published. The lists and maps publish their entries with release/acquire semantics.
  * <p>
@@ -89,7 +104,8 @@ import io.questdb.std.QuietCloseable;
  * <p>
  * Memory: {@link #idToString} retains an immutable string per lead assignment and
  * the reverse map retains one key per distinct value. Neither is cleared before
- * close, because a cursor pinned on an older slot holds a disk reader whose
+ * close ({@link #rewind} drops only the band no flush committed), because a cursor
+ * pinned on an older slot holds a disk reader whose
  * committed count predates the flush that committed those ids, so it resolves them
  * through {@link #newSymbolValueOf} rather than from disk - the cache cannot tell
  * how far back the oldest such reader sits. The id space itself advances once per
@@ -111,6 +127,10 @@ public class LiveViewSymbolCache implements QuietCloseable {
     // values per flush window) from being walked twice per refresh cycle for
     // nothing.
     private static final int PRUNE_MIN_ASSIGNMENTS = 1024;
+    // Per output column, the committed symbol count the last anchor or rewind saw. Every
+    // id the column holds at or above it is one the next apply has to commit to the same
+    // value, so isInStepWith compares from here. Writer-side only.
+    private final IntList anchoredCount;
     // Per output column, assignments made since the last successful prune. Gates
     // pruneReverseIndex to at most one map walk per that many assignments, which
     // keeps pruning O(1) amortized per assignment. Writer-side only.
@@ -125,7 +145,8 @@ public class LiveViewSymbolCache implements QuietCloseable {
     private final ObjList<ConcurrentHashMap<SymbolIdChain>> stringToIds;
     // Per output column, the next symbol id to assign to a value new to the lead.
     // Anchored at or above the committed symbol count each drain; advances per
-    // new value. Persists across drain ticks within a flush window.
+    // new value. Persists across drain ticks within a flush window. Only rewind
+    // lowers it.
     private final IntList nextNewId;
     private final IntList symbolColumns = new IntList();
     // Per output column, null for non-SYMBOL columns. Writer-side only: the
@@ -142,6 +163,7 @@ public class LiveViewSymbolCache implements QuietCloseable {
         this.stringToIds = new ObjList<>(n);
         this.windowNewToId = new ObjList<>(n);
         this.nextNewId = new IntList(n);
+        this.anchoredCount = new IntList(n);
         this.assignmentsSincePrune = new IntList(n);
         for (int i = 0; i < n; i++) {
             if (ColumnType.tagOf(columnTypes.getQuick(i)) == ColumnType.SYMBOL) {
@@ -155,6 +177,7 @@ public class LiveViewSymbolCache implements QuietCloseable {
                 windowNewToId.add(null);
             }
             nextNewId.add(0);
+            anchoredCount.add(0);
             assignmentsSincePrune.add(0);
         }
     }
@@ -164,8 +187,14 @@ public class LiveViewSymbolCache implements QuietCloseable {
      * Called at the start of each drain so a flush (or O3) that advanced the
      * committed symbol count re-anchors the next assigned id past it, while a
      * within-window advance (no flush since the last drain) is preserved.
+     * <p>
+     * It never lowers the counter: a counter above the committed count is either an
+     * un-flushed lead or an un-applied block, which own those ids, or a discarded pass,
+     * which only {@link #rewind} may take back. It records {@code committedCount} either
+     * way, as the id {@link #isInStepWith} starts comparing from.
      */
     public void anchor(int col, int committedCount) {
+        anchoredCount.setQuick(col, committedCount);
         if (committedCount > nextNewId.getQuick(col)) {
             nextNewId.setQuick(col, committedCount);
         }
@@ -189,8 +218,59 @@ public class LiveViewSymbolCache implements QuietCloseable {
         }
     }
 
+    /**
+     * Returns true when {@code col} has handed out ids at or above {@code committedCount},
+     * the LV table's committed symbol count for the column. Writer-side only.
+     * <p>
+     * With no un-flushed lead and every LV WAL block applied, nothing owns those ids: they
+     * belong to a pass a recovery discarded, and {@link #rewind} may take them back. With
+     * a lead or a pending block they are legitimate, so the caller checks both first.
+     */
+    public boolean hasStrandedIds(int col, int committedCount) {
+        return nextNewId.getQuick(col) > committedCount;
+    }
+
     public boolean hasSymbolColumns() {
         return symbolColumns.size() > 0;
+    }
+
+    /**
+     * Returns true when every id {@code col} assigned since the last {@link #anchor} or
+     * {@link #rewind} names the same value in {@code committedReader}, the LV table's
+     * committed symbol map for the column, and the next id the column would hand a value
+     * new to the lead is the table's next id too. Writer-side only.
+     * <p>
+     * After an apply that landed the rows the drain interned, this is exactly the check
+     * that the ids the drain assigned are the ids the apply committed. The apply gives
+     * each value new to the table the next id in first-seen order, which is the order the
+     * drain interned them in, unless something else reached the commit first. Two things
+     * do: a discarded pass whose ids the cache still holds (a reader pinned the tier at
+     * every rewind attempt), which makes the counts differ, and a value the WAL writer
+     * kept from a pass it rolled back, which the commit assigns ahead of this pass's
+     * values - at an unchanged count when this pass meets that value again, only later.
+     * Comparing the values catches both. Either way the slot may carry ids the disk reads
+     * as other values, and the caller must not stamp it as a subset of disk.
+     * <p>
+     * Costs one comparison per id assigned since the anchor - the values new to the table
+     * in this flush or publish - and allocates nothing beyond what
+     * {@link SymbolMapReader#valueOf} caches for a cached column.
+     */
+    public boolean isInStepWith(int col, SymbolMapReader committedReader) {
+        final int committedCount = committedReader.getSymbolCount();
+        if (nextNewId.getQuick(col) != committedCount) {
+            return false;
+        }
+        // anchor and rewind both leave nextNewId at or above anchoredCount, and intern only
+        // raises it, so the band below is never inverted.
+        final ConcurrentCharSequenceList list = idToString.getQuick(col);
+        for (int id = Math.max(anchoredCount.getQuick(col), 0); id < committedCount; id++) {
+            final CharSequence assigned = list.valueOf(id);
+            final CharSequence committed = committedReader.valueOf(id);
+            if (assigned == null || committed == null || !Chars.equals(assigned, committed)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -337,9 +417,13 @@ public class LiveViewSymbolCache implements QuietCloseable {
 
     /**
      * Resets the writer-side window maps after an O3 replay re-sequenced the
-     * on-disk symbol ids. {@code idToString} is left intact (a pinned pre-O3
-     * cursor still resolves its slot from it); the next drain re-anchors
-     * {@code nextNewId} to the post-replay committed count via {@link #anchor}.
+     * on-disk symbol ids, or after a recovery discarded an un-flushed pass.
+     * {@code idToString} is left intact (a pinned pre-O3 cursor still resolves its
+     * slot from it), and so is {@code nextNewId}. The next drain's {@link #anchor}
+     * raises it to the post-replay committed count when the replay committed at
+     * least as many values as the discarded passes interned. When it committed
+     * fewer - a timeline restore commits none - the counter stays above the
+     * committed count until {@link #rewind} takes the band back.
      */
     public void onO3() {
         clearWindowMaps();
@@ -393,6 +477,63 @@ public class LiveViewSymbolCache implements QuietCloseable {
             }
         }
         assignmentsSincePrune.setQuick(col, 0);
+    }
+
+    /**
+     * Takes back every id {@code col} assigned at or above {@code committedCount}, the
+     * LV table's committed symbol count for the column, so the next value new to the
+     * lead is assigned {@code committedCount} - the id the next flush's apply gives it,
+     * unless the view's WAL writer still holds a value the discarded pass appended before
+     * a rollback, which its next commit assigns first. {@link #isInStepWith} catches that
+     * after the apply, and the commit leaves the writer holding nothing, so the pass after
+     * it is in step again. A no-op when the column holds no id at or above it.
+     * <p>
+     * This forgets the band completely, so that no later reader can resolve it under the
+     * old binding: the {@code id -> string} store drops it, the reverse index drops every
+     * chain node at or above {@code committedCount} (chains are newest-first, so those
+     * nodes form a prefix of each chain), and the window map is cleared. Ids below
+     * {@code committedCount} keep their strings, because a cursor whose disk reader
+     * predates their commit resolves them from here.
+     * <p>
+     * Writer-side only, and only through {@link LiveViewInMemoryTier#tryRewindSymbolCache}:
+     * a re-bound id is safe only while no reader can resolve it. The tier holds the writer
+     * sentinel on both slots for the duration, then re-stamps their horizons at or below
+     * {@code committedCount}. The caller also guarantees that nothing still owns the band:
+     * no un-flushed lead, no un-applied LV WAL block, and a published slot whose rows carry
+     * only committed ids. Clearing the window map is safe for the same reason - with no
+     * lead, no window entry needs to be found again.
+     */
+    public void rewind(int col, int committedCount) {
+        if (nextNewId.getQuick(col) <= committedCount) {
+            return;
+        }
+        final ConcurrentCharSequenceList list = idToString.getQuick(col);
+        final ConcurrentHashMap<SymbolIdChain> reverseMap = stringToIds.getQuick(col);
+        // The band is dense: anchor only ever raises the counter to a committed count,
+        // and the committed count never decreases, so no anchor sat above committedCount
+        // and every assignment at or above it came from consecutive intern calls.
+        for (int id = Math.max(committedCount, 0), n = list.size(); id < n; id++) {
+            final CharSequence value = list.valueOf(id);
+            if (value == null) {
+                continue;
+            }
+            final SymbolIdChain head = reverseMap.get(value);
+            SymbolIdChain retained = head;
+            while (retained != null && retained.id >= committedCount) {
+                retained = retained.previous;
+            }
+            if (retained != head) {
+                if (retained == null) {
+                    reverseMap.remove(value);
+                } else {
+                    reverseMap.put(value, retained);
+                }
+            }
+        }
+        list.truncate(committedCount);
+        windowNewToId.getQuick(col).clear();
+        nextNewId.setQuick(col, committedCount);
+        anchoredCount.setQuick(col, committedCount);
     }
 
     /**

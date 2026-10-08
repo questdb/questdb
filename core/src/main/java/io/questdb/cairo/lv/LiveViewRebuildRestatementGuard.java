@@ -98,7 +98,12 @@ import org.jetbrains.annotations.NotNull;
  *     base) or a materialized view's TRUNCATE ({@link #ABSTAIN_BACKLOG_MAY_REMOVE});</li>
  *     <li>a backlog transaction cannot be read, which is what a lost or purged base WAL segment
  *     leaves, and the base is a materialized view, which can produce such a commit
- *     ({@link #ABSTAIN_BACKLOG_UNREADABLE}).</li>
+ *     ({@link #ABSTAIN_BACKLOG_UNREADABLE});</li>
+ *     <li>the rebuild stands in for a restore from the timeline whose replay of the raw base WAL
+ *     disagreed with the view's table, over a deduplicating base. That replay feeds both copies
+ *     of a duplicate the base collapsed, which the view drained as one row, so a refusal here
+ *     would stop a view on a routine restart; the rebuild follows the base instead and drops
+ *     whatever the base lost ({@link #ABSTAIN_DEDUP_RESTORE_MISMATCH}).</li>
  * </ul>
  * For a view with a filter, a third kind of commit lowers the output legitimately: one that
  * reaches the frontier and that the base applied under dedup, whose replacement row may fail
@@ -133,7 +138,9 @@ import org.jetbrains.annotations.NotNull;
  *     view's durable coordinate add to the recompute what the loss took from it;</li>
  *     <li>a loss only the row shortfall sees, behind a backlog that stood it down: a base
  *     partition lost and then re-created by later commits into its range;</li>
- *     <li>anything in a backlog the guard abstained over.</li>
+ *     <li>anything in a backlog the guard abstained over;</li>
+ *     <li>the rebuild a deduplicating base's restore falls back to when its replay disagrees
+ *     with the view's table, which the guard does not check at all.</li>
  * </ul>
  * <p>
  * One instance per refresh job, armed per whole-view rebuild and left holding that rebuild's
@@ -152,6 +159,15 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
      * stands down, and the history floor and the lost partition check still compare.
      */
     public static final int ABSTAIN_BACKLOG_UNREADABLE = 4;
+    /**
+     * The rebuild stands in for a restore from the view's checkpoint timeline whose replay of the
+     * raw base WAL did not reproduce the view's durable row count and frontier, and the pinned
+     * snapshot deduplicates: a duplicate the base's dedup keys collapsed between the newest root
+     * and the frontier fails the restore, since the view drained the one row the base kept and
+     * the replay feeds both. The rebuild follows the base table, as every rebuild did before the
+     * guard, rather than stop a view whose timeline may be intact.
+     */
+    public static final int ABSTAIN_DEDUP_RESTORE_MISMATCH = 6;
     /**
      * {@code cairo.live.view.rebuild.restatement.guard.enabled} is off.
      */
@@ -250,6 +266,7 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
             case ABSTAIN_BACKLOG_MAY_REMOVE -> "backlog may remove rows";
             case ABSTAIN_BACKLOG_UNREADABLE -> "backlog unreadable";
             case ABSTAIN_FORMAT_UPGRADE -> "format upgrade";
+            case ABSTAIN_DEDUP_RESTORE_MISMATCH -> "dedup restore mismatch";
             default -> "not evaluated";
         };
     }

@@ -30,7 +30,9 @@ import io.questdb.std.Mutable;
  * Single-writer, multi-reader, append-only sparse {@link CharSequence} store that
  * safely publishes its backing arrays. {@link LiveViewSymbolCache} keeps its
  * per-column {@code id -> string} lead mappings here: the refresh worker writes
- * ({@link #extendAndSet}, {@link #size}), cursors read ({@link #valueOf}).
+ * ({@link #extendAndSet}, {@link #size}), cursors read ({@link #valueOf}). The one
+ * exception to append-only is {@link #truncate}, which takes back a band of ids no
+ * reader can reach.
  * <p>
  * The index is an ABSOLUTE LV-table symbol id, and the ids this store holds are only
  * the lead's provisional ones - a band that starts at the committed symbol count and
@@ -129,6 +131,41 @@ final class ConcurrentCharSequenceList implements Mutable {
      */
     int size() {
         return size;
+    }
+
+    /**
+     * Writer-only. Takes back every id at or above {@code newSize}: {@link #valueOf}
+     * answers {@code null} for them again, {@link #size} becomes {@code newSize}, and
+     * {@link #extendAndSet} may assign from {@code newSize} up. A no-op when the store
+     * holds nothing at or above it.
+     * <p>
+     * This is the store's one exception to append-only, so the {@link #extendAndSet}
+     * assertion stays meaningful: an id is only ever re-assigned after the store has
+     * forgotten it. The caller must prove that no reader can resolve an id at or above
+     * {@code newSize}, because the next assignment re-binds it.
+     * {@link LiveViewInMemoryTier#tryRewindSymbolCache} does that by holding the writer
+     * sentinel on both slots, and re-stamps both horizons at or below {@code newSize}
+     * before either slot can be pinned again. A truncation below the store's origin drops
+     * every page, so the next assignment fixes a new origin, as after {@link #clear()}.
+     */
+    void truncate(int newSize) {
+        if (newSize >= size) {
+            return;
+        }
+        final PageIndex snap = pageIndex;
+        if (snap.pages.length == 0 || newSize <= snap.basePage << PAGE_BITS) {
+            pageIndex = EMPTY; // release
+        } else {
+            // Every id below size sits in an allocated index slot: extendAndSet grew the
+            // index to cover the highest one.
+            for (int id = newSize, n = size; id < n; id++) {
+                final CharSequence[] values = snap.pages[(id >>> PAGE_BITS) - snap.basePage];
+                if (values != null) {
+                    values[id & PAGE_MASK] = null;
+                }
+            }
+        }
+        size = Math.max(newSize, 0);
     }
 
     /**

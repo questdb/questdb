@@ -3162,7 +3162,8 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                 LiveViewRebuildRestatementGuard.ABSTAIN_NOTHING_RETAINED,
                 LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE,
                 LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE,
-                LiveViewRebuildRestatementGuard.ABSTAIN_FORMAT_UPGRADE
+                LiveViewRebuildRestatementGuard.ABSTAIN_FORMAT_UPGRADE,
+                LiveViewRebuildRestatementGuard.ABSTAIN_DEDUP_RESTORE_MISMATCH
         };
         for (int abstention : abstentions) {
             // Armed over evidence both checks would refuse, then stood down: nothing it held

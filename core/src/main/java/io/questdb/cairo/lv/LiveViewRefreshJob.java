@@ -348,6 +348,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // start of each whole-view rebuild and left holding its evidence afterwards, which is
     // what a caller reads to explain a refusal. Rebuilds never nest.
     private final LiveViewRebuildRestatementGuard restatementGuard = new LiveViewRebuildRestatementGuard();
+    // Set by restoreFromTimeline when the replay of the raw base WAL above the root does not
+    // reproduce the view's durable row count and frontier, which is what a duplicate a
+    // deduplicating base collapsed in the replay gap does. Read by armRebuildRestatementGuard for
+    // the whole-view rebuild that restore's caller falls back to, and cleared by that caller
+    // (tryRestoreFromTimeline, recoverActiveWindowState) once the fallback returns, so no other
+    // rebuild sees it. Refresh-worker thread only.
+    private boolean isRestoreReplayMismatched;
     // Reusable counter for the skip a resumed localized repair takes over the rows of
     // its resume group that a prior turn already folded.
     private final RecordCursor.Counter repairSkipCounter = new RecordCursor.Counter();
@@ -663,6 +670,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // the top of every run. Pruned lazily: an entry whose repair has ended is
     // dropped on the next pass.
     private final ObjList<LiveViewInstance> suspendedRepairViews = new ObjList<>();
+    // Scratch for rewindStrandedSymbolIds: the LV table's committed symbol count per
+    // output column, indexed by column and filled for SYMBOL columns only.
+    private final IntList symbolCommittedCounts = new IntList();
     // Reusable shape buffer for ensureStagingAndTier — alpha-ordered alongside
     // the other staging-related fields so the per-FLUSH-cycle code path can
     // mutate without per-call allocation.
@@ -3247,7 +3257,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // (fixed-width, SYMBOL via eager interning, or var-length) is
                 // lead-eligible and takes the refresh/flush split instead, so this
                 // disk-subset publish is effectively unreachable; kept defensively.
-                publishToInMemoryTier(instance, stagingMaxTs, lvAppliedSeqTxn, appendedRows, false);
+                publishSubsetToInMemoryTier(instance, stagingMaxTs, lvAppliedSeqTxn, appendedRows);
             }
             if (lvConsumedPersisted && appendedRows > 0) {
                 // Head-checkpoint write hook. Ordered after the apply's _txn
@@ -3472,6 +3482,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 executionContext.of(reader);
                 readerAttached = true;
                 if (internSymbols) {
+                    // Take back ids a discarded pass left above the committed count before
+                    // this pass interns past them; a no-op unless a recovery stranded some.
+                    if (isSymbolRewindCandidate(instance)) {
+                        rewindStrandedSymbolIds(instance, committedSymbolReader);
+                    }
                     // Re-anchor each SYMBOL column's next-new-id to the committed symbol
                     // count so a prior flush's advance moves new-id assignment past it.
                     for (int si = 0, sn = stagingSymbolColumnIndexes.size(); si < sn; si++) {
@@ -3614,7 +3629,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // Publish the just-applied rows into the tier as a subset of disk
                 // (leadRowCount = 0). This disk-subset publish is the tier's only feed
                 // for a dedup base (it has no un-flushed lead), so it is load-bearing.
-                publishToInMemoryTier(instance, stagingMaxTs, lvAppliedSeqTxn, appendedRows, false);
+                publishSubsetToInMemoryTier(instance, stagingMaxTs, lvAppliedSeqTxn, appendedRows);
             }
             if (lvConsumedPersisted && appendedRows > 0) {
                 maybeWriteHeadCheckpoint(instance, windowFactory, effectiveSeqTxn, batchMaxTs, appendedRows, false);
@@ -3726,6 +3741,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 QuietCloseable segmentRelease = walSegmentRelease
         ) {
             if (internSymbols) {
+                // Take back ids a discarded pass left above the committed count before
+                // this pass interns past them. Only a drain that starts with an empty lead
+                // may: a lead's own ids sit above the committed count legitimately.
+                if (isSymbolRewindCandidate(instance)) {
+                    rewindStrandedSymbolIds(instance, committedSymbolReader);
+                }
                 // Re-anchor each SYMBOL column's next-new-id to the committed symbol
                 // count, so a flush (or O3) that advanced the count moves new-id
                 // assignment past it while a within-window advance is preserved.
@@ -4572,6 +4593,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // one transaction was outstanding, and it is the one committed above.
                 restampSlot(instance, Numbers.LONG_NULL, 0);
                 instance.setTierStale(true);
+            } else if (hasSymbols && !isSymbolCacheInStepWithDisk(instance, tier.getSymbolCache())) {
+                // The apply landed exactly this flush's block, but the lead's symbol ids are
+                // not the ones it committed: a recovery discarded a pass whose interned ids
+                // nothing has taken back yet (a reader pinned the tier at every rewind
+                // attempt), so this lead was interned above them; or the view's WAL writer,
+                // rolled back with a discarded pass and pooled, still held a value that pass
+                // appended, and this commit assigned it ahead of the lead's values. Re-stamping
+                // would make the disk symbol table resolve those ids, and they name other
+                // values there.
+                // Un-stamp so reads run disk-only, where every id is the committed one; the
+                // stale marking makes the next drain with rows rebuild the slot from disk,
+                // and that rebuild retries the rewind (rebuildInMemoryTier).
+                // See LiveViewRuntimeRestoreTest.testAReaderPinnedAcrossAMidDrainRestoreDefersTheSymbolRewind.
+                LOG.info().$("live view symbol ids are out of step with the committed symbols, serving flushed rows from disk [view=")
+                        .$(instance.getDefinition().getViewName()).I$();
+                restampSlot(instance, Numbers.LONG_NULL, 0);
+                instance.setTierStale(true);
             } else {
                 // Normal flush: the lead rows are now on disk and still in the slot,
                 // so it is a complete subset of disk. Re-stamp it so reads regain
@@ -4579,6 +4617,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 restampSlotAfterFlush(instance, lvAppliedSeqTxn);
             }
             maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, flushedMaxTs, flushRows, false);
+        } else if (hasSymbols
+                && lvAppliedSeqTxn == lvAppliedBefore + 1
+                && lvTracker.getSeqTxn() == lvAppliedSeqTxn
+                && !isSymbolCacheInStepWithDisk(instance, tier.getSymbolCache())) {
+            // The consumed watermark failed to persist, so the branches above never ran and the
+            // slot keeps its pre-flush stamp and lead count. The next lead publish re-stamps the
+            // slot at the current disk seqTxn and turns these flushed rows into overlap, which
+            // reads resolve against the disk symbol table - wrong for ids out of step with it.
+            // Un-stamp it and mark it stale, as the in-step check above does, so the next drain
+            // with rows rebuilds the slot from disk instead of publishing onto it.
+            LOG.info().$("live view symbol ids are out of step with the committed symbols, serving flushed rows from disk [view=")
+                    .$(instance.getDefinition().getViewName()).I$();
+            restampSlot(instance, Numbers.LONG_NULL, 0);
+            instance.setTierStale(true);
         }
     }
 
@@ -5228,6 +5280,64 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", error=").$(t).I$();
             return false;
         }
+    }
+
+    /**
+     * Reports whether every SYMBOL column of {@code cache} committed each value the drain
+     * interned at the id the drain gave it, and would hand the next value new to the lead
+     * the id the LV table assigns next, read from a fresh reader of the table (see
+     * {@link LiveViewSymbolCache#isInStepWith}). Trivially true for a schema without SYMBOL
+     * columns, which opens no reader.
+     * <p>
+     * The caller must establish that the table holds every block the view's WAL committed,
+     * and that the last apply landed rows the drain interned: only then do the two id
+     * spaces have to agree, so only then does a disagreement prove the slot's ids are not
+     * disk's. Costs one pooled reader per call plus one comparison per value new to the
+     * table, and runs once per flush or disk-subset publish.
+     * <p>
+     * Fails closed: a reader that cannot be opened reports {@code false}, which keeps the
+     * slot out of the read path - a disk-only read is correct either way, and the apply has
+     * already landed, so this must not fail the flush that called it.
+     */
+    private boolean isSymbolCacheInStepWithDisk(LiveViewInstance instance, LiveViewSymbolCache cache) {
+        if (!cache.hasSymbolColumns()) {
+            return true;
+        }
+        try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+            for (int i = 0, n = cache.symbolColumnCount(); i < n; i++) {
+                final int col = cache.symbolColumnIndexAt(i);
+                if (!cache.isInStepWith(col, lvReader.getSymbolMapReader(col))) {
+                    return false;
+                }
+            }
+        } catch (Throwable t) {
+            LOG.error().$("live view could not check its symbol ids against the committed symbols [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$(t).I$();
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Reports whether the view is in a state a symbol-id rewind may run from, judged on the
+     * worker's own bookkeeping alone, before any reader is opened: a tier with SYMBOL
+     * columns, no un-flushed lead (whose ids would sit above the committed count
+     * legitimately), no parked repair (whose uncommitted replacement has yet to add its
+     * values to the committed count), and a tier that is not stale. A stale published slot
+     * may still hold rows interned at the ids the rewind would take back - the dropped lead
+     * of a recovery whose restage both slots' pins skipped, or the rows of a flush the
+     * in-step check un-stamped - and its fence can still pass, so a rewind must wait for the
+     * rebuild that replaces it. {@link #rewindStrandedSymbolIds(LiveViewInstance, TableReader)}
+     * checks the rest.
+     */
+    private boolean isSymbolRewindCandidate(LiveViewInstance instance) {
+        final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+        return tier != null
+                && tier.getSymbolCache().hasSymbolColumns()
+                && instance.getLeadRowCount() == 0
+                && instance.getSuspendedRepair() == null
+                && !instance.isTierStale();
     }
 
     /**
@@ -8095,9 +8205,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * sits on that root's timestamp. A restart then restores the root without the tie and
      * replays only the base commits above the splice's stamp, with the tie's commit below it.
      * The row count fails, and the rebuild that follows is one the restatement guard refuses
-     * over a base that lost rows the view keeps. So every route that keeps the primary runtime
-     * asks this first and gives way to a repair that re-versions the newest root from the
-     * pinned snapshot instead.
+     * over a base that lost rows the view keeps, unless the base has dedup keys: then the guard
+     * stands down and the rebuild drops those rows. So every route that keeps the primary
+     * runtime asks this first and gives way to a repair that re-versions the newest root from
+     * the pinned snapshot instead.
      * <p>
      * The window closes at the first row above the head or at the next seal. Across a restart
      * it rests on the restore keeping the batch minimum of the tie it replayed; see
@@ -13465,6 +13576,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     durableBaseSeqTxn,
                     "timeline restore failed"
             );
+        } finally {
+            // Set only by the restore's replay check, and meant for the rebuild above alone.
+            isRestoreReplayMismatched = false;
         }
     }
 
@@ -13636,10 +13750,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // that landed on the head boundary after the seal, which no seal can record because
             // a root only extends the timeline upwards. A floor above the root skips that row,
             // and the row count below then sends a sound timeline to the rebuild - which the
-            // restatement guard refuses over a base that lost rows the view retains. The one root
-            // producer that reads the base table rather than the commits, the corrupt-root heal
-            // above, folds the tie into a ceiling whose group grew and publishes that generation at
-            // the applied seqTxn, so this replay starts above the tie's commit.
+            // restatement guard refuses over a base that lost rows the view retains, unless the
+            // base has dedup keys: then the guard stands down and the rebuild drops those rows.
+            // The one root producer that reads the base table rather than the commits, the
+            // corrupt-root heal above, folds the tie into a ceiling whose group grew and publishes
+            // that generation at the applied seqTxn, so this replay starts above the tie's commit.
             final long lowTimestamp = Math.max(
                     instance.getDefinition().getViewLowerBoundTimestamp(),
                     restored.maxTimestamp
@@ -13665,6 +13780,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long rebuiltLvRows = restored.effectiveLvRowPosition + replayedRows;
         if (rebuiltLvRows != durableLvRowCount
                 || instance.getLatestSeenTs() != durableFrontierTimestamp) {
+            // A deduplicating base's drain reads the applied base, which kept one row of a
+            // duplicate its dedup keys collapsed, while this replay reads the raw WAL, which
+            // holds both. The caller's fallback rebuild reads this; see armRebuildRestatementGuard.
+            isRestoreReplayMismatched = true;
             throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
                     .put("live view checkpoint timeline rebuild does not match durable materialization")
                     .put(" [rootRows=").put(restored.effectiveLvRowPosition)
@@ -13859,6 +13978,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * it would leave the view nothing to resume from. The history floor is still compared, and
      * a breach is logged rather than refused, so a view that came back without rows its base
      * lost has a line saying so. The row shortfall is not: it needs the replay's count.
+     * <p>
+     * A rebuild that stands in for a restore whose replay did not reproduce the view's durable
+     * row count and frontier ({@link #isRestoreReplayMismatched}) stands the guard down too, when
+     * the pinned snapshot deduplicates. The forward drain of such a base reads the applied base,
+     * which keeps one row of a duplicate its dedup keys collapsed, while the restore replays the
+     * raw WAL above the newest root, which holds both: a duplicate between the newest root and
+     * the frontier fails an intact timeline. Refusing the rebuild would stop the view on a
+     * routine restart, a base schema change or a mid-drain fault; the rebuild follows the base
+     * instead, dropping any rows the base lost that the view retained. Every other restore
+     * failure keeps the guard, and so does a base without dedup keys.
      */
     private void armRebuildRestatementGuard(LiveViewInstance instance, TableReader reader, long effectiveSeqTxn) {
         if (instance.isCheckpointUpgradeRebuildPending()) {
@@ -13901,6 +14030,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         assert effectiveSeqTxn >= rebuildSnapshotFloor(instance)
                 : "a whole-view rebuild pinned a snapshot behind the view [effectiveSeqTxn=" + effectiveSeqTxn
                 + ", floor=" + rebuildSnapshotFloor(instance) + ']';
+        if (isRestoreReplayMismatched && hasDedupKeys(reader.getMetadata())) {
+            // The rebuild stands in for a restore whose replay of the raw WAL disagreed with the
+            // view's table, over a base whose dedup keys can collapse a duplicate the replay
+            // feeds twice. Refusing would stop a view whose timeline may be intact; the rebuild
+            // follows the base instead, as every rebuild did before the guard.
+            standDownRestatementGuard(instance, LiveViewRebuildRestatementGuard.ABSTAIN_DEDUP_RESTORE_MISMATCH);
+            return;
+        }
         final long appliedWatermark = instance.getAppliedWatermark();
         final int backlog = classifyRebuildBacklog(instance, reader, appliedWatermark, effectiveSeqTxn, durableMaxTimestamp);
         // Armed to compare the history floor and the row shortfall, which an additive backlog
@@ -14487,6 +14624,36 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Publishes this cycle's already-applied staging rows into the tier as a subset of disk
+     * ({@link #publishToInMemoryTier} in subset mode), unless the symbol ids the drain
+     * interned them at are out of step with the ids the apply committed. That happens when
+     * a recovery discarded a pass whose interned ids no rewind has taken back yet, or whose
+     * appended values the view's WAL writer kept through its rollback and committed ahead of
+     * this pass's, and the slot would then serve these rows under ids the disk symbol table
+     * resolves as other values. In that case this rebuilds the tier from disk instead, which
+     * also retries the rewind - a disk-subset view has no lead flush and no stale-tier
+     * rebuild of its own to retry it from. The commit leaves the writer holding nothing, so
+     * the pass after it is in step again.
+     * See LiveViewRuntimeRestoreTest.testAnAppliedScanRestoreKeepsAccountsOnTheirIdsWhenALaterAccountSortsBelowTheDiscardedRow.
+     * <p>
+     * The check needs every LV WAL block applied; with one pending, the cache's ids sit
+     * above the applied count legitimately and this publishes as before.
+     */
+    private void publishSubsetToInMemoryTier(LiveViewInstance instance, long stagingMaxTs, long lvAppliedSeqTxn, long appendedRows) {
+        final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+        if (tier != null
+                && tier.getSymbolCache().hasSymbolColumns()
+                && isLiveViewWalFullyApplied(instance)
+                && !isSymbolCacheInStepWithDisk(instance, tier.getSymbolCache())) {
+            LOG.info().$("live view symbol ids are out of step with the committed symbols, rebuilding the in-mem tier from disk [view=")
+                    .$(instance.getDefinition().getViewName()).I$();
+            rebuildInMemoryTier(instance);
+            return;
+        }
+        publishToInMemoryTier(instance, stagingMaxTs, lvAppliedSeqTxn, appendedRows, false);
+    }
+
+    /**
      * Publishes this cycle's staging rows into the LV's in-memory tier
      * (fast-path + slow-path swap), returning {@code true} on success and
      * {@code false} only when both slots are reader-pinned in lead mode.
@@ -14753,7 +14920,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             return null;
         }
-        return rebuildActiveWindowStateFromAppliedBase(instance, cause, isFaultRecovery);
+        try {
+            return rebuildActiveWindowStateFromAppliedBase(instance, cause, isFaultRecovery);
+        } finally {
+            // Set only by a restore that failed its replay check, and meant for this rebuild
+            // alone, including one that defers on the base's apply before it arms the guard.
+            isRestoreReplayMismatched = false;
+        }
     }
 
     /**
@@ -15028,13 +15201,97 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
         // The O3 replay re-sequenced the on-disk symbol ids; the failed in-order
-        // drain's window intern entries are now stale. Drop them - the next drain
-        // re-anchors nextNewId to the post-replay committed count, and the rebuilt
-        // slot stores disk-resolved committed ids that the overlay reads via the
-        // disk reader (no intern). The id -> string lists stay for any pinned
-        // pre-O3 cursor.
+        // drain's window intern entries are now stale. Drop them. The rebuilt slot
+        // stores disk-resolved committed ids that the overlay reads via the disk
+        // reader (no intern). The id -> string lists stay for any pinned pre-O3
+        // cursor.
         tier.getSymbolCache().onO3();
         restageInMemoryTierFromDisk(instance, tier);
+        // The next drain's anchor raises nextNewId to the post-replay committed count,
+        // but never lowers it, and every caller here discarded a pass whose interned
+        // ids may sit above that count: a timeline restore commits none of them, and a
+        // replay can commit fewer values than the pass interned. Take those ids back
+        // now, while the published slot is the disk subset just staged. When a reader
+        // pins a slot the rewind waits for the next drain that starts with an empty lead,
+        // and each flush in between checks that its ids are in step with disk before it
+        // re-stamps the slot. That check compares values, so it also catches what the
+        // rewind cannot see: a value the discarded pass appended to the view's WAL writer,
+        // which the pooled writer kept through its rollback and commits first.
+        if (isSymbolRewindCandidate(instance)) {
+            rewindStrandedSymbolIds(instance);
+        }
+    }
+
+    /**
+     * {@link #rewindStrandedSymbolIds(LiveViewInstance, TableReader)} over a reader of the
+     * view's table that this opens, for a caller outside a drain, which holds none.
+     */
+    private void rewindStrandedSymbolIds(LiveViewInstance instance) {
+        try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+            rewindStrandedSymbolIds(instance, lvReader);
+        } catch (Throwable t) {
+            LOG.error().$("live view could not rewind its symbol ids [view=").$(instance.getDefinition().getViewName())
+                    .$(", error=").$(t).I$();
+        }
+    }
+
+    /**
+     * Takes back the symbol ids a discarded pass assigned and no flush committed, so the
+     * next value new to the lead is assigned the id the next flush's apply gives it. The
+     * caller has already checked {@link #isSymbolRewindCandidate}; {@code lvReader} is a
+     * reader of the view's table, whose committed symbol counts are the rewind targets.
+     * Those targets miss one thing: a value the discarded pass appended to the view's WAL
+     * writer, which the pooled writer keeps through its rollback and assigns first at its
+     * next commit. The in-step check after that apply compares values and catches it.
+     * <p>
+     * Does nothing unless some SYMBOL column holds ids at or above its committed count and
+     * {@code lvReader} reflects every block the view's WAL committed. A flushed block that
+     * has not applied yet owns ids above the applied count, so a rewind then would give
+     * its values' ids to other values; the flush paths that rebuild the tier with such a
+     * block pending (the tier-stale lead flush, {@link #retryPendingLiveViewApply}) reach
+     * here and must stop. The rewind itself runs only while no reader pins either slot
+     * ({@link LiveViewInMemoryTier#tryRewindSymbolCache}); otherwise it is retried later,
+     * at {@link #rebuildInMemoryTier} or at a drain that starts with an empty lead.
+     * <p>
+     * A failure is logged and swallowed, never propagated: the recovery and drain paths
+     * that call this must not fail over a rewind, which a later attempt can still complete,
+     * and the flush-time in-step check keeps reads correct until it does.
+     */
+    private void rewindStrandedSymbolIds(LiveViewInstance instance, TableReader lvReader) {
+        final String viewName = instance.getDefinition().getViewName();
+        try {
+            final LiveViewSymbolCache cache = instance.getInMemoryTier().getSymbolCache();
+            final IntList counts = symbolCommittedCounts;
+            counts.clear();
+            boolean hasStrandedIds = false;
+            for (int i = 0, n = cache.symbolColumnCount(); i < n; i++) {
+                final int col = cache.symbolColumnIndexAt(i);
+                final int committedCount = lvReader.getSymbolMapReader(col).getSymbolCount();
+                counts.extendAndSet(col, committedCount);
+                hasStrandedIds |= cache.hasStrandedIds(col, committedCount);
+            }
+            if (!hasStrandedIds) {
+                return;
+            }
+            // Disk truth rather than the tracker, which a restart leaves uninitialised: the
+            // reader must already hold every committed block for its counts to be the ids
+            // every flush assigned.
+            final long committedSeqTxn = engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken());
+            if (lvReader.getSeqTxn() < committedSeqTxn) {
+                return;
+            }
+            if (instance.getInMemoryTier().tryRewindSymbolCache(counts)) {
+                LOG.info().$("live view rewound symbol ids no flush committed [view=").$(viewName).I$();
+            } else {
+                // Debug, not info: a drain that starts with an empty lead retries every turn
+                // until no reader pins the tier.
+                LOG.debug().$("live view symbol id rewind deferred, a reader pins the in-mem tier [view=")
+                        .$(viewName).I$();
+            }
+        } catch (Throwable t) {
+            LOG.error().$("live view could not rewind its symbol ids [view=").$(viewName)
+                    .$(", error=").$(t).I$();
+        }
     }
 
     /**
