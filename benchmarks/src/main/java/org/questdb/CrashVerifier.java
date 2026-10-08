@@ -470,7 +470,7 @@ public class CrashVerifier {
             engine.load();
             // CairoEngine.completeInit() already ran RecoveryCoordinator.recover() at construction; we run
             // the PRODUCTION ADAPTIVE RECOVERY TRIPLE explicitly here (idempotent re-run) to be faithful to
-            // the reboot path and match AdaptiveGroupCommitCrashTest: recover → republish → drain.
+            // the reboot path and match DurableFrontierTest: recover → republish → drain.
             final TableToken token = engine.verifyTableName(CrashIngestWriter.TABLE_NAME);
             new RecoveryCoordinator(engine).recover();
             engine.notifyWalTxnRepublisher(token);

@@ -27,14 +27,12 @@ package io.questdb.test.cairo.crash;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
-import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
@@ -46,6 +44,7 @@ import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8String;
+import io.questdb.test.cairo.wal.GroupCommitTestUtils.ExposedFlusher;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Rule;
@@ -58,6 +57,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+
+import static io.questdb.test.cairo.wal.GroupCommitTestUtils.commitRow;
 
 /**
  * Multi-writer durable-ack CONTIGUITY crash-fuzz for adaptive GROUP-COMMIT ({@code W > 0}) — the seeded,
@@ -428,7 +429,7 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
             // A power loss can tear the UN-ACKED tail so a writer's non-durable _event ends up BELOW the
             // (peer-flushed) durable shared sequencer; recovery then LOUDLY suspends on that torn tail. That is
             // an acceptable, NON-silent power-loss outcome — the acked data stays durable on disk for a resume —
-            // and is exactly the tolerance the two-writer oracle AdaptiveGroupCommitCrashTest applies (it reads
+            // and is exactly the tolerance the two-writer oracle DurableFrontierTest applies (it reads
             // quietly and does not require "never suspended"). What is NEVER acceptable is a silently-WRONG row.
             final boolean suspended = engine.getTableSequencerAPI().isSuspended(tt);
             final Map<Long, Long> recovered = readRowsQuietly();
@@ -532,27 +533,6 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
 
         private String seedMsg(String msg) {
             return "[seed s0=" + s0 + " s1=" + s1 + " ops=" + ops + "] " + msg;
-        }
-    }
-
-    private static void commitRow(WalWriter w, long tsMicros, long v) {
-        TableWriter.Row row = w.newRow(tsMicros);
-        row.putLong(1, v);
-        row.append();
-        w.commit();
-    }
-
-    /**
-     * Exposes {@link WalPurgeJob#runSerially()} so the background group-commit sweep runs deterministically
-     * against the test microsecond clock.
-     */
-    static final class ExposedFlusher extends WalPurgeJob {
-        ExposedFlusher(io.questdb.cairo.CairoEngine engine) {
-            super(engine);
-        }
-
-        boolean flushNow() {
-            return runSerially();
         }
     }
 

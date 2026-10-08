@@ -31,7 +31,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
 import io.questdb.cairo.sql.Record;
@@ -40,7 +39,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cairo.wal.LocalDurableAckRegistry;
-import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
@@ -53,6 +51,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.test.cairo.wal.GroupCommitTestUtils.ExposedFlusher;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Rule;
@@ -65,6 +64,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+
+import static io.questdb.test.cairo.wal.GroupCommitTestUtils.commitRow;
 
 /**
  * End-to-end "no ACKNOWLEDGED-data loss" integration proof for the adaptive-commit QWP durable-ack
@@ -614,13 +615,6 @@ public class AdaptiveQwpDurableAckNoLossCrashTest extends AbstractCrashConsisten
                 recovered.size() <= committedRows.size());
     }
 
-    private static void commitRow(WalWriter w, long tsMicros, long v) {
-        TableWriter.Row row = w.newRow(tsMicros);
-        row.putLong(1, v);
-        row.append();
-        w.commit();
-    }
-
     /**
      * Invokes the exact private per-table consumer the QWP commit path runs ({@code recordCommittedTable},
      * bound as {@code this::recordCommittedTable} and driven by {@code tudCache.commitAll} on every commit),
@@ -672,20 +666,6 @@ public class AdaptiveQwpDurableAckNoLossCrashTest extends AbstractCrashConsisten
             return MicrosFormatUtils.parseTimestamp(s);
         } catch (Exception e) {
             throw new RuntimeException(e);
-        }
-    }
-
-    /**
-     * Exposes {@link WalPurgeJob#runSerially()} so the background group-commit sweep runs deterministically
-     * against the test microsecond clock.
-     */
-    static final class ExposedFlusher extends WalPurgeJob {
-        ExposedFlusher(io.questdb.cairo.CairoEngine engine) {
-            super(engine);
-        }
-
-        boolean flushNow() {
-            return runSerially();
         }
     }
 }
