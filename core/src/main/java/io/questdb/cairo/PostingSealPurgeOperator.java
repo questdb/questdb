@@ -175,8 +175,10 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
                 if (!tracker.isRangeAvailableToEpoch(fromTxn, toTxn)) {
                     return false;
                 }
-                // Only an adaptive recovery rewinds a table, and it pins every table it recovers.
-                if (isReplay && tracker.getPinnedEpochTxn() > -1) {
+                // A replayed row can come from before an adaptive recovery's rewind and end above the committed txn,
+                // also at a later start in another mode, which has no pin. Clamped, it cannot raise the scoreboard
+                // max past the committed txn.
+                if (isReplay) {
                     toTxn = Math.min(toTxn, readCommittedTxn(liveToken, task));
                 }
             }
