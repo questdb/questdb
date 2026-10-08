@@ -98,6 +98,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean cloneSymbolTables;
     private boolean containsSecret;
     private CharSequence expiryMaterializingViewName;
+    private TableToken expiryRawReadTable;
     private ExpiryReadPolicy expiryReadPolicy = ExpiryReadPolicy.FILTER;
     private int intervalFunctionType;
     private long intervalPlanGeneration;
@@ -459,13 +460,22 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public @Nullable TableToken getExpiryRawReadTable() {
+        return expiryRawReadTable;
+    }
+
+    @Override
     public ExpiryReadPolicy getExpiryReadPolicy() {
         return expiryReadPolicy;
     }
 
     @Override
     public ExpiryReadPolicy getExpiryReadPolicy(TableToken tableToken) {
-        return expiryReadPolicy;
+        // The raw table overrides only a filtered read: a materializing compile in REJECT mode keeps
+        // rejecting every policied table.
+        return expiryReadPolicy == ExpiryReadPolicy.FILTER && tableToken.equals(expiryRawReadTable)
+                ? ExpiryReadPolicy.RAW
+                : expiryReadPolicy;
     }
 
     @Override
@@ -650,6 +660,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setCloneSymbolTables(boolean cloneSymbolTables) {
         this.cloneSymbolTables = cloneSymbolTables;
+    }
+
+    @Override
+    public void setExpiryRawReadTable(@Nullable TableToken tableToken) {
+        this.expiryRawReadTable = tableToken;
     }
 
     @Override

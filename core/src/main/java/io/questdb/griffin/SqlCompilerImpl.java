@@ -7336,23 +7336,33 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // fails it with TableReferenceOutOfDateException. No such change alters the view's column names or
         // types, so the probe runs again against the new metadata version. A view dropped and re-created
         // under the same name has a new table id, and the WAL writer rejects the ALTER when it executes.
-        for (int remainingRetries = maxRecompileAttempts; ; remainingRetries--) {
-            try {
-                return validateStructuralExpiryPolicy(
-                        executionContext,
-                        RowExpiryUtil.quoteIdentifier(tableToken.getTableName()),
-                        tableMetadata,
-                        predicate,
-                        true,
-                        position
-                );
-            } catch (TableReferenceOutOfDateException e) {
-                if (remainingRetries == 0) {
-                    throw SqlException.$(position, "too many ").put(e.getFlyweightMessage());
+        // The probe reads the view without its current policy, the way a read sees the view once the new
+        // policy replaces it, so it asks for SELECT on the new policy's columns and not on the columns of
+        // the policy it replaces. Every other table the probe reads keeps its own policy, as it does in that
+        // read.
+        final TableToken previousExpiryRawReadTable = executionContext.getExpiryRawReadTable();
+        executionContext.setExpiryRawReadTable(tableToken);
+        try {
+            for (int remainingRetries = maxRecompileAttempts; ; remainingRetries--) {
+                try {
+                    return validateStructuralExpiryPolicy(
+                            executionContext,
+                            RowExpiryUtil.quoteIdentifier(tableToken.getTableName()),
+                            tableMetadata,
+                            predicate,
+                            true,
+                            position
+                    );
+                } catch (TableReferenceOutOfDateException e) {
+                    if (remainingRetries == 0) {
+                        throw SqlException.$(position, "too many ").put(e.getFlyweightMessage());
+                    }
+                    LOG.info().$("retrying EXPIRE ROWS probe [view=").$safe(tableToken.getTableName())
+                            .$(", reason=").$(e.getFlyweightMessage()).I$();
                 }
-                LOG.info().$("retrying EXPIRE ROWS probe [view=").$safe(tableToken.getTableName())
-                        .$(", reason=").$(e.getFlyweightMessage()).I$();
             }
+        } finally {
+            executionContext.setExpiryRawReadTable(previousExpiryRawReadTable);
         }
     }
 
@@ -7545,7 +7555,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * does not use. A narrow projection selects only the policy's own output - the PARTITION BY keys for
      * KEEP LATEST, the keep column for the other modes - so the optimiser keeps only the columns the policy
      * reads, and the probe asks for SELECT on exactly those. A read through the policy asks for the same
-     * columns, so a caller who can read the view through a policy can also set it. ALTER needs the narrow
+     * columns, so a caller who can read the view through a policy can also set it. At ALTER the probe reads
+     * the view without its current policy (see {@link #validateAlterRelativePolicy}), so replacing a policy
+     * asks for SELECT on the new policy's columns and not on the replaced policy's. ALTER needs the narrow
      * projection, because it probes the existing view under the caller's column grants. CREATE selects every
      * column: it probes the view's defining SELECT, whose columns CREATE requires anyway, and a narrow
      * projection would let the optimiser drop columns inside that query too.

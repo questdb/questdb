@@ -286,3 +286,46 @@ replica fails until `DROP EXPIRE`.
   second run can only fail for reasons unrelated to the policy.
 - **Pinned by:**
   `MatViewReaderPoolRetryTest.testSetExpireSurvivesViewReaderPoolExhaustionDuringApply`.
+
+## Access control
+
+### A failed `SET EXPIRE` can show values from rows the current policy hides
+
+To check a KEEP LATEST, KEEP HIGHEST/LOWEST or window WHEN policy, `ALTER
+MATERIALIZED VIEW ... SET EXPIRE ROWS` compiles and opens the query a read of the
+view will run once the new policy replaces the current one. That query reads the
+view without its current policy. A window WHEN predicate can hold a subquery, and
+a subquery that names the view itself reads it without any policy, in the check
+and in every later read. Opening the check's cursor runs such a
+subquery. When it fails, the error carries the reason, and the reason can include
+a row value. In QuestDB Enterprise, with `WHEN secret < 20` in force, a user who
+holds `SET TABLE PARAM` and SELECT on `k`, `v` and `sym`, but not on `secret`,
+runs:
+
+    ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v < max(v) OVER (PARTITION BY k)
+        AND k IN (SELECT k FROM mv WHERE sym = 'B' AND v::string = 12345)
+
+The statement fails with
+
+    invalid EXPIRE ROWS policy: inconvertible value: `3.0` [STRING -> INT]
+
+where `3.0` is the `v` of a row that `secret < 20` hides. The current policy
+stays in place. The same user cannot read the view at all, because every read
+through `secret < 20` needs SELECT on `secret`.
+
+- **Why accepted:** `SET TABLE PARAM` already lets the user run `DROP EXPIRE` and
+  read every row. The error shows values only from columns the user holds SELECT
+  on, because the check asks for SELECT on every column the new policy reads. It
+  shows nothing about the current policy's own columns, which the check does not
+  read. Reading the view through the current policy in the check would make
+  replacing a policy require SELECT on the replaced policy's columns, which
+  neither `DROP EXPIRE` nor a scalar `SET EXPIRE` requires. Unlike `DROP EXPIRE`,
+  the failed statement leaves the current policy and the view unchanged.
+- **Pinned by:** in QuestDB Enterprise,
+  `EntRowExpiryAclTest.testAlterMatViewSetExpireOverPolicyRequiresSelectOnNewPolicyColumnsOnly`
+  replaces a policy on a column the user cannot read, and
+  `EntRowExpiryAclTest.testAlterMatViewSetExpireSubqueryRequiresSelectOnOtherViewPolicyColumns`
+  shows that only the view itself is read without its policy.
+- **Follow-up:** replacing the reason with a generic message for failures raised
+  while the check opens its cursor would stop the values from showing, at the
+  cost of the detail for every policy error found there.

@@ -285,6 +285,13 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return null;
     }
 
+    // The one table this compilation reads without its EXPIRE ROWS policy, while every other table follows
+    // getExpiryReadPolicy(). ALTER ... SET EXPIRE ROWS names the view while its compile probe runs, so the
+    // probe reads the view the way a read sees it once the new policy replaces the current one.
+    default @Nullable TableToken getExpiryRawReadTable() {
+        return null;
+    }
+
     default ExpiryReadPolicy getExpiryReadPolicy() {
         return isExpiryReadFilterEnabled() ? ExpiryReadPolicy.FILTER : ExpiryReadPolicy.RAW;
     }
@@ -431,6 +438,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     void setCloneSymbolTables(boolean cloneSymbolTables);
+
+    // A context without per-table read policies ignores this and reads every table under
+    // getExpiryReadPolicy().
+    default void setExpiryRawReadTable(@Nullable TableToken tableToken) {
+    }
 
     void setExpiryReadFilterEnabled(boolean enabled);
 
