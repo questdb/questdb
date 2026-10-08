@@ -826,7 +826,6 @@ public class TypeRelationGoldenTest {
         // admissible ANCHOR EXPRESSION return type (LiveViewWindow.isAnchorType); covered: the arm
         // CoveredColumnDecoder.writeCoveredRow takes (its own tag, or none)
         final Method codec = method(LiveViewSnapshotKeyCodec.class, "byteSizeOfType", int.class);
-        final Method covered = method(CoveredColumnDecoder.class, "coveredOpcode", int.class);
         assertGolden(
                 """
                          0 UNDEFINED     codec=. tier=. anchor=. covered=none
@@ -895,7 +894,7 @@ public class TypeRelationGoldenTest {
                     row.put("codec=").put(width >= 0 ? Integer.toString(width) : isKey ? "str" : ".");
                     row.put(" tier=").put(LiveViewInMemoryBuffer.isColumnTypeSupported(type) ? "X" : ".");
                     row.put(" anchor=").put(LiveViewWindow.isAnchorType(type) ? "X" : ".");
-                    row.put(" covered=").put(arm(covered, ColumnType.tagOf(type), type));
+                    row.put(" covered=").put(arm(CoveredColumnDecoder.coveredOpcode(type), ColumnType.tagOf(type)));
                     return row.toString();
                 })
         );
@@ -915,9 +914,7 @@ public class TypeRelationGoldenTest {
         // virtual column in (. = none)
         final Method wal = method(Class.forName("io.questdb.cairo.wal.WalEventWriter"), "bindValueOpcode", int.class);
         final Method touch = method(Class.forName("io.questdb.griffin.engine.table.AsyncFilterAtom"), "preTouchOpcode", int.class);
-        final Method zip = method(CoveringCompressor.class, "maxCompressedSize", int.class, int.class);
         final Method hold = method(Class.forName("io.questdb.cairo.map.OrderedMapFixedSizeRecord"), "keyHolderOpcode", int.class);
-        final Method lay = method(CoveredColumnDecoder.class, "coveredLayout", int.class);
         final Method prev = method(SqlCodeGenerator.class, "isFixedSizePrevSlotEligible", int.class);
         final Method latest = method(SqlCodeGenerator.class, "isLatestOnKeyType", int.class);
         final Method memo = method(SqlCodeGenerator.class, "memoized", Function.class);
@@ -986,13 +983,13 @@ public class TypeRelationGoldenTest {
                     row.put(" touch=").put(arm(touch, tag, type));
                     String zipped;
                     try {
-                        zipped = Long.toString((long) zip.invoke(null, 1, type));
-                    } catch (InvocationTargetException e) {
+                        zipped = Long.toString(CoveringCompressor.maxCompressedSize(1, type));
+                    } catch (AssertionError e) {
                         zipped = "!";
                     }
                     row.put(" zip=").put(zipped);
                     row.put(" hold=").put(holders[(int) hold.invoke(null, type)]);
-                    row.put(" lay=").put(layouts[(int) lay.invoke(null, type)]);
+                    row.put(" lay=").put(layouts[CoveredColumnDecoder.coveredLayout(type)]);
                     row.put(" prev=").put((boolean) prev.invoke(null, tag) ? "X" : ".");
                     row.put(" latest=").put((boolean) latest.invoke(null, type) ? "X" : ".");
                     final Function typed = (Function) Proxy.newProxyInstance(
@@ -1195,15 +1192,11 @@ public class TypeRelationGoldenTest {
         // GroupByColumnSink (none = the sink appends nothing); upd: UpdateOperatorImpl (none =
         // rejected at the first row); map: the single-column key eligibility of Unordered4/8Map
         final Method sink = method(RecordSinkFactory.class, "sinkOpcode", int.class, String.class);
-        final Method vsink = method(RecordValueSinkFactory.class, "isSupportedColumnType", int.class);
         final Method cmp = method(RecordComparatorCompiler.class, "comparatorOpcode", int.class);
         final Method kind = method(SortKeyEncoder.class, "keyKind", int.class);
         final Method width = method(SortKeyEncoder.class, "fixedColumnByteWidth", int.class);
         final Method mat = method(Class.forName("io.questdb.griffin.engine.orderby.SortKeyMaterializingRecordCursor"), "materializeOpcode", int.class);
-        final Method agg = method(GroupByColumnSink.class, "argTag", int.class);
         final Method upd = method(UpdateOperatorImpl.class, "updateOpcode", int.class);
-        final Method map4 = method(Unordered4Map.class, "isSupportedKeyType", int.class);
-        final Method map8 = method(Unordered8Map.class, "isSupportedKeyType", int.class);
         final String[] kinds = {"signed", "unsigned", "float", "double", "wide", "symbol", "variable"};
         // TIMESTAMP_NS map=. is a known inconsistency: only the plain TIMESTAMP type takes the
         // 8-byte map
@@ -1267,14 +1260,14 @@ public class TypeRelationGoldenTest {
                     final int tag = ColumnType.tagOf(type);
                     final StringSink row = new StringSink();
                     row.put("sink=").put(arm(sink, tag, type, "column"));
-                    row.put(" vsink=").put((boolean) vsink.invoke(null, type) ? "X" : ".");
+                    row.put(" vsink=").put(RecordValueSinkFactory.isSupportedColumnType(type) ? "X" : ".");
                     row.put(" cmp=").put(arm(cmp, tag, type));
                     final int k = (int) kind.invoke(null, type);
                     row.put(" key=").put(k < 0 ? "." : kinds[k]).put('/').put((int) width.invoke(null, type));
                     row.put(" mat=").put(arm(mat, tag, type));
-                    row.put(" agg=").put(sizeArm(agg, tag, type));
+                    row.put(" agg=").put(sizeArm(GroupByColumnSink.argTag(type), tag, type));
                     row.put(" upd=").put(arm(upd, tag, type));
-                    row.put(" map=").put((boolean) map4.invoke(null, type) ? "4" : (boolean) map8.invoke(null, type) ? "8" : ".");
+                    row.put(" map=").put(Unordered4Map.isSupportedKeyType(type) ? "4" : Unordered8Map.isSupportedKeyType(type) ? "8" : ".");
                     return row.toString();
                 })
         );
@@ -1445,13 +1438,16 @@ public class TypeRelationGoldenTest {
      */
     private static String arm(Method relation, int tag, Object... args) {
         try {
-            final int opcode = ((Number) relation.invoke(null, args)).intValue();
-            return opcode == tag ? "X" : opcode < 0 ? "none" : "#" + opcode;
+            return arm(((Number) relation.invoke(null, args)).intValue(), tag);
         } catch (InvocationTargetException e) {
             return "!";
         } catch (IllegalAccessException e) {
             throw new AssertionError(e);
         }
+    }
+
+    private static String arm(int opcode, int tag) {
+        return opcode == tag ? "X" : opcode < 0 ? "none" : "#" + opcode;
     }
 
     private static void assertGolden(String expected, String actual) {
@@ -1463,8 +1459,7 @@ public class TypeRelationGoldenTest {
      * tag {@link GroupByColumnSink#argTag} yields: {@code X} when it appends the type's width,
      * {@code none} when it appends nothing.
      */
-    private static String sizeArm(Method argTag, int tag, int type) throws Exception {
-        final short argType = (short) argTag.invoke(null, type);
+    private static String sizeArm(short argType, int tag, int type) {
         Assert.assertEquals(tag, argType);
         final GroupByColumnSink columnSink = new GroupByColumnSink(64);
         try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1MB)) {
