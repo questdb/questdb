@@ -45,6 +45,8 @@ import org.jetbrains.annotations.Nullable;
 // contiguous mapped appendable readable writable
 public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, MemoryCARW, MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryCMARWImpl.class);
+    // allocates exactly the requested size instead of TableUtils.alignedSize()
+    private final boolean exact;
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private long appendAddress = 0;
     private boolean closeFdOnClose = true;
@@ -55,15 +57,26 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     private long minMappedMemorySize = -1;
 
     public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSizePow2, long size, int memoryTag, int opts) {
+        this(false);
         of(ff, name, extendSegmentSizePow2, size, memoryTag, opts, -1);
     }
 
     public MemoryCMARWImpl() {
+        this(false);
+    }
+
+    public MemoryCMARWImpl(boolean exact) {
+        this.exact = exact;
     }
 
     @Override
     public long addressHi() {
         return lim;
+    }
+
+    @Override
+    public void allocate(long size) {
+        allocateDiskSpace(size);
     }
 
     @Override
@@ -265,6 +278,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     public void swapState(MemoryCMARWImpl other) {
+        assert exact == other.exact;
         long tFd = this.fd;
         this.fd = other.fd;
         other.fd = tFd;
@@ -381,6 +395,14 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         Vect.memset(pageAddress, baseLength, 0);
     }
 
+    private void allocateDiskSpace(long size) {
+        if (exact) {
+            TableUtils.allocateDiskSpaceUnaligned(ff, fd, size);
+        } else {
+            TableUtils.allocateDiskSpaceAligned(ff, fd, size);
+        }
+    }
+
     private void checkAndExtend(long address) {
         if (address <= lim) {
             return;
@@ -394,7 +416,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         long offset = appendAddress - pageAddress;
         long previousSize = size;
         assert size > 0;
-        TableUtils.allocateDiskSpace(ff, fd, newSize);
+        allocateDiskSpace(newSize);
         try {
             this.pageAddress = TableUtils.mremap(
                     ff,
@@ -418,7 +440,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     private void map0(FilesFacade ff, long size) {
         try {
-            this.pageAddress = TableUtils.mapRW(ff, fd, size, memoryTag);
+            allocateDiskSpace(size);
+            this.pageAddress = TableUtils.mapRWNoAlloc(ff, fd, size, 0, memoryTag);
             this.lim = pageAddress + size;
             ff.madvise(pageAddress, size, madviseOpts);
         } catch (Throwable e) {
@@ -438,7 +461,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         // file either did not exist when length() was called or empty
         if (size < 1) {
             this.size = minMappedMemorySize;
-            TableUtils.allocateDiskSpace(ff, fd, this.size);
             map0(ff, minMappedMemorySize);
             this.appendAddress = pageAddress;
         } else {

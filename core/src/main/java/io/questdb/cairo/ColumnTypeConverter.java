@@ -190,7 +190,7 @@ public class ColumnTypeConverter {
             srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
             columnSizesSink.setSrcOffsets(skipBytes, -1);
 
-            TableUtils.allocateDiskSpace(ff, dstFixFd, dstMapBytes);
+            TableUtils.allocateDiskSpaceAligned(ff, dstFixFd, dstMapBytes);
             dstMapAddress = TableUtils.mapAppendColumnBuffer(ff, dstFixFd, 0, dstMapBytes, true, memoryTag);
             columnSizesSink.setDestSizes(dstMapBytes, -1);
 
