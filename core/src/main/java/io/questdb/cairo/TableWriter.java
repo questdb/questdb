@@ -103,6 +103,7 @@ import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.FindVisitor;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
@@ -6057,10 +6058,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 continue;
             }
             // The aux file holds every committed row, so it can size the data vector. Read through the fd, not
-            // the mapping: the mapping is exactly what may be stale.
+            // the mapping: the mapping is exactly what may be stale. Read through the real facade, not the
+            // configured one: a test facade with a planted fault would fail this read and the check would
+            // report the fault as a corrupt entry.
             final long requiredDataBytes;
             try {
-                requiredDataBytes = driver.getDataVectorSizeAtFromFd(ff, auxMem.getFd(), columnRows - 1);
+                requiredDataBytes = driver.getDataVectorSizeAtFromFd(FilesFacadeImpl.INSTANCE, auxMem.getFd(), columnRows - 1);
             } catch (CairoException e) {
                 // Must not throw: this runs inside the writer's close.
                 reportDebugInvariantViolation("close", "aux entry of the last committed row is unreadable", i);
