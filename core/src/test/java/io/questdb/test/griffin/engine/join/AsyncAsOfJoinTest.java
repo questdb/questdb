@@ -165,6 +165,55 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalkOrSpanScan() throws Exception {
+        // the walk serves frames with few master rows against long spans, and is given up for the
+        // span scan where every slave row's key joins and the walk would read about as many rows
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 10_000);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 10_000);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, ctx) -> {
+                        engine.execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        engine.execute("INSERT INTO quotes SELECT '2024-01-01'::timestamp + x * 100_000L, CASE WHEN x % 2 = 0 THEN 'k0' ELSE 'k' || (x % 400) END, x "
+                                + "FROM long_sequence(400000)", ctx);
+                        engine.execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        engine.execute("INSERT INTO trades SELECT '2024-01-01'::timestamp + x * 20_000L + 7, 'k' || ((x * 7) % 400), x FROM long_sequence(2000000)", ctx);
+                        final String selective = "SELECT /*+ asof_parallel(t q) */ t.ts, t.sym, q.bid FROM trades t ASOF JOIN quotes q ON (sym) WHERE t.sym = 'k0'";
+                        final String dense = "SELECT /*+ asof_parallel(t q) */ t.ts, t.sym, q.bid FROM trades t ASOF JOIN quotes q ON (sym)";
+                        try (RecordCursorFactory factory = engine.select(selective, ctx)) {
+                            drain(factory, ctx);
+                            final AsyncAsOfJoinAtom atom = findAtom(factory);
+                            Assert.assertTrue("the walk must serve a selective master", atom.getStatFramesWalk() > 0);
+                            Assert.assertEquals(0, atom.getStatWalkAborts());
+                        }
+                        try (RecordCursorFactory factory = engine.select(dense, ctx)) {
+                            drain(factory, ctx);
+                            final AsyncAsOfJoinAtom atom = findAtom(factory);
+                            Assert.assertTrue("the walk must give up on a dense master", atom.getStatWalkAborts() > 0);
+                            Assert.assertTrue(atom.getStatFramesSpan() > 0);
+                        }
+                        TestUtils.assertSqlCursors(engine, ctx, selective.replace("asof_parallel", "asof_linear"), selective, LOG);
+                        TestUtils.assertSqlCursors(engine, ctx, dense.replace("asof_parallel", "asof_dense"), dense, LOG);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    private static void drain(RecordCursorFactory factory, SqlExecutionContext ctx) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(ctx)) {
+            //noinspection StatementWithEmptyBody
+            while (cursor.hasNext()) {
+            }
+        }
+    }
+
+    @Test
     public void testExplain() throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4);
