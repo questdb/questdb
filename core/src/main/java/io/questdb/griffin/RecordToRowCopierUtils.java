@@ -69,20 +69,13 @@ public class RecordToRowCopierUtils {
      */
     static final int COPY_NONE = 0;
     /**
-     * The {@link #copyOpcode} of a NULL source into a type that does not represent NULL as its
-     * accessor family's namesake does, such as a never-null type on INT's accessor: the family's
-     * getter would read the namesake's NULL, so the copiers write nothing and the writer's null
-     * setter puts the type's own NULL there, from its type driver. Every existing type is its own
-     * namesake and keeps its same-type arm.
-     */
-    static final int COPY_SKIP = -1;
-    /**
      * The {@link #copyOpcode} of a conversion with a side that does not represent its values as
      * its accessor family's namesake does, such as an unsigned type on INT's accessor: the family's
      * arm would read or write the value as the namesake's (an unsigned INT sign-extended into
      * LONG), so the pair has no arm until the type adds its own, and INSERT refuses it
      * ({@link #hasCopierArm}); a copier built for it anyway raises the family-arm guard's refusal.
-     * Every existing type is its own namesake.
+     * A NULL source into such a type takes it too, since the family's getter would read the
+     * namesake's NULL. Every existing type is its own namesake.
      */
     static final int COPY_UNLIKE = -2;
     // [source tag][target tag] -> the pair has a copier arm; filled from rule K (RelationRules.copier) at class init
@@ -120,7 +113,7 @@ public class RecordToRowCopierUtils {
      * when the copier is built: the source tag in the high byte and the target tag in the low byte,
      * or {@link #COPY_NONE} for a pair without an arm. VARCHAR_SLICE (the transient read_parquet
      * type) reads through VARCHAR's getter, and NULL through the target's getter, which returns the
-     * target's NULL, or, for a target unlike its family's namesake, {@link #COPY_SKIP}. A same-tag
+     * target's NULL, or, for a target unlike its family's namesake, {@link #COPY_UNLIKE}. A same-tag
      * pair takes {@link #sameTypeOpcode}; any other pair needs an arm in {@link RelationRules#copier}
      * (rule K) and takes the opcodes of the two {@link
      * PhysicalDescriptor.Accessor accessor families}. {@code TypeRelationGoldenTest.testCopierArms}
@@ -137,7 +130,7 @@ public class RecordToRowCopierUtils {
         if (fromTag == ColumnType.NULL) {
             final TypeDriver toDriver = PhysicalDescriptor.storedTypeDriverOf(toColumnType);
             if (toDriver != null && !PhysicalDescriptor.isLikeFamilyNamesake(toDriver)) {
-                return COPY_SKIP;
+                return COPY_UNLIKE;
             }
             fromTag = toTag;
         }
@@ -818,10 +811,6 @@ public class RecordToRowCopierUtils {
                 final int toColumnType = toMetadata.getColumnType(toColumnIndex);
                 final int fromColumnType = fromTypes.getColumnType(i);
                 final int opcode = copyOpcode(fromColumnType, toColumnType);
-                if (opcode == COPY_SKIP) {
-                    // the writer's null setter puts the type's own NULL
-                    continue;
-                }
                 if (opcode == COPY_UNLIKE) {
                     throw noFamilyArmForColumn(fromColumnType, toColumnType);
                 }
@@ -1986,10 +1975,6 @@ public class RecordToRowCopierUtils {
             final int toColumnType = toMetadata.getColumnType(toColumnIndex);
             final int fromColumnType = fromTypes.getColumnType(i);
             final int opcode = copyOpcode(fromColumnType, toColumnType);
-            if (opcode == COPY_SKIP) {
-                // the writer's null setter puts the type's own NULL
-                continue;
-            }
             if (opcode == COPY_UNLIKE) {
                 throw noFamilyArmForColumn(fromColumnType, toColumnType);
             }

@@ -53,7 +53,6 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
     private final DoubleArrayParser arrayParser; // null if not needed
     private final ColumnTypes fromTypes;
     // RecordToRowCopierUtils.copyOpcode() per filtered column; COPY_NONE for the timestamp column
-    // and for a NULL source the writer's null setter fills (COPY_SKIP)
     private final IntList opcodes = new IntList();
     private final ColumnFilter toColumnFilter;
     private final RecordMetadata toMetadata;
@@ -75,7 +74,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             final int toColumnType = this.toMetadata.getColumnType(toColumnIndex);
             final int fromColumnType = this.fromTypes.getColumnType(i);
             // the timestamp column is copied externally
-            int opcode = toColumnIndex == timestampIndex
+            final int opcode = toColumnIndex == timestampIndex
                     ? RecordToRowCopierUtils.COPY_NONE
                     : RecordToRowCopierUtils.copyOpcode(fromColumnType, toColumnType);
             if (opcode == RecordToRowCopierUtils.COPY_NONE && toColumnIndex != timestampIndex) {
@@ -83,10 +82,6 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             }
             if (opcode == RecordToRowCopierUtils.COPY_UNLIKE) {
                 throw RecordToRowCopierUtils.noFamilyArmForColumn(fromColumnType, toColumnType);
-            }
-            if (opcode == RecordToRowCopierUtils.COPY_SKIP) {
-                // the writer's null setter puts the type's own NULL
-                opcode = RecordToRowCopierUtils.COPY_NONE;
             }
             opcodes.add(opcode);
             // STRING/VARCHAR -> ARRAY parses the text
@@ -105,7 +100,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         for (int i = 0; i < n; i++) {
             final int opcode = opcodes.getQuick(i);
             if (opcode == RecordToRowCopierUtils.COPY_NONE) {
-                // the timestamp column, copied apart from the copier, or a NULL source the writer fills
+                // the timestamp column, copied apart from the copier
                 continue;
             }
             final int toColumnIndex = toColumnFilter.getColumnIndexFactored(i);
