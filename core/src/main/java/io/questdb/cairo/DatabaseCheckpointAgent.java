@@ -226,7 +226,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
      *     <li>Elsewhere: sync(2), which flushes every filesystem.</li>
      * </ul>
      */
-    static void syncRestoredState(FilesFacade ff, Path dir, boolean includeVolumes) {
+    public static void syncRestoredState(FilesFacade ff, Path dir, boolean includeVolumes) {
         if (ff.isSyncfsFileSystemWide()) {
             final int dirLen = dir.size();
             syncFileSystemOf(ff, dir.$());
