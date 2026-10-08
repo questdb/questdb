@@ -7171,6 +7171,7 @@ public class PostingIndexWriter implements IndexWriter {
                 if (addr != 0) {
                     if (nullRunOffset >= 0) {
                         driver.setNull(sidecarBuf + nullRunOffset, (rawOffset - nullRunOffset) >> shift);
+                        // validity batch site: a column with a validity bitmap would mark these rows NULL here
                         nullRunOffset = -1;
                     }
                     Unsafe.copyMemory(addr, sidecarBuf + rawOffset, valueSize);
@@ -7181,6 +7182,7 @@ public class PostingIndexWriter implements IndexWriter {
             }
             if (nullRunOffset >= 0) {
                 driver.setNull(sidecarBuf + nullRunOffset, (rawOffset - nullRunOffset) >> shift);
+                // validity batch site: a column with a validity bitmap would mark these rows NULL here
             }
 
             boolean isDesignatedTs = timestampColumnIndex >= 0
@@ -7252,6 +7254,7 @@ public class PostingIndexWriter implements IndexWriter {
                     if (addr != 0) {
                         if (nullRunOffset >= 0) {
                             driver.setNull(sidecarBuf + nullRunOffset, (rawOffset - nullRunOffset) >> shift);
+                            // validity batch site: a column with a validity bitmap would mark these rows NULL here
                             nullRunOffset = -1;
                         }
                         Unsafe.copyMemory(addr, sidecarBuf + rawOffset, valueSize);
@@ -7262,6 +7265,7 @@ public class PostingIndexWriter implements IndexWriter {
                 }
                 if (nullRunOffset >= 0) {
                     driver.setNull(sidecarBuf + nullRunOffset, (rawOffset - nullRunOffset) >> shift);
+                    // validity batch site: a column with a validity bitmap would mark these rows NULL here
                 }
 
                 // Compress and write

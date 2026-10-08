@@ -194,6 +194,11 @@ PLANTED_JAVA = """
             return opcode;
         }
 
+        void fillNulls(long address, long count) {
+            java.util.Arrays.fill(new long[(int) count], address);
+            // validity batch site: a column with a validity bitmap would mark these rows NULL here
+        }
+
         int guardedSwitch(TypeDriver driver) {
             return switch (PhysicalDescriptor.familyArmOf(driver, "planted site")) {
                 case INT -> 4;
@@ -498,6 +503,11 @@ class FormTest(TreeTest):
         self.assertEqual({'LONG'}, set(self.one('optional').tags))
         self.assertEqual([], self.places('in_test'))
 
+    def test_validity_marker(self):
+        p = self.one('fillNulls')
+        self.assertEqual(('validity-marker', 'acolumnwithavaliditybitmapwouldmarktheserowsNULLhere', set(), False),
+                         (p.form, p.anchor, set(p.tags), p.is_checked))
+
     def test_native_switches_and_tests(self):
         self.assertEqual(({'INT', 'LONG'}, False), (set(self.one('unchecked').tags), self.one('unchecked').is_checked))
         self.assertTrue(self.one('checked').is_checked)
@@ -559,6 +569,13 @@ class ViewTest(TreeTest):
         self.assertEqual('\t'.join(audit.COLUMNS), rows[0])
         self.assertTrue(all(r.endswith('\t\t\tUINT32') for r in rows[1:]))
         self.assertEqual(len(self.view().open()), len(rows) - 1)
+
+    def test_validity_sites_only_for_a_null_policy_of_its_own(self):
+        v, places = self.scan()
+        values = audit.type_values(self.root, 'INT')
+        self.assertEqual([], self.view().open('validity'))
+        own = audit.like(v, places, [], 'INT', (values - {'NullPolicy.SENTINEL'}) | {'NullPolicy.NONE'}, self.root)
+        self.assertEqual({'fillNulls'}, {i.place.method for i in own.open('validity')})
 
     def test_a_default_arm_takes_away_the_compiler_check(self):
         self.edit('core/src/main/java/io/questdb/griffin/Planted.java', 'UNKNOWN -> 1;', 'UNKNOWN -> 1;\n            default -> 0;')

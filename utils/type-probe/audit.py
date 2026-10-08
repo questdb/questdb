@@ -77,7 +77,10 @@ FLAG_PREDICATES = {
     'isArrayWithWeakDims': ('ARRAY',),
 }
 FORMS = ('tag-switch', 'tag-enum-switch', 'tag-test', 'tag-table', 'value-switch', 'value-test',
-         'rust-match', 'rust-test', 'c-switch', 'c-test')
+         'rust-match', 'rust-test', 'c-switch', 'c-test', 'validity-marker')
+# the comment that marks where a column whose NULL lives in a validity bitmap would write or move
+# its bits: no compiler check and no test names these places, so the comment does
+VALIDITY_MARKER = re.compile(r'//\s*validity batch site:')
 DECISIONS = ('not-reached', 'no-change', 'refused', 'test')
 COLUMNS = ('file', 'method', 'form', 'anchor', 'n', 'decision', 'reason', 'type')
 ANCHOR_LIMIT = 100
@@ -471,11 +474,14 @@ def scan(root=REPO):
     places = []
     for path in sorted((root / JAVA_MAIN).rglob('*.java')):
         raw = path.read_text(encoding='utf-8', errors='replace')
-        if not re.search(r'ColumnType|ColumnTypeTag|Accessor|NullPolicy|WireKind|RelationKind|Arithmetic|Movement|'
-                         r'CastTarget|' + '|'.join(FAMILY_CALLS), raw):
+        is_marked = VALIDITY_MARKER.search(raw) is not None
+        if not is_marked and not re.search(r'ColumnType|ColumnTypeTag|Accessor|NullPolicy|WireKind|RelationKind|Arithmetic|Movement|'
+                                           r'CastTarget|' + '|'.join(FAMILY_CALLS), raw):
             continue
         src = Source(str(path.relative_to(root)), raw, strip_java(raw))
         places += scan_java(src, v)
+        if is_marked:
+            places += scan_markers(src)
     for crate in RUST_CRATES:
         if not (root / crate).is_dir():
             continue
@@ -709,6 +715,17 @@ def scan_java(src, v):
 
     places = [p for p in places if not (p.form == 'value-test' and not p.values and not p.is_guarded and is_switched_local(p))]
     places.sort(key=lambda p: (p.line, FORMS.index(p.form)))
+    return places
+
+
+def scan_markers(src):
+    """The validity batch sites of a Java file: each marker comment is a place, keyed by its own
+    text, which says what a column with a validity bitmap would do there."""
+    spans, places = java_methods(src.s), []
+    for m in VALIDITY_MARKER.finditer(src.raw):
+        text = src.raw[m.end():src.raw.find('\n', m.end())]
+        places.append(Place(file=src.rel, line=src.line(m.start()), last_line=src.line(m.start()), method=enclosing(spans, m.start()),
+                            form='validity-marker', anchor=anchor_of(text)))
     return places
 
 
@@ -1065,7 +1082,7 @@ def evaluate(condition, v, code):
         return None
 
 
-GROUPS = ('names', 'shares', 'table')
+GROUPS = ('names', 'shares', 'table', 'validity')
 
 
 @dataclass
@@ -1095,9 +1112,10 @@ class View:
 def like(v, places, decisions, name, values, root=REPO, own='', type_name=''):
     """The places a type declared like the tag `name` must look at: those that name `name` (its
     tag takes a path a new tag does not), those that switch on or test a value in `values` (the
-    new type takes `name`'s arm), and the tables indexed by tag. A place is closed for the type
-    `type_name` when it names `own`, the type's own tag, or when places.tsv decides it for every
-    type or for `type_name`; another type's decision at it is a precedent."""
+    new type takes `name`'s arm), the tables indexed by tag, and, when `values` holds a NULL policy
+    other than `name`'s, the validity batch sites. A place is closed for the type `type_name` when
+    it names `own`, the type's own tag, or when places.tsv decides it for every type or for
+    `type_name`; another type's decision at it is a precedent."""
     if name not in v.tags:
         raise UsageError(f'{name} is no tag')
     code = v.tags[name]
@@ -1106,6 +1124,8 @@ def like(v, places, decisions, name, values, root=REPO, own='', type_name=''):
     for d in decisions:
         by_key.setdefault(d.key(), []).append(d)
     own_driver = driver_file(root, name)
+    policies = {x for x in values if x.startswith('NullPolicy.')}
+    is_own_null_policy = bool(policies) and policies != {x for x in type_values(root, name) if x.startswith('NullPolicy.')}
     items, checked = [], []
     for p in places:
         if p.file == own_driver or (p.file.endswith('cairo/ColumnType.java') and
@@ -1113,7 +1133,11 @@ def like(v, places, decisions, name, values, root=REPO, own='', type_name=''):
             # the namesake's own type driver, which a new type replaces with its own, and the
             # definitions of the predicates, whose callers are the places
             continue
-        if p.form == 'tag-table':
+        if p.form == 'validity-marker':
+            if not is_own_null_policy:
+                continue
+            group = 'validity'
+        elif p.form == 'tag-table':
             group = 'table'
         elif name in p.tags or (p.ranges and diverges(p, v, code, new_code)):
             if p.is_checked:
@@ -1139,12 +1163,14 @@ def like(v, places, decisions, name, values, root=REPO, own='', type_name=''):
     return View(name, values, items, checked)
 
 
-GROUP_COUNTS = {'names': 'names {n}', 'shares': 'shares a value with {n}', 'table': 'tables'}
+GROUP_COUNTS = {'names': 'names {n}', 'shares': 'shares a value with {n}', 'table': 'tables', 'validity': 'validity batch sites'}
 GROUP_TEXT = {
     'names': ('Places that name {n}', '{n}\'s tag takes a path here that a new tag does not take: decide whether the new type takes it.'),
     'shares': ('Places that switch on a value shared with {n}', 'The new type takes {n}\'s arm here: decide whether that arm is right for it '
                                                               '(its NULL, order and range). A guarded place refuses a type unlike its family first.'),
     'table': ('Tables indexed by a tag', 'Every new tag needs its entry, or a reason it needs none.'),
+    'validity': ('Validity batch sites', 'The type keeps NULL otherwise than {n}: a column whose NULL lives in a validity bitmap would '
+                                         'write or move its bits here; decide what the type does at each site.'),
 }
 
 

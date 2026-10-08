@@ -4393,6 +4393,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long nullFixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_TABLE_WRITER);
         try {
             ColumnType.getTypeDriver(columnType).setNull(nullFixBuf, rowCount);
+            // validity batch site: a column with a validity bitmap would mark these rows NULL here
             appendBuffer(dstFixFd, nullFixBuf, fixSize);
         } finally {
             Unsafe.free(nullFixBuf, fixSize, MemoryTag.NATIVE_TABLE_WRITER);

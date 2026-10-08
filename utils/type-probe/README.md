@@ -235,7 +235,10 @@ does not move the other's decision. A place whose code text changes is a new pla
 - the places that switch on or test a value the type shares with `<TYPE>`: the new type takes
   `<TYPE>`'s arm there, whether a compiler checks the switch or not, since a check names a new
   value, not a shared one; those no guard covers come first;
-- the tables indexed by a tag: every new tag needs its entry.
+- the tables indexed by a tag: every new tag needs its entry;
+- when the type's NULL policy differs from `<TYPE>`'s (the tool passes the type's own facts), the
+  validity batch sites: the comments `// validity batch site:` mark where a column whose NULL lives
+  in a validity bitmap would write or move its bits, which no compiler check and no test names.
 
 `<TYPE>`'s own type driver and the definitions of the predicates (whose callers are the places) are
 left out. A place that names no namesake treats a new type as it treats every type it does not
