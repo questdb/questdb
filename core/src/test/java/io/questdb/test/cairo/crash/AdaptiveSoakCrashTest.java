@@ -214,7 +214,7 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
      * W&gt;0 (group commit, 50ms) soak: the tail is committed PENDING and lost on the power loss (RPO &le; W),
      * so the zero-loss bar does NOT apply — recovery must still land on a consistent committed prefix
      * (membership), never suspend, and always preserve the durable-ACK'd prefix. The µs clock is pinned so the
-     * group-commit window is load-independent (mirrors {@link AdaptiveGroupCommitCrashTest}).
+     * group-commit window is load-independent (mirrors {@code DurableFrontierTest}).
      */
     @Test
     public void testSoakWN() throws Exception {
@@ -233,7 +233,7 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
         // growth invariant meaningful, and makes recovery's roll-forward anchor deterministic.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         if (windowUs > 0) {
-            // Pin the microsecond clock (see AdaptiveGroupCommitCrashTest / testConvertPartitionCrashSafeWN):
+            // Pin the microsecond clock (see DurableFrontierTest / testConvertPartitionCrashSafeWN):
             // under W>0 the group-commit deferral trigger and the WAL-apply time quota both read the engine
             // clock, so a fixed clock keeps every commit inside the window (deterministic PENDING tail) and the
             // apply quota effectively unbounded (single-pass), independent of load. Restored in the finally.

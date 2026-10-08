@@ -59,12 +59,12 @@ dimensions**, each verified to actually execute.
 
 | # | Dimension | Java crash test | E2E |
 |---|---|---|---|
-| 1 | plain `(ts, v long)` | `AdaptiveRecoveryRollForward`, `GroupCommit` | `profile=none` |
+| 1 | plain `(ts, v long)` | `AdaptiveRecoveryRollForward`, `DurableFrontier` | `profile=none` |
 | 2 | bitmap index | `AdaptiveIndexedSymbolLazyGap`, `MapLengthGuard` | `profile=bitmap` |
 | 3 | posting index | posting suite | `profile=posting` |
 | 4 | covering index | covering suite | `profile=covering` |
 | 5 | multi-partition | `AdaptiveMultiPartitionLazyGap` (W5) | partition by DAY |
-| 6 | W=0 / W>0 group commit | `AdaptiveGroupCommitCrashTest` | `--window-us` |
+| 6 | W=0 / W>0 group commit | `DurableFrontierTest` | `--window-us` |
 | 7 | SYNC / NOSYNC | crash-consistency baseline | `--mode` |
 | 8 | varchar column | `AdaptiveEpochCrashTest`, `VarcharPowerLoss*` | `profile=varchar` |
 | 9 | array column | `ArrayCrashConsistencyTest` | `profile=array` -- length varies per row (`id % 10`), CONTENTS verified |

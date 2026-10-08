@@ -33,13 +33,17 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.Files;
 import io.questdb.std.LongList;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.wal.GroupCommitTestUtils.WalFdatasyncFacade;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
@@ -48,6 +52,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static io.questdb.test.cairo.wal.GroupCommitTestUtils.commitRow;
 
 /**
  * TDD tests for Plan 2 — CommitMode.ADAPTIVE: durable WAL commit (Task A) + lazy table apply (Task B).
@@ -73,6 +80,7 @@ import java.util.Map;
  * <p>(g) Task B — correctness: adaptive lazy apply produces correct query results.
  */
 public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
+    private static final long WINDOW_US = 1_000_000L;
 
     /**
      * (a) ADAPTIVE: a WAL commit must fdatasync segment column data BEFORE events BEFORE sequencer.
@@ -821,6 +829,172 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testEpochCannotPublishAheadOfDeferredSequencerOnNonWideSyncfsPlatform() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "-1");
+
+        final NonWideSyncfsWalFdatasyncFacade ff = new NonWideSyncfsWalFdatasyncFacade();
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(1_000_000L);
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("x");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+
+            try (WalWriter walWriter = engine.getWalWriter(tt)) {
+                commitRow(walWriter, 0L, 1L);
+                drainWalQueue();
+                final long appliedSeqTxn = tracker.getWriterTxn();
+                Assert.assertTrue("the W>0 sequencer barrier must still be pending",
+                        tracker.getLocalDurableSeqTxn() < appliedSeqTxn);
+
+                ff.reset();
+                try (TableWriter tableWriter = getWriter(tt)) {
+                    tableWriter.advanceDurableEpoch(1L);
+                }
+
+                Assert.assertTrue("a non-wide epoch must fdatasync the sequencer before publishing",
+                        ff.sequencerFdatasyncs() > 0);
+                Assert.assertTrue("the epoch cut must be inside the local durable WAL prefix",
+                        tracker.getLocalDurableSeqTxn() >= appliedSeqTxn);
+                Assert.assertEquals(appliedSeqTxn, tracker.getDurableEpochSeqTxn());
+            }
+        });
+    }
+
+    /**
+     * The epoch's non-wide-syncfs flush must scale with the UN-EPOCHED WRITE SET, not with table history.
+     * Everything older than the previous epoch was made durable by that epoch, so re-walking it buys nothing
+     * and costs three syscalls per file per partition, forever, at the epoch cadence.
+     * <p>
+     * Pins both halves: the first epoch of a writer's life still walks everything (it must cover partitions a
+     * previous writer instance left un-epoched), and a second epoch that follows a write to ONE partition
+     * opens files under that partition only.
+     */
+    @Test
+    public void testEpochFlushesOnlyTheWriteSetOnNonWideSyncfsPlatform() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "-1");
+
+        final EpochOpenTrackingFacade ff = new EpochOpenTrackingFacade();
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(1_000_000L);
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("x");
+
+            // Three days of history.
+            try (WalWriter walWriter = engine.getWalWriter(tt)) {
+                commitRow(walWriter, 0L, 1L);
+                commitRow(walWriter, Micros.DAY_MICROS, 2L);
+                commitRow(walWriter, 2 * Micros.DAY_MICROS, 3L);
+            }
+            drainWalQueue();
+
+            try (TableWriter tableWriter = getWriter(tt)) {
+                Assert.assertEquals(3, tableWriter.getTxWriter().getPartitionCount());
+
+                // First epoch of this writer's life: the write set cannot be vouched for, so everything is
+                // walked. This is the fail-safe that covers a previous writer instance's un-epoched work.
+                ff.reset();
+                tableWriter.advanceDurableEpoch(1L);
+                Assert.assertTrue(
+                        "the first epoch after open must walk every partition, saw: " + ff.openedPartitionDirs(),
+                        ff.openedPartitionDirs().contains("1970-01-01")
+                                && ff.openedPartitionDirs().contains("1970-01-02")
+                                && ff.openedPartitionDirs().contains("1970-01-03")
+                );
+
+                // Second epoch, with nothing written since the first: no partition owes a flush.
+                ff.reset();
+                tableWriter.advanceDurableEpoch(2L);
+                Assert.assertTrue(
+                        "an epoch with an empty write set must open no partition file, saw: " + ff.openedPartitionDirs(),
+                        ff.openedPartitionDirs().isEmpty()
+                );
+            }
+
+            // Write to the LAST partition only, then epoch again: history must not be re-walked.
+            try (WalWriter walWriter = engine.getWalWriter(tt)) {
+                commitRow(walWriter, 2 * Micros.DAY_MICROS + 1, 4L);
+            }
+            drainWalQueue();
+
+            try (TableWriter tableWriter = getWriter(tt)) {
+                ff.reset();
+                tableWriter.advanceDurableEpoch(3L);
+                Assert.assertTrue(
+                        "the epoch must touch the written partition, saw: " + ff.openedPartitionDirs(),
+                        ff.openedPartitionDirs().contains("1970-01-03")
+                );
+                Assert.assertFalse(
+                        "the epoch must NOT re-walk untouched history, saw: " + ff.openedPartitionDirs(),
+                        ff.openedPartitionDirs().contains("1970-01-01")
+                );
+                Assert.assertFalse(
+                        "the epoch must NOT re-walk untouched history, saw: " + ff.openedPartitionDirs(),
+                        ff.openedPartitionDirs().contains("1970-01-02")
+                );
+            }
+        });
+    }
+
+    /**
+     * A read-only (soft-linked) attached partition must not stall the epoch on a platform whose syncfs is
+     * not filesystem-wide, where {@code fsyncAttachedPartitionFiles} is the epoch's column-flush path.
+     * <p>
+     * Such a partition is backed by storage this writer never writes, so it holds nothing an epoch could
+     * need to flush, and {@code openRW} on its files fails. That failure is not contained: it unwinds into
+     * {@code handleBestEffortDurableEpochFailure}, which only logs, so the epoch never reaches
+     * {@code setLastEpochTs} — {@code durableEpochSeqTxn} stays 0, {@link WalPurgeJob} pins the purge floor
+     * at 0, and the WAL grows without bound while the whole scan is retried every apply batch. Asserting the
+     * PUBLISHED epoch, rather than merely "it did not throw", is what separates the fix from the swallow
+     * that hid the failure.
+     */
+    @Test
+    public void testEpochSkipsReadOnlyPartitionsOnNonWideSyncfsPlatform() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "-1");
+
+        final ReadOnlyPartitionSyncfsFacade ff = new ReadOnlyPartitionSyncfsFacade();
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(1_000_000L);
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("x");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+
+            // Two partitions, so one can be flagged read-only while the other still carries the epoch.
+            try (WalWriter walWriter = engine.getWalWriter(tt)) {
+                commitRow(walWriter, 0L, 1L);
+                commitRow(walWriter, Micros.DAY_MICROS, 2L);
+            }
+            drainWalQueue();
+
+            final long appliedSeqTxn = tracker.getWriterTxn();
+            try (TableWriter tableWriter = getWriter(tt)) {
+                Assert.assertEquals(2, tableWriter.getTxWriter().getPartitionCount());
+                // Flag the FIRST partition read-only exactly as attachPartition does for a soft link, and
+                // make its files unopenable for write exactly as the read-only mount behind one would.
+                tableWriter.getTxWriter().setPartitionReadOnlyByTimestamp(0L, true);
+                ff.denyWritesUnder("1970-01-01");
+
+                tableWriter.advanceDurableEpoch(1L);
+            }
+
+            Assert.assertEquals(
+                    "the epoch must publish despite the read-only partition",
+                    appliedSeqTxn,
+                    tracker.getDurableEpochSeqTxn()
+            );
+            Assert.assertEquals(
+                    "no file under a read-only partition may be opened for write by the epoch",
+                    0,
+                    ff.deniedOpenAttempts()
+            );
+        });
+    }
+
     private int readMarkerGeneration(TableToken token) {
         try (io.questdb.std.str.Path p = new io.questdb.std.str.Path();
              SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
@@ -1287,6 +1461,76 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         public int syncFileRange(long fd, long offset, long nbytes, int flags) {
             syncFileRangeCount++;
             return super.syncFileRange(fd, offset, nbytes, flags);
+        }
+    }
+
+    static class NonWideSyncfsWalFdatasyncFacade extends WalFdatasyncFacade {
+        @Override
+        public boolean isSyncfsFileSystemWide() {
+            return false;
+        }
+    }
+
+    /**
+     * Non-wide syncfs plus a record of which partition directories the epoch opened files under.
+     */
+    static class EpochOpenTrackingFacade extends WalFdatasyncFacade {
+        private final java.util.Set<String> openedPartitionDirs = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+        @Override
+        public boolean isSyncfsFileSystemWide() {
+            return false;
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            for (int day = 1; day <= 3; day++) {
+                final String dir = "1970-01-0" + day;
+                if (Utf8s.containsAscii(name, dir)) {
+                    openedPartitionDirs.add(dir);
+                }
+            }
+            return super.openRW(name, opts);
+        }
+
+        public java.util.Set<String> openedPartitionDirs() {
+            return openedPartitionDirs;
+        }
+
+        public void reset() {
+            openedPartitionDirs.clear();
+        }
+    }
+
+    /**
+     * Non-wide syncfs plus a partition directory whose files refuse to open for write, standing in for the
+     * read-only mount behind a soft-linked attached partition.
+     */
+    static class ReadOnlyPartitionSyncfsFacade extends WalFdatasyncFacade {
+        private final AtomicInteger deniedOpenAttempts = new AtomicInteger();
+        private volatile String deniedDir;
+
+        public int deniedOpenAttempts() {
+            return deniedOpenAttempts.get();
+        }
+
+        public void denyWritesUnder(String partitionDirName) {
+            deniedDir = partitionDirName;
+        }
+
+        @Override
+        public boolean isSyncfsFileSystemWide() {
+            return false;
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final String denied = deniedDir;
+            if (denied != null && Utf8s.containsAscii(name, denied)) {
+                deniedOpenAttempts.incrementAndGet();
+                return -1;
+            }
+            return super.openRW(name, opts);
         }
     }
 }

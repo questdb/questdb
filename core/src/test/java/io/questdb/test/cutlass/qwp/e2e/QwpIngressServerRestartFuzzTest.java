@@ -519,7 +519,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
      * this proves the <em>client</em> store-and-forward replay against adaptive's
      * lagging ack. The <em>engine</em> power-loss + WAL-prefix recovery side of
      * the same contract at W&gt;0 is covered by
-     * {@code AdaptiveGroupCommitCrashTest} and the adaptive crash sweeps.
+     * {@code DurableFrontierTest} and the adaptive crash sweeps.
      */
     @Test
     public void testSameSenderReplaysUnackedAcrossRestartUnderAdaptiveW50ms() throws Exception {

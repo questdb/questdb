@@ -211,6 +211,8 @@ public class PropServerConfigurationTest {
         // assertion is about what a user gets, not what the tests exercise.
         Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
         Assert.assertEquals(CommitMode.DEFAULT, configuration.getCairoConfiguration().getCommitMode());
+        // RPO of the adaptive group commit out of the box.
+        Assert.assertEquals(50_000L, configuration.getCairoConfiguration().getAdaptiveCommitGroupWindowUs());
         Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());

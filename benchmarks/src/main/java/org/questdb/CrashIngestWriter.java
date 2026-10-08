@@ -891,7 +891,7 @@ public class CrashIngestWriter {
 
     /**
      * Exposes {@link WalPurgeJob#runSerially()} so the harness can drive the adaptive group-commit
-     * device flush deterministically in-process (same trick as AdaptiveGroupCommitCrashTest.ExposedFlusher).
+     * device flush deterministically in-process (same trick as GroupCommitTestUtils.ExposedFlusher).
      */
     static final class ExposedFlusher extends WalPurgeJob {
         ExposedFlusher(CairoEngine engine) {

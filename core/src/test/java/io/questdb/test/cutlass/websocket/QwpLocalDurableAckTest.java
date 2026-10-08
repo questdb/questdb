@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,8 @@
 package io.questdb.test.cutlass.websocket;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.client.Sender;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.cutlass.qwp.client.sf.cursor.CursorWebSocketSendLoop;
@@ -38,16 +40,23 @@ import org.junit.Test;
 
 import java.time.temporal.ChronoUnit;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 
 /**
- * End-to-end coverage of the {@code STATUS_LOCAL_DURABLE_ACK} stream, driving
- * the real pinned {@code java-questdb-client} against a live server -- the
- * repo rule for wire-contract changes. The client requests the {@code local}
- * durable-ack tier, the server grants it, fsyncs the transaction log within
- * the adaptive commit window, and reports the local frontier; the client
- * releases its store-and-forward copy only on that ack.
+ * End-to-end coverage of the {@code local} durable-ack tier with the real pinned {@code java-questdb-client}
+ * against a live server, the repo rule for wire-contract changes. The server grants the tier only under
+ * ADAPTIVE, reports the local frontier on {@code STATUS_LOCAL_DURABLE_ACK}, and the client trims its
+ * store-and-forward copy on that ack.
+ * <p>
+ * The client pops its pending OK entries in order and stops at the first entry the per-table watermarks do not
+ * cover. A dropped table's frontier never advances again, so without special handling one stranded entry would
+ * block the trim of every later frame: the buffer grows until {@code flush()} fails, {@code close()} times out,
+ * and a restarted sender replays the frames, re-creating the dropped table.
  */
 public class QwpLocalDurableAckTest extends AbstractQwpBootstrapTest {
+
+    // Long enough that no local ack can cover a commit before the test drops its table.
+    private static final String LONG_GROUP_WINDOW_US = "3000000";
 
     @Override
     @Before
@@ -58,167 +67,247 @@ public class QwpLocalDurableAckTest extends AbstractQwpBootstrapTest {
     }
 
     @Test
-    public void testLocalAckArrivesOnIdleTailAndTrims() throws Exception {
-        // The idle-tail case: one burst of rows, then silence. The background
-        // sweep fsyncs the transaction log within the commit window, and the
-        // client's own keepalive PING gives the passive server its write
-        // opportunity -- the local ack must arrive with no help from the test.
+    public void testDropAfterFrontierCoversBeforeServerPollDoesNotStall() throws Exception {
+        // The tracker already covers A, but the server reads the registry only on an inbound frame or a
+        // keepalive PING, so the drop lands before the connection ever reports A as durable.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startFragmented(
-                    PropertyKey.CAIRO_COMMIT_MODE.getEnvVarName(), "adaptive"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-                serverMain.execute("CREATE TABLE local_ack_test (" +
-                        "value LONG, " +
-                        "ts TIMESTAMP" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (TestServerMain serverMain = startAdaptive(null)) {
+                createTables(serverMain, "p_a", "p_b");
+                try (QwpWebSocketSender sender = localSender(serverMain, "durable_ack_keepalive_interval_millis=3000;")) {
+                    commitRows(sender, "p_a", 5);
+                    final TableToken tokenA = serverMain.getEngine().verifyTableName("p_a");
+                    final SeqTxnTracker trackerA = serverMain.getEngine().getTableSequencerAPI().getTxnTracker(tokenA);
+                    Assert.assertTrue("the local frontier must cover A",
+                            waitFor(() -> trackerA.getLocalDurableSeqTxn() >= 1, 10_000));
+                    Assert.assertEquals("the server must not have reported A yet",
+                            0, sender.cursorSendLoopForTest().getTotalLocalDurableAcks());
 
-                try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig(
-                        "ws::addr=localhost:" + httpPort + ";request_durable_ack=local;")) {
-                    for (int i = 0; i < 10; i++) {
-                        sender.table("local_ack_test")
-                                .longColumn("value", i)
-                                .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
-                    }
-                    sender.flush();
-
-                    CursorWebSocketSendLoop loop = sender.cursorSendLoopForTest();
-                    Assert.assertNotNull("send loop must exist after flush", loop);
-                    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
-                    while ((loop.getTotalLocalDurableAcks() == 0 || loop.getTotalDurableTrimAdvances() == 0)
-                            && System.nanoTime() < deadline) {
-                        Os.sleep(10);
-                    }
-                    Assert.assertTrue(
-                            "client must receive STATUS_LOCAL_DURABLE_ACK frames",
-                            loop.getTotalLocalDurableAcks() > 0);
-                    Assert.assertTrue(
-                            "local acks must advance the store-and-forward trim",
-                            loop.getTotalDurableTrimAdvances() > 0);
-                    Assert.assertEquals(
-                            "a local-only grant must never produce STATUS_DURABLE_ACK frames",
-                            0, loop.getTotalDurableAcks());
+                    serverMain.execute("DROP TABLE p_a");
+                    assertTrimmed(sender, commitRows(sender, "p_b", 5));
                 }
-
-                serverMain.awaitTable("local_ack_test");
-                serverMain.assertSql(
-                        "SELECT count() FROM local_ack_test",
-                        "count\n10\n"
-                );
+                assertCount(serverMain, "p_b", 5);
             }
         });
     }
 
     @Test
-    public void testNoOptInMeansNoAckFrames() throws Exception {
-        // Spec contract: the server must not emit durable-ack frames of either
-        // kind to a connection that never requested them.
+    public void testDropBeforeLocalAckDoesNotStallOrReplay() throws Exception {
+        // A is committed but not yet locally durable when it is dropped. B commits after the drop. Every frame
+        // must trim on the idle tail's local ack, close() must drain, and a sender restarted on the same sf_dir
+        // must find nothing to replay, so the dropped table stays dropped and B holds its rows once.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startFragmented(
-                    PropertyKey.CAIRO_COMMIT_MODE.getEnvVarName(), "adaptive"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-                serverMain.execute("CREATE TABLE no_opt_in_test (" +
-                        "value LONG, " +
-                        "ts TIMESTAMP" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String sfDir = temp.newFolder("sf-local-ack-drop").getAbsolutePath();
+            try (TestServerMain serverMain = startAdaptive(LONG_GROUP_WINDOW_US)) {
+                createTables(serverMain, "d_a", "d_b");
+                try (QwpWebSocketSender sender = localSender(serverMain, "sf_dir=" + sfDir + ";")) {
+                    commitRows(sender, "d_a", 5);
+                    Assert.assertEquals("no local ack may precede the drop",
+                            0, sender.cursorSendLoopForTest().getTotalLocalDurableAcks());
 
-                try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig(
-                        "ws::addr=localhost:" + httpPort + ";")) {
-                    for (int i = 0; i < 5; i++) {
-                        sender.table("no_opt_in_test")
-                                .longColumn("value", i)
-                                .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
-                    }
-                    sender.flush();
-                    serverMain.awaitTable("no_opt_in_test");
-                    // Grace period past the commit window and sweep so a
-                    // misbehaving server would have had its chance to emit.
+                    serverMain.execute("DROP TABLE d_a");
+                    assertTrimmed(sender, commitRows(sender, "d_b", 5));
+                }
+
+                try (QwpWebSocketSender sender = localSender(serverMain, "sf_dir=" + sfDir + ";")) {
                     Os.sleep(500);
-                    CursorWebSocketSendLoop loop = sender.cursorSendLoopForTest();
-                    Assert.assertEquals(0, loop.getTotalLocalDurableAcks());
-                    Assert.assertEquals(0, loop.getTotalDurableAcks());
+                    final CursorWebSocketSendLoop loop = sender.cursorSendLoopForTest();
+                    Assert.assertTrue("nothing may replay", loop == null || loop.getTotalFramesReplayed() == 0);
                 }
-
-                serverMain.assertSql(
-                        "SELECT count() FROM no_opt_in_test",
-                        "count\n5\n"
-                );
+                Assert.assertNull("the dropped table must not be re-created",
+                        serverMain.getEngine().getTableTokenIfExists("d_a"));
+                assertCount(serverMain, "d_b", 5);
             }
         });
     }
 
     @Test
-    public void testRequestsIncludingReplicatedAreDeniedOnOss() throws Exception {
-        // OSS has no replication, so every request set that includes the
-        // replicated tier -- including the shipped legacy "on" -- is denied in
-        // full: no confirmation header, client fails loudly. All-or-nothing;
-        // the local half of "local,replicated" is never granted on its own.
+    public void testDropThenWriteSameNameDoesNotStall() throws Exception {
+        // The producer keeps writing to the dropped name: the next frame auto-creates a new table (a new
+        // directory) under the old name. The old incarnation's frames reached seqTxn 3; the new incarnation
+        // starts again at seqTxn 1 and must not leave the old entries behind.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startFragmented(
-                    PropertyKey.CAIRO_COMMIT_MODE.getEnvVarName(), "adaptive"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-                serverMain.execute("CREATE TABLE deny_test (" +
-                        "value LONG, " +
-                        "ts TIMESTAMP" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-                for (String tiers : new String[]{"on", "replicated", "local,replicated"}) {
-                    Throwable failure = null;
-                    try (Sender sender = Sender.fromConfig(
-                            "ws::addr=localhost:" + httpPort + ";request_durable_ack=" + tiers + ";")) {
-                        sender.table("deny_test")
-                                .longColumn("value", 1)
-                                .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                        sender.flush();
-                    } catch (Throwable e) {
-                        failure = e;
+            try (TestServerMain serverMain = startAdaptive(LONG_GROUP_WINDOW_US)) {
+                createTables(serverMain, "r_a", "r_b");
+                try (QwpWebSocketSender sender = localSender(serverMain, "")) {
+                    for (int i = 0; i < 3; i++) {
+                        commitRows(sender, "r_a", 2);
                     }
-                    Assert.assertNotNull(
-                            "request_durable_ack=" + tiers + " must be denied by an OSS server",
-                            failure);
-                    TestUtils.assertContains(failure.getMessage(), "durable ack");
+                    Assert.assertEquals("no local ack may precede the drop",
+                            0, sender.cursorSendLoopForTest().getTotalLocalDurableAcks());
+
+                    serverMain.execute("DROP TABLE r_a");
+                    sender.table("r_a").longColumn("value", 42).at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    for (int i = 0; i < 5; i++) {
+                        sender.table("r_b").longColumn("value", i).at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    }
+                    assertTrimmed(sender, sender.flushAndGetSequence());
                 }
+                assertCount(serverMain, "r_a", 1);
+                assertCount(serverMain, "r_b", 5);
             }
         });
     }
 
     @Test
     public void testLocalTierIsDeniedOutsideAdaptive() throws Exception {
-        // The local frontier never advances outside ADAPTIVE, so a granted
-        // "local" would leave the client waiting forever and failing close()
-        // with "data may be lost" although the rows landed. The server must
-        // deny it at the handshake and the pinned client must fail the connect.
-        for (String mode : new String[]{"nosync", "sync", "async"}) {
-            TestUtils.assertMemoryLeak(() -> {
-                try (final TestServerMain serverMain = startFragmented(
-                        PropertyKey.CAIRO_COMMIT_MODE.getEnvVarName(), mode
-                )) {
-                    int httpPort = serverMain.getHttpServerPort();
-                    // The server root survives across iterations, hence the per-mode name.
-                    String table = "deny_local_" + mode;
-                    serverMain.execute("CREATE TABLE " + table + " (" +
-                            "value LONG, " +
-                            "ts TIMESTAMP" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+        // A granted "local" outside ADAPTIVE would leave the client waiting forever, since the frontier never
+        // advances there. The registry and handshake tests cover every mode; end to end, the shipped default.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startFragmented(PropertyKey.CAIRO_COMMIT_MODE.getEnvVarName(), "nosync")) {
+                createTables(serverMain, "deny_local");
+                assertDenied(serverMain, "deny_local", "local");
+            }
+        });
+    }
 
-                    Throwable failure = null;
-                    try (Sender sender = Sender.fromConfig(
-                            "ws::addr=localhost:" + httpPort + ";request_durable_ack=local;")) {
-                        sender.table(table)
-                                .longColumn("value", 1)
-                                .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                        sender.flush();
-                    } catch (Throwable e) {
-                        failure = e;
+    @Test
+    public void testOssDeniesReplicatedTiersAndSendsNoAckWithoutOptIn() throws Exception {
+        // A connection that requests no tier gets no durable-ack frame of either kind. OSS has no replication,
+        // so every request set that includes the replicated tier, the shipped legacy "on" included, is denied in
+        // full, never downgraded to its local half.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startFragmented(PropertyKey.CAIRO_COMMIT_MODE.getEnvVarName(), "adaptive")) {
+                createTables(serverMain, "no_opt_in", "deny_test");
+                try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig(
+                        "ws::addr=localhost:" + serverMain.getHttpServerPort() + ";")) {
+                    for (int i = 0; i < 5; i++) {
+                        sender.table("no_opt_in").longColumn("value", i).at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                     }
-                    Assert.assertNotNull(
-                            "request_durable_ack=local must be denied under cairo.commit.mode=" + mode,
-                            failure);
-                    TestUtils.assertContains(failure.getMessage(), "durable ack");
+                    sender.flush();
+                    serverMain.awaitTable("no_opt_in");
+                    // Past the commit window and the sweep, so a misbehaving server would have emitted by now.
+                    Os.sleep(500);
+                    final CursorWebSocketSendLoop loop = sender.cursorSendLoopForTest();
+                    Assert.assertEquals(0, loop.getTotalLocalDurableAcks());
+                    Assert.assertEquals(0, loop.getTotalDurableAcks());
                 }
-            });
+                assertCount(serverMain, "no_opt_in", 5);
+
+                for (String tiers : new String[]{"on", "replicated", "local,replicated"}) {
+                    assertDenied(serverMain, "deny_test", tiers);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRecreatedTableIsNotTrimmedBeforeItIsDurable() throws Exception {
+        // The client keys its durable watermarks by table name. A was acked through seqTxn 3, then dropped and
+        // auto-created again. The new incarnation's first commit is seqTxn 1 on the server; if the wire carried
+        // that raw value, the old watermark of 3 would cover it and the client would trim the frame on its OK,
+        // before the commit is locally durable.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startAdaptive(LONG_GROUP_WINDOW_US)) {
+                createTables(serverMain, "x_a");
+                try (QwpWebSocketSender sender = localSender(serverMain, "")) {
+                    long fsn = -1;
+                    for (int i = 0; i < 3; i++) {
+                        fsn = commitRows(sender, "x_a", 2);
+                    }
+                    Assert.assertTrue("A must be acked through seqTxn 3", sender.awaitAckedFsn(fsn, 15_000));
+
+                    serverMain.execute("DROP TABLE x_a");
+                    final CursorWebSocketSendLoop loop = sender.cursorSendLoopForTest();
+                    final long okBefore = loop.getTotalAcks();
+                    sender.table("x_a").longColumn("value", 42).at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    final long recreatedFsn = sender.flushAndGetSequence();
+                    Assert.assertTrue("OK for the re-created table", waitFor(() -> loop.getTotalAcks() > okBefore, 10_000));
+                    // The client drains its pending entries right after it enqueues an OK; let that run.
+                    Os.sleep(300);
+                    final long acked = sender.getAckedFsn();
+                    final TableToken tokenA2 = serverMain.getEngine().verifyTableName("x_a");
+                    final long frontierA2 = serverMain.getEngine().getTableSequencerAPI().getTxnTracker(tokenA2).getLocalDurableSeqTxn();
+                    Assert.assertTrue("test setup: the new incarnation must not be locally durable yet [frontier="
+                            + frontierA2 + ']', frontierA2 < 1);
+                    Assert.assertTrue("the re-created table's frame was trimmed before it was durable [acked="
+                            + acked + ", recreatedFsn=" + recreatedFsn + ']', acked < recreatedFsn);
+
+                    assertTrimmed(sender, recreatedFsn);
+                }
+                assertCount(serverMain, "x_a", 1);
+            }
+        });
+    }
+
+    private static void assertCount(TestServerMain serverMain, String table, int expected) {
+        serverMain.awaitTable(table);
+        serverMain.assertSql("SELECT count() FROM " + table, "count\n" + expected + '\n');
+    }
+
+    // The pinned client must fail the connection: the server sent no confirmation header.
+    private static void assertDenied(TestServerMain serverMain, String table, String tiers) {
+        Throwable failure = null;
+        try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + serverMain.getHttpServerPort()
+                + ";request_durable_ack=" + tiers + ";")) {
+            sender.table(table).longColumn("value", 1).at(1_000_000_000_000L, ChronoUnit.MICROS);
+            sender.flush();
+        } catch (Throwable e) {
+            failure = e;
         }
+        Assert.assertNotNull("request_durable_ack=" + tiers + " must be denied", failure);
+        TestUtils.assertContains(failure.getMessage(), "durable ack");
+    }
+
+    // Waits until the local acks, which arrive on the idle tail with no help from the test, trim every frame.
+    private static void assertTrimmed(QwpWebSocketSender sender, long lastFsn) {
+        Assert.assertTrue("test setup: nothing was published", lastFsn >= 0);
+        Assert.assertTrue("the trim is stuck [ackedFsn=" + sender.getAckedFsn() + ", lastFsn=" + lastFsn + ']',
+                sender.awaitAckedFsn(lastFsn, 15_000));
+        final CursorWebSocketSendLoop loop = sender.cursorSendLoopForTest();
+        Assert.assertTrue("the client must receive STATUS_LOCAL_DURABLE_ACK frames", loop.getTotalLocalDurableAcks() > 0);
+        Assert.assertTrue("local acks must advance the store-and-forward trim", loop.getTotalDurableTrimAdvances() > 0);
+        Assert.assertEquals("a local-only grant must never produce STATUS_DURABLE_ACK frames", 0, loop.getTotalDurableAcks());
+    }
+
+    // Publishes one frame of rows to the table and waits for its OK. Returns the frame's FSN.
+    private static long commitRows(QwpWebSocketSender sender, String table, int rows) {
+        final CursorWebSocketSendLoop before = sender.cursorSendLoopForTest();
+        final long okBefore = before == null ? 0 : before.getTotalAcks();
+        for (int i = 0; i < rows; i++) {
+            sender.table(table).longColumn("value", i).at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+        }
+        final long fsn = sender.flushAndGetSequence();
+        final CursorWebSocketSendLoop loop = sender.cursorSendLoopForTest();
+        Assert.assertNotNull(loop);
+        Assert.assertTrue("OK for " + table, waitFor(() -> loop.getTotalAcks() > okBefore, 10_000));
+        return fsn;
+    }
+
+    private static void createTables(TestServerMain serverMain, String... tables) {
+        for (String table : tables) {
+            serverMain.execute("CREATE TABLE " + table + " (value LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        }
+    }
+
+    private static QwpWebSocketSender localSender(TestServerMain serverMain, String extra) {
+        return (QwpWebSocketSender) Sender.fromConfig("ws::addr=localhost:" + serverMain.getHttpServerPort()
+                + ";request_durable_ack=local;close_flush_timeout_millis=10000;" + extra);
+    }
+
+    private static boolean waitFor(BooleanSupplier condition, long millis) {
+        final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
+        while (System.nanoTime() < deadline) {
+            if (condition.getAsBoolean()) {
+                return true;
+            }
+            Os.sleep(10);
+        }
+        return condition.getAsBoolean();
+    }
+
+    // Durable epochs are disabled: a table's first apply publishes one at once, which would advance the
+    // local frontier within milliseconds and race the drop. The group-commit window alone drives it here.
+    private TestServerMain startAdaptive(String groupWindowUs) {
+        if (groupWindowUs == null) {
+            return startFragmented(
+                    PropertyKey.CAIRO_COMMIT_MODE.getEnvVarName(), "adaptive",
+                    PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL.getEnvVarName(), "-1"
+            );
+        }
+        return startFragmented(
+                PropertyKey.CAIRO_COMMIT_MODE.getEnvVarName(), "adaptive",
+                PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL.getEnvVarName(), "-1",
+                PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW.getEnvVarName(), groupWindowUs
+        );
     }
 }

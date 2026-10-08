@@ -676,7 +676,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     // throughput. Under W>0 a crash mid-window rolls back the un-flushed tail (RPO <= W), so the W=0
     // zero-loss tighteners (assertW0Bars) do NOT apply; the per-crash-point oracle (membership + no-suspend)
     // still must hold at EVERY point = the "clean rollback, no corruption" guarantee. The complementary
-    // durable-ack RPO bar (an ACK'd txn always survives) is proven by AdaptiveGroupCommitCrashTest.
+    // durable-ack RPO bar (an ACK'd txn always survives) is proven by DurableFrontierTest.
     private static final int GROUP_WINDOW_WN_US = 50_000;
 
     // CI-fast W>0 regression guard: the group-commit (W=50ms) counterpart of testConvertPartitionCrashSafeW0.
@@ -689,7 +689,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     // recoverAfterCrash reclaims the resulting owned/distressed pool orphan (releaseCrashOrphanedWalWriters,
     // else "left behind on pool shutdown") AND reboots the table sequencer (resetForReboot, else the
     // still-open sequencer's stale in-memory lastTxn wedges recovery's apply in an infinite re-notify loop).
-    // The W>0 durable-ack crash GUARANTEE itself is separately covered by AdaptiveGroupCommitCrashTest.
+    // The W>0 durable-ack crash GUARANTEE itself is separately covered by DurableFrontierTest.
     @Test
     public void testConvertPartitionCrashSafeWN() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
@@ -702,7 +702,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         // intermittently wedging recovery's drainWalQueue. A fixed clock keeps every commit inside the window
         // (deterministic deferral, still exercising the close-time flush crash path) and the apply quota
         // effectively unbounded (single-pass apply), independent of load. This mirrors how the sibling W>0
-        // oracle AdaptiveGroupCommitCrashTest drives its window off a controlled clock. Restore the real clock
+        // oracle DurableFrontierTest drives its window off a controlled clock. Restore the real clock
         // in the finally so a fixed clock never leaks into a later test (currentMicros is a static not reset
         // by the harness between tests).
         setCurrentMicros(1_000_000L);
