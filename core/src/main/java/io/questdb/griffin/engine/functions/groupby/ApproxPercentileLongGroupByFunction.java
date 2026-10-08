@@ -45,7 +45,6 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
     private final GroupByHistogram histogramA;
     private final GroupByHistogram histogramB;
     private final Function percentileFunc;
-    private double percentile;
     private int valueIndex;
 
     public ApproxPercentileLongGroupByFunction(Function exprFunc, Function percentileFunc, int precision, int funcPosition) {
@@ -99,7 +98,9 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
         if (histogram.getTotalCount() == 0) {
             return Double.NaN;
         }
-        return histogram.getValueAtPercentile(percentile * 100);
+        // read at read time, not cached by init(): the copy of this function that reads a shared GROUP BY
+        // cursor (the outer side of a JOIN LATERAL) is never initialised
+        return histogram.getValueAtPercentile(percentileFunc.getDouble(null) * 100);
     }
 
     @Override
@@ -126,7 +127,7 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         BinaryFunction.super.init(symbolTableSource, executionContext);
 
-        percentile = percentileFunc.getDouble(null);
+        final double percentile = percentileFunc.getDouble(null);
         if (Numbers.isNull(percentile) || percentile < 0 || percentile > 1) {
             throw SqlException.$(funcPosition, "percentile must be between 0.0 and 1.0");
         }

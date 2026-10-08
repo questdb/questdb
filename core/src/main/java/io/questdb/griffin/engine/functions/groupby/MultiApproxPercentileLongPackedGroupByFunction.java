@@ -47,11 +47,13 @@ import io.questdb.std.histogram.org.HdrHistogram.PackedHistogram;
 
 public class MultiApproxPercentileLongPackedGroupByFunction extends ArrayFunction implements UnaryFunction, GroupByFunction {
     private final Function exprFunc;
-    private final ObjList<PackedHistogram> histograms = new ObjList<>();
+    private ObjList<PackedHistogram> histograms = new ObjList<>();
     private final Function percentileFunc;
     private final int percentilesPos;
     private final int precision;
     private int histogramIndex;
+    // a copy that reads the primary's histograms (a shared GROUP BY cursor, JOIN LATERAL)
+    private boolean isShared;
     private DirectArray out;
     private int valueIndex;
 
@@ -66,11 +68,14 @@ public class MultiApproxPercentileLongPackedGroupByFunction extends ArrayFunctio
 
     @Override
     public void clear() {
-        histograms.clear();
-        histogramIndex = 0;
         if (out != null) {
             out.clear();
         }
+        if (isShared) {
+            return;
+        }
+        histograms.clear();
+        histogramIndex = 0;
     }
 
     @Override
@@ -170,6 +175,13 @@ public class MultiApproxPercentileLongPackedGroupByFunction extends ArrayFunctio
         super.init(symbolTableSource, sqlExecutionContext);
         exprFunc.init(symbolTableSource, sqlExecutionContext);
         percentileFunc.init(symbolTableSource, sqlExecutionContext);
+    }
+
+    @Override
+    public void initSharedFrom(GroupByFunction primary) {
+        this.valueIndex = primary.getValueIndex();
+        this.histograms = ((MultiApproxPercentileLongPackedGroupByFunction) primary).histograms;
+        this.isShared = true;
     }
 
     @Override

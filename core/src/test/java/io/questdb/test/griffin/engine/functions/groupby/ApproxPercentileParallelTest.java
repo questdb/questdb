@@ -40,7 +40,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * approx_percentile over LONG arguments runs in parallel GROUP BY at every precision (the paged off-heap
+ * approx_percentile over LONG arguments runs in parallel GROUP BY at every precision (the sparse off-heap
  * histogram), and returns exactly what the serial on-heap histograms returned. Every query is run with
  * cairo.sql.parallel.approx.percentile.enabled=false first; its output is the expected output of the
  * parallel run. The values are integers recorded into integer counts, so the comparison is exact.
@@ -110,6 +110,21 @@ public class ApproxPercentileParallelTest extends AbstractCairoTest {
                                     Frame forward scan on: tab
                             """
             );
+            // under a per-query memory limit the serial on-heap functions are kept
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, "1G");
+            assertPlan(
+                    "SELECT approx_percentile(i + j, 0.5, 5) FROM tab WHERE g = 'a'",
+                    """
+                            GroupBy vectorized: false
+                              values: [approx_percentile(i+j,0.5)]
+                                Async JIT Filter workers: 1
+                                  filter: g='a'
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                            """
+            );
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, "0");
             assertPlan(
                     "SELECT g, approx_percentile(i, ARRAY[0.5, 0.9], 3) FROM tab",
                     """
@@ -173,6 +188,136 @@ public class ApproxPercentileParallelTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSharedReferenceThroughLateral() throws Exception {
+        // A GROUP BY on the outer side of a JOIN LATERAL is read twice: through the primary functions and
+        // through a second, shared set built for the outer reference, which never sees init(). Both must
+        // return the requested percentile, with parallel GROUP BY on and off.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, ctx) -> {
+                        engine.execute("CREATE TABLE items (k SYMBOL, lval LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", ctx);
+                        engine.execute("CREATE TABLE rates (min_val DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", ctx);
+                        engine.execute(
+                                """
+                                        INSERT INTO items VALUES
+                                        ('A', 10, '2024-01-01T00:00:00Z'), ('A', 20, '2024-01-01T01:00:00Z'), ('A', 30, '2024-01-01T02:00:00Z'),
+                                        ('B', 100, '2024-01-01T03:00:00Z'), ('B', 200, '2024-01-01T04:00:00Z'), ('B', 300, '2024-01-01T05:00:00Z')
+                                        """,
+                                ctx
+                        );
+                        engine.execute("INSERT INTO rates VALUES (15.0, 0.1, '2024-01-01T00:00:00Z'), (150.0, 0.2, '2024-01-01T00:00:01Z')", ctx);
+                        for (String parallelGroupBy : new String[]{"true", "false"}) {
+                            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, parallelGroupBy);
+                            for (String enabled : new String[]{"false", "true"}) {
+                                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_APPROX_PERCENTILE_ENABLED, enabled);
+                                assertSql(
+                                        engine,
+                                        ctx,
+                                        "SELECT o.k, o.p, sub.rate FROM (SELECT k, approx_percentile(lval, 0.5, 3) p FROM items GROUP BY k) o "
+                                                + "JOIN LATERAL (SELECT rate FROM rates WHERE min_val <= o.p) sub ORDER BY o.k, sub.rate",
+                                        """
+                                                k\tp\trate
+                                                A\t20.0\t0.1
+                                                B\t200.0\t0.1
+                                                B\t200.0\t0.2
+                                                """
+                                );
+                                assertSql(
+                                        engine,
+                                        ctx,
+                                        "SELECT o.k, o.p, sub.rate FROM (SELECT k, approx_median(lval, 4) p FROM items GROUP BY k) o "
+                                                + "JOIN LATERAL (SELECT rate FROM rates WHERE min_val <= o.p) sub ORDER BY o.k, sub.rate",
+                                        """
+                                                k\tp\trate
+                                                A\t20.0\t0.1
+                                                B\t200.0\t0.1
+                                                B\t200.0\t0.2
+                                                """
+                                );
+                                assertSql(
+                                        engine,
+                                        ctx,
+                                        "SELECT o.p, sub.rate FROM (SELECT approx_percentile(lval, 0.5, 5) p FROM items) o "
+                                                + "JOIN LATERAL (SELECT rate FROM rates WHERE min_val <= o.p) sub ORDER BY sub.rate",
+                                        """
+                                                p\trate
+                                                30.0\t0.1
+                                                """
+                                );
+                                // the shared reference read directly
+                                assertSql(
+                                        engine,
+                                        ctx,
+                                        "SELECT o.k, o.p, sub.x FROM (SELECT k, approx_percentile(lval, 0.9, 3) p FROM items GROUP BY k) o "
+                                                + "JOIN LATERAL (SELECT o.p AS x FROM rates LIMIT 1) sub ORDER BY o.k",
+                                        """
+                                                k\tp\tx
+                                                A\t30.0\t30.0
+                                                B\t300.0\t300.0
+                                                """
+                                );
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testSharedReferenceThroughLateralArrayForm() throws Exception {
+        // the on-heap array-form functions (the key off) did not share the primary's histograms with the
+        // copy that reads a shared GROUP BY cursor, so a JOIN LATERAL correlated on them returned no rows
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, ctx) -> {
+                        engine.execute("CREATE TABLE items (k SYMBOL, lval LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", ctx);
+                        engine.execute("CREATE TABLE rates (min_val DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", ctx);
+                        engine.execute(
+                                """
+                                        INSERT INTO items VALUES
+                                        ('A', 10, '2024-01-01T00:00:00Z'), ('A', 20, '2024-01-01T01:00:00Z'), ('A', 30, '2024-01-01T02:00:00Z'),
+                                        ('B', 100, '2024-01-01T03:00:00Z'), ('B', 200, '2024-01-01T04:00:00Z'), ('B', 300, '2024-01-01T05:00:00Z')
+                                        """,
+                                ctx
+                        );
+                        engine.execute("INSERT INTO rates VALUES (15.0, 0.1, '2024-01-01T00:00:00Z'), (150.0, 0.2, '2024-01-01T00:00:01Z')", ctx);
+                        for (String parallelGroupBy : new String[]{"true", "false"}) {
+                            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, parallelGroupBy);
+                            for (String enabled : new String[]{"false", "true"}) {
+                                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_APPROX_PERCENTILE_ENABLED, enabled);
+                                // the array form, on-heap at precision 3 (PackedHistogram) and 2 (Histogram) when the
+                                // key is off: those functions returned no rows here until they shared the primary's
+                                // histograms
+                                for (String precision : new String[]{"3", "2"}) {
+                                    assertSql(
+                                            engine,
+                                            ctx,
+                                            "SELECT o.k, o.p, sub.rate FROM (SELECT k, approx_percentile(lval, ARRAY[0.5, 0.6], " + precision + ") p FROM items GROUP BY k) o "
+                                                    + "JOIN LATERAL (SELECT rate FROM rates WHERE min_val <= o.p[1]) sub ORDER BY o.k, sub.rate",
+                                            """
+                                                    k\tp\trate
+                                                    A\t[20.0,20.0]\t0.1
+                                                    B\t[200.0,200.0]\t0.1
+                                                    B\t[200.0,200.0]\t0.2
+                                                    """
+                                    );
+                                }
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
     private static void assertMatchesSerial(CairoEngine engine, SqlExecutionContext ctx, String query, boolean parallel) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_APPROX_PERCENTILE_ENABLED, "false");
         final String serialPlan = plan(engine, ctx, query);
@@ -193,6 +338,16 @@ public class ApproxPercentileParallelTest extends AbstractCairoTest {
                 .inferRandomAccess()
                 .inferTimestamp()
                 .returns(expected.toString());
+    }
+
+    private static void assertSql(CairoEngine engine, SqlExecutionContext ctx, String query, String expected) throws Exception {
+        new QueryAssertion(engine, ctx, () -> {
+        }, query)
+                .noLeakCheck()
+                .sizeMayVary()
+                .inferRandomAccess()
+                .inferTimestamp()
+                .returns(expected);
     }
 
     private static void createTable(CairoEngine engine, SqlExecutionContext ctx) throws SqlException {

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,73 +25,72 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.DirectArray;
-import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByPagedHistogram;
-import io.questdb.std.Misc;
+import io.questdb.griffin.engine.groupby.GroupBySparseHistogram;
 import io.questdb.std.Numbers;
 
 /**
- * approx_percentile(LONG, DOUBLE[] percentiles [, precision]) over an off-heap {@link GroupByPagedHistogram}.
- * Returns the same arrays as {@link MultiApproxPercentileLongGroupByFunction} and
- * {@link MultiApproxPercentileLongPackedGroupByFunction}, and runs in parallel GROUP BY: the state is a
- * pointer in the group by map, and per-worker partials merge exactly. Used unless
- * cairo.sql.parallel.approx.percentile.enabled is false.
+ * approx_percentile(LONG, percentile, precision) over an off-heap {@link GroupBySparseHistogram}. It returns
+ * the same values as {@link ApproxPercentileLongPackedGroupByFunction} (the histogram records the same
+ * per-index counts and reads the percentile the same way), but its state lives in the group by map as a
+ * pointer, so per-worker partials merge exactly and the function runs in parallel GROUP BY. Used for
+ * precision 3..5 when {@link #isEnabled(CairoConfiguration)}.
  */
-public class MultiApproxPercentileLongPagedGroupByFunction extends ArrayFunction implements UnaryFunction, GroupByFunction {
+public class ApproxPercentileLongSparseGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
     private final Function exprFunc;
-    private final GroupByPagedHistogram histogramA;
-    private final GroupByPagedHistogram histogramB;
+    private final int funcPosition;
+    private final GroupBySparseHistogram histogramA;
+    private final GroupBySparseHistogram histogramB;
     private final Function percentileFunc;
-    private final int percentilesPos;
-    private DirectArray out;
     private int valueIndex;
 
-    public MultiApproxPercentileLongPagedGroupByFunction(Function exprFunc, Function percentileFunc, int precision, int percentilesPos) {
-        assert precision >= 0 && precision <= 5;
+    public ApproxPercentileLongSparseGroupByFunction(Function exprFunc, Function percentileFunc, int precision, int funcPosition) {
         this.exprFunc = exprFunc;
         this.percentileFunc = percentileFunc;
-        this.percentilesPos = percentilesPos;
-        this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
-        this.histogramA = new GroupByPagedHistogram(precision);
-        this.histogramB = new GroupByPagedHistogram(precision);
+        this.funcPosition = funcPosition;
+        this.histogramA = new GroupBySparseHistogram(precision);
+        this.histogramB = new GroupBySparseHistogram(precision);
+    }
+
+    /**
+     * True when approx_percentile over LONG uses the off-heap parallel functions: the feature key is on and
+     * no per-query memory limit is configured. Under a limit the serial on-heap functions are kept, so the
+     * per-worker partials of a parallel GROUP BY cannot make a query fail that ran within the limit before.
+     */
+    public static boolean isEnabled(CairoConfiguration configuration) {
+        return configuration.isSqlParallelApproxPercentileEnabled() && configuration.getQueryMemoryLimitBytes() <= 0;
     }
 
     @Override
     public void clear() {
         histogramA.clear();
         histogramB.clear();
-        if (out != null) {
-            out.clear();
-        }
     }
 
     @Override
     public void close() {
-        Misc.free(exprFunc);
-        Misc.free(percentileFunc);
-        out = Misc.free(out);
+        BinaryFunction.super.close();
+        histogramA.close();
+        histogramB.close();
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final long val = exprFunc.getLong(record);
         if (val != Numbers.LONG_NULL) {
-            histogramA.of(0).recordValue(val);
+            histogramA.of(0);
+            histogramA.recordValue(val);
             mapValue.putLong(valueIndex, histogramA.ptr());
         } else {
             mapValue.putLong(valueIndex, 0);
@@ -102,9 +101,9 @@ public class MultiApproxPercentileLongPagedGroupByFunction extends ArrayFunction
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final long val = exprFunc.getLong(record);
         if (val != Numbers.LONG_NULL) {
-            final long ptr = mapValue.getLong(valueIndex);
+            long ptr = mapValue.getLong(valueIndex);
             histogramA.of(ptr).recordValue(val);
-            final long newPtr = histogramA.ptr();
+            long newPtr = histogramA.ptr();
             if (newPtr != ptr) {
                 mapValue.putLong(valueIndex, newPtr);
             }
@@ -112,35 +111,23 @@ public class MultiApproxPercentileLongPagedGroupByFunction extends ArrayFunction
     }
 
     @Override
-    public Function getArg() {
-        return exprFunc;
+    public double getDouble(Record rec) {
+        long ptr = rec.getLong(valueIndex);
+        if (ptr == 0) {
+            return Double.NaN;
+        }
+        GroupBySparseHistogram histogram = histogramA.of(ptr);
+        if (histogram.getTotalCount() == 0) {
+            return Double.NaN;
+        }
+        // read at read time, not cached by init(): the copy of this function that reads a shared GROUP BY
+        // cursor (the outer side of a JOIN LATERAL) is never initialised
+        return histogram.getValueAtPercentile(percentileFunc.getDouble(null) * 100);
     }
 
     @Override
-    public ArrayView getArray(Record rec) {
-        if (out == null) {
-            out = new DirectArray();
-        }
-        final GroupByPagedHistogram histogram = histogramA.of(rec.getLong(valueIndex));
-        if (histogram.getTotalCount() == 0) {
-            out.ofNull();
-            return out;
-        }
-
-        ArrayView percentiles = percentileFunc.getArray(rec);
-        FlatArrayView view = percentiles.flatView();
-        int viewLength = view.length();
-
-        out.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
-        out.setDimLen(0, viewLength);
-        out.applyShape();
-
-        for (int i = 0; i < viewLength; i++) {
-            double p = view.getDoubleAtAbsIndex(i);
-            double multiplier = SqlUtil.getPercentileMultiplier(p, percentilesPos);
-            out.putDouble(i, histogram.getValueAtPercentile(multiplier * 100));
-        }
-        return out;
+    public Function getLeft() {
+        return exprFunc;
     }
 
     @Override
@@ -149,8 +136,8 @@ public class MultiApproxPercentileLongPagedGroupByFunction extends ArrayFunction
     }
 
     @Override
-    public int getSampleByFlags() {
-        return GroupByFunction.SAMPLE_BY_FILL_ALL;
+    public Function getRight() {
+        return percentileFunc;
     }
 
     @Override
@@ -159,10 +146,13 @@ public class MultiApproxPercentileLongPagedGroupByFunction extends ArrayFunction
     }
 
     @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        super.init(symbolTableSource, sqlExecutionContext);
-        exprFunc.init(symbolTableSource, sqlExecutionContext);
-        percentileFunc.init(symbolTableSource, sqlExecutionContext);
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        BinaryFunction.super.init(symbolTableSource, executionContext);
+
+        final double percentile = percentileFunc.getDouble(null);
+        if (Numbers.isNull(percentile) || percentile < 0 || percentile > 1) {
+            throw SqlException.$(funcPosition, "percentile must be between 0.0 and 1.0");
+        }
     }
 
     @Override
@@ -172,7 +162,7 @@ public class MultiApproxPercentileLongPagedGroupByFunction extends ArrayFunction
 
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
-        valueIndex = columnTypes.getColumnCount();
+        initValueIndex(columnTypes.getColumnCount());
         columnTypes.add(ColumnType.LONG);
     }
 
@@ -193,10 +183,11 @@ public class MultiApproxPercentileLongPagedGroupByFunction extends ArrayFunction
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        final long srcPtr = srcValue.getLong(valueIndex);
+        long srcPtr = srcValue.getLong(valueIndex);
         if (srcPtr == 0) {
             return;
         }
+
         histogramA.of(destValue.getLong(valueIndex));
         histogramB.of(srcPtr);
         histogramA.merge(histogramB);
@@ -210,22 +201,17 @@ public class MultiApproxPercentileLongPagedGroupByFunction extends ArrayFunction
     }
 
     @Override
-    public void setEmpty(MapValue mapValue) {
-        mapValue.putLong(valueIndex, 0);
-    }
-
-    @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, 0);
     }
 
     @Override
-    public boolean supportsParallelism() {
-        return UnaryFunction.super.supportsParallelism() && (percentileFunc.isConstant() || percentileFunc.isRuntimeConstant());
+    public void setEmpty(MapValue mapValue) {
+        mapValue.putLong(valueIndex, 0);
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
-        sink.val("approx_percentile(").val(exprFunc).val(')');
+    public boolean supportsParallelism() {
+        return exprFunc.supportsParallelism();
     }
 }

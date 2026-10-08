@@ -63,8 +63,8 @@ public class ApproxPercentileLongGroupByFunctionFactory implements FunctionFacto
         final int precision = checkAndReturnPrecision(precisionFunc, argPositions.getQuick(2));
 
         if (precision > 2) {
-            if (configuration.isSqlParallelApproxPercentileEnabled()) {
-                return new ApproxPercentileLongPagedGroupByFunction(exprFunc, percentileFunc, precision, position);
+            if (ApproxPercentileLongSparseGroupByFunction.isEnabled(configuration)) {
+                return new ApproxPercentileLongSparseGroupByFunction(exprFunc, percentileFunc, precision, position);
             }
             return new ApproxPercentileLongPackedGroupByFunction(exprFunc, percentileFunc, precision, position);
         }
