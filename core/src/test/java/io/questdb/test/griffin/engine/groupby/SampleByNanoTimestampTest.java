@@ -16650,13 +16650,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     // Asserts that a statement over a designated timestamp that holds NULL fails with an error that names the NULL,
-    // and pins the path that the plan takes. LIMIT bounds the statements that walked the fill grid from the NULL,
-    // except FILL(LINEAR), which builds every bucket before it returns the first row.
+    // and pins the path of the same statement in its plan. LIMIT keeps a regression that walks the fill grid from
+    // the NULL from hanging the test, except with FILL(LINEAR), which builds every bucket before it returns the
+    // first row.
     private void assertSampleByNullTimestampFails(String sql, String planFragment) throws Exception {
-        assertQuery(sql)
+        final String limited = sql + " LIMIT 10";
+        assertQuery(limited)
                 .noLeakCheck()
                 .assertsPlanContaining(planFragment);
-        assertQuery(sql + " LIMIT 10")
+        assertQuery(limited)
                 .noLeakCheck()
                 .failsWith("SAMPLE BY designated timestamp cannot be NULL");
     }

@@ -11013,6 +11013,61 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByNullDesignatedTimestampReExecution() throws Exception {
+        // A prepared statement keeps its factory after the error of testSampleByNullDesignatedTimestampCursor(). Key
+        // b has only the row with the NULL timestamp, and the keyed cursors add it to their maps before they read the
+        // first timestamp. The next execution of the factory must fail the same way, and an execution that filters
+        // key b out must return the rows of key a alone. LIMIT and, for FILL(LINEAR), the calendar alignment keep a
+        // regression that walks the fill grid from the NULL from hanging the test, see
+        // assertSampleByNullTimestampFails().
+        assertMemoryLeak(() -> {
+            createNullTimestampTable();
+            final String select = "SELECT ts, sym, count() c, sum(v) s";
+            final String cursorSource = " FROM ((SELECT * FROM n WHERE sym != $1 ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY 1h ";
+            assertSampleByNullTimestampReExecution(
+                    select + cursorSource + "FILL(PREV) ALIGN TO FIRST OBSERVATION LIMIT 10",
+                    "Sample By\n",
+                    false,
+                    """
+                            ts\tsym\tc\ts
+                            2024-01-01T00:00:00.000000Z\ta\t1\t1.0
+                            2024-01-01T01:00:00.000000Z\ta\t1\t1.0
+                            2024-01-01T02:00:00.000000Z\ta\t1\t4.0
+                            """
+            );
+            final String expectedFillNull = """
+                    ts\tsym\tc\ts
+                    2024-01-01T00:00:00.000000Z\ta\t1\t1.0
+                    2024-01-01T01:00:00.000000Z\ta\tnull\tnull
+                    2024-01-01T02:00:00.000000Z\ta\t1\t4.0
+                    """;
+            assertSampleByNullTimestampReExecution(
+                    select + cursorSource + "FILL(NULL) LIMIT 10",
+                    "Sample By\n",
+                    false,
+                    expectedFillNull
+            );
+            assertSampleByNullTimestampReExecution(
+                    select + " FROM n TIMESTAMP(ts) WHERE sym != $1 SAMPLE BY 1h FILL(NULL) LIMIT 10",
+                    "Sample By Fill\n",
+                    false,
+                    expectedFillNull
+            );
+            assertSampleByNullTimestampReExecution(
+                    select + cursorSource + "FILL(LINEAR)",
+                    "fill: linear\n",
+                    true,
+                    """
+                            ts\tsym\tc\ts
+                            2024-01-01T00:00:00.000000Z\ta\t1\t1.0
+                            2024-01-01T01:00:00.000000Z\ta\t1\t2.5
+                            2024-01-01T02:00:00.000000Z\ta\t1\t4.0
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testSampleByOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE eq_equities_market_data (" +
@@ -22465,15 +22520,62 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     // Asserts that a statement over a designated timestamp that holds NULL fails with an error that names the NULL,
-    // and pins the path that the plan takes. LIMIT bounds the statements that walked the fill grid from the NULL,
-    // except FILL(LINEAR), which builds every bucket before it returns the first row.
+    // and pins the path of the same statement in its plan. LIMIT keeps a regression that walks the fill grid from
+    // the NULL from hanging the test, except with FILL(LINEAR), which builds every bucket before it returns the
+    // first row.
     private void assertSampleByNullTimestampFails(String sql, String planFragment) throws Exception {
+        final String limited = sql + " LIMIT 10";
+        assertQuery(limited)
+                .noLeakCheck()
+                .assertsPlanContaining(planFragment);
+        assertQuery(limited)
+                .noLeakCheck()
+                .failsWith("SAMPLE BY designated timestamp cannot be NULL");
+    }
+
+    // Compiles a statement once and executes it four times: twice over the base with the NULL timestamp, then with
+    // key b, whose only row holds the NULL, filtered out by the bind variable, and then over the NULL again.
+    // FILL(LINEAR) reads its rows from a map, so it supports random access and knows its size.
+    private void assertSampleByNullTimestampReExecution(
+            String sql,
+            String planFragment,
+            boolean isFillLinear,
+            String expected
+    ) throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "b");
         assertQuery(sql)
                 .noLeakCheck()
                 .assertsPlanContaining(planFragment);
-        assertQuery(sql + " LIMIT 10")
+
+        final String error = "SAMPLE BY designated timestamp cannot be NULL";
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.fails(
+                "NULL in the base",
+                error,
+                bindVariableService -> bindVariableService.setStr(0, "none")
+        ));
+        cases.add(BindVarTuple.fails(
+                "NULL again on the same factory",
+                error,
+                bindVariableService -> bindVariableService.setStr(0, "none")
+        ));
+        cases.add(BindVarTuple.ok(
+                "key b filtered out",
+                expected,
+                bindVariableService -> bindVariableService.setStr(0, "b")
+        ));
+        cases.add(BindVarTuple.fails(
+                "NULL after a full read",
+                error,
+                bindVariableService -> bindVariableService.setStr(0, "none")
+        ));
+        assertQuery(sql)
                 .noLeakCheck()
-                .failsWith("SAMPLE BY designated timestamp cannot be NULL");
+                .timestamp("ts")
+                .supportsRandomAccess(isFillLinear)
+                .expectSize(isFillLinear)
+                .assertBinds(cases);
     }
 
     private void assertSubDayTimeZoneBindVariable(String sql, String rowsAt0200, String rowsAt0530) throws Exception {
