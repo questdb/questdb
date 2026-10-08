@@ -185,6 +185,10 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public CairoConfiguration getConfiguration() {
+        return configuration;
+    }
+
     public int getCurrentWalId(final TableToken tableToken) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
             try {
