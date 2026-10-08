@@ -65,6 +65,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.LongConsumer;
 
 /**
  * Computes a window partitioned by the key of a key-major index scan on the shared query
@@ -1522,6 +1523,9 @@ public class AsyncWindowRecordCursor implements RecordCursor {
      * stopRounds(), and only then {@link #reset()}s the pass.
      */
     static final class ReplayChain {
+        // see passPublishing()
+        @TestOnly
+        static volatile LongConsumer passPublishingListener;
         private final int[] columns;
         private final boolean[] foldCounted;
         private final double[] foldSums;
@@ -1662,10 +1666,23 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                 }
                 assert task.passSeq == h;
                 pass(task);
-                task.passDone = true;
+                // head first: whoever sees passDone, and so may return the task and enqueue in
+                // its slot, also sees the head past it, which keeps tail - head within the ring
                 head = ++h;
+                assert passPublishing(task.passSeq);
+                task.passDone = true;
             }
             return h - h0;
+        }
+
+        // Between the pass's two writes of a task, under -ea only: lets a test stand in for a
+        // thread that sees the task's state while the passer is preempted there.
+        private static boolean passPublishing(long passSeq) {
+            final LongConsumer listener = passPublishingListener;
+            if (listener != null) {
+                listener.accept(passSeq);
+            }
+            return true;
         }
 
         // The serial functions' arithmetic over the task's rows, in walk order, in place: a
