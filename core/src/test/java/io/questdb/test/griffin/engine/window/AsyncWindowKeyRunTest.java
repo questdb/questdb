@@ -38,7 +38,6 @@ import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.window.AsyncWindowAtom;
 import io.questdb.griffin.engine.window.AsyncWindowRecordCursor;
 import io.questdb.griffin.engine.window.AsyncWindowRecordCursorFactory;
-import io.questdb.griffin.engine.window.AsyncWindowSplitPlan;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
@@ -66,8 +65,8 @@ import java.util.Collection;
  *     off), which must equal them bit for bit whatever the split, since both compute a split key the
  *     same way;</li>
  *     <li>the serial window, which they must equal bit for bit, also when keys are split: a
- *     split replays a bounded DOUBLE frame (OP_REPLAY) or rebuilds an exact one from warm-up rows.
- *     The one exception, a running DOUBLE sum a carry adds (OP_ADD), is compared whole only.</li>
+ *     split replays a bounded DOUBLE frame (OP_REPLAY) or rebuilds an exact one from warm-up rows,
+ *     and folds a running DOUBLE sum (OP_FOLD) in walk order.</li>
  * </ul>
  * The fixture holds NULLs in every column, zero denominators, -0.0 and keys of every size.
  */
@@ -326,9 +325,7 @@ public class AsyncWindowKeyRunTest extends AbstractCairoTest {
                 }
                 final String serial = bits(engine, sqlExecutionContext, query, false, false);
                 final String parallel = bits(engine, sqlExecutionContext, query, true, false);
-                if (!hasInexactCarry(engine, sqlExecutionContext, query)) {
-                    TestUtils.assertEquals(query, serial, parallel);
-                }
+                TestUtils.assertEquals(query, serial, parallel);
             }
         });
     }
@@ -497,23 +494,6 @@ public class AsyncWindowKeyRunTest extends AbstractCairoTest {
         return lines.toString();
     }
 
-    // Whether the plan splits keys and carries a running DOUBLE sum, the one documented inexact split.
-    private static boolean hasInexactCarry(CairoEngine engine, SqlExecutionContext ctx, String query) throws Exception {
-        ctx.setParallelWindowEnabled(true);
-        try (RecordCursorFactory factory = engine.select(query, ctx)) {
-            final AsyncWindowSplitPlan plan = findAsyncFactory(factory).getSplitPlan();
-            for (int i = 0, n = plan.getPrefixCount(); i < n; i++) {
-                if (plan.getPrefixOp(i) == AsyncWindowSplitPlan.OP_ADD && ColumnType.tagOf(plan.getPrefixType(i)) == ColumnType.DOUBLE) {
-                    return true;
-                }
-            }
-            return false;
-        } finally {
-            ctx.setParallelWindowEnabled(false);
-        }
-    }
-
-
     // Every value of every row as the bits a reader gets from the record.
     private static void printBits(RecordCursor cursor, RecordMetadata metadata, StringSink sink) {
         final Record record = cursor.getRecord();
@@ -621,9 +601,7 @@ public class AsyncWindowKeyRunTest extends AbstractCairoTest {
             ctx.setParallelWindowEnabled(false);
         }
         final String serial = bits(engine, ctx, query, false, false);
-        if (!hasInexactCarry(engine, ctx, query)) {
-            TestUtils.assertEquals(query, serial, keyRuns);
-        }
+        TestUtils.assertEquals(query, serial, keyRuns);
         // no key split: one task takes every key whole
         final long minRows = engine.getConfiguration().getSqlParallelWindowMinRows();
         final long taskRows = engine.getConfiguration().getSqlParallelWindowTaskRows();

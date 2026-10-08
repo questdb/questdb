@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordBlock;
@@ -118,6 +119,8 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     private final double[] foldSums;
     // OP_REPLAY: each replayed column's function, the query thread's own, see applyCarry()
     private final ReplayableWindowFunction[] replayFunctions;
+    // whether a column is folded, see AsyncWindowSplitPlan.OP_FOLD
+    private final boolean hasFold;
     // whether a column is replayed, see AsyncWindowSplitPlan.OP_REPLAY
     private final boolean hasReplay;
     // OP_REPLAY: the rows of ownerRows at which a key starts, ascending, see refillPrefix()
@@ -223,6 +226,11 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             }
         }
         this.hasReplay = hasReplay;
+        boolean hasFold = false;
+        for (int j = 0, n = splitPlan.getPrefixCount(); j < n; j++) {
+            hasFold |= splitPlan.getPrefixOp(j) == AsyncWindowSplitPlan.OP_FOLD;
+        }
+        this.hasFold = hasFold;
         this.taskRows = configuration.getSqlParallelWindowTaskRows();
         this.maxKeyRows = Math.max(taskRows, configuration.getSqlParallelWindowMaxKeyRows());
         // the prefix: no more than min.rows, which also gates the parallel plan, see prefix.rows
@@ -653,7 +661,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         // each key the task starts. A key the task continues goes on from the state the key's
         // rows before the task's left: the rows this thread computed itself (see
         // replayPrefixRow()) or replayed here, task by task, in walk order.
-        final long rowCount = hasReplay ? task.emittedRows : task.firstKeyRows;
+        final long rowCount = hasReplay || hasFold ? task.emittedRows : task.firstKeyRows;
         final LongList keyStarts = task.keyStarts;
         // a continued key's start is among the warm-up rows, or at the task's first row when
         // there are none: either way not a start here
@@ -670,6 +678,10 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                 for (int j = 0; j < n; j++) {
                     if (replayFunctions[j] != null) {
                         replayFunctions[j].replayKeyStart();
+                    } else if (splitPlan.getPrefixOp(j) == AsyncWindowSplitPlan.OP_FOLD) {
+                        // a key the task starts: its sum starts from scratch, as serially
+                        foldSums[j] = 0.0;
+                        foldCounted[j] = false;
                     }
                 }
             }
@@ -683,17 +695,18 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                     final ReplayableWindowFunction function = replayFunctions[j];
                     function.replayNext(Unsafe.getDouble(address));
                     Unsafe.putDouble(address, function.getReplayedValue());
-                } else if (!firstKey) {
-                    // the carries and folds are the first key's
-                    continue;
                 } else if (op == AsyncWindowSplitPlan.OP_FOLD) {
-                    // as SumOverUnboundedRowsFrameFunction.computeNext() adds, in the same order
+                    // as SumOverUnboundedRowsFrameFunction.computeNext() adds, and its partitioned
+                    // twin, in the same order: every key's rows, each from its start
                     final double value = Unsafe.getDouble(address);
                     if (Numbers.isFinite(value)) {
                         foldSums[j] += value;
                         foldCounted[j] = true;
                     }
                     Unsafe.putDouble(address, foldCounted[j] ? foldSums[j] : Double.NaN);
+                } else if (!firstKey) {
+                    // the carries are the first key's: a key the task starts needs none
+                    continue;
                 } else if (!continues) {
                     // a key the task starts needs no carry
                     continue;
@@ -755,7 +768,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         mode = MODE_SERIAL;
         if (baseCursor instanceof KeyMajorPageFrameRecordCursor keyMajorCursor) {
             keyMajorCursor.prepareFrames();
-            if (keyMajorCursor.hasOnlyPlainNativeFrames()) {
+            if (keyMajorCursor.hasOnlyPlainNativeFrames() && isWithinExactRowLimit(keyMajorCursor)) {
                 this.keyMajorCursor = keyMajorCursor;
                 mode = MODE_PARALLEL;
                 final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
@@ -771,6 +784,25 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         record.of(atom.getSlot(-1).getOutputRecord());
         atom.getSlot(-1).ofSerial(baseCursor.getRecord());
         isOwnerFlushPending = true;
+    }
+
+    // Whether the walk's frames hold no more rows than the plan's carried sums stay exact over,
+    // see AsyncWindowSplitPlan.getExactRowLimit(): every key's rows are among them. A walk over
+    // more is run serially, whose sums are the serial plan's.
+    private boolean isWithinExactRowLimit(KeyMajorPageFrameRecordCursor keyMajorCursor) {
+        final long limit = splitPlan.getExactRowLimit();
+        if (limit == Long.MAX_VALUE) {
+            return true;
+        }
+        final PageFrameAddressCache frames = keyMajorCursor.getFrameAddressCache();
+        long rows = 0;
+        for (int i = 0, n = frames.getFrameCount(); i < n; i++) {
+            rows += frames.getFrameSize(i);
+            if (rows > limit) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // Collects the next round's tasks from the walk and dispatches them, then queues the round.

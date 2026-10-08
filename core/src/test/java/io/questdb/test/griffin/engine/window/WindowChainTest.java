@@ -67,9 +67,8 @@ import java.util.Collection;
  * projections, windows, filters and GROUP BY over the Async Window as steps its workers compute.
  * <p>
  * Every query runs with the parallel window switched off, which is the serial plan, and on; the
- * two must agree bit for bit, with the one exception documented for the parallel window: a running
- * DOUBLE sum under PARTITION BY that a carry adds over a key split across tasks, which may differ by
- * the rounding of adding its values in another order, in its own column. The tests also check
+ * two must agree bit for bit, running DOUBLE sums included: the query's thread folds those in walk
+ * order, or a carry adds whole numbers exactly. The tests also check
  * the plan they mean to test: the steps, the key-major scans, and that the sort over the GROUP BY
  * is elided where the groups come out in its order.
  */
@@ -603,7 +602,7 @@ public class WindowChainTest extends AbstractCairoTest {
                     // the plans made over native partitions
                     sqlExecutionContext.setParallelWindowEnabled(true);
                     try (RecordCursor cursor = cached.getQuick(i).getCursor(sqlExecutionContext)) {
-                        assertRowsMatch(queries[i], cached.getQuick(i), expected.getQuick(i), rawRows(cursor, cached.getQuick(i).getMetadata()));
+                        assertRowsMatch(queries[i], expected.getQuick(i), rawRows(cursor, cached.getQuick(i).getMetadata()));
                     } finally {
                         sqlExecutionContext.setParallelWindowEnabled(false);
                     }
@@ -630,9 +629,9 @@ public class WindowChainTest extends AbstractCairoTest {
                                 // a partial pass
                             }
                             cursor.toTop();
-                            assertRowsMatch(query, factory, expected, rawRows(cursor, factory.getMetadata()));
+                            assertRowsMatch(query, expected, rawRows(cursor, factory.getMetadata()));
                             cursor.toTop();
-                            assertRowsMatch(query, factory, expected, rawRows(cursor, factory.getMetadata()));
+                            assertRowsMatch(query, expected, rawRows(cursor, factory.getMetadata()));
                         }
                     }
                     assertSlotsReleased(factory);
@@ -827,8 +826,7 @@ public class WindowChainTest extends AbstractCairoTest {
      * Doubles no sum of which is exact, so that adding them in another order shows: random
      * fractions, spikes of 1e9, pairs of +-1e16 that cancel, -0.0, NULLs, tiny magnitudes; a
      * column with infinities and sums that overflow; and an INT. Every window over them must match
-     * the serial one bit for bit, but the running DOUBLE sums a carry adds under PARTITION BY,
-     * within the bound of their data.
+     * the serial one bit for bit, the running DOUBLE sums under PARTITION BY included.
      */
     private void assertInexactDoubles(CairoEngine engine, SqlExecutionContext ctx) throws Exception {
         final int rows = 6_000;
@@ -850,8 +848,6 @@ public class WindowChainTest extends AbstractCairoTest {
                 ctx
         );
         engine.execute("create table u as (select * from d) timestamp(time) partition by DAY", ctx);
-        // n * 2^-52 * the sum of the magnitudes: the bound of a sum's rounding in any order
-        final double tolerance = rows * 0x1p-52 * (rows * 1e16);
         final String big = "FROM d WHERE sym = 'BIG'";
         final String[] singleKey = {
                 // a bounded frame's avg and sum, replayed (idx 48)
@@ -903,26 +899,39 @@ public class WindowChainTest extends AbstractCairoTest {
             for (String query : manyKeys) {
                 assertMatchesSerial(engine, ctx, query, null);
             }
-            // the one documented exception: a running DOUBLE sum under PARTITION BY
+            // a running DOUBLE sum under PARTITION BY, folded key by key in walk order
             assertMatchesSerial(
                     engine,
                     ctx,
                     "SELECT sym, time, s FROM (SELECT sym, time, sum(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM " + table + " WHERE sym IN ('BIG', 'K1', 'K2')) ORDER BY sym, time, s",
-                    null,
-                    tolerance
+                    null
             );
-            // a sum that overflowed stays infinite, also across a carry
+            // a sum that overflowed stays infinite, and one that did not, finite
             assertMatchesSerial(
                     engine,
                     ctx,
                     "SELECT sym, time, s FROM (SELECT sym, time, sum(x) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM " + table + " WHERE sym IN ('BIG', 'K1', 'K2')) ORDER BY sym, time, s",
-                    null,
-                    tolerance
+                    null
+            );
+            // over the whole table, next to warm-up rows, and of an INT
+            assertMatchesSerial(
+                    engine,
+                    ctx,
+                    "SELECT sym, time, s, l FROM (SELECT sym, time, sum(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s, lag(v) OVER (PARTITION BY sym ORDER BY time) l FROM " + table + ") ORDER BY sym, time, s, l",
+                    null
+            );
+            assertMatchesSerial(
+                    engine,
+                    ctx,
+                    "SELECT sym, time, s FROM (SELECT sym, time, sum(i) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM " + table + ") ORDER BY sym, time, s",
+                    null
             );
         }
         assertSplitOp(engine, ctx, "SELECT sym, time, a FROM (SELECT sym, time, avg(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) a FROM d) ORDER BY sym, time, a", AsyncWindowSplitPlan.OP_REPLAY);
-        // the exception's plans do split keys and carry the sums
-        assertSplitOp(engine, ctx, "SELECT sym, time, s FROM (SELECT sym, time, sum(x) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM d WHERE sym IN ('BIG', 'K1', 'K2')) ORDER BY sym, time, s", AsyncWindowSplitPlan.OP_ADD);
+        // these plans do split keys, and fold the sums
+        assertSplitOp(engine, ctx, "SELECT sym, time, s FROM (SELECT sym, time, sum(x) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM d WHERE sym IN ('BIG', 'K1', 'K2')) ORDER BY sym, time, s", AsyncWindowSplitPlan.OP_FOLD);
+        assertSplitOp(engine, ctx, "SELECT sym, time, s, l FROM (SELECT sym, time, sum(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s, lag(v) OVER (PARTITION BY sym ORDER BY time) l FROM d) ORDER BY sym, time, s, l", AsyncWindowSplitPlan.OP_FOLD);
+        assertSplitOp(engine, ctx, "SELECT sym, time, s FROM (SELECT sym, time, sum(i) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM d) ORDER BY sym, time, s", AsyncWindowSplitPlan.OP_FOLD);
         // slices of the whole table, a running sum folded
         assertMatchesSerial(engine, ctx, "SELECT time, sum(v) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM u WHERE i > 0", null);
         assertMatchesSerial(engine, ctx, "SELECT time, sum(x) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM u", null);
@@ -1087,60 +1096,9 @@ public class WindowChainTest extends AbstractCairoTest {
         return sink.toString();
     }
 
-    private static void assertRowsMatch(String query, RecordCursorFactory factory, String expected, String actual) {
-        assertRowsMatch(query, factory, expected, actual, 0);
-    }
-
-    /**
-     * Compares every value bit for bit, but for the one documented exception: a running DOUBLE
-     * sum combined with a carry (OP_ADD) may differ from the serial sum by the rounding of adding
-     * its values in another order, at most {@code tolerance}, in its own columns and nowhere else.
-     * A test passes the bound of its data, n * 2^-52 * the sum of the values' magnitudes, or 0
-     * when no such sum may differ at all.
-     */
-    private static void assertRowsMatch(String query, RecordCursorFactory factory, String expected, String actual, double tolerance) {
-        final AsyncWindowRecordCursorFactory async = findAsyncFactoryOrNull(factory);
-        final RecordMetadata metadata = factory.getMetadata();
-        final boolean[] mayDiffer = new boolean[metadata.getColumnCount()];
-        boolean any = false;
-        if (async != null && tolerance > 0) {
-            final AsyncWindowSplitPlan plan = async.getSplitPlan();
-            for (int i = 0, n = plan.getPrefixCount(); i < n; i++) {
-                if (plan.getPrefixOp(i) == AsyncWindowSplitPlan.OP_ADD && ColumnType.tagOf(plan.getPrefixType(i)) == ColumnType.DOUBLE) {
-                    // the carried column, by its name, wherever the output puts it
-                    final int column = metadata.getColumnIndexQuiet(async.getMetadata().getColumnName(plan.getPrefixColumn(i)));
-                    if (column > -1) {
-                        mayDiffer[column] = true;
-                        any = true;
-                    }
-                }
-            }
-        }
-        if (!any) {
-            TestUtils.assertEquals(query, expected, actual);
-            return;
-        }
-        final String[] e = expected.split("\n");
-        final String[] a = actual.split("\n");
-        Assert.assertEquals(query, e.length, a.length);
-        for (int i = 0; i < e.length; i++) {
-            if (e[i].equals(a[i])) {
-                continue;
-            }
-            final String[] ev = e[i].split("\t", -1);
-            final String[] av = a[i].split("\t", -1);
-            Assert.assertEquals(query, ev.length, av.length);
-            for (int c = 0; c < ev.length; c++) {
-                if (ev[c].equals(av[c])) {
-                    continue;
-                }
-                final String message = query + " row " + i + " column " + c + ": expected " + ev[c] + " but was " + av[c];
-                Assert.assertTrue(message, mayDiffer[c]);
-                final double x = Double.longBitsToDouble(Long.parseLong(ev[c]));
-                final double y = Double.longBitsToDouble(Long.parseLong(av[c]));
-                Assert.assertTrue(message, Math.abs(x - y) <= tolerance);
-            }
-        }
+    // every value bit for bit: no split may change one
+    private static void assertRowsMatch(String query, String expected, String actual) {
+        TestUtils.assertEquals(query, expected, actual);
     }
 
     private static void assertSlotsReleased(RecordCursorFactory factory) {
@@ -1206,15 +1164,6 @@ public class WindowChainTest extends AbstractCairoTest {
      *                  Async Window at all, null for any plan
      */
     private long assertMatchesSerial(CairoEngine engine, SqlExecutionContext ctx, String query, Integer lastStage) throws Exception {
-        return assertMatchesSerial(engine, ctx, query, lastStage, 0);
-    }
-
-    /**
-     * {@link #assertMatchesSerial(CairoEngine, SqlExecutionContext, String, Integer)}, letting the
-     * running DOUBLE sums a carry adds to differ by at most {@code tolerance}, see
-     * {@link #assertRowsMatch(String, RecordCursorFactory, String, String, double)}.
-     */
-    private long assertMatchesSerial(CairoEngine engine, SqlExecutionContext ctx, String query, Integer lastStage, double tolerance) throws Exception {
         final String expected = serial(engine, ctx, query);
         ctx.setParallelWindowEnabled(true);
         try (RecordCursorFactory factory = engine.select(query, ctx)) {
@@ -1231,9 +1180,9 @@ public class WindowChainTest extends AbstractCairoTest {
             }
             for (int pass = 0; pass < 2; pass++) {
                 try (RecordCursor cursor = factory.getCursor(ctx)) {
-                    assertRowsMatch(query, factory, expected, rawRows(cursor, factory.getMetadata()), tolerance);
+                    assertRowsMatch(query, expected, rawRows(cursor, factory.getMetadata()));
                     cursor.toTop();
-                    assertRowsMatch(query, factory, expected, rawRows(cursor, factory.getMetadata()), tolerance);
+                    assertRowsMatch(query, expected, rawRows(cursor, factory.getMetadata()));
                 }
             }
             if (async == null) {

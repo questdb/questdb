@@ -30,6 +30,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * How {@link AsyncWindowRecordCursor} may split one key of the scan into several tasks, decided
@@ -50,23 +51,36 @@ import io.questdb.std.Numbers;
  *     continues a key computes it from scratch, and the query's thread combines each of its rows
  *     with the value the key had at the end of the previous task before returning them.</li>
  * </ul>
- * Results equal the serial window's bit for bit, with one exception: a running DOUBLE sum under
- * PARTITION BY ({@link #OP_ADD}) whose key a split spreads over tasks may differ in its last bits,
- * since the carry adds the same values in a different order, as parallel GROUP BY does. A sum of
- * whole numbers is exact either way, and the planner proves which are (see
- * {@code SqlCodeGenerator.isNonNegativeValue}). Everything else is exact by construction:
+ * Results equal the serial window's bit for bit, by construction:
  * <ul>
  *     <li>integer, count, min, max, first, last, lag and row_number results, which do not depend
- *     on the order of additions;</li>
- *     <li>a running DOUBLE sum of a single key, which the query's thread folds in order
- *     ({@link #OP_FOLD});</li>
+ *     on the order of additions: a LONG carry adds in two's complement, which wraps as the serial
+ *     sum does;</li>
+ *     <li>a running DOUBLE sum, which the query's thread folds in walk order, key by key
+ *     ({@link #OP_FOLD}), unless its values are whole numbers of a known bound: a carry adds
+ *     those exactly ({@link #OP_ADD}) while no sum passes {@link #EXACT_DOUBLE_MAGNITUDE}, which
+ *     the cursor checks against the walk's rows before it splits a key, see
+ *     {@link #getExactRowLimit()};</li>
  *     <li>a bounded frame's DOUBLE {@code avg} or {@code sum}, which the query's thread replays
  *     with the serial function's own arithmetic ({@link #OP_REPLAY}): the serial function's
  *     running sum carries the rounding of the key's whole history, which warm-up rows cannot
- *     rebuild. A frame whose argument is a whole number is rebuilt from warm-up rows, exactly.</li>
+ *     rebuild. A frame of whole numbers whose sums stay within {@link #EXACT_DOUBLE_MAGNITUDE},
+ *     by their bound and the frame's rows, is rebuilt from warm-up rows, exactly.</li>
  * </ul>
  */
 public class AsyncWindowSplitPlan implements Plannable {
+    /**
+     * The magnitude up to which a DOUBLE holds every integer: a sum of whole numbers is exact, in
+     * any order, while every partial sum stays within it.
+     */
+    public static final long EXACT_DOUBLE_MAGNITUDE = 1L << 53;
+    /**
+     * The largest magnitude of the whole numbers a running DOUBLE sum may carry ({@link #OP_ADD})
+     * rather than fold: a walk of up to 2^32 rows keeps such a sum within
+     * {@link #EXACT_DOUBLE_MAGNITUDE}. A sum of larger values is folded, whose order is the
+     * serial one.
+     */
+    public static final long MAX_CARRIED_WHOLE_BOUND = 1L << 21;
     public static final int MODE_NONE = 0;
     public static final int MODE_PREFIX = 2;
     public static final int MODE_WARMUP = 1;
@@ -74,8 +88,11 @@ public class AsyncWindowSplitPlan implements Plannable {
     public static final int OP_ADD = 0;
     public static final int OP_FIRST = 3;
     /**
-     * A running DOUBLE sum of a single key whose workers output each row's argument (see
-     * {@link AsyncWindowFoldEcho}) and whose query thread folds the sum over them, in order: exact.
+     * A running DOUBLE sum whose workers output each row's argument (see
+     * {@link AsyncWindowFoldEcho}) and whose query thread folds the sum over them, in walk order,
+     * from the key's sum before the task for a key the task continues and from scratch at each
+     * key the task starts: the serial additions in the serial order, exact, and an overflow
+     * where the serial sum overflows and nowhere else.
      */
     public static final int OP_FOLD = 4;
     public static final int OP_MAX = 2;
@@ -89,12 +106,15 @@ public class AsyncWindowSplitPlan implements Plannable {
      * exact. Starts afresh at each key a task starts; needs no warm-up rows.
      */
     public static final int OP_REPLAY = 5;
+    private static long exactMagnitude = EXACT_DOUBLE_MAGNITUDE;
     private final int mode;
     // MODE_PREFIX: the output columns to combine, how, and their column types
     private final IntList prefixColumns;
     private final IntList prefixOps;
     private final IntList prefixTypes;
     private final long warmupRows;
+    // OP_ADD of whole DOUBLE values: the most rows a walk may have for every sum to stay exact
+    private long exactRowLimit = Long.MAX_VALUE;
     // with a GROUP BY step: the carried group key's index among the step's keys, and its column in
     // the step's input; -1 without a carried group key
     private int groupCarryInputColumn = -1;
@@ -129,10 +149,12 @@ public class AsyncWindowSplitPlan implements Plannable {
                 if (Double.isNaN(l)) {
                     return carry;
                 }
-                // a DOUBLE is only ever added: its min and max are not split, see the planner
+                // A DOUBLE is only ever added, and only a sum of whole numbers that stays within
+                // EXACT_DOUBLE_MAGNITUDE, see getExactRowLimit(): its min and max are not split,
+                // and other sums are folded, see the planner.
                 assert op == OP_ADD;
-                // A running sum skips infinite arguments, so one that overflowed stays where it
-                // went: serially, adding the next part's finite values leaves it there.
+                // never reached by such a sum; kept as the serial sum behaves: it skips infinite
+                // arguments, so one that overflowed stays where it went
                 if (Double.isInfinite(c)) {
                     return carry;
                 }
@@ -165,6 +187,15 @@ public class AsyncWindowSplitPlan implements Plannable {
                 return op == OP_MIN ? Math.min(c, l) : Math.max(c, l);
             }
         }
+    }
+
+    /**
+     * The most rows a walk may have for a carried running sum of whole numbers of magnitude up to
+     * {@code bound} to stay exact: {@link #EXACT_DOUBLE_MAGNITUDE} over the bound.
+     */
+    public static long exactRowLimit(long bound) {
+        assert bound > -1;
+        return bound == 0 ? Long.MAX_VALUE : exactMagnitude / bound;
     }
 
     /**
@@ -208,6 +239,24 @@ public class AsyncWindowSplitPlan implements Plannable {
         return false;
     }
 
+    /**
+     * Lowers the magnitude {@link #exactRowLimit(long)} divides, so that a test reaches the limit
+     * with a few thousand rows; {@link #EXACT_DOUBLE_MAGNITUDE} restores it.
+     */
+    @TestOnly
+    public static void setExactMagnitude(long magnitude) {
+        exactMagnitude = magnitude;
+    }
+
+    /**
+     * The most rows the walk may have for this plan's carried DOUBLE sums ({@link #OP_ADD} of
+     * whole numbers) to be exact, {@code Long.MAX_VALUE} without such a sum. The cursor runs a
+     * walk over more rows serially, see {@code AsyncWindowRecordCursor}.
+     */
+    public long getExactRowLimit() {
+        return exactRowLimit;
+    }
+
     public int getGroupCarryInputColumn() {
         return groupCarryInputColumn;
     }
@@ -224,6 +273,10 @@ public class AsyncWindowSplitPlan implements Plannable {
      * With a GROUP BY step whose group key is the carried running value: its index among the
      * step's keys, and its column in the step's input, whose captured rows take the carry too.
      */
+    public void setExactRowLimit(long exactRowLimit) {
+        this.exactRowLimit = exactRowLimit;
+    }
+
     public void setGroupCarry(int keyIndex, int inputColumn) {
         this.groupCarryKeyIndex = keyIndex;
         this.groupCarryInputColumn = inputColumn;

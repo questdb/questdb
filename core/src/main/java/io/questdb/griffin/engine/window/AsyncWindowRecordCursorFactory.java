@@ -82,6 +82,8 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
     private boolean[] nonDecreasingColumns = new boolean[0];
     // per output column: whether its values are never negative, or NULL
     private boolean[] nonNegativeColumns = new boolean[0];
+    // see getWholeBounds()
+    private long[] wholeBounds = new long[0];
     // per output column: whether its values are never NULL
     private boolean[] nonNullColumns = new boolean[0];
     // whether the scan walks a single key
@@ -421,8 +423,8 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
      *     column's values are a run of NULLs, possibly empty, then values that never decrease.
      *     The rows of a key that share a value, NULL included, are then contiguous, and so are
      *     the rows of a group of the key and the column.</li>
-     *     <li>{@code nonNegativeColumns}: the values are never negative, or NULL, and are whole
-     *     numbers, see {@code SqlCodeGenerator.isNonNegativeValue}: adding them is exact.</li>
+     *     <li>{@code nonNegativeColumns}: the values are never negative, or NULL, see
+     *     {@code SqlCodeGenerator.isNonNegativeValue}: a running sum of them never decreases.</li>
      *     <li>{@code nonNullColumns}: the values are never NULL.</li>
      * </ul>
      */
@@ -430,6 +432,19 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
         this.nonDecreasingColumns = nonDecreasingColumns;
         this.nonNegativeColumns = nonNegativeColumns;
         this.nonNullColumns = nonNullColumns;
+    }
+
+    /**
+     * Per output column, the magnitude bound of its values when they are always whole numbers, -1
+     * when they may not be or have no known bound (and for a column past the array's end); see
+     * {@code SqlCodeGenerator.wholeValueBound}. A window chained on reads them for its arguments.
+     */
+    public long[] getWholeBounds() {
+        return wholeBounds;
+    }
+
+    public void setWholeBounds(long[] wholeBounds) {
+        this.wholeBounds = wholeBounds;
     }
 
     public boolean[] getNonNullColumns() {

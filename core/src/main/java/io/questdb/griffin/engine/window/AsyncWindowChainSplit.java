@@ -50,6 +50,8 @@ public class AsyncWindowChainSplit {
     // the stage, by index among the steps after the window, whose windows carry; -1 when the
     // window's own functions carry, -2 when nothing does
     private int carryStage = -2;
+    // the most rows a walk may have for the carried sums to stay exact, see AsyncWindowSplitPlan.getExactRowLimit()
+    private long exactRowLimit = Long.MAX_VALUE;
     // with a GROUP BY step, see AsyncWindowSplitPlan.setGroupCarry()
     private int groupCarryInputColumn = -1;
     private int groupCarryKeyIndex = -1;
@@ -59,6 +61,7 @@ public class AsyncWindowChainSplit {
 
     public static AsyncWindowChainSplit of(AsyncWindowSplitPlan plan) {
         final AsyncWindowChainSplit split = new AsyncWindowChainSplit();
+        split.exactRowLimit = plan.getExactRowLimit();
         switch (plan.getMode()) {
             case AsyncWindowSplitPlan.MODE_WARMUP -> split.warmupRows = plan.getWarmupRows();
             case AsyncWindowSplitPlan.MODE_PREFIX -> {
@@ -94,8 +97,10 @@ public class AsyncWindowChainSplit {
     /**
      * The split after a GROUP BY step, whose groups the cursor completes when they span tasks
      * (see {@link AsyncWindowGroupByStage#replay}). Warm-up rows still rebuild the stages before
-     * it. A carry must be the group key's own, a running sum known to hold integers only (so that
-     * combining it is exact, as the group key must be), and the output must show the key.
+     * it. A carry must be the group key's own, a running sum a carry adds exactly ({@code OP_ADD}:
+     * a LONG, or a DOUBLE of whole numbers within the plan's exact row limit, see
+     * {@link AsyncWindowSplitPlan#getExactRowLimit()}), as the group key must be, and the output
+     * must show the key.
      *
      * @param groupKeyIndex the group key's index among the step's keys, -1 for none
      * @param groupInput    the group key's column in the step's input, -1 for none
@@ -152,6 +157,7 @@ public class AsyncWindowChainSplit {
             case AsyncWindowSplitPlan.MODE_WARMUP -> next.warmupRows = Math.max(0, warmupRows) + plan.getWarmupRows();
             case AsyncWindowSplitPlan.MODE_PREFIX -> {
                 next.carryStage = stage;
+                next.exactRowLimit = Math.min(exactRowLimit, plan.getExactRowLimit());
                 for (int i = 0, n = plan.getPrefixCount(); i < n; i++) {
                     next.carryColumns.add(plan.getPrefixColumn(i));
                     next.carryOps.add(plan.getPrefixOp(i));
@@ -179,11 +185,13 @@ public class AsyncWindowChainSplit {
             assert carryStage != -1;
             final AsyncWindowSplitPlan plan = new AsyncWindowSplitPlan(AsyncWindowSplitPlan.MODE_WARMUP, warmupRows, copyOf(carryColumns), copyOf(carryOps), copyOf(carryTypes));
             plan.setGroupCarry(groupCarryKeyIndex, groupCarryInputColumn);
+            plan.setExactRowLimit(exactRowLimit);
             return plan;
         }
         if (carryStage > -2) {
             final AsyncWindowSplitPlan plan = new AsyncWindowSplitPlan(AsyncWindowSplitPlan.MODE_PREFIX, 0, copyOf(carryColumns), copyOf(carryOps), copyOf(carryTypes));
             plan.setGroupCarry(groupCarryKeyIndex, groupCarryInputColumn);
+            plan.setExactRowLimit(exactRowLimit);
             return plan;
         }
         return AsyncWindowSplitPlan.NONE;
@@ -201,6 +209,7 @@ public class AsyncWindowChainSplit {
         copy.carryOps.addAll(carryOps);
         copy.carryTypes.addAll(carryTypes);
         copy.carryStage = carryStage;
+        copy.exactRowLimit = exactRowLimit;
         copy.groupCarryInputColumn = groupCarryInputColumn;
         copy.groupCarryKeyIndex = groupCarryKeyIndex;
         copy.unsplittable = unsplittable;

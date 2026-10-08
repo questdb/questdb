@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.window.AsyncWindowRecordCursorFactory;
+import io.questdb.griffin.engine.window.AsyncWindowSplitPlan;
 import io.questdb.griffin.engine.window.AsyncWindowStage;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
@@ -247,6 +248,110 @@ public class WindowChainProofTest extends AbstractCairoTest {
         });
     }
 
+    // A running sum of whole numbers is carried exactly only while it stays within 2^53: a LONG
+    // constant of 1e15 passes it in a few rows (m1).
+    @Test
+    public void testLargeWholeNumbersNotCarried() throws Exception {
+        smallConfig();
+        assertMemoryLeak(() -> {
+            execute("create table t (time timestamp, sym symbol index, price double, size double) timestamp(time) partition by DAY");
+            execute("insert into t select (x * 1_000_000_000L)::timestamp, case when x % 5 = 0 then 'Z' else 'A' end, rnd_double() * 10, (x % 9)::double from long_sequence(4000)");
+            final String lagged = "WITH w0 AS (SELECT time, price, size, lag(price) OVER (ORDER BY time) lp FROM t WHERE sym = 'A') ";
+            final String q = lagged + ", w1 AS (SELECT time, price, size, sum(CASE WHEN price > lp THEN 1000000000000001 ELSE 0 END) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM w0) ";
+            assertMatchesSerial(q + "SELECT time, s FROM w1");
+            assertMatchesSerial(q + "SELECT s, count() c, sum(size) z FROM w1");
+            assertMatchesSerial(q + "SELECT s, count() c, sum(size) z FROM w1 ORDER BY s");
+            // a bounded frame of them, which warm-up rows would rebuild from the frame alone
+            assertMatchesSerial(lagged + "SELECT time, avg(CASE WHEN price > lp THEN 1000000000000001 ELSE 0 END) OVER (ORDER BY time ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) a FROM w0");
+            assertMatchesSerial(lagged + "SELECT time, sum(CASE WHEN price > lp THEN 3000000000000001 ELSE 1 END) OVER (ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) a FROM w0");
+            // a running count is a LONG, and so is its carry: exact whatever its size
+            final String counted = lagged + ", w1 AS (SELECT time, size, sum(CASE WHEN price > lp THEN 1 ELSE 0 END) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM w0) ";
+            assertMatchesSerial(counted + "SELECT s, count() c, sum(size) z FROM w1");
+            Assert.assertEquals(AsyncWindowStage.KIND_GROUP_BY, lastStage(counted + "SELECT s, count() c, sum(size) z FROM w1"));
+        });
+    }
+
+    // A carried sum of whole numbers is exact while the walk's rows keep it within 2^53, which the
+    // cursor checks before it splits a key: past the limit, the walk runs serially.
+    @Test
+    public void testExactRowLimitRunsSerially() throws Exception {
+        smallConfig();
+        assertMemoryLeak(() -> {
+            createRuns(engine, sqlExecutionContext, 4_000);
+            final String taq = grouped(new String[]{BASE, "up"}) + " ORDER BY s";
+            final String thousands = grouped(new String[]{BASE, "CASE WHEN up = 1 THEN 1000 ELSE 0 END"}) + " ORDER BY s";
+            sqlExecutionContext.setParallelWindowEnabled(true);
+            try (RecordCursorFactory factory = engine.select(taq, sqlExecutionContext)) {
+                Assert.assertEquals(AsyncWindowSplitPlan.EXACT_DOUBLE_MAGNITUDE, findAsyncFactory(factory).getSplitPlan().getExactRowLimit());
+            }
+            try (RecordCursorFactory factory = engine.select(thousands, sqlExecutionContext)) {
+                Assert.assertEquals(AsyncWindowSplitPlan.EXACT_DOUBLE_MAGNITUDE / 1000, findAsyncFactory(factory).getSplitPlan().getExactRowLimit());
+            } finally {
+                sqlExecutionContext.setParallelWindowEnabled(false);
+            }
+            Assert.assertTrue(parallelRounds(taq) > 0);
+            Assert.assertTrue(parallelRounds(thousands) > 0);
+            // the walk's frames hold 4000 rows; a limit of 3999 runs it serially
+            AsyncWindowSplitPlan.setExactMagnitude(3_999);
+            try {
+                assertMatchesSerial(taq);
+                Assert.assertEquals(0, parallelRounds(taq));
+                Assert.assertEquals(0, parallelRounds(thousands));
+                // a limit of the frames' rows keeps it parallel
+                AsyncWindowSplitPlan.setExactMagnitude(4_000);
+                Assert.assertTrue(parallelRounds(taq) > 0);
+                Assert.assertEquals(0, parallelRounds(thousands));
+                // folded sums, and LONG carries, do not depend on it
+                AsyncWindowSplitPlan.setExactMagnitude(1);
+                Assert.assertTrue(parallelRounds("SELECT time, size, sum(size) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM t WHERE sym = 'A'") > 0);
+                Assert.assertTrue(parallelRounds(BASE + "SELECT time, up, count() OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) c FROM ch") > 0);
+            } finally {
+                AsyncWindowSplitPlan.setExactMagnitude(AsyncWindowSplitPlan.EXACT_DOUBLE_MAGNITUDE);
+            }
+        });
+    }
+
+    // A running DOUBLE sum under PARTITION BY whose key a split spreads over tasks: a carry added
+    // to a task's own sum overflows where the serial sum, which starts from the carry, does not
+    // (m2). The query's thread folds such a sum in walk order instead, key by key.
+    @Test
+    public void testPartitionedRunningSumOverflow() throws Exception {
+        smallConfig();
+        assertMemoryLeak(() -> {
+            execute("create table o (time timestamp, sym symbol index, v double) timestamp(time) partition by DAY");
+            execute("insert into o select (x * 1_000_000L)::timestamp, 'K' || (x % 3), case when (x / 3) % 7 = 0 then -1e308 when (x / 3) % 7 = 1 then 1e308 when (x / 3) % 7 = 2 then 1e308 when (x / 3) % 7 = 3 then -1e308 else 0.0 end from long_sequence(3000)");
+            final String query = "SELECT sym, time, v, s FROM (SELECT sym, time, v, sum(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM o WHERE sym IN ('K0', 'K1', 'K2')) ORDER BY sym, time, v, s";
+            assertMatchesSerial(query);
+            assertSplitOp(query, AsyncWindowSplitPlan.OP_FOLD);
+            // the whole table, and a key of its own
+            assertMatchesSerial("SELECT sym, time, v, s FROM (SELECT sym, time, v, sum(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM o) ORDER BY sym, time, v, s");
+            assertMatchesSerial("SELECT time, v, sum(v) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM o WHERE sym = 'K1'");
+        });
+    }
+
+    // A window that stays cached, ordered by another column than the walk's timestamp, gains
+    // nothing from a key-major walk (m4): the serial plan's scan stays.
+    @Test
+    public void testNoKeyMajorWalkForCachedWindow() throws Exception {
+        smallConfig();
+        assertMemoryLeak(() -> {
+            createRuns(engine, sqlExecutionContext, 4_000);
+            final String[] queries = {
+                    "SELECT sym, time, a, r FROM (SELECT sym, time, avg(price) OVER (PARTITION BY sym ORDER BY time RANGE BETWEEN 10 SECONDS PRECEDING AND CURRENT ROW) a, row_number() OVER (PARTITION BY sym ORDER BY price) r FROM t) ORDER BY sym, time, a, r",
+                    "SELECT sym, time, l FROM (SELECT sym, time, lag(price) OVER (PARTITION BY sym ORDER BY size) l FROM t) ORDER BY sym, time, l",
+                    "SELECT time, r FROM (SELECT time, rank() OVER (ORDER BY price) r FROM t WHERE sym = 'A') ORDER BY time, r",
+            };
+            for (String query : queries) {
+                final StringSink serialPlan = new StringSink();
+                engine.print("explain " + query, serialPlan, sqlExecutionContext);
+                final String plan = plan(query);
+                Assert.assertFalse(query + "\n" + plan, Chars.contains(plan, "keyMajor: true"));
+                TestUtils.assertEquals(query, serialPlan, plan);
+                assertMatchesSerial(query);
+            }
+        });
+    }
+
     // the sort over the query's GROUP BY is elided: the Async Window is the plan's top
     private static boolean isSortElided(String query) throws Exception {
         return plan(query).startsWith("QUERY PLAN\nAsync Window");
@@ -294,6 +399,20 @@ public class WindowChainProofTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertSplitOp(String query, int op) throws Exception {
+        sqlExecutionContext.setParallelWindowEnabled(true);
+        try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+            final AsyncWindowSplitPlan plan = findAsyncFactory(factory).getSplitPlan();
+            boolean found = false;
+            for (int i = 0, n = plan.getPrefixCount(); i < n; i++) {
+                found |= plan.getPrefixOp(i) == op;
+            }
+            Assert.assertTrue(query, found);
+        } finally {
+            sqlExecutionContext.setParallelWindowEnabled(false);
+        }
+    }
+
     /**
      * Table {@code t}: key A holds 4 rows in 5, Z the rest; the price steps through 0..4 in runs of
      * three rows, so that it goes up, down and stays; sizes vary.
@@ -337,6 +456,24 @@ public class WindowChainProofTest extends AbstractCairoTest {
                 }
             }
             return -2;
+        } finally {
+            sqlExecutionContext.setParallelWindowEnabled(false);
+        }
+    }
+
+    // The rounds the workers computed for the query's walk, 0 when it ran serially.
+    private static long parallelRounds(String query) throws Exception {
+        sqlExecutionContext.setParallelWindowEnabled(true);
+        try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+            final AsyncWindowRecordCursorFactory async = findAsyncFactory(factory);
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                long rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertTrue(rows > 0);
+                return async.getAsyncCursor().getParallelRoundCount();
+            }
         } finally {
             sqlExecutionContext.setParallelWindowEnabled(false);
         }

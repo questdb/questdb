@@ -458,6 +458,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // lifetime and pay that cost on every subsequent clear(). Typical query nesting is one or two
     // levels, so retaining a small head covers realistic reuse while releasing pathological depth.
     private static final int MAX_RETAINED_WHERE_CLAUSE_PARSERS = 8;
+    // no own columns' bounds: a window's argument reads its input's columns only
+    private static final long[] NO_BOUNDS = new long[0];
     private static final ModelOperator RESTORE_WHERE_CLAUSE = IQueryModel::restoreWhereClause;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_ALL_CONSTRUCTOR = ExceptAllRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
@@ -5255,19 +5257,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     nonNegative,
                     nonNull
             );
+            final long[] wholeBounds = projectionWholeBounds(ownerStage.getFunctions(), virtual.getPriorityMetadata().getVirtualColumnReservedSlots(), next.getWholeBounds());
             next = next.withStage(ownerStage, virtualCopies, outputMetadata, virtualSink, split.toPlan(taskRows), split.getCarryStage());
             next.setChainSplit(split);
             next.setColumnOrder(nonDecreasing, nonNegative, nonNull);
+            next.setWholeBounds(wholeBounds);
         }
         final boolean[] filterNonDecreasing = next.getNonDecreasingColumns();
         final boolean[] filterNonNegative = next.getNonNegativeColumns();
         final boolean[] filterNonNull = next.getNonNullColumns();
+        final long[] filterWholeBounds = next.getWholeBounds();
         split = split.thenFilter();
         next = next.withStage(AsyncWindowStage.filter(filter), filterCopies, outputMetadata, sink, split.toPlan(taskRows), split.getCarryStage());
         next.setChainColumns(singleKey, chainColumns[0], chainColumns[1]);
         next.setChainSplit(split);
         // a filter keeps the columns and the order of the rows it keeps
         next.setColumnOrder(filterNonDecreasing, filterNonNegative, filterNonNull);
+        next.setWholeBounds(filterWholeBounds);
         return next;
     }
 
@@ -13636,26 +13642,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     nonNegative,
                     nonNull
             );
+            final long[] wholeBounds = projectionWholeBounds(ownerStage.getFunctions(), virtual.getPriorityMetadata().getVirtualColumnReservedSlots(), next.getWholeBounds());
             next = next.withStage(ownerStage, virtualCopies, (GenericRecordMetadata) virtual.getMetadata(), virtualSink, split.toPlan(taskRows), split.getCarryStage());
             next.setChainColumns(singleKey, keyOutput, timestampOutput);
             next.setChainSplit(split);
             next.setColumnOrder(nonDecreasing, nonNegative, nonNull);
+            next.setWholeBounds(wholeBounds);
             stage++;
         }
-        // A single key's running DOUBLE sum is folded, unless its argument is a whole number, whose
-        // sums the carry adds exactly, as a GROUP BY over it needs. A bounded frame of DOUBLE
-        // keeps the key whole: the query's thread replays a frame of the window's own functions
-        // only.
-        final boolean[] exactArgs = new boolean[functions.size()];
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            if (columns.getQuick(i).isWindowExpression()
-                    && functions.getQuick(i) instanceof BaseWindowFunction windowFunction
-                    && windowFunction.getWindowArgument() != null) {
-                final Function arg = windowFunction.getWindowArgument();
-                exactArgs[i] = isWholeNumberType(arg.getType()) || isNonNegativeValue(arg, next.getNonNegativeColumns(), 0, new boolean[0]);
-            }
-        }
-        final AsyncWindowSplitPlan windowPlan = classifyKeySplit(columns, functions, taskRows, singleKey, singleKey, false, exactArgs);
+        // A running DOUBLE sum is folded, unless its argument is a whole number of a small bound,
+        // whose sums the carry adds exactly, as a GROUP BY over it needs, within the exact row
+        // limit the cursor checks. A bounded frame of DOUBLE keeps the key whole: the query's
+        // thread replays a frame of the window's own functions only.
+        final long[] argBounds = windowArgumentBounds(columns, functions, next.getWholeBounds());
+        final AsyncWindowSplitPlan windowPlan = classifyKeySplit(columns, functions, taskRows, singleKey, true, false, argBounds, true);
         split = split.thenWindow(windowPlan, stage);
         // the workers of a folded sum output its argument, see AsyncWindowFoldEcho
         swapInFoldEchoes(windowPlan, perWorkerFunctions);
@@ -13680,10 +13680,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 nonNegative,
                 nonNull
         );
+        final long[] wholeBounds = windowWholeBounds(columns, functions, next.getWholeBounds());
         next = next.withStage(AsyncWindowStage.window(functions, windowMapStates), windowCopies, factoryMetadata, windowSink, split.toPlan(taskRows), split.getCarryStage());
         next.setChainColumns(singleKey, findColumnFunction(functions, keyOutput), findColumnFunction(functions, timestampOutput));
         next.setChainSplit(split);
         next.setColumnOrder(nonDecreasing, nonNegative, nonNull);
+        next.setWholeBounds(wholeBounds);
         if (dropPartitionBy) {
             ((AsyncWindowAtom) next.getAtom()).setKeyStartReset(true);
         }
@@ -13884,7 +13886,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 groupKeyIndex,
                 groupColumn,
                 groupOutput,
-                // a running sum of integers only, see isNonNegativeValue(): combining it is exact
+                // the carry itself must be exact, which thenGroupBy() checks: OP_ADD, a LONG or a
+                // sum of bounded whole numbers, see classifyKeySplit()
                 groupColumn > -1 && groupColumn < nonNegative.length && nonNegative[groupColumn] && isGroupKeyNonNull
         );
         final RecordSink headSink;
@@ -13971,7 +13974,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         final long taskRows = Math.max(1, configuration.getSqlParallelWindowTaskRows());
         // slices are running aggregates only: a bounded frame has no slice to replay over
-        final AsyncWindowSplitPlan splitPlan = classifyKeySplit(columns, functions, taskRows, true, true, false, null);
+        final AsyncWindowSplitPlan splitPlan = classifyKeySplit(columns, functions, taskRows, true, true, false, null, false);
         if (splitPlan.getMode() != AsyncWindowSplitPlan.MODE_PREFIX) {
             return null;
         }
@@ -14253,17 +14256,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             throw th;
         }
-        // shards never split a key: each holds its keys' state from round to round
-        // a frame of whole numbers is rebuilt exactly from warm-up rows, which the workers compute
-        final boolean[] exactArgs = new boolean[functions.size()];
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            if (columns.getQuick(i).isWindowExpression()
-                    && functions.getQuick(i) instanceof BaseWindowFunction windowFunction
-                    && windowFunction.getWindowArgument() != null) {
-                exactArgs[i] = isWholeNumberType(windowFunction.getWindowArgument().getType());
-            }
-        }
-        final AsyncWindowSplitPlan splitPlan = shardMode ? AsyncWindowSplitPlan.NONE : classifyKeySplit(columns, functions, taskRows, singleKey, singleKey, true, exactArgs);
+        // Shards never split a key: each holds its keys' state from round to round. A frame of
+        // whole numbers is rebuilt exactly from warm-up rows, which the workers compute; a running
+        // DOUBLE sum is folded, so that nothing over this window depends on the walk's size.
+        final long[] argBounds = windowArgumentBounds(columns, functions, null);
+        final AsyncWindowSplitPlan splitPlan = shardMode ? AsyncWindowSplitPlan.NONE : classifyKeySplit(columns, functions, taskRows, singleKey, true, true, argBounds, false);
         // the workers of a folded or replayed column output its argument, see AsyncWindowFoldEcho
         swapInFoldEchoes(splitPlan, perWorkerFunctions);
         if (shardMode) {
@@ -14308,6 +14305,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final boolean[] nonNull = new boolean[functions.size()];
         windowColumnOrder(columns, functions, baseMetadata, keyColumnIndex, singleKey, null, null, null, nonDecreasing, nonNegative, nonNull);
         factory.setColumnOrder(nonDecreasing, nonNegative, nonNull);
+        factory.setWholeBounds(windowWholeBounds(columns, functions, null));
         return factory;
     }
 
@@ -14416,6 +14414,111 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         };
     }
 
+    // Per output column, the bound of its window's argument, see wholeValueBound(); -1 for the
+    // columns that are not windows.
+    private static long[] windowArgumentBounds(ObjList<QueryColumn> columns, ObjList<Function> functions, long @Nullable [] inputBounds) {
+        final long[] bounds = new long[functions.size()];
+        Arrays.fill(bounds, -1);
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (columns.getQuick(i).isWindowExpression()
+                    && functions.getQuick(i) instanceof BaseWindowFunction windowFunction
+                    && windowFunction.getWindowArgument() != null) {
+                bounds[i] = wholeValueBound(windowFunction.getWindowArgument(), inputBounds, 0, NO_BOUNDS);
+            }
+        }
+        return bounds;
+    }
+
+    // Per output column of a projection, its bound, see wholeValueBound().
+    private static long[] projectionWholeBounds(ObjList<Function> functions, int reservedSlots, long[] inputBounds) {
+        final long[] bounds = new long[functions.size()];
+        Arrays.fill(bounds, -1);
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            Function function = functions.getQuick(i);
+            if (function instanceof MemoizerFunction memoizer) {
+                function = memoizer.getArg();
+            }
+            // an own column read by a later one comes first, so its bound is known by then
+            bounds[i] = wholeValueBound(function, inputBounds, reservedSlots, bounds);
+        }
+        return bounds;
+    }
+
+    // Per output column of a window, its bound, see wholeValueBound(): a column passed through
+    // keeps it, a window's own values have none known (its sums grow with the rows).
+    private static long[] windowWholeBounds(ObjList<QueryColumn> columns, ObjList<Function> functions, long @Nullable [] inputBounds) {
+        final long[] bounds = new long[functions.size()];
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            bounds[i] = columns.getQuick(i).isWindowExpression() ? -1 : wholeValueBound(functions.getQuick(i), inputBounds, 0, NO_BOUNDS);
+        }
+        return bounds;
+    }
+
+    /**
+     * The largest magnitude a value takes when it is always a whole number, or -1 when it may not
+     * be whole or has no known bound: an integer constant (NULL counts as 0, since a sum skips
+     * it), an input column known to be such, a value of an integer type of up to 32 bits, a cast
+     * to a type that holds the bound exactly, or a CASE whose every value is such (read by role,
+     * see CaseBranches). A sum of n such values, in DOUBLE, is exact in any order while n times
+     * the bound is at most 2^53, see {@link AsyncWindowSplitPlan#EXACT_DOUBLE_MAGNITUDE}.
+     */
+    private static long wholeValueBound(Function function, @Nullable long[] inputBounds, int reservedSlots, long[] ownBounds) {
+        if (function instanceof ColumnFunction cf && !(function instanceof WindowFunction)) {
+            final int index = cf.getColumnIndex();
+            final long known;
+            if (index >= reservedSlots) {
+                known = inputBounds != null && index - reservedSlots < inputBounds.length ? inputBounds[index - reservedSlots] : -1;
+            } else {
+                known = index < ownBounds.length ? ownBounds[index] : -1;
+            }
+            return known > -1 ? known : wholeTypeBound(function.getType());
+        }
+        if (function.isConstant()) {
+            switch (ColumnType.tagOf(function.getType())) {
+                case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG -> {
+                    final long value = function.getLong(null);
+                    return value == Numbers.LONG_NULL ? 0 : Math.abs(value);
+                }
+                case ColumnType.NULL -> {
+                    return 0;
+                }
+                default -> {
+                    return -1;
+                }
+            }
+        }
+        if (function instanceof CastFunction cast && isNonNarrowingNumericCast(cast.getArg().getType(), function.getType())) {
+            final long bound = wholeValueBound(cast.getArg(), inputBounds, reservedSlots, ownBounds);
+            // a FLOAT holds integers exactly up to 2^24, a DOUBLE up to 2^53
+            final long exact = switch (ColumnType.tagOf(function.getType())) {
+                case ColumnType.FLOAT -> 1L << 24;
+                case ColumnType.DOUBLE -> AsyncWindowSplitPlan.EXACT_DOUBLE_MAGNITUDE;
+                default -> Long.MAX_VALUE;
+            };
+            return bound <= exact ? bound : -1;
+        }
+        if (function instanceof CaseBranches caseBranches) {
+            long bound = wholeValueBound(caseBranches.getElseValue(), inputBounds, reservedSlots, ownBounds);
+            final ObjList<Function> thenValues = caseBranches.getThenValues();
+            for (int i = 0, n = thenValues.size(); i < n && bound > -1; i++) {
+                final long value = wholeValueBound(thenValues.getQuick(i), inputBounds, reservedSlots, ownBounds);
+                bound = value > -1 ? Math.max(bound, value) : -1;
+            }
+            return bound;
+        }
+        return wholeTypeBound(function.getType());
+    }
+
+    // The magnitude bound of any value of an integer type of up to 32 bits, -1 for another type.
+    private static long wholeTypeBound(int type) {
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.BYTE -> 1L << 7;
+            case ColumnType.SHORT -> 1L << 15;
+            case ColumnType.INT -> 1L << 31;
+            default -> -1;
+        };
+    }
+
     // What a projection's output columns are known to be, see AsyncWindowRecordCursorFactory.setColumnOrder().
     private static void projectionColumnOrder(
             ObjList<Function> functions,
@@ -14472,8 +14575,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * projection does, keeps the claim, and so does a filter, whose rows are a subsequence.
      * <p>
      * A column is never NULL when it is row_number or a count, or a running sum of a value that
-     * is never NULL: its frame ends at the current row, which counts. It is never negative, and
-     * whole, when it is row_number, a count, or a running sum of such values.
+     * is never NULL: its frame ends at the current row, which counts. It is never negative when
+     * it is row_number, a count, or a running sum of values that are never negative. Whether its
+     * values are whole, and how large, is {@link #windowWholeBounds}'s to say.
      *
      * @param keyIndex  the walk's key among the base's columns, -1 when the base drops it
      * @param singleKey whether the walk has a single key
@@ -14581,16 +14685,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * replayed column (see {@link AsyncWindowSplitPlan#OP_FOLD}, {@link AsyncWindowSplitPlan#OP_REPLAY})
      * goes with either kind: its workers need no state.
      * <p>
-     * Every split is exact but a running DOUBLE sum under PARTITION BY ({@code OP_ADD}), see
-     * {@link AsyncWindowSplitPlan}. A bounded frame's DOUBLE avg or sum is not rebuilt exactly by
-     * warm-up rows, since the serial function's running sum carries the rounding of the whole key:
-     * it is replayed by the query's thread, when {@code allowReplay} (a key-major walk), and keeps
-     * keys whole otherwise, unless its argument is a whole number.
+     * Every split is exact. A running DOUBLE sum is folded by the query's thread, in walk order,
+     * unless {@code allowExactCarry} and its values are whole numbers bounded by
+     * {@link AsyncWindowSplitPlan#MAX_CARRIED_WHOLE_BOUND}: a carry adds those exactly, as a GROUP
+     * BY over the sum needs, while the walk's rows keep every sum within 2^53, which the plan's
+     * exact row limit makes the cursor check (see {@link AsyncWindowSplitPlan#getExactRowLimit()}).
+     * A bounded frame's DOUBLE avg or sum is not rebuilt exactly by warm-up rows, since the serial
+     * function's running sum carries the rounding of the whole key: it is replayed by the query's
+     * thread, when {@code allowReplay} (a key-major walk), and keeps keys whole otherwise, unless
+     * its values are whole numbers whose sums over the frame stay within 2^53.
      *
-     * @param allowFold   whether a single key's running DOUBLE sum may be folded
-     * @param allowReplay whether a bounded frame may be replayed, see {@link AsyncWindowSplitPlan#OP_REPLAY}
-     * @param exactArgs   per output column, whether its window's argument is known to be a whole
-     *                    number, so that adding it is exact in any order; null for none known
+     * @param allowFold       whether a running DOUBLE sum may be folded
+     * @param allowReplay     whether a bounded frame may be replayed, see {@link AsyncWindowSplitPlan#OP_REPLAY}
+     * @param argBounds       per output column, the magnitude bound of its window's argument when that
+     *                        is always a whole number, -1 when it may not be, see
+     *                        {@link #wholeValueBound}; null for none known
+     * @param allowExactCarry whether a running DOUBLE sum of bounded whole numbers may be carried, for
+     *                        a cursor that checks the exact row limit
      */
     private static AsyncWindowSplitPlan classifyKeySplit(
             ObjList<QueryColumn> columns,
@@ -14599,9 +14710,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             boolean singleKey,
             boolean allowFold,
             boolean allowReplay,
-            boolean @Nullable [] exactArgs
+            long @Nullable [] argBounds,
+            boolean allowExactCarry
     ) {
         long warmupRows = -1;
+        long exactRowLimit = Long.MAX_VALUE;
         final IntList prefixColumns = new IntList();
         final IntList prefixOps = new IntList();
         final IntList prefixTypes = new IntList();
@@ -14625,6 +14738,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final boolean rows = ac.getFramingMode() == WindowExpression.FRAMING_ROWS;
             final long lo = ac.getRowsLo();
             final long hi = ac.getRowsHi();
+            final long argBound = argBounds != null && i < argBounds.length ? argBounds[i] : -1;
             if (Chars.equalsIgnoreCase(name, "lag")) {
                 final long k = lagOffset(ast);
                 if (k < 0) {
@@ -14636,10 +14750,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 prefixOps.add(AsyncWindowSplitPlan.OP_ADD);
                 prefixTypes.add(functions.getQuick(i).getType());
             } else if (rows && lo != Long.MIN_VALUE && lo <= 0 && hi <= 0 && hi >= lo && isFrameFunction(name)) {
-                final boolean isExactArg = exactArgs != null && i < exactArgs.length && exactArgs[i];
+                // the serial frame's running sum holds at most the frame's rows and the one coming
+                // in: whole numbers within 2^53 then, it is exact, and warm-up rows rebuild it
+                final long inFlightRows = -lo < Long.MAX_VALUE - 2 ? -lo + 2 : Long.MAX_VALUE;
+                final boolean isExactFrame = argBound > -1 && argBound <= AsyncWindowSplitPlan.EXACT_DOUBLE_MAGNITUDE / inFlightRows;
                 if (type == ColumnType.DOUBLE
                         && (Chars.equalsIgnoreCase(name, "avg") || Chars.equalsIgnoreCase(name, "sum"))
-                        && !isExactArg) {
+                        && !isExactFrame) {
                     // warm-up rows would rebuild the frame's running sum from the frame alone
                     if (allowReplay
                             && functions.getQuick(i) instanceof ReplayableWindowFunction replayable
@@ -14654,15 +14771,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 warmupRows = Math.max(warmupRows, -lo);
             } else if (rows && lo == Long.MIN_VALUE && hi == 0) {
                 final int op;
-                final boolean isExactArg = exactArgs != null && i < exactArgs.length && exactArgs[i];
-                if (allowFold
-                        && Chars.equalsIgnoreCase(name, "sum")
-                        && type == ColumnType.DOUBLE
-                        && ac.getPartitionBy().size() == 0
-                        && !isExactArg
-                        && functions.getQuick(i).getClass() == SumDoubleWindowFunctionFactory.SumOverUnboundedRowsFrameFunction.class) {
-                    // a single key's running DOUBLE sum: folded in order by the query's thread, exact
-                    op = AsyncWindowSplitPlan.OP_FOLD;
+                boolean isExactCarry = false;
+                if (Chars.equalsIgnoreCase(name, "sum") && type == ColumnType.DOUBLE) {
+                    if (allowExactCarry && argBound > -1 && argBound <= AsyncWindowSplitPlan.MAX_CARRIED_WHOLE_BOUND) {
+                        // whole numbers, which a carry adds exactly while the sums stay within 2^53
+                        op = AsyncWindowSplitPlan.OP_ADD;
+                        isExactCarry = true;
+                        exactRowLimit = Math.min(exactRowLimit, AsyncWindowSplitPlan.exactRowLimit(argBound));
+                    } else if (allowFold && SumDoubleWindowFunctionFactory.isRunningSum(functions.getQuick(i))) {
+                        // folded in walk order by the query's thread, exact, see OP_FOLD
+                        op = AsyncWindowSplitPlan.OP_FOLD;
+                    } else {
+                        // a carry would add the values in another order than the serial sum
+                        return AsyncWindowSplitPlan.NONE;
+                    }
                 } else if (Chars.equalsIgnoreCase(name, "sum") || Chars.equalsIgnoreCase(name, "count")) {
                     op = AsyncWindowSplitPlan.OP_ADD;
                 } else if (Chars.equalsIgnoreCase(name, "min")) {
@@ -14680,7 +14802,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // own first row, then compared with the carry, reproduces neither.
                 final boolean isFloatingMinMax = (op == AsyncWindowSplitPlan.OP_MIN || op == AsyncWindowSplitPlan.OP_MAX)
                         && type == ColumnType.DOUBLE;
-                final boolean typeOk = !isFloatingMinMax && (type == ColumnType.DOUBLE || type == ColumnType.LONG
+                // a DOUBLE is added only as the exact carry above
+                final boolean isInexactAdd = op == AsyncWindowSplitPlan.OP_ADD && type == ColumnType.DOUBLE && !isExactCarry;
+                final boolean typeOk = !isFloatingMinMax && !isInexactAdd && (type == ColumnType.DOUBLE || type == ColumnType.LONG
                         || (type == ColumnType.INT && op != AsyncWindowSplitPlan.OP_ADD));
                 if (!typeOk) {
                     return AsyncWindowSplitPlan.NONE;
@@ -14700,15 +14824,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
         }
+        final AsyncWindowSplitPlan plan;
         if (warmupRows > -1) {
             // warm-up rows come from the previous task, which holds about taskRows of them
-            return warmupRows * 2 < taskRows
+            plan = warmupRows * 2 < taskRows
                     ? new AsyncWindowSplitPlan(AsyncWindowSplitPlan.MODE_WARMUP, warmupRows, prefixColumns, prefixOps, prefixTypes)
                     : AsyncWindowSplitPlan.NONE;
+        } else {
+            plan = prefixColumns.size() > 0
+                    ? new AsyncWindowSplitPlan(AsyncWindowSplitPlan.MODE_PREFIX, 0, prefixColumns, prefixOps, prefixTypes)
+                    : AsyncWindowSplitPlan.NONE;
         }
-        return prefixColumns.size() > 0
-                ? new AsyncWindowSplitPlan(AsyncWindowSplitPlan.MODE_PREFIX, 0, prefixColumns, prefixOps, prefixTypes)
-                : AsyncWindowSplitPlan.NONE;
+        if (plan != AsyncWindowSplitPlan.NONE) {
+            plan.setExactRowLimit(exactRowLimit);
+        }
+        return plan;
     }
 
     // Replaces, in every worker copy, each folded or replayed column's function by its stand-in,
@@ -14725,14 +14855,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
         }
-    }
-
-    // Integers of up to 32 bits, whose sums of a frame or a key, in doubles, are exact in any order.
-    private static boolean isWholeNumberType(int type) {
-        return switch (ColumnType.tagOf(type)) {
-            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT -> true;
-            default -> false;
-        };
     }
 
     // Aggregates whose value over a ROWS frame depends on the frame's rows alone.
@@ -17259,6 +17381,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         if (tableModel == null) {
             return null;
+        }
+        // Only the walk's own timestamp lets a window stream: ordered by another column, it sorts
+        // its partitions whatever the scan, and a key-major walk would only cost it.
+        final ExpressionNode timestamp = tableModel.getTimestamp();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            if (column.isWindowExpression()) {
+                final ObjList<ExpressionNode> orderBy = ((WindowExpression) column).getOrderBy();
+                if (orderBy.size() == 1 && (timestamp == null || !Chars.equalsIgnoreCase(orderBy.getQuick(0).token, timestamp.token))) {
+                    return null;
+                }
+            }
         }
         final int permission = partitioned && everyPartitioned ? keyMajorReorderPermission(model, keyColumn) : REORDER_DENIED;
         return new KeyMajorWindowRequest(
