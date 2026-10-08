@@ -75,8 +75,10 @@ public class AsOfJoinTieFrameStraddleTest extends AbstractCairoTest {
                     2024-01-01T02:30:00.000000Z\tK\t2024-01-01T02:30:00.000000Z\tK\t1300000.0
                     """;
             assertJoin("", "trades t ASOF JOIN quotes q", "AsOf Join Fast", false, expected);
-            assertJoin("", "trades t ASOF JOIN quotes q ON (sym)", "AsOf Join Fast", true, expected);
+            assertJoin("asof_fast(t q)", "trades t ASOF JOIN quotes q ON (sym)", "AsOf Join Fast", true, expected);
+            assertJoin("", "trades t ASOF JOIN quotes q ON (sym)", "AsOf Join Memoized Scan", true, expected);
             assertJoin("asof_dense(t q)", "trades t ASOF JOIN quotes q ON (sym)", "AsOf Join Dense Single Symbol", true, expected);
+            assertJoin("asof_parallel(t q)", "trades t ASOF JOIN quotes q ON (sym)", "Async AsOf Join", true, expected);
             assertJoin("asof_memoized(t q)", "trades t ASOF JOIN quotes q ON (sym)", "AsOf Join Memoized Scan", true, expected);
             assertJoin("asof_linear(t q)", "trades t ASOF JOIN quotes q ON (sym)", "AsOf Join Light", true, expected);
             assertNoFailures();
@@ -160,18 +162,22 @@ public class AsOfJoinTieFrameStraddleTest extends AbstractCairoTest {
 
             // keyed on a symbol, every algorithm
             final String keyed = "trades t ASOF JOIN quotes q ON (sym)";
-            assertJoin("", keyed, "AsOf Join Fast", true, expected);
+            assertJoin("asof_fast(t q)", keyed, "AsOf Join Fast", true, expected);
+            // no hint: the small-master choice
+            assertJoin("", keyed, "AsOf Join Memoized Scan", true, expected);
             assertJoin("asof_dense(t q)", keyed, "AsOf Join Dense Single Symbol", true, expected);
+            assertJoin("asof_parallel(t q)", keyed, "Async AsOf Join", true, expected);
             assertJoin("asof_memoized(t q)", keyed, "AsOf Join Memoized Scan", true, expected);
             assertJoin("asof_memoized_driveby(t q)", keyed, "driveByCache: true", true, expected);
             assertJoin("asof_index(t q)", "trades t ASOF JOIN quotes_ix q ON (sym)", "AsOf Join Indexed Scan", true, expected);
             assertJoin("asof_linear(t q)", keyed, "AsOf Join Light", true, expected);
             // keyed on a VARCHAR: the generic key sink and the multi-key Dense
-            assertJoin("", "trades t ASOF JOIN quotes q ON (s)", "AsOf Join Fast", true, expected);
-            assertJoin("asof_dense(t q)", "trades t ASOF JOIN quotes q ON (s)", "AsOf Join Dense", true, expected);
+            assertJoin("asof_fast(t q)", "trades t ASOF JOIN quotes q ON (s)", "AsOf Join Fast", true, expected);
+            assertJoin("", "trades t ASOF JOIN quotes q ON (s)", "AsOf Join Dense", true, expected);
             // keyed, filtered slave: the stolen filter, with and without a projection
             assertJoin("", "trades t ASOF JOIN (SELECT * FROM quotes WHERE sym IN ('A', 'B', 'K')) q ON (sym)", "Filtered AsOf Join Fast", true, expected);
             assertJoin("", "trades t ASOF JOIN (SELECT ts, sym, bid FROM quotes WHERE bid > 0) q ON (sym)", "Filtered AsOf Join Fast", true, expected);
+            assertJoin("asof_parallel(t q)", "trades t ASOF JOIN (SELECT * FROM quotes WHERE sym IN ('A', 'B', 'K')) q ON (sym)", "Async AsOf Join", true, expected);
 
             // non-keyed
             assertJoin("", "trades t ASOF JOIN quotes q", "AsOf Join Fast", false, expected);
@@ -181,7 +187,8 @@ public class AsOfJoinTieFrameStraddleTest extends AbstractCairoTest {
 
             // TOLERANCE: the row the defect returned (x = 500 at 500 s) is outside it, the right one inside
             final String keyedTol = "trades t ASOF JOIN quotes q ON (sym) TOLERANCE 1m";
-            assertJoin("", keyedTol, "AsOf Join Fast", true, expected);
+            assertJoin("asof_fast(t q)", keyedTol, "AsOf Join Fast", true, expected);
+            assertJoin("asof_parallel(t q)", keyedTol, "Async AsOf Join", true, expected);
             assertJoin("asof_dense(t q)", keyedTol, "AsOf Join Dense Single Symbol", true, expected);
             assertJoin("asof_memoized(t q)", keyedTol, "AsOf Join Memoized Scan", true, expected);
             assertJoin("asof_index(t q)", "trades t ASOF JOIN quotes_ix q ON (sym) TOLERANCE 1m", "AsOf Join Indexed Scan", true, expected);
