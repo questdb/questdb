@@ -42,6 +42,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.SyncAttributingFilesFacade;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -982,6 +983,50 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropAndViewChangeFlushFailureStopsTheEngine() throws Exception {
+        // DROP TABLE and ALTER VIEW flush the sequencer log in the append (SYNC: msync, ADAPTIVE W=0: fdatasync) or
+        // after it (ADAPTIVE W>0). A failed flush must stop the engine, as on the insert path. NOSYNC and ASYNC do not
+        // flush the log, so they never see the failure.
+        final String[][] modes = {
+                {"sync", "0"},
+                {"adaptive", "0"},
+                {"adaptive", String.valueOf(WINDOW_US)},
+                {"nosync", "0"},
+                {"async", "0"}
+        };
+        final String[] statements = {"drop table drop_t%d", "alter view v%d as (select ts, y from base_t%d)"};
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "1h");
+        final FailingSeqLogFlushFacade ff = new FailingSeqLogFlushFacade();
+        try {
+            assertMemoryLeak(ff, () -> {
+                final StringBuilder expected = new StringBuilder();
+                final StringBuilder actual = new StringBuilder();
+                int i = 0;
+                for (String[] mode : modes) {
+                    node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode[0]);
+                    node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, mode[1]);
+                    final boolean flushes = !"nosync".equals(mode[0]) && !"async".equals(mode[0]);
+                    for (String statement : statements) {
+                        execute("create table base_t" + i + " (ts timestamp, x int, y int) timestamp(ts) partition by day wal");
+                        execute("create table drop_t" + i + " (ts timestamp, x int) timestamp(ts) partition by day wal");
+                        execute("insert into drop_t" + i + " values (1, 1)");
+                        execute("create view v" + i + " as (select ts, x from base_t" + i + ")");
+                        final String sql = String.format(statement, i, i);
+                        final String row = mode[0] + " W=" + mode[1] + ", " + sql + ": ";
+                        expected.append(row).append(flushes ? "engine stopped" : "no flush").append('\n');
+                        actual.append(row).append(failNextLogFlush(ff, sql, "insert into base_t" + i + " values (1, 1, 1)")).append('\n');
+                        engine.resetDurabilityFailure();
+                        i++;
+                    }
+                }
+                Assert.assertEquals(expected.toString(), actual.toString());
+            });
+        } finally {
+            engine.resetDurabilityFailure();
+        }
+    }
+
+    @Test
     public void testDropAndViewChangeFlushTheSequencerLogV1() throws Exception {
         assertDropAndViewChangeFlushTheSequencerLog(0);
     }
@@ -1434,6 +1479,33 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
         w.commit();
     }
 
+    private static String failNextLogFlush(FailingSeqLogFlushFacade ff, String sql, String nextWrite) throws Exception {
+        final AtomicInteger fatalCalls = new AtomicInteger();
+        engine.setDurabilityFailureHandler(failure -> fatalCalls.incrementAndGet());
+        ff.failNextFlush();
+        Throwable thrown = null;
+        try {
+            execute(sql);
+        } catch (Throwable th) {
+            thrown = th;
+        }
+        if (!ff.disarm()) {
+            return thrown == null ? "no flush" : "no flush, failed: " + thrown;
+        }
+        if (thrown == null) {
+            return "flush failed, statement succeeded";
+        }
+        if (!engine.isDurabilityFailed() || fatalCalls.get() != 1) {
+            return "flush failed, engine runs: " + thrown;
+        }
+        try {
+            execute(nextWrite);
+            return "poisoned engine took a write";
+        } catch (CairoError e) {
+            return e.getMessage().contains("engine is poisoned") ? "engine stopped" : "next write failed: " + e;
+        }
+    }
+
     private static void markDistressed(WalWriter writer) throws ReflectiveOperationException {
         final Field distressed = WalWriter.class.getSuperclass().getDeclaredField("distressed");
         distressed.setAccessible(true);
@@ -1533,6 +1605,45 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
 
         void failNextSequencerFdatasync() {
             armed = true;
+        }
+    }
+
+    static class FailingSeqLogFlushFacade extends SyncAttributingFilesFacade {
+        private boolean armed;
+        private boolean injected;
+
+        @Override
+        public void fdatasync(long fd) {
+            super.fdatasync(fd);
+            failIfArmed(pathOfFd(fd), "fdatasync");
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            super.msync(addr, len, async);
+            if (!async) {
+                failIfArmed(pathOfAddress(addr), "msync");
+            }
+        }
+
+        // Returns whether the armed failure was injected, and disarms.
+        boolean disarm() {
+            final boolean wasInjected = injected;
+            armed = false;
+            injected = false;
+            return wasInjected;
+        }
+
+        void failNextFlush() {
+            armed = true;
+        }
+
+        private void failIfArmed(String path, String operation) {
+            if (armed && WalFdatasyncFacade.isSequencerFile(path)) {
+                armed = false;
+                injected = true;
+                throw CairoException.dataSyncFailure(5, operation).put("injected sequencer log flush failure");
+            }
         }
     }
 

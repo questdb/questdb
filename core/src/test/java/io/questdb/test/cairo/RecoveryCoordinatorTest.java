@@ -47,6 +47,7 @@ import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjHashSet;
@@ -1098,6 +1099,73 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     @Test
     public void testConversionToNonWalSkipsReplayAfterReplayCrash() throws Exception {
         assertConversionAfterRewind(true, 3);
+    }
+
+    /**
+     * The replay ends with a flush of the table and its sequencer log. A failed flush must stop the engine, as
+     * on every other flush of the log: the kernel reports a writeback error once, so no later flush proves the
+     * replayed rows.
+     */
+    @Test
+    public void testConversionToNonWalReplayFlushFailureStopsTheEngine() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        final AtomicBoolean armed = new AtomicBoolean();
+        final AtomicLong seqLogFd = new AtomicLong(-1);
+        final FilesFacade failingFf = new TestFilesFacadeImpl() {
+            @Override
+            public void fdatasync(long fd) {
+                if (fd == seqLogFd.get() && armed.compareAndSet(true, false)) {
+                    throw CairoException.dataSyncFailure(5, "fdatasync").put("injected sequencer log flush failure");
+                }
+                super.fdatasync(fd);
+            }
+
+            // Where syncfs does not cover the whole filesystem, the replay's flush flushes the sequencer log itself.
+            @Override
+            public boolean isSyncfsFileSystemWide() {
+                return false;
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (fd > -1 && Utf8s.endsWithAscii(name, WalUtils.TXNLOG_FILE_NAME)) {
+                    seqLogFd.set(fd);
+                }
+                return fd;
+            }
+        };
+        try {
+            assertMemoryLeak(failingFf, () -> {
+                buildAdaptiveLazyGapTable("conv");
+                final TableToken tt = engine.verifyTableName("conv");
+                execute("ALTER TABLE conv SET TYPE BYPASS WAL");
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                final AtomicInteger fatalCalls = new AtomicInteger();
+                engine.setDurabilityFailureHandler(failure -> fatalCalls.incrementAndGet());
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                new RecoveryCoordinator(engine).recover();
+                armed.set(true);
+                try {
+                    engine.load();
+                    Assert.fail("a failed flush of the replayed WAL must stop the startup");
+                } catch (CairoError e) {
+                    Assert.assertTrue(e.toString(), CairoException.isDataSyncFailure(e));
+                }
+                Assert.assertFalse("test setup: the replay's flush of the sequencer log must have failed", armed.get());
+                Assert.assertTrue(engine.isDurabilityFailed());
+                Assert.assertEquals(1, fatalCalls.get());
+                Assert.assertTrue("the table must stay a WAL table", engine.verifyTableName("conv").isWal());
+            });
+        } finally {
+            engine.resetDurabilityFailure();
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        }
     }
 
     /**

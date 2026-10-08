@@ -225,6 +225,21 @@ public class SyncAttributingFilesFacade extends TestFilesFacadeImpl {
         super.syncfs(fd);
     }
 
+    protected synchronized String pathOfAddress(long addr) {
+        for (int i = mappings.size() - 1; i >= 0; i--) {
+            long[] m = mappings.get(i);
+            if (addr >= m[0] && addr < m[1]) {
+                return pathOfFd(m[2]);
+            }
+        }
+        return "<unmapped>";
+    }
+
+    protected String pathOfFd(long fd) {
+        String path = fdToPath.get(fd);
+        return path == null ? "<unknown>" : path;
+    }
+
     private static void bump(Map<String, int[]> into, String path) {
         int[] c = into.get(path);
         if (c == null) {
@@ -242,21 +257,6 @@ public class SyncAttributingFilesFacade extends TestFilesFacadeImpl {
             }
         }
         return total;
-    }
-
-    private synchronized String pathOfAddress(long addr) {
-        for (int i = mappings.size() - 1; i >= 0; i--) {
-            long[] m = mappings.get(i);
-            if (addr >= m[0] && addr < m[1]) {
-                return pathOfFd(m[2]);
-            }
-        }
-        return "<unmapped>";
-    }
-
-    private String pathOfFd(long fd) {
-        String path = fdToPath.get(fd);
-        return path == null ? "<unknown>" : path;
     }
 
     private synchronized void recordFsync(long fd) {

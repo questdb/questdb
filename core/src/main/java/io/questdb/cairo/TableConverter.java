@@ -276,7 +276,16 @@ public class TableConverter {
                     // advanceDurableEpoch() flushes the table and then may decline to publish the epoch, for
                     // example when its pin slot is busy. Only the flush matters here, so check that.
                     if (writer.getEffectiveCommitMode() == CommitMode.ADAPTIVE && seqTxn > 0 && seqTxn > tracker.getLocalDurableSeqTxn()) {
-                        writer.advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
+                        try {
+                            writer.advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
+                        } catch (CairoException e) {
+                            // A failed flush stops the engine, as on every other save point; the startup must not go on.
+                            if (e.isDataSyncFailure()) {
+                                writer.markDistressed();
+                                engine.handleDataSyncFailure(e);
+                            }
+                            throw e;
+                        }
                         if (tracker.getLocalDurableSeqTxn() < seqTxn) {
                             throw CairoException.critical(0)
                                     .put("could not make replayed WAL durable before conversion [table=").put(token.getTableName())

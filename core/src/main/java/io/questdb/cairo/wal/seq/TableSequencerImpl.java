@@ -225,14 +225,23 @@ public class TableSequencerImpl implements TableSequencer {
     public void dropTable() {
         checkDropped();
         final long timestamp = microClock.getTicks();
-        final long txn = tableTransactionLog.addEntry(
-                getStructureVersion(), WalUtils.DROP_TABLE_WAL_ID,
-                0, 0, timestamp, 0, 0, 0
-        );
-        // Group commit leaves the log's flush to the next batch, and no writer flushes a dropped table again.
-        final CairoConfiguration configuration = engine.getConfiguration();
-        if (configuration.getCommitMode() == CommitMode.ADAPTIVE && configuration.getAdaptiveCommitGroupWindowUs() > 0) {
-            fdatasyncTxnLog();
+        final long txn;
+        try {
+            txn = tableTransactionLog.addEntry(
+                    getStructureVersion(), WalUtils.DROP_TABLE_WAL_ID,
+                    0, 0, timestamp, 0, 0, 0
+            );
+            // Group commit leaves the log's flush to the next batch, and no writer flushes a dropped table again.
+            final CairoConfiguration configuration = engine.getConfiguration();
+            if (configuration.getCommitMode() == CommitMode.ADAPTIVE && configuration.getAdaptiveCommitGroupWindowUs() > 0) {
+                fdatasyncTxnLog();
+            }
+        } catch (CairoException e) {
+            // The log is flushed in the append or right after it. A failed flush stops the engine, as on the commit path.
+            if (e.isDataSyncFailure()) {
+                engine.handleDataSyncFailure(e);
+            }
+            throw e;
         }
         metadata.dropTable();
         notifyTxnCommitted(Long.MAX_VALUE);
