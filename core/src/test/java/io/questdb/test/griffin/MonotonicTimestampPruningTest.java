@@ -457,7 +457,9 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     @Test
     public void testDateAddRuntimeTextBound() throws Exception {
         // a text bind variable bounds the chain as its getLong() reads it: NULL selects nothing,
-        // an integer string is the bound's value
+        // an integer string is the bound in microseconds. The bound falls between the two rows and
+        // the row filter alone, which reads the text in another unit, keeps both, so the result
+        // shows the interval the bound gives; the rows are master's
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-02T00:00:00.000000Z')");
@@ -474,15 +476,14 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                         .returns("v\tts\n");
                 bindVariableService.clear();
                 if (isVarchar) {
-                    bindVariableService.setVarchar(0, new Utf8String("1704067200000000"));
+                    bindVariableService.setVarchar(0, new Utf8String("1704110400000000")); // 2024-01-01T12:00:00Z
                 } else {
-                    bindVariableService.setStr(0, "1704067200000000");
+                    bindVariableService.setStr(0, "1704110400000000");
                 }
                 assertQuery(query)
                         .timestamp("ts")
                         .returns("""
                                 v\tts
-                                1\t2024-01-01T00:00:00.000000Z
                                 2\t2024-01-02T00:00:00.000000Z
                                 """);
             }
