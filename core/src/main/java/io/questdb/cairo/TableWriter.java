@@ -9808,9 +9808,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * decoded size is not derivable from metadata.
      *
      * <p>{@code covSlotMeta} is filled with 4 longs per slot:
-     * [decodedChunkIdx, colType, dataVecBytesWritten, parquetColType].
+     * [decodedChunkIdx, colType, dataVecBytesWritten, parquetColIdx].
      * Slots whose column is absent from parquet get decodedChunkIdx == -1.
-     * parquetColType is the parquet-stored type, which differs from colType
+     * The type stored in the parquet file at parquetColIdx differs from colType
      * when a lazy ALTER COLUMN TYPE is pending on the covered column.
      *
      * <p>{@code covMmaps} is filled with 2 entries per slot:
