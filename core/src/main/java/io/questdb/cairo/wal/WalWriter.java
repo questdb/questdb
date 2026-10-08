@@ -2450,7 +2450,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             } finally {
                 ff.munmap(auxMemAddr, auxMemSize, MEM_TAG);
             }
-            // ADAPTIVE handshake, matching syncIfRequired0 and syncAdaptiveEventsBeforeSequencing: the
+            // ADAPTIVE handshake, as in syncAdaptiveEventsBeforeSequencing: the
             // msync ORDERS the bytes (MS_ASYNC when the group-commit window defers the device flush,
             // MS_SYNC otherwise) and an EXPLICIT fdatasync provides the device barrier. Relying on
             // msync(MS_SYNC) alone would make this path's durability grade depend on the kernel treating
@@ -2478,7 +2478,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             } finally {
                 ff.munmap(dataMemAddr, varColSize, MEM_TAG);
             }
-            // ADAPTIVE handshake, matching syncIfRequired0 and syncAdaptiveEventsBeforeSequencing: the
+            // ADAPTIVE handshake, as in syncAdaptiveEventsBeforeSequencing: the
             // msync ORDERS the bytes (MS_ASYNC when the group-commit window defers the device flush,
             // MS_SYNC otherwise) and an EXPLICIT fdatasync provides the device barrier. Relying on
             // msync(MS_SYNC) alone would make this path's durability grade depend on the kernel treating
