@@ -672,6 +672,44 @@ public class WindowChainTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRangeFramesOverKeyMajorWalks() throws Exception {
+        // a RANGE frame reads the designated timestamp, which a walk of several keys no longer
+        // declares: the window must read the walk's own ascending timestamp
+        assertMemoryLeak(() -> {
+            execute("create table t (time timestamp, sym symbol index type " + indexType + ", v double) timestamp(time) partition by DAY");
+            execute("insert into t select ((x / 2) * 1_000_000_000L)::timestamp, 'K' || (x % 5), (x % 17)::double from long_sequence(3000)");
+            final String[] queries = {
+                    "SELECT sym, time, v, s FROM (SELECT sym, time, v, sum(v) OVER (PARTITION BY sym ORDER BY time RANGE BETWEEN 10 SECONDS PRECEDING AND CURRENT ROW) s FROM t) ORDER BY sym, time, v, s",
+                    "SELECT sym, time, v, a, l FROM (SELECT sym, time, v, avg(v) OVER (PARTITION BY sym ORDER BY time RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW) a, lag(v) OVER (PARTITION BY sym ORDER BY time) l FROM t) ORDER BY sym, time, v, a, l",
+                    "SELECT sym, time, v, s FROM (SELECT sym, time, v, sum(v) OVER (PARTITION BY sym ORDER BY time) s FROM t) ORDER BY sym, time, v, s",
+                    "SELECT sym, time, v, r, a FROM (SELECT sym, time, v, rank() OVER (PARTITION BY sym ORDER BY time) r, avg(v) OVER (PARTITION BY sym ORDER BY time RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW) a FROM t) ORDER BY sym, time, v, r, a",
+                    "SELECT sym, time, v, a FROM (SELECT sym, time, v, avg(v) OVER (PARTITION BY sym ORDER BY time RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW) a FROM t WHERE sym IN ('K1', 'K2', 'K3')) ORDER BY sym, time, v, a",
+                    "SELECT sym, time, c FROM (SELECT sym, time, count(*) OVER (PARTITION BY sym ORDER BY time RANGE BETWEEN 30 SECONDS PRECEDING AND CURRENT ROW) c FROM t WHERE sym IN ('K1', 'K4')) ORDER BY sym, time, c",
+                    "SELECT time, v, c FROM (SELECT time, v, count(*) OVER (ORDER BY time RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW) c FROM t WHERE sym = 'K1')",
+                    // a RANGE frame chained over another window of the walk
+                    "SELECT sym, time, l, s FROM (SELECT sym, time, l, sum(l) OVER (PARTITION BY sym ORDER BY time RANGE BETWEEN 20 SECONDS PRECEDING AND CURRENT ROW) s FROM (SELECT sym, time, lag(v) OVER (PARTITION BY sym ORDER BY time) l FROM t)) ORDER BY sym, time, l, s",
+                    // a key-major walk under a window that stays serial
+                    "SELECT sym, time, v, m FROM (SELECT sym, time, v, min(v) OVER (PARTITION BY sym) m FROM t) WHERE v > m ORDER BY sym, time, v, m",
+            };
+            for (String query : queries) {
+                assertMatchesSerial(engine, sqlExecutionContext, query, null);
+            }
+            // the walk is key-major, and the window runs on it
+            assertAsyncWindow(engine, sqlExecutionContext, queries[0]);
+            assertAsyncWindow(engine, sqlExecutionContext, queries[4]);
+        });
+    }
+
+    private void assertAsyncWindow(CairoEngine engine, SqlExecutionContext ctx, String query) throws Exception {
+        ctx.setParallelWindowEnabled(true);
+        try (RecordCursorFactory factory = engine.select(query, ctx)) {
+            findAsyncFactory(factory);
+        } finally {
+            ctx.setParallelWindowEnabled(false);
+        }
+    }
+
     private void assertKeyStartReset(CairoEngine engine, SqlExecutionContext ctx, String query, boolean expected) throws Exception {
         assertMatchesSerial(engine, ctx, query, null);
         ctx.setParallelWindowEnabled(true);

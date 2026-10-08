@@ -1778,7 +1778,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (dismissOrder) {
             return base.getScanDirection();
         }
-        final int timestampIndex = baseMetadata.getTimestampIndex();
+        final int timestampIndex = getWindowTimestampIndex(base, baseMetadata);
         if (timestampIndex != -1
                 && windowExpr.getOrderBy().size() == 1
                 && windowExpr.getOrderByDirection().getQuick(0) == ORDER_ASC
@@ -12508,6 +12508,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             // if all window function don't require sorting or more than one pass then use streaming factory
             boolean isFastPath = true;
+            // the timestamp RANGE frames and time-weighted functions read, see getWindowTimestampIndex()
+            final int windowTimestampIndex = getWindowTimestampIndex(base, baseMetadata);
+            final int windowTimestampType = windowTimestampIndex > -1 ? baseMetadata.getColumnType(windowTimestampIndex) : ColumnType.NULL;
 
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn qc = columns.getQuick(i);
@@ -12608,8 +12611,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ac.getRowsHiKindPos(),
                             ac.getExclusionKind(),
                             ac.getExclusionKindPos(),
-                            baseMetadata.getTimestampIndex(),
-                            baseMetadata.getTimestampType(),
+                            windowTimestampIndex,
+                            windowTimestampType,
                             ac.isIgnoreNulls(),
                             ac.getNullsDescPos()
                     );
@@ -12900,6 +12903,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     if (baseMetadata.getTimestampIndex() != -1 && baseMetadata.getTimestampIndex() == columnIndex) {
                         factoryMetadata.setTimestampIndex(i);
+                    }
+                    if (windowTimestampIndex != -1 && windowTimestampIndex == columnIndex) {
                         chainTimestampIndex = i;
                     }
                 }
@@ -12921,7 +12926,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     listColumnFilterA.extendAndSet(addAt, addAt + 1);
                     listColumnFilterB.extendAndSet(addAt, i);
                     columnIndexes.extendAndSet(addAt, i);
-                    if (baseMetadata.getTimestampIndex() == i) {
+                    if (windowTimestampIndex != -1 && windowTimestampIndex == i) {
                         chainTimestampIndex = addAt;
                     }
                     addAt++;
@@ -13040,7 +13045,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ac.getExclusionKind(),
                             ac.getExclusionKindPos(),
                             chainTimestampIndex,
-                            baseMetadata.getTimestampType(),
+                            windowTimestampType,
                             ac.isIgnoreNulls(),
                             ac.getNullsDescPos()
                     );
@@ -13338,6 +13343,45 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
+     * The key and the ascending timestamp of a key-major walk, as {key, timestamp} columns of the
+     * base that presents them, -1 for a column it drops: a key-major scan, a projection of its
+     * columns, an Async Window over one, or the steps and projections chained over that. Null for
+     * any other base.
+     */
+    private static int @Nullable [] getKeyMajorColumns(RecordCursorFactory base) {
+        if (base instanceof KeyMajorScanFactory scan) {
+            return new int[]{scan.getKeyMajorColumnIndex(), scan.getKeyMajorTimestampIndex()};
+        }
+        if (base instanceof SelectedRecordCursorFactory selected && selected.getBaseFactory() instanceof KeyMajorScanFactory scan) {
+            final IntList crossIndex = selected.getColumnCrossIndex();
+            return new int[]{
+                    scan.getKeyMajorColumnIndex() > -1 ? crossIndex.indexOf(scan.getKeyMajorColumnIndex(), 0, crossIndex.size()) : -1,
+                    scan.getKeyMajorTimestampIndex() > -1 ? crossIndex.indexOf(scan.getKeyMajorTimestampIndex(), 0, crossIndex.size()) : -1
+            };
+        }
+        return getAsyncWindowChainColumns(base);
+    }
+
+    /**
+     * The timestamp column a window over the base reads, for a RANGE frame or a time-weighted
+     * function: the base's designated timestamp, or, over a key-major walk of several keys, whose
+     * output declares none since it is not in timestamp order as a whole, the walk's timestamp,
+     * which ascends within each key. A window reads it in ascending order either way: one
+     * partitioned by the walk's key and ordered by it is in walk order (see
+     * {@link #isWindowOrderedByKeyMajorScan}), and any other window ordered by it is sorted by it.
+     * -1 when the base has neither.
+     */
+    private static int getWindowTimestampIndex(RecordCursorFactory base, RecordMetadata baseMetadata) {
+        final int timestampIndex = baseMetadata.getTimestampIndex();
+        if (timestampIndex > -1) {
+            return timestampIndex;
+        }
+        final int[] keyMajorColumns = getKeyMajorColumns(base);
+        final int column = keyMajorColumns != null ? keyMajorColumns[1] : -1;
+        return column > -1 && column < baseMetadata.getColumnCount() && ColumnType.isTimestamp(baseMetadata.getColumnType(column)) ? column : -1;
+    }
+
+    /**
      * Whether a window {@code PARTITION BY <key> ORDER BY <ts>} sees each partition in order
      * already: its base walks the key one key after another, each key's rows in ascending order
      * of {@code ts}, see {@link KeyMajorScanFactory#getKeyMajorTimestampIndex()}. The base is such
@@ -13354,23 +13398,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (partitionNode.type != LITERAL || orderNode.type != LITERAL) {
             return false;
         }
-        final int keyIndex;
-        final int timestampIndex;
-        if (base instanceof KeyMajorScanFactory scan) {
-            keyIndex = scan.getKeyMajorColumnIndex();
-            timestampIndex = scan.getKeyMajorTimestampIndex();
-        } else if (base instanceof SelectedRecordCursorFactory selected && selected.getBaseFactory() instanceof KeyMajorScanFactory scan) {
-            final IntList crossIndex = selected.getColumnCrossIndex();
-            keyIndex = scan.getKeyMajorColumnIndex() > -1 ? crossIndex.indexOf(scan.getKeyMajorColumnIndex(), 0, crossIndex.size()) : -1;
-            timestampIndex = scan.getKeyMajorTimestampIndex() > -1 ? crossIndex.indexOf(scan.getKeyMajorTimestampIndex(), 0, crossIndex.size()) : -1;
-        } else {
-            final int[] chainColumns = getAsyncWindowChainColumns(base);
-            if (chainColumns == null) {
-                return false;
-            }
-            keyIndex = chainColumns[0];
-            timestampIndex = chainColumns[1];
+        final int[] keyMajorColumns = getKeyMajorColumns(base);
+        if (keyMajorColumns == null) {
+            return false;
         }
+        final int keyIndex = keyMajorColumns[0];
+        final int timestampIndex = keyMajorColumns[1];
         return keyIndex > -1
                 && timestampIndex > -1
                 && SqlUtil.getColumnIndexQuiet(baseMetadata, partitionNode.token) == keyIndex
@@ -14570,6 +14603,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         final ObjList<QueryColumn> columns = model.getColumns();
         final int columnCount = columns.size();
+        final int windowTimestampIndex = getWindowTimestampIndex(base, baseMetadata);
         final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
         final ObjList<WindowMapSpec> windowMapSpecs = new ObjList<>();
         final ObjList<Function> functions = new ObjList<>(columnCount);
@@ -14639,8 +14673,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         ac.getRowsHiKindPos(),
                         ac.getExclusionKind(),
                         ac.getExclusionKindPos(),
-                        baseMetadata.getTimestampIndex(),
-                        baseMetadata.getTimestampType(),
+                        windowTimestampIndex,
+                        windowTimestampIndex > -1 ? baseMetadata.getColumnType(windowTimestampIndex) : ColumnType.NULL,
                         ac.isIgnoreNulls(),
                         ac.getNullsDescPos()
                 );
