@@ -364,7 +364,7 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
                 final StringBuilder actual = new StringBuilder();
                 int i = 0;
                 for (String[] mode : modes) {
-                    setCommitMode(mode, i);
+                    setCommitMode(mode);
                     final boolean flushes = !"nosync".equals(mode[0]) && !"async".equals(mode[0]);
                     for (String statement : statements) {
                         execute("create table base_t" + i + " (ts timestamp, x int, y int) timestamp(ts) partition by day wal");
@@ -457,7 +457,7 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
                 final StringBuilder expected = new StringBuilder();
                 final StringBuilder actual = new StringBuilder();
                 for (int i = 0; i < modes.length; i++) {
-                    setCommitMode(modes[i], i);
+                    setCommitMode(modes[i]);
                     engine.setDdlListener(new DefaultDdlListener() {
                         @Override
                         public void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
@@ -959,17 +959,14 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
         engine.releaseInactiveTableSequencers();
     }
 
-    // The harness reloads the configuration only when the last property set changed it, so the epoch interval, which
-    // differs on every call, goes last. The assertions prove that the row runs the mode it names.
-    private static void setCommitMode(String[] mode, int row) {
+    // The assertions prove that the row runs the mode it names.
+    private static void setCommitMode(String[] mode) {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode[0]);
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, mode[1]);
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, (60 + row) + "m");
         Assert.assertEquals(mode[0], CommitMode.toString(engine.getConfiguration().getCommitMode()));
         Assert.assertEquals(Long.parseLong(mode[1]), engine.getConfiguration().getAdaptiveCommitGroupWindowUs());
     }
 
-    // Sets each property once: the test harness can lose a configuration change when a property is set again.
     private static void setGroupCommit(long windowUs, int seqPartTxnCount) {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, seqPartTxnCount);
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
