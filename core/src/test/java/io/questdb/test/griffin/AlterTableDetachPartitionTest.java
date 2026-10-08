@@ -754,10 +754,13 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     public void testAttachPartitionWithoutMetadataReadsSymbolDataOnce() throws Exception {
         final SymbolDataOpenCountingFilesFacade ff = new SymbolDataOpenCountingFilesFacade();
         assertMemoryLeak(ff, () -> {
-            for (boolean hasNulls : new boolean[]{true, false}) {
+            final String[][] attachedSymbols = {{"'A'", "NULL"}, {"'A'", "'B'"}, {"NULL", "NULL"}};
+            final String[] expected = {"x\tsym\n1\tA\n2\t\n3\tC\n", "x\tsym\n1\tA\n2\tB\n3\tC\n", "x\tsym\n2\t\n3\tC\n"};
+            for (int i = 0; i < attachedSymbols.length; i++) {
+                final boolean hasNulls = attachedSymbols[i][1].equals("NULL");
                 execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-                execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00Z', 1, 'A'), ('2024-01-01T01:00:00Z', 2, " + (hasNulls ? "NULL" : "'B'")
-                        + "), ('2024-01-02T00:00:00Z', 3, 'C')");
+                execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00Z', 1, " + attachedSymbols[i][0] + "), ('2024-01-01T01:00:00Z', 2, "
+                        + attachedSymbols[i][1] + "), ('2024-01-02T00:00:00Z', 3, 'C')");
                 execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
                 unsetSymbolNullFlag("tab", "sym");
                 try (Path path = new Path()) {
@@ -776,7 +779,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 Assert.assertEquals(hasNulls, containsSymbolNullValue("tab", "sym"));
                 assertQuery("SELECT x, sym FROM tab LATEST ON ts PARTITION BY sym")
                         .noLeakCheck().inferRandomAccess().sizeMayVary()
-                        .returns(hasNulls ? "x\tsym\n1\tA\n2\t\n3\tC\n" : "x\tsym\n1\tA\n2\tB\n3\tC\n");
+                        .returns(expected[i]);
                 execute("DROP TABLE tab");
             }
         });
