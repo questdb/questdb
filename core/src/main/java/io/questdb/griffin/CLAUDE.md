@@ -597,7 +597,7 @@ through `testParseExpression(CharSequence, IQueryModel)` and therefore asserts a
 | IPv4 | 0 | `Numbers.IPv4_NULL` |
 | UUID | `Long.MIN_VALUE` for both hi and lo | two longs |
 | STRING/VARCHAR | null reference | var-size null marker in `.i` file |
-| SYMBOL | `SymbolTable.VALUE_IS_NULL` | -1 |
+| SYMBOL | `SymbolTable.VALUE_IS_NULL` | `Numbers.INT_NULL` (-2_147_483_648); a `keyOf()` miss returns `VALUE_NOT_FOUND` (-2) |
 
 **BYTE/SHORT/BOOLEAN have no null sentinel.** Converting a nullable type (INT, LONG, etc.)
 to BYTE/SHORT loses null information — nulls become 0. This is a known semantic gap.

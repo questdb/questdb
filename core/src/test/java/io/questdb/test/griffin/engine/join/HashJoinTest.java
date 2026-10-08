@@ -39,6 +39,88 @@ import org.junit.Test;
 
 public class HashJoinTest extends AbstractCairoTest {
 
+    @Test
+    public void testHashFullJoinSymbolAndStringKeyIndexCollision() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersAndFills("STRING");
+            assertQuery("SELECT o.ts, o.sym, f.qty FROM orders o FULL JOIN fills f ON o.sym = f.sym AND o.venue = f.venue ORDER BY o.ts, f.qty")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Hash Full Outer Join Light", "symbolKeyJoin: true")
+                    .returns("""
+                            ts\tsym\tqty
+                            \t\t30
+                            \t\t40
+                            2024-01-01T00:00:01.000000Z\tAAPL\t10
+                            2024-01-01T00:00:02.000000Z\tMSFT\t20
+                            2024-01-01T00:00:03.000000Z\tIBM\tnull
+                            2024-01-01T00:00:04.000000Z\tAAPL\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashFullJoinSymbolAndStringKeyIndexCollisionFiltered() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersAndFills("STRING");
+            assertQuery("SELECT o.ts, o.sym, f.qty FROM orders o FULL JOIN fills f ON o.sym = f.sym AND o.venue = f.venue AND f.qty <> 20 ORDER BY o.ts, f.qty")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Hash Full Outer Join Light", "symbolKeyJoin: true", "filter:")
+                    .returns("""
+                            ts\tsym\tqty
+                            \t\t20
+                            \t\t30
+                            \t\t40
+                            2024-01-01T00:00:01.000000Z\tAAPL\t10
+                            2024-01-01T00:00:02.000000Z\tMSFT\tnull
+                            2024-01-01T00:00:03.000000Z\tIBM\tnull
+                            2024-01-01T00:00:04.000000Z\tAAPL\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashFullJoinSymbolAndStringKeyIndexCollisionFilteredFullFat() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersAndFills("STRING");
+            assertQuery("SELECT o.ts, o.sym, f.qty FROM orders o FULL JOIN fills f ON o.sym = f.sym AND o.venue = f.venue AND f.qty <> 20 ORDER BY o.ts, f.qty")
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tqty
+                            \t\t20
+                            \t\t30
+                            \t\t40
+                            2024-01-01T00:00:01.000000Z\tAAPL\t10
+                            2024-01-01T00:00:02.000000Z\tMSFT\tnull
+                            2024-01-01T00:00:03.000000Z\tIBM\tnull
+                            2024-01-01T00:00:04.000000Z\tAAPL\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashFullJoinSymbolAndStringKeyIndexCollisionFullFat() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersAndFills("STRING");
+            assertQuery("SELECT o.ts, o.sym, f.qty FROM orders o FULL JOIN fills f ON o.sym = f.sym AND o.venue = f.venue ORDER BY o.ts, f.qty")
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tqty
+                            \t\t30
+                            \t\t40
+                            2024-01-01T00:00:01.000000Z\tAAPL\t10
+                            2024-01-01T00:00:02.000000Z\tMSFT\t20
+                            2024-01-01T00:00:03.000000Z\tIBM\tnull
+                            2024-01-01T00:00:04.000000Z\tAAPL\tnull
+                            """);
+        });
+    }
+
     /**
      * Check that hash join factory doesn't allocate substantial amounts of memory prior to- and after cursor execution.
      * This is tricky because:
@@ -204,6 +286,81 @@ public class HashJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHashJoinSymbolAndStringKeyIndexCollision() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersAndFills("STRING");
+            assertQuery("SELECT o.ts, o.sym, f.qty FROM orders o JOIN fills f ON o.sym = f.sym AND o.venue = f.venue")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Hash Join Light", "symbolKeyJoin: true")
+                    .returns("""
+                            ts\tsym\tqty
+                            2024-01-01T00:00:01.000000Z\tAAPL\t10
+                            2024-01-01T00:00:02.000000Z\tMSFT\t20
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashJoinSymbolAndStringKeyIndexCollisionFullFat() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersAndFills("STRING");
+            assertQuery("SELECT o.ts, o.sym, f.qty FROM orders o JOIN fills f ON o.sym = f.sym AND o.venue = f.venue")
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tqty
+                            2024-01-01T00:00:01.000000Z\tAAPL\t10
+                            2024-01-01T00:00:02.000000Z\tMSFT\t20
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashJoinSymbolAndStringKeyIndexCollisionMasterSymbolKey() throws Exception {
+        // The mirror case: the SYMBOL compared with a STRING sits on the master side. The projection
+        // puts fills.venue at master column 0 and orders.sym at slave column 0.
+        assertMemoryLeak(() -> {
+            createOrdersAndFills("STRING");
+            assertQuery("SELECT f.venue, o.sym, f.qty FROM fills f JOIN orders o ON f.sym = o.sym AND f.venue = o.venue")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Hash Join Light", "symbolKeyJoin: true")
+                    .returns("""
+                            venue\tsym\tqty
+                            NYSE\tAAPL\t10
+                            NASDAQ\tMSFT\t20
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashJoinSymbolAndStringKeyIndexCollisionSwap() throws Exception {
+        // fills has more rows than orders, so the light hash join swaps the build and probe sides.
+        // The projection has no designated timestamp, so nothing pins the master before getCursor().
+        assertMemoryLeak(() -> {
+            createOrdersAndFills("STRING");
+            execute("""
+                    INSERT INTO fills VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'GOOG', 'NYSE', 50),
+                        ('2024-01-01T00:00:00.000000Z', 'AMZN', 'ARCA', 60)""");
+            assertQuery("SELECT o.venue, o.sym, f.qty FROM orders o JOIN fills f ON o.sym = f.sym AND o.venue = f.venue")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Hash Join Light", "symbolKeyJoin: true")
+                    .returns("""
+                            venue\tsym\tqty
+                            NYSE\tAAPL\t10
+                            NASDAQ\tMSFT\t20
+                            """);
+        });
+    }
+
+    @Test
     public void testHashJoinSymbolAndUuidKeys() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m (id UUID, sym SYMBOL, v INT)");
@@ -231,6 +388,23 @@ public class HashJoinTest extends AbstractCairoTest {
                             33333333-3333-3333-3333-333333333333\tC\t3\t30
                             \tN\t4\t40
                             44444444-4444-4444-4444-444444444444\t\t5\t50
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashJoinSymbolAndVarcharKeyIndexCollision() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersAndFills("VARCHAR");
+            assertQuery("SELECT o.ts, o.sym, f.qty FROM orders o JOIN fills f ON o.sym = f.sym AND o.venue = f.venue")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Hash Join Light", "symbolKeyJoin: true")
+                    .returns("""
+                            ts\tsym\tqty
+                            2024-01-01T00:00:01.000000Z\tAAPL\t10
+                            2024-01-01T00:00:02.000000Z\tMSFT\t20
                             """);
         });
     }
@@ -339,6 +513,82 @@ public class HashJoinTest extends AbstractCairoTest {
                             A	1	A	10
                             B	2	B	20
                             C	3		null
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashLeftJoinSymbolAndStringKeyIndexCollision() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersAndFills("STRING");
+            assertQuery("SELECT o.ts, o.sym, f.qty FROM orders o LEFT JOIN fills f ON o.sym = f.sym AND o.venue = f.venue")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Hash Left Outer Join Light", "symbolKeyJoin: true")
+                    .returns("""
+                            ts\tsym\tqty
+                            2024-01-01T00:00:01.000000Z\tAAPL\t10
+                            2024-01-01T00:00:02.000000Z\tMSFT\t20
+                            2024-01-01T00:00:03.000000Z\tIBM\tnull
+                            2024-01-01T00:00:04.000000Z\tAAPL\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashLeftJoinSymbolAndStringKeyIndexCollisionFiltered() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersAndFills("STRING");
+            assertQuery("SELECT o.ts, o.sym, f.qty FROM orders o LEFT JOIN fills f ON o.sym = f.sym AND o.venue = f.venue AND f.qty <> 20")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Hash Left Outer Join Light", "symbolKeyJoin: true", "filter:")
+                    .returns("""
+                            ts\tsym\tqty
+                            2024-01-01T00:00:01.000000Z\tAAPL\t10
+                            2024-01-01T00:00:02.000000Z\tMSFT\tnull
+                            2024-01-01T00:00:03.000000Z\tIBM\tnull
+                            2024-01-01T00:00:04.000000Z\tAAPL\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashLeftJoinSymbolAndStringKeyIndexCollisionFilteredFullFat() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersAndFills("STRING");
+            assertQuery("SELECT o.ts, o.sym, f.qty FROM orders o LEFT JOIN fills f ON o.sym = f.sym AND o.venue = f.venue AND f.qty <> 20")
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tqty
+                            2024-01-01T00:00:01.000000Z\tAAPL\t10
+                            2024-01-01T00:00:02.000000Z\tMSFT\tnull
+                            2024-01-01T00:00:03.000000Z\tIBM\tnull
+                            2024-01-01T00:00:04.000000Z\tAAPL\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashLeftJoinSymbolAndStringKeyIndexCollisionFullFat() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersAndFills("STRING");
+            assertQuery("SELECT o.ts, o.sym, f.qty FROM orders o LEFT JOIN fills f ON o.sym = f.sym AND o.venue = f.venue")
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tqty
+                            2024-01-01T00:00:01.000000Z\tAAPL\t10
+                            2024-01-01T00:00:02.000000Z\tMSFT\t20
+                            2024-01-01T00:00:03.000000Z\tIBM\tnull
+                            2024-01-01T00:00:04.000000Z\tAAPL\tnull
                             """);
         });
     }
@@ -466,6 +716,114 @@ public class HashJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testHashRightJoinSymbolAndStringKeyIndexCollision() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersAndFills("STRING");
+            assertQuery("SELECT o.ts, o.sym, f.qty FROM orders o RIGHT JOIN fills f ON o.sym = f.sym AND o.venue = f.venue ORDER BY f.qty")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "symbolKeyJoin: true")
+                    .returns("""
+                            ts\tsym\tqty
+                            2024-01-01T00:00:01.000000Z\tAAPL\t10
+                            2024-01-01T00:00:02.000000Z\tMSFT\t20
+                            \t\t30
+                            \t\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashRightJoinSymbolAndStringKeyIndexCollisionFiltered() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersAndFills("STRING");
+            assertQuery("SELECT o.ts, o.sym, f.qty FROM orders o RIGHT JOIN fills f ON o.sym = f.sym AND o.venue = f.venue AND f.qty <> 20 ORDER BY f.qty")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "symbolKeyJoin: true", "filter:")
+                    .returns("""
+                            ts\tsym\tqty
+                            2024-01-01T00:00:01.000000Z\tAAPL\t10
+                            \t\t20
+                            \t\t30
+                            \t\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashRightJoinSymbolAndStringKeyIndexCollisionFilteredFullFat() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersAndFills("STRING");
+            assertQuery("SELECT o.ts, o.sym, f.qty FROM orders o RIGHT JOIN fills f ON o.sym = f.sym AND o.venue = f.venue AND f.qty <> 20 ORDER BY f.qty")
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .returns("""
+                            ts\tsym\tqty
+                            2024-01-01T00:00:01.000000Z\tAAPL\t10
+                            \t\t20
+                            \t\t30
+                            \t\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashRightJoinSymbolAndStringKeyIndexCollisionFullFat() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersAndFills("STRING");
+            assertQuery("SELECT o.ts, o.sym, f.qty FROM orders o RIGHT JOIN fills f ON o.sym = f.sym AND o.venue = f.venue ORDER BY f.qty")
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .returns("""
+                            ts\tsym\tqty
+                            2024-01-01T00:00:01.000000Z\tAAPL\t10
+                            2024-01-01T00:00:02.000000Z\tMSFT\t20
+                            \t\t30
+                            \t\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashSelfJoinSymbolAndStringKeyIndexCollision() throws Exception {
+        // A self-join compares a.sym = b.sym as raw symbol keys and does not set its bits, but
+        // processJoinContext() sets the bits for a.side = b.side_str on both sides. The projection puts
+        // b.side_str at slave column 1, so the stray bit makes the master sink write a.sym (master
+        // column 1) as a string while the slave sink writes b.sym as an int.
+        assertMemoryLeak(() -> {
+            createBook();
+            assertQuery("SELECT a.ts, a.sym, b.qty FROM book a JOIN book b ON a.sym = b.sym AND a.side = b.side_str")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Hash Join Light")
+                    .returns("""
+                            ts\tsym\tqty
+                            2024-01-01T00:00:01.000000Z\tAAPL\t1
+                            2024-01-01T00:00:02.000000Z\tMSFT\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashSelfJoinSymbolAndStringKeyIndexCollisionSymbolKeyJoin() throws Exception {
+        // Stray bits from a.side_str = b.side make a.sym = b.sym look like a non-self-join pair, so
+        // convertSymbolJoinKeysToInt() converts it and clears the bit of b.side along the way.
+        assertMemoryLeak(() -> {
+            createBook();
+            assertQuery("SELECT a.ts, b.qty, b.sym FROM book a JOIN book b ON a.sym = b.sym AND a.side_str = b.side")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Hash Join Light")
+                    .returns("""
+                            ts\tqty\tsym
+                            2024-01-01T00:00:01.000000Z\t1\tAAPL
+                            2024-01-01T00:00:02.000000Z\t2\tMSFT
+                            """);
+        });
+    }
+
     private void assertHashJoinSymbolAndDecimalKey(String tableSuffix, String decimalType, String id1, String id2, String id3) throws Exception {
         final String mTableName = "m_" + tableSuffix;
         final String sTableName = "s_" + tableSuffix;
@@ -561,4 +919,41 @@ public class HashJoinTest extends AbstractCairoTest {
                         """);
     }
 
+    private void createBook() throws Exception {
+        execute("CREATE TABLE book (ts TIMESTAMP, sym SYMBOL, side SYMBOL, side_str STRING, qty LONG) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO book VALUES
+                    ('2024-01-01T00:00:01.000000Z', 'AAPL', 'buy', 'buy', 1),
+                    ('2024-01-01T00:00:02.000000Z', 'MSFT', 'sell', 'sell', 2),
+                    ('2024-01-01T00:00:03.000000Z', 'IBM', 'buy', 'sell', 3)""");
+    }
+
+    /**
+     * Creates orders (master) and fills (slave) for joins on a composite key that pairs
+     * orders.sym = fills.sym (SYMBOL = SYMBOL) with orders.venue = fills.venue (venueType = SYMBOL).
+     * <p>
+     * The hash join converts the SYMBOL = SYMBOL pair to int symbol keys and compares the other
+     * pair as strings. SqlCodeGenerator keeps one writeSymbolAsString BitSet for both sides, although
+     * master and slave column indexes live in separate index spaces. A projection such as
+     * {@code SELECT o.ts, o.sym, f.qty} puts orders.sym at master column 1 and fills.venue at slave
+     * column 1, so clearing the bit of the converted master column also makes the slave sink write
+     * fills.venue as an int symbol key instead of a string. The keys then never match.
+     */
+    private void createOrdersAndFills(String venueType) throws Exception {
+        execute("CREATE TABLE orders (ts TIMESTAMP, sym SYMBOL, venue " + venueType + ") TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE fills (ts TIMESTAMP, sym SYMBOL, venue SYMBOL, qty LONG) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO orders VALUES
+                    ('2024-01-01T00:00:01.000000Z', 'AAPL', 'NYSE'),
+                    ('2024-01-01T00:00:02.000000Z', 'MSFT', 'NASDAQ'),
+                    ('2024-01-01T00:00:03.000000Z', 'IBM', 'NYSE'),
+                    ('2024-01-01T00:00:04.000000Z', 'AAPL', 'ARCA')""");
+        // TSLA goes first, so fills and orders assign different symbol keys to the same symbol
+        execute("""
+                INSERT INTO fills VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'TSLA', 'NASDAQ', 40),
+                    ('2024-01-01T00:00:00.000000Z', 'AAPL', 'NYSE', 10),
+                    ('2024-01-01T00:00:00.000000Z', 'MSFT', 'NASDAQ', 20),
+                    ('2024-01-01T00:00:00.000000Z', 'IBM', 'ARCA', 30)""");
+    }
 }

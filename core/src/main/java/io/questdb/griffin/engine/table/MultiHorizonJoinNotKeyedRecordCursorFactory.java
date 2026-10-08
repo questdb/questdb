@@ -279,7 +279,7 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                         asOfJoinMaps.add(null);
                     }
                     if (ss.getMasterSymbolKeyColumnIndices() != null) {
-                        symbolTranslatingRecords.add(new SymbolTranslatingRecord(ss.getMasterColumnCount(), ss.getMasterSymbolKeyColumnIndices(), ss.getSlaveSymbolKeyColumnIndices()));
+                        symbolTranslatingRecords.add(new SymbolTranslatingRecord(configuration, ss.getMasterColumnCount(), ss.getMasterSymbolKeyColumnIndices(), ss.getSlaveSymbolKeyColumnIndices()));
                     } else {
                         symbolTranslatingRecords.add(null);
                     }
@@ -315,7 +315,7 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                 Misc.clearObjList(groupByFunctions);
                 Misc.free(groupByAllocator);
                 Misc.freeObjListAndKeepObjects(asOfJoinMaps);
-                Misc.clearObjList(symbolTranslatingRecords);
+                Misc.freeObjListAndKeepObjects(symbolTranslatingRecords);
                 Misc.free(horizonIterator);
                 isOpen = false;
             }
@@ -451,8 +451,10 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             for (int s = 0; s < slaveCount; s++) {
                 timeFrameHelpers.getQuick(s).of(slaveCursors.getQuick(s));
                 slaveSymbolSources.setQuick(s, slaveCursors.getQuick(s));
-                if (symbolTranslatingRecords.getQuick(s) != null) {
-                    symbolTranslatingRecords.getQuick(s).initSources(masterCursor, slaveCursors.getQuick(s));
+                final SymbolTranslatingRecord symbolTranslatingRecord = symbolTranslatingRecords.getQuick(s);
+                if (symbolTranslatingRecord != null) {
+                    symbolTranslatingRecord.setMemoryTracker(executionContext.getMemoryTracker());
+                    symbolTranslatingRecord.initSources(masterCursor, slaveCursors.getQuick(s));
                 }
             }
 
