@@ -13657,8 +13657,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final long[] argBounds = windowArgumentBounds(columns, functions, next.getWholeBounds());
         final AsyncWindowSplitPlan windowPlan = classifyKeySplit(columns, functions, taskRows, singleKey, true, false, argBounds, true);
         split = split.thenWindow(windowPlan, stage);
-        // the workers of a folded sum output its argument, see AsyncWindowFoldEcho
-        swapInFoldEchoes(windowPlan, perWorkerFunctions);
+        final AsyncWindowSplitPlan chainPlan = split.toPlan(taskRows);
+        // The workers of a folded sum output its argument (see AsyncWindowFoldEcho), which only
+        // the fold of the plan the cursor follows turns into the sum. The stage's own plan is not
+        // that plan: where the chain splits no key (a window before this one carries or keeps
+        // its keys whole, or the warm-up rows add up past half a task), nothing is folded, and
+        // the workers compute the sum themselves.
+        if (split.getCarryStage() == stage && chainPlan.hasFold()) {
+            swapInFoldEchoes(chainPlan, perWorkerFunctions);
+        }
         for (int i = 0; i < copyCount; i++) {
             windowCopies.add(AsyncWindowStage.window(perWorkerFunctions.getQuick(i), perWorkerMapStates.getQuick(i)));
             perWorkerFunctions.setQuick(i, null);
@@ -13681,7 +13688,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 nonNull
         );
         final long[] wholeBounds = windowWholeBounds(columns, functions, next.getWholeBounds());
-        next = next.withStage(AsyncWindowStage.window(functions, windowMapStates), windowCopies, factoryMetadata, windowSink, split.toPlan(taskRows), split.getCarryStage());
+        next = next.withStage(AsyncWindowStage.window(functions, windowMapStates), windowCopies, factoryMetadata, windowSink, chainPlan, split.getCarryStage());
         next.setChainColumns(singleKey, findColumnFunction(functions, keyOutput), findColumnFunction(functions, timestampOutput));
         next.setChainSplit(split);
         next.setColumnOrder(nonDecreasing, nonNegative, nonNull);
@@ -14827,7 +14834,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final AsyncWindowSplitPlan plan;
         if (warmupRows > -1) {
             // warm-up rows come from the previous task, which holds about taskRows of them
-            plan = warmupRows * 2 < taskRows
+            plan = AsyncWindowSplitPlan.isWarmupWithinTask(warmupRows, taskRows)
                     ? new AsyncWindowSplitPlan(AsyncWindowSplitPlan.MODE_WARMUP, warmupRows, prefixColumns, prefixOps, prefixTypes)
                     : AsyncWindowSplitPlan.NONE;
         } else {
@@ -17291,6 +17298,95 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
+     * Whether every window of the model that has an ORDER BY is ordered by the table's designated
+     * timestamp. The ORDER BY names a column of the model below the window: an alias of the
+     * table's column through projections, or the column qualified by the table's alias. It is
+     * followed down to the table model, then matched with the designated timestamp by column
+     * index in the table's metadata.
+     */
+    private static boolean isOrderedByDesignatedTimestamp(IQueryModel model, IQueryModel tableModel, SqlExecutionContext executionContext) {
+        final ObjList<QueryColumn> columns = model.getColumns();
+        final ObjList<CharSequence> tableColumns = new ObjList<>();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            if (column.isWindowExpression()) {
+                final ObjList<ExpressionNode> orderBy = ((WindowExpression) column).getOrderBy();
+                if (orderBy.size() == 1) {
+                    final ExpressionNode node = orderBy.getQuick(0);
+                    final CharSequence tableColumn = node.type == LITERAL ? resolveTableColumn(model.getNestedModel(), tableModel, node.token) : null;
+                    if (tableColumn == null) {
+                        return false;
+                    }
+                    tableColumns.add(tableColumn);
+                }
+            }
+        }
+        if (tableColumns.size() == 0) {
+            return true;
+        }
+        final TableToken tableToken = executionContext.getTableTokenIfExists(tableModel.getTableName());
+        if (tableToken == null || tableToken.isView() || tableToken.isLiveView()) {
+            return false;
+        }
+        try (TableReader reader = executionContext.getReader(tableToken)) {
+            final RecordMetadata metadata = reader.getMetadata();
+            final int timestampIndex = metadata.getTimestampIndex();
+            for (int i = 0, n = tableColumns.size(); i < n; i++) {
+                final CharSequence name = tableColumns.getQuick(i);
+                int index = SqlUtil.getColumnIndexQuiet(metadata, name);
+                final int dot = Chars.lastIndexOf(name, 0, name.length(), '.');
+                if (index < 0 && dot > -1) {
+                    // qualified by the table's alias
+                    index = SqlUtil.getColumnIndexQuiet(metadata, name.subSequence(dot + 1, name.length()));
+                }
+                if (timestampIndex < 0 || index != timestampIndex) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // The table model's column that a column name of the model `from` stands for, following its
+    // aliases down through the projections; null when the name is computed on the way or is not
+    // a column of a projection.
+    private static @Nullable CharSequence resolveTableColumn(@Nullable IQueryModel from, IQueryModel tableModel, CharSequence name) {
+        CharSequence column = name;
+        for (IQueryModel m = from; m != null; m = m.getNestedModel()) {
+            QueryColumn aliased = findColumnByAlias(m, column);
+            final int dot = Chars.lastIndexOf(column, 0, column.length(), '.');
+            if (aliased == null && dot > -1) {
+                // qualified by the model's alias
+                aliased = findColumnByAlias(m, column.subSequence(dot + 1, column.length()));
+            }
+            if (aliased != null) {
+                final ExpressionNode ast = aliased.getAst();
+                if (ast == null || ast.type != LITERAL) {
+                    return null;
+                }
+                column = ast.token;
+            } else if (m.getSelectModelType() == IQueryModel.SELECT_MODEL_CHOOSE) {
+                return null;
+            }
+            if (m == tableModel) {
+                return column;
+            }
+        }
+        return null;
+    }
+
+    private static @Nullable QueryColumn findColumnByAlias(IQueryModel model, CharSequence alias) {
+        final ObjList<QueryColumn> columns = model.getColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            if (Chars.equalsIgnoreCase(column.getAlias(), alias)) {
+                return column;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Asks for the table scan below a streaming window to walk the scan's index key by key
      * (a key-major scan), so that the window may run as {@code Async Window}, computed by the
      * shared workers one key apart from another; see {@link #generateAsyncWindow}. The request
@@ -17384,15 +17480,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         // Only the walk's own timestamp lets a window stream: ordered by another column, it sorts
         // its partitions whatever the scan, and a key-major walk would only cost it.
-        final ExpressionNode timestamp = tableModel.getTimestamp();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final QueryColumn column = columns.getQuick(i);
-            if (column.isWindowExpression()) {
-                final ObjList<ExpressionNode> orderBy = ((WindowExpression) column).getOrderBy();
-                if (orderBy.size() == 1 && (timestamp == null || !Chars.equalsIgnoreCase(orderBy.getQuick(0).token, timestamp.token))) {
-                    return null;
-                }
-            }
+        if (!isOrderedByDesignatedTimestamp(model, tableModel, executionContext)) {
+            return null;
         }
         final int permission = partitioned && everyPartitioned ? keyMajorReorderPermission(model, keyColumn) : REORDER_DENIED;
         return new KeyMajorWindowRequest(

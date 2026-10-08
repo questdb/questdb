@@ -149,12 +149,25 @@ public class AsyncWindowChainSplit {
      */
     public AsyncWindowChainSplit thenWindow(AsyncWindowSplitPlan plan, int stage) {
         final AsyncWindowChainSplit next = copy();
+        if (unsplittable) {
+            return next;
+        }
         if (carryStage > -2) {
             next.unsplittable = true;
             return next;
         }
         switch (plan.getMode()) {
-            case AsyncWindowSplitPlan.MODE_WARMUP -> next.warmupRows = Math.max(0, warmupRows) + plan.getWarmupRows();
+            case AsyncWindowSplitPlan.MODE_WARMUP -> {
+                if (plan.getPrefixCount() > 0) {
+                    // A fold or replay beside the stage's own warm-up rows: the carry stage starts
+                    // afresh at the task's first own row, which the warm-up rows of its own
+                    // windows would then not reach, and a carry before the stage's last would
+                    // not reach the output either.
+                    next.unsplittable = true;
+                } else {
+                    next.warmupRows = addWarmupRows(Math.max(0, warmupRows), plan.getWarmupRows());
+                }
+            }
             case AsyncWindowSplitPlan.MODE_PREFIX -> {
                 next.carryStage = stage;
                 next.exactRowLimit = Math.min(exactRowLimit, plan.getExactRowLimit());
@@ -178,7 +191,7 @@ public class AsyncWindowChainSplit {
             return AsyncWindowSplitPlan.NONE;
         }
         if (warmupRows > -1) {
-            if (warmupRows * 2 >= taskRows) {
+            if (!AsyncWindowSplitPlan.isWarmupWithinTask(warmupRows, taskRows)) {
                 return AsyncWindowSplitPlan.NONE;
             }
             // a carry of the window's own functions has no warm-up rows before it
@@ -195,6 +208,12 @@ public class AsyncWindowChainSplit {
             return plan;
         }
         return AsyncWindowSplitPlan.NONE;
+    }
+
+    // the sum of two warm-up row counts, Long.MAX_VALUE when it overflows: more than a task holds
+    private static long addWarmupRows(long a, long b) {
+        final long sum = a + b;
+        return sum < 0 ? Long.MAX_VALUE : sum;
     }
 
     private static IntList copyOf(IntList list) {
