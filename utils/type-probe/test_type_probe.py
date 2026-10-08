@@ -582,7 +582,7 @@ class WorklistTest(unittest.TestCase):
         self.assertTrue(all(re.match(r'^`core/[^`]+:\d+`$', i.location) for i in items))
         self.assertFalse(any('WireKind.INT' in i.message for i in items))
         # a decision for every type closes its place
-        first = next(p for p in sites.places if p.form == 'tag-table')
+        first = view.open('table')[0].place
         closed = tp.Sites(sites.vocabulary, sites.places, sites.decisions + [audit.Decision(*first.key(), 'not-reached', 'r')], REPO)
         self.assertEqual(len(items) - 1, len(tp.namesake_items(closed, facts)))
 
