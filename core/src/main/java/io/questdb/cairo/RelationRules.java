@@ -36,12 +36,9 @@ import static io.questdb.cairo.ColumnType.*;
  * driver declares: its relation kind, its value width in bits and its one implicit-cast list. A
  * type's own relations, from it to every other type, derive from its facts. The relations of the
  * existing types into a type come from the existing types' implicit-cast lists and from the
- * exception cells below, which name tags, except that W into a type of a width-ordered kind
- * (INT, FLOAT, TEMPORAL) also derives from its facts, so a newcomer of such a kind needs no
- * existing list to name it unless it differs in signedness; a new kind of value needs a rule
- * clause. W, C, N and CASE's number rule are answered for one pair at a time, over the two types'
- * tags and type drivers, so a type no tag resolves to yet can be asked too; the tag-keyed rows
- * below call them.
+ * exception cells below, which name tags; a new kind of value needs a rule clause. W, C, N and
+ * CASE's number rule are answered for one pair at a time, over the two types' tags and type
+ * drivers, so a type no tag resolves to yet can be asked too; the tag-keyed rows below call them.
  * <p>
  * The exception cells hold the pairs where the existing types' relations depart from the rules,
  * and {@code TypeRelationGoldenTest} pins every table. The rules read the type drivers, so
@@ -331,17 +328,14 @@ public final class RelationRules {
     /**
      * W for one pair: whether a value of {@code fromTag} widens to {@code toTag} without a cast
      * wrapper. The source's implicit-cast list names the target and the target converts through
-     * its own getter (integer, CHAR, float and temporal targets); or the target is of a
-     * width-ordered kind and the source, or a type its list widens it to, is of that kind, no wider
-     * and of the same signedness, and the target can hold the source's NULL. The exception cells
-     * apply to both. Over the two types' tags and type drivers; a null type driver is a pseudo
-     * type.
+     * its own getter (integer, CHAR, float and temporal targets), with the exception cells
+     * applied. Over the two types' tags and type drivers; a null type driver is a pseudo type.
      */
     public static boolean isBuiltInWidening(short fromTag, @Nullable TypeDriver from, short toTag, @Nullable TypeDriver to) {
         if (from == null || to == null || fromTag == toTag || isCell(BUILT_IN_REMOVE, fromTag, toTag)) {
             return false;
         }
-        return isListedWidening(fromTag, from, toTag, to) || isDerivedWidening(fromTag, from, to);
+        return isListedWidening(fromTag, from, toTag, to);
     }
 
     /**
@@ -567,18 +561,6 @@ public final class RelationRules {
         return false;
     }
 
-    // whether a value of the target can stand for the source's NULL: the source has none, or the
-    // target has a sentinel of its own
-    private static boolean holdsNullOf(TypeDriver to, TypeDriver from) {
-        return switch (from.getNullPolicy()) {
-            case NONE -> true;
-            case SENTINEL -> switch (to.getNullPolicy()) {
-                case SENTINEL -> true;
-                case NONE -> false;
-            };
-        };
-    }
-
     private static int indexOf(IntList list, int v) {
         for (int i = 0, n = list.size(); i < n; i++) {
             if (list.getQuick(i) == v) {
@@ -601,31 +583,6 @@ public final class RelationRules {
         return isCell(cells, a, b) || isCell(cells, b, a);
     }
 
-    // W into a type of a width-ordered kind, which the source's list need not name: the source, or
-    // a type the source's list widens it to, is of the target's kind, no wider and of the same
-    // signedness, and the target can hold the source's NULL
-    private static boolean isDerivedWidening(short fromTag, TypeDriver from, TypeDriver to) {
-        final RelationKind toKind = to.getRelationKind();
-        if ((toKind != RelationKind.INT && toKind != RelationKind.FLOAT && toKind != RelationKind.TEMPORAL)
-                || !holdsNullOf(to, from)) {
-            return false;
-        }
-        if (isNoWiderOfKind(from, to)) {
-            return true;
-        }
-        for (short x : from.getImplicitCasts()) {
-            if (isListedWideningOfKind(fromTag, from, x, to)) {
-                return true;
-            }
-        }
-        for (short[] cell : BUILT_IN_ADD) {
-            if (cell[0] == fromTag && isListedWideningOfKind(fromTag, from, cell[1], to)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private static boolean isGetterKind(RelationKind k) {
         return k == RelationKind.INT || k == RelationKind.CHAR || k == RelationKind.FLOAT || k == RelationKind.TEMPORAL;
     }
@@ -635,31 +592,8 @@ public final class RelationRules {
         return (isGetterKind(to.getRelationKind()) && contains(from.getImplicitCasts(), toTag)) || isCell(BUILT_IN_ADD, fromTag, toTag);
     }
 
-    // the source's list widens it to x, and x is of the target's kind, no wider, of its signedness
-    private static boolean isListedWideningOfKind(short fromTag, TypeDriver from, short x, TypeDriver to) {
-        final TypeDriver xDriver = findTypeDriver(x);
-        return xDriver != null
-                && x != fromTag
-                && !isCell(BUILT_IN_REMOVE, fromTag, x)
-                && isListedWidening(fromTag, from, x, xDriver)
-                && isNoWiderOfKind(xDriver, to);
-    }
-
-    private static boolean isNoWiderOfKind(TypeDriver type, TypeDriver to) {
-        return type.getRelationKind() == to.getRelationKind()
-                && type.getRelationBits() <= to.getRelationBits()
-                && isUnsigned(type.getArithmetic()) == isUnsigned(to.getArithmetic());
-    }
-
     private static boolean isNumber(@Nullable TypeDriver driver) {
         return driver != null && (driver.getRelationKind() == RelationKind.INT || driver.getRelationKind() == RelationKind.FLOAT);
-    }
-
-    private static boolean isUnsigned(PhysicalDescriptor.Arithmetic arithmetic) {
-        return switch (arithmetic) {
-            case U8, U16, U32 -> true;
-            case I8, I16, I32, I64, F32, F64, WIDE, NONE -> false;
-        };
     }
 
     // CASE's order of CHAR, SYMBOL and the two column texts; -1 for another type
