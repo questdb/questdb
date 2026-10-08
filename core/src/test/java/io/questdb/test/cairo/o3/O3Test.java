@@ -615,7 +615,8 @@ public class O3Test extends AbstractO3Test {
                         txFile.getPartitionNameTxn(0)
                 );
                 long length = TestFilesFacadeImpl.INSTANCE.length(path.concat("v.d").$());
-                Assert.assertEquals(TableUtils.alignedSize(3L * Long.BYTES), length);
+                // 3 rows; independent of TableUtils.alignedSize() so a regression there fails
+                Assert.assertEquals(Os.isLinux() ? Files.PAGE_SIZE : 3L * Long.BYTES, length);
             }
         });
     }
