@@ -1427,7 +1427,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 // the parquet exporter), the partition stays mapped on pool
                 // return so the next QWP query reuses the FdCache.
                 pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_CACHED);
-                state.beginStreamingPageFrame(requestId, factory, pageFrameCursor,
+                state.beginStreamingPageFrame(requestId, factory, pageFrameCursor, sqlCtx.getMemoryTracker(),
                         columnCount, decoder.initialCredit, cacheKey, compiledQueryType, queryCacheable);
             } else {
                 state.beginStreaming(requestId, factory, cursor,

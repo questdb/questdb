@@ -851,8 +851,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         // record still points at that pool's live buffers. A foreign pool (e.g. a
         // reduce task's) that later frees its buffers leaves boundPool != the
         // navigating pool, forcing a safe rebind.
-        this.boundPool = frameMemory.getPool();
-        this.boundGeneration = boundPool != null ? boundPool.getBindGeneration() : 0;
+        final PageFrameMemoryPool pool = frameMemory.getPool();
+        setBoundPool(pool, pool != null ? pool.getBindGeneration() : 0);
     }
 
     @Override
@@ -868,6 +868,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     public void setBoundPool(PageFrameMemoryPool boundPool, long boundGeneration) {
         this.boundPool = boundPool;
         this.boundGeneration = boundGeneration;
+        // Delta output uses native layout but only survives until its frame is released.
+        this.stableStrings &= boundPool == null || boundPool.isFrameStable(frameIndex);
     }
 
     /**

@@ -102,7 +102,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                  PageFrameAddressCache addressCache = new PageFrameAddressCache()) {
                 // Drive the cache the same way the async pipeline does
                 // (PageFrameSequence.buildAddressCache).
-                addressCache.of(factory.getMetadata(), cursor.getColumnMapping(), cursor.isExternal());
+                addressCache.of(factory.getMetadata(), cursor);
                 int frameCount = 0;
                 PageFrame f;
                 while ((f = cursor.next(0)) != null) {
@@ -162,7 +162,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                  PageFrameAddressCache addressCache = new PageFrameAddressCache()) {
                 // Drive the cache exactly like PageFrameSequence.buildAddressCache:
                 // of(metadata, columnMapping, external) then add(frameIndex, frame).
-                addressCache.of(factory.getMetadata(), cursor.getColumnMapping(), cursor.isExternal());
+                addressCache.of(factory.getMetadata(), cursor);
                 int frameCount = 0;
                 PageFrame f;
                 while ((f = cursor.next(0)) != null) {
@@ -463,7 +463,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                  PageFrameAddressCache addressCache = new PageFrameAddressCache();
                  PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, 0L);
                  PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER)) {
-                addressCache.of(factory.getMetadata(), cursor.getColumnMapping(), cursor.isExternal());
+                addressCache.of(factory.getMetadata(), cursor);
                 int frameCount = 0;
                 PageFrame f;
                 while ((f = cursor.next(0)) != null) {
@@ -836,7 +836,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = select("SELECT sym, px FROM cov WHERE sym = 'K1'");
                  PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
                  PageFrameAddressCache addressCache = new PageFrameAddressCache()) {
-                addressCache.of(factory.getMetadata(), cursor.getColumnMapping(), cursor.isExternal());
+                addressCache.of(factory.getMetadata(), cursor);
                 int frameCount = 0;
                 PageFrame f;
                 while ((f = cursor.next(0)) != null) {
@@ -1600,7 +1600,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                  PageFrameAddressCache addressCache = new PageFrameAddressCache();
                  PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, 0L);
                  PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER)) {
-                addressCache.of(factory.getMetadata(), cursor.getColumnMapping(), cursor.isExternal());
+                addressCache.of(factory.getMetadata(), cursor);
                 int frameCount = 0;
                 PageFrame f;
                 while ((f = cursor.next(0)) != null) {

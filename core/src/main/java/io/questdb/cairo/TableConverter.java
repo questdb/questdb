@@ -116,6 +116,12 @@ public class TableConverter {
                                     txWriter = new TxWriter(ff, configuration);
                                 }
                                 txWriter.ofRW(path.trimTo(rootLen).concat(dirNameSink).concat(TXN_FILE_NAME).$());
+                                // Delta may have become active after SQL scheduled this conversion.
+                                if (txWriter.hasDeltaState()) {
+                                    LOG.error().$("skipping table type conversion, table has a delta-active partition or delta data [dirName=")
+                                            .$(dirNameSink).I$();
+                                    continue;
+                                }
                                 txWriter.resetLagValuesUnsafe();
 
                                 if (walEnabled) {

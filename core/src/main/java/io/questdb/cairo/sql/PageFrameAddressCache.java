@@ -82,27 +82,34 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     private final IntList coveredKeys = new IntList();
     private final LongList coveredRowHis = new LongList();
     private final LongList coveredRowLos = new LongList();
+    private final LongList designatedTimestampPageAddresses = new LongList();
+    private final LongList designatedTimestampPageSizes = new LongList();
+    private final LongList designatedTimestampPageTops = new LongList();
     private final ByteList frameFormats = new ByteList();
     private final LongList frameSizes = new LongList();
     private final DirectLongList pageAddresses;
     private final DirectLongList pageSizes;
+    private final DirectLongList pageTops;
     private final ObjList<ParquetDecoder> parquetDecoders = new ObjList<>();
     private final IntList parquetRowGroupHis = new IntList();
     private final IntList parquetRowGroupLos = new IntList();
     private final IntList parquetRowGroups = new IntList();
+    private final LongList partitionFrameStates = new LongList();
     // Makes it possible to determine real row id, not the one relative to the page.
     private final LongList rowIdOffsets = new LongList();
     private int columnCount;
     // True in case of external parquet files, false in case of table partition files.
     private boolean external;
     private boolean hasCoveredFrames;
-    private boolean hasParquetFrames;
+    private boolean hasCustomFrames;
+    private boolean hasDecodedFrames;
 
     public PageFrameAddressCache() {
         this.auxPageAddresses = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
         this.auxPageSizes = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
         this.pageAddresses = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
         this.pageSizes = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
+        this.pageTops = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
     }
 
     public void add(int frameIndex, @Transient PageFrame frame) {
@@ -123,6 +130,9 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 pageAddresses.add(frame.getPageAddress(columnIndex));
                 pageSizes.add(frame.getPageSize(columnIndex));
+                if (hasCustomFrames) {
+                    pageTops.add(frame.getPageTop(columnIndex));
+                }
                 if (ColumnType.isVarSize(columnTypes.getQuick(columnIndex))) {
                     auxPageAddresses.add(frame.getAuxPageAddress(columnIndex));
                     auxPageSizes.add(frame.getAuxPageSize(columnIndex));
@@ -146,10 +156,13 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 pageAddresses.add(0);
                 pageSizes.add(0);
+                if (hasCustomFrames) {
+                    pageTops.add(0);
+                }
                 auxPageAddresses.add(0);
                 auxPageSizes.add(0);
             }
-            hasParquetFrames = true;
+            hasDecodedFrames = true;
         }
 
         // Defensive consistency check: a covering frame produces its per-column
@@ -165,8 +178,22 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         frameFormats.add(format);
         ParquetDecoder decoder = frame.getParquetDecoder();
         parquetDecoders.add(decoder);
+        final long partitionFrameState = hasCustomFrames ? frame.getPartitionFrameState() : 0;
+        if (hasCustomFrames) {
+            // Keep frame indexes aligned across ordinary and custom frames in this cursor.
+            designatedTimestampPageAddresses.add(frame.getDesignatedTimestampPageAddress());
+            designatedTimestampPageSizes.add(frame.getDesignatedTimestampPageSize());
+            designatedTimestampPageTops.add(frame.getDesignatedTimestampPageTop());
+            partitionFrameStates.add(partitionFrameState);
+        }
+        final int parquetRowGroup = frame.getParquetRowGroup();
+        if (parquetRowGroup >= 0
+                && partitionFrameState != 0
+                && PartitionFrameState.requiresMaterialization(partitionFrameState, parquetRowGroup)) {
+            hasDecodedFrames = true;
+        }
         assert (decoder != null && decoder.getFileSize() > 0) || format != PartitionFormat.PARQUET;
-        parquetRowGroups.add(frame.getParquetRowGroup());
+        parquetRowGroups.add(parquetRowGroup);
         parquetRowGroupLos.add(frame.getParquetRowGroupLo());
         parquetRowGroupHis.add(frame.getParquetRowGroupHi());
         rowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
@@ -234,7 +261,11 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     public void clear() {
         frameSizes.clear();
         frameFormats.clear();
+        designatedTimestampPageAddresses.clear();
+        designatedTimestampPageSizes.clear();
+        designatedTimestampPageTops.clear();
         parquetDecoders.clear();
+        partitionFrameStates.clear();
         parquetRowGroups.clear();
         parquetRowGroupLos.clear();
         parquetRowGroupHis.clear();
@@ -248,19 +279,22 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         pageAddresses.clear();
         auxPageAddresses.clear();
         pageSizes.clear();
+        pageTops.clear();
         auxPageSizes.clear();
         rowIdOffsets.clear();
         external = false;
         hasCoveredFrames = false;
-        hasParquetFrames = false;
+        hasDecodedFrames = false;
     }
 
     @Override
     public void close() {
+        clear();
         pageAddresses.close();
         pageSizes.close();
         auxPageAddresses.close();
         auxPageSizes.close();
+        pageTops.close();
     }
 
     /**
@@ -293,7 +327,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
 
     /**
      * The per-partition posting (index) reader the covered frame's columns
-     * decode from, or {@code null} when the frame has no covered columns.
+     * decode from, or {@code null} when the frame has no covered columns or its
+     * producer already materialized them.
      */
     public IndexReader getCoveredIndexReader(int frameIndex) {
         return coveredIndexReaders.getQuick(frameIndex);
@@ -345,6 +380,18 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         return coveredRowLos.getQuick(frameIndex);
     }
 
+    public long getDesignatedTimestampPageAddress(int frameIndex) {
+        return hasCustomFrames ? designatedTimestampPageAddresses.getQuick(frameIndex) : 0;
+    }
+
+    public long getDesignatedTimestampPageSize(int frameIndex) {
+        return hasCustomFrames ? designatedTimestampPageSizes.getQuick(frameIndex) : 0;
+    }
+
+    public long getDesignatedTimestampPageTop(int frameIndex) {
+        return hasCustomFrames ? designatedTimestampPageTops.getQuick(frameIndex) : 0;
+    }
+
     public int getFrameCount() {
         return frameSizes.size();
     }
@@ -373,6 +420,10 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         return pageSizes;
     }
 
+    public DirectLongList getPageTops() {
+        return pageTops;
+    }
+
     public ParquetDecoder getParquetDecoder(int frameIndex) {
         return parquetDecoders.getQuick(frameIndex);
     }
@@ -387,6 +438,10 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
 
     public int getParquetRowGroupLo(int frameIndex) {
         return parquetRowGroupLos.getQuick(frameIndex);
+    }
+
+    public long getPartitionFrameState(int frameIndex) {
+        return hasCustomFrames ? partitionFrameStates.getQuick(frameIndex) : 0;
     }
 
     public long getRowIdOffset(int frameIndex) {
@@ -448,14 +503,14 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
 
     /**
      * Whether this cache holds at least one covered frame. Mirrors
-     * {@link #hasParquetFrames()}.
+     * {@link #hasDecodedFrames()}.
      */
     public boolean hasCoveredFrames() {
         return hasCoveredFrames;
     }
 
-    public boolean hasParquetFrames() {
-        return hasParquetFrames;
+    public boolean hasDecodedFrames() {
+        return hasDecodedFrames;
     }
 
     /**
@@ -479,15 +534,20 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
 
     public void of(
             @Transient RecordMetadata metadata,
-            @Transient ColumnMapping columnMapping,
-            boolean external
+            @Transient PageFrameCursor frameCursor
     ) {
+        final boolean hasCustomFrames = frameCursor.hasCustomFrames();
         // Reopen off-heap lists atomically: reopen() can trip the memory limit, so if a
         // later one fails, close the ones already reopened. A caller that propagates the
         // failure without ever reaching close() then leaks nothing.
         try {
             pageAddresses.reopen();
             pageSizes.reopen();
+            if (hasCustomFrames) {
+                pageTops.reopen();
+            } else {
+                pageTops.close();
+            }
             auxPageAddresses.reopen();
             auxPageSizes.reopen();
         } catch (Throwable th) {
@@ -502,8 +562,9 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             columnTypes.add(metadata.getColumnType(columnIndex));
         }
-        this.columnMapping.copyFrom(columnMapping);
-        this.external = external;
+        this.columnMapping.copyFrom(frameCursor.getColumnMapping());
+        this.external = frameCursor.isExternal();
+        this.hasCustomFrames = hasCustomFrames;
     }
 
     /**
@@ -517,8 +578,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     /**
      * Updates column addresses and parquet decoder for an existing frame entry.
      * Called during lazy partition opening to patch zero-address skeleton entries
-     * with real mmap addresses. Does not change frame structure (size, format,
-     * rowIdOffset, parquet row group indices).
+     * with real mmap addresses. The row-group fields are also patched because a
+     * skeleton native frame has no partition-decoder window until its partition is open.
      */
     public void updateAddresses(int frameIndex, @Transient PageFrame frame) {
         final int offset = frameIndex * columnCount;
@@ -526,13 +587,34 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 pageAddresses.set(offset + columnIndex, frame.getPageAddress(columnIndex));
                 pageSizes.set(offset + columnIndex, frame.getPageSize(columnIndex));
+                if (hasCustomFrames) {
+                    pageTops.set(offset + columnIndex, frame.getPageTop(columnIndex));
+                }
                 if (ColumnType.isVarSize(columnTypes.getQuick(columnIndex))) {
                     auxPageAddresses.set(offset + columnIndex, frame.getAuxPageAddress(columnIndex));
                     auxPageSizes.set(offset + columnIndex, frame.getAuxPageSize(columnIndex));
                 }
             }
+            if (hasCustomFrames) {
+                designatedTimestampPageAddresses.setQuick(frameIndex, frame.getDesignatedTimestampPageAddress());
+                designatedTimestampPageSizes.setQuick(frameIndex, frame.getDesignatedTimestampPageSize());
+                designatedTimestampPageTops.setQuick(frameIndex, frame.getDesignatedTimestampPageTop());
+            }
         } else {
             parquetDecoders.setQuick(frameIndex, frame.getParquetDecoder());
+        }
+        final long partitionFrameState = hasCustomFrames ? frame.getPartitionFrameState() : 0;
+        if (hasCustomFrames) {
+            partitionFrameStates.setQuick(frameIndex, partitionFrameState);
+        }
+        final int parquetRowGroup = frame.getParquetRowGroup();
+        parquetRowGroups.setQuick(frameIndex, parquetRowGroup);
+        parquetRowGroupLos.setQuick(frameIndex, frame.getParquetRowGroupLo());
+        parquetRowGroupHis.setQuick(frameIndex, frame.getParquetRowGroupHi());
+        if (parquetRowGroup >= 0
+                && partitionFrameState != 0
+                && PartitionFrameState.requiresMaterialization(partitionFrameState, parquetRowGroup)) {
+            hasDecodedFrames = true;
         }
     }
 }

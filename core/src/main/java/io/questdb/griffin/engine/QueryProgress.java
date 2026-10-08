@@ -589,6 +589,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
+        public boolean hasCustomFrames() {
+            return baseCursor.hasCustomFrames();
+        }
+
+        @Override
         public boolean isExternal() {
             return baseCursor.isExternal();
         }

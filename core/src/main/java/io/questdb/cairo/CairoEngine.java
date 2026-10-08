@@ -2248,14 +2248,15 @@ public class CairoEngine implements Closeable, WriterSource {
      * Returns a pooled table reader that is pointed at the same transaction number
      * as the source reader.
      * <p>
-     * If the source reader is detached and not in use, returns the source reader.
+     * If the source reader is detached, not in use, and has no Delta rows, returns it.
      * The source reader must be used only through calling this method.
      */
     public TableReader getReaderAtTxn(TableReader srcReader, SqlExecutionContext executionContext) {
         assert srcReader.isOpen() && srcReader.isActive();
         // Fast path: go with the base reader if it's not in-use. It was borrowed before the
         // current query, so it is intentionally not attributed to the query's supervisor.
-        if (readerPool.isDetached(srcReader) && readerPool.getDetachedRefCount(srcReader) == 0) {
+        // Delta readers need pooled copies so cursor close frees checkpoints before tracker recycling.
+        if (readerPool.isDetached(srcReader) && readerPool.getDetachedRefCount(srcReader) == 0 && !srcReader.hasAnyDelta()) {
             readerPool.incDetachedRefCount(srcReader);
             return srcReader;
         }
@@ -2792,7 +2793,8 @@ public class CairoEngine implements Closeable, WriterSource {
                                 sequencerTxn,
                                 walTimestamp,
                                 minTimestamp == Long.MAX_VALUE ? Numbers.LONG_NULL : minTimestamp,
-                                maxTimestamp
+                                maxTimestamp,
+                                RecentWriteTracker.RowCountSource.of(txReader)
                         )) {
                             hydratedCount++;
                         }
@@ -3130,6 +3132,12 @@ public class CairoEngine implements Closeable, WriterSource {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Runs before a dropped WAL table's files are deleted, while its readers and writer are locked out.
+     */
+    public void notifyDroppedTablePurge(TableToken tableToken) {
     }
 
     public void notifyLiveViewBaseTableCommit(TableToken baseTableToken, long seqTxn) {
@@ -4574,6 +4582,13 @@ public class CairoEngine implements Closeable, WriterSource {
             // it on isReadOnlyMode(). The plain variant keeps the read-only-refusing getWriter acquire so a
             // client REBASE WAL on a demoting primary is refused (the demote write-fence).
             oldWriter = replicaVariant ? getWriterUnsafe(oldToken, "rebase") : getWriter(oldToken, "rebase");
+
+            // Delta catalogs retain transaction numbers that a WAL rebase resets to zero.
+            if (oldWriter.getTxWriter().hasDeltaState()) {
+                throw CairoException.nonCritical()
+                        .put("cannot rebase WAL, table has a delta-active partition or delta data [table=")
+                        .put(tableName).put(']');
+            }
 
             try (Path src = new Path(); Path dst = new Path()) {
                 // Build the clone in a hidden ".rebase/" staging dir (mirrors ".download"/".checkpoint").

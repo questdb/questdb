@@ -975,6 +975,221 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPurgeRetriesUntilSuccess() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger deleteAttempts = new AtomicInteger();
+            AtomicBoolean hasDeleteFailure = new AtomicBoolean(true);
+            AtomicBoolean hasScanFailure = new AtomicBoolean();
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public long findFirst(LPSZ path) {
+                    if (hasScanFailure.get()) {
+                        throw CairoException.critical(CairoException.ERRNO_EACCES_LINUX).put("test: table directory is inaccessible");
+                    }
+                    return super.findFirst(path);
+                }
+
+                @Override
+                public boolean rmdir(Path name, boolean lazy) {
+                    if (Utf8s.endsWithAscii(name, "1970-01-10")) {
+                        deleteAttempts.incrementAndGet();
+                        if (hasDeleteFailure.get()) {
+                            return false;
+                        }
+                    }
+                    return super.rmdir(name, lazy);
+                }
+            };
+            setCurrentMicros(0);
+            execute("CREATE TABLE tbl (x LONG, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tbl VALUES (1, '1970-01-10'), (2, '1970-01-11')");
+            TableToken tableToken = engine.verifyTableName("tbl");
+
+            try (O3PartitionPurgeJob purge = new O3PartitionPurgeJob(engine); Path path = new Path()) {
+                execute("ALTER TABLE tbl DROP PARTITION LIST '1970-01-10'");
+                // Duplicate notifications must not multiply periodic retries.
+                Assert.assertTrue(TableUtils.schedulePurgeO3Partitions(engine.getMessageBus(), tableToken, timestampType.getTimestampType(), PartitionBy.DAY));
+                purge.drain(0);
+                int attempts = deleteAttempts.get();
+                Assert.assertTrue(attempts > 0);
+                path.of(configuration.getDbRoot()).concat(tableToken).concat("1970-01-10").$();
+                Assert.assertTrue(Files.exists(path.$()));
+
+                Assert.assertFalse(purge.run());
+                Assert.assertEquals(attempts, deleteAttempts.get());
+                currentMicros += 60_000_000L;
+                purge.drain(0);
+                Assert.assertEquals(++attempts, deleteAttempts.get());
+                Assert.assertTrue(Files.exists(path.$()));
+
+                // A failed directory scan must also keep the retry pending.
+                hasScanFailure.set(true);
+                currentMicros += 60_000_000L;
+                Assert.assertTrue(purge.run());
+                Assert.assertFalse(purge.run());
+                Assert.assertEquals(attempts, deleteAttempts.get());
+                hasScanFailure.set(false);
+
+                hasDeleteFailure.set(false);
+                Assert.assertFalse(purge.run());
+                currentMicros += 60_000_000L;
+                purge.drain(0);
+                Assert.assertEquals(++attempts, deleteAttempts.get());
+                Assert.assertFalse(Files.exists(path.$()));
+
+                currentMicros += 60_000_000L;
+                Assert.assertFalse(purge.run());
+                Assert.assertEquals(attempts, deleteAttempts.get());
+            }
+            assertQuery("SELECT x FROM tbl").noLeakCheck().expectSize().returns("x\n2\n");
+        });
+    }
+
+    @Test
+    public void testPurgeRetryAfterTableDrop() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicBoolean hasDeleteFailure = new AtomicBoolean(true);
+            AtomicInteger scans = new AtomicInteger();
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public long findFirst(LPSZ path) {
+                    scans.incrementAndGet();
+                    return super.findFirst(path);
+                }
+
+                @Override
+                public boolean rmdir(Path name, boolean lazy) {
+                    if (hasDeleteFailure.get() && Utf8s.endsWithAscii(name, "1970-01-10")) {
+                        return false;
+                    }
+                    return super.rmdir(name, lazy);
+                }
+            };
+            setCurrentMicros(0);
+            execute("CREATE TABLE tbl (x LONG, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tbl VALUES (1, '1970-01-10'), (2, '1970-01-11')");
+            TableToken oldToken = engine.verifyTableName("tbl");
+
+            try (O3PartitionPurgeJob purge = new O3PartitionPurgeJob(engine)) {
+                execute("ALTER TABLE tbl DROP PARTITION LIST '1970-01-10'");
+                purge.drain(0);
+                hasDeleteFailure.set(false);
+                engine.releaseInactive();
+                execute("DROP TABLE tbl");
+                execute("CREATE TABLE tbl (x LONG, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY MONTH");
+                execute("INSERT INTO tbl VALUES (3, '1970-01-10')");
+                TableToken newToken = engine.verifyTableName("tbl");
+                Assert.assertEquals(oldToken.getDirName(), newToken.getDirName());
+                Assert.assertNotEquals(oldToken.getTableId(), newToken.getTableId());
+
+                int scansBeforeRetry = scans.get();
+                Assert.assertTrue(scansBeforeRetry > 0);
+                currentMicros += 60_000_000L;
+                Assert.assertTrue(purge.run());
+                Assert.assertEquals(scansBeforeRetry, scans.get());
+                Assert.assertFalse(purge.run());
+                currentMicros += 60_000_000L;
+                Assert.assertFalse(purge.run());
+            }
+            assertQuery("SELECT x FROM tbl").noLeakCheck().expectSize().returns("x\n3\n");
+        });
+    }
+
+    @Test
+    public void testPurgeRetryRecreatedTable() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicBoolean hasDeleteFailure = new AtomicBoolean(true);
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public boolean rmdir(Path name, boolean lazy) {
+                    if (hasDeleteFailure.get() && Utf8s.endsWithAscii(name, "1970-01-10")) {
+                        return false;
+                    }
+                    return super.rmdir(name, lazy);
+                }
+            };
+            setCurrentMicros(0);
+            String ddl = "CREATE TABLE tbl (x LONG, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY";
+            execute(ddl);
+            execute("INSERT INTO tbl VALUES (1, '1970-01-10'), (2, '1970-01-11')");
+            TableToken oldToken = engine.verifyTableName("tbl");
+
+            try (O3PartitionPurgeJob purge = new O3PartitionPurgeJob(engine); Path path = new Path()) {
+                execute("ALTER TABLE tbl DROP PARTITION LIST '1970-01-10'");
+                purge.drain(0);
+                hasDeleteFailure.set(false);
+                engine.releaseInactive();
+                execute("DROP TABLE tbl");
+                execute(ddl);
+                execute("INSERT INTO tbl VALUES (3, '1970-01-10'), (4, '1970-01-11')");
+                TableToken newToken = engine.verifyTableName("tbl");
+                Assert.assertEquals(oldToken.getDirName(), newToken.getDirName());
+
+                // The old retry is still pending when the replacement table needs cleanup.
+                hasDeleteFailure.set(true);
+                execute("ALTER TABLE tbl DROP PARTITION LIST '1970-01-10'");
+                purge.drain(0);
+                path.of(configuration.getDbRoot()).concat(newToken).concat("1970-01-10").$();
+                Assert.assertTrue(Files.exists(path.$()));
+
+                hasDeleteFailure.set(false);
+                currentMicros += 60_000_000L;
+                purge.drain(0);
+                Assert.assertFalse(Files.exists(path.$()));
+                currentMicros += 60_000_000L;
+                Assert.assertFalse(purge.run());
+            }
+            assertQuery("SELECT x FROM tbl").noLeakCheck().expectSize().returns("x\n4\n");
+        });
+    }
+
+    @Test
+    public void testPurgeRetryWithSharedId() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicBoolean hasDeleteFailure = new AtomicBoolean(true);
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public boolean rmdir(Path name, boolean lazy) {
+                    if (hasDeleteFailure.get() && Utf8s.endsWithAscii(name, "1970-01-10")) {
+                        return false;
+                    }
+                    return super.rmdir(name, lazy);
+                }
+            };
+            setCurrentMicros(0);
+            execute("CREATE TABLE tbl_a (x LONG, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            TableToken tokenA = engine.verifyTableName("tbl_a");
+            TableModel model = new TableModel(configuration, "tbl_b", PartitionBy.DAY)
+                    .col("x", ColumnType.LONG)
+                    .timestamp("ts", timestampType.getTimestampType());
+            TableToken tokenB = TestUtils.createTable(engine, model, tokenA.getTableId());
+            Assert.assertEquals(tokenA.getTableId(), tokenB.getTableId());
+            Assert.assertNotEquals(tokenA.getDirName(), tokenB.getDirName());
+            execute("INSERT INTO tbl_a VALUES (1, '1970-01-10'), (2, '1970-01-11')");
+            execute("INSERT INTO tbl_b VALUES (3, '1970-01-10'), (4, '1970-01-11')");
+
+            try (O3PartitionPurgeJob purge = new O3PartitionPurgeJob(engine); Path path = new Path()) {
+                execute("ALTER TABLE tbl_a DROP PARTITION LIST '1970-01-10'");
+                execute("ALTER TABLE tbl_b DROP PARTITION LIST '1970-01-10'");
+                purge.drain(0);
+                Assert.assertTrue(Files.exists(path.of(configuration.getDbRoot()).concat(tokenA).concat("1970-01-10").$()));
+                Assert.assertTrue(Files.exists(path.of(configuration.getDbRoot()).concat(tokenB).concat("1970-01-10").$()));
+
+                hasDeleteFailure.set(false);
+                currentMicros += 60_000_000L;
+                purge.drain(0);
+                Assert.assertFalse(Files.exists(path.of(configuration.getDbRoot()).concat(tokenA).concat("1970-01-10").$()));
+                Assert.assertFalse(Files.exists(path.of(configuration.getDbRoot()).concat(tokenB).concat("1970-01-10").$()));
+
+                currentMicros += 60_000_000L;
+                Assert.assertFalse(purge.run());
+            }
+            assertQuery("SELECT x FROM tbl_a").noLeakCheck().expectSize().returns("x\n2\n");
+            assertQuery("SELECT x FROM tbl_b").noLeakCheck().expectSize().returns("x\n4\n");
+        });
+    }
+
+    @Test
     public void testReaderUsesPartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl as (select x, cast('1970-01-10T10' as " + timestampType.getTypeName() + ") ts from long_sequence(1)) timestamp(ts) partition by DAY");

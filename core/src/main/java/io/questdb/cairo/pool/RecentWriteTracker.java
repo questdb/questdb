@@ -25,6 +25,7 @@
 package io.questdb.cairo.pool;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TxReader;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
@@ -126,7 +127,7 @@ public class RecentWriteTracker {
     public WriteStats getOrCreateStats(@NotNull TableToken tableToken) {
         WriteStats stats = writeStats.get(tableToken);
         if (stats == null) {
-            WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, RowCountSource.TXN);
             WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
             stats = existing != null ? existing : newStats;
         }
@@ -382,8 +383,12 @@ public class RecentWriteTracker {
      * @param writerTxn      the writer transaction number (not WAL sequence txn)
      */
     public void recordWrite(@NotNull TableToken tableToken, long writeTimestamp, long rowCount, long writerTxn) {
+        recordWrite(tableToken, writeTimestamp, rowCount, writerTxn, RowCountSource.TXN);
+    }
+
+    public void recordWrite(@NotNull TableToken tableToken, long writeTimestamp, long rowCount, long writerTxn, RowCountSource rowCountSource) {
         try {
-            getOrCreateStats(tableToken).updateWriter(writeTimestamp, rowCount, writerTxn);
+            getOrCreateStats(tableToken).updateWriter(writeTimestamp, rowCount, writerTxn, rowCountSource);
 
             // Lazy eviction: only clean up when we exceed 2x capacity
             // This amortizes the cleanup cost and reduces contention
@@ -422,6 +427,21 @@ public class RecentWriteTracker {
             long tableMinTimestamp,
             long tableMaxTimestamp
     ) {
+        return recordWriteIfAbsent(tableToken, writeTimestamp, rowCount, writerTxn, sequencerTxn,
+                walTimestamp, tableMinTimestamp, tableMaxTimestamp, RowCountSource.TXN);
+    }
+
+    public boolean recordWriteIfAbsent(
+            @NotNull TableToken tableToken,
+            long writeTimestamp,
+            long rowCount,
+            long writerTxn,
+            long sequencerTxn,
+            long walTimestamp,
+            long tableMinTimestamp,
+            long tableMaxTimestamp,
+            RowCountSource rowCountSource
+    ) {
         try {
             // Check first to avoid allocation when entry exists
             if (writeStats.containsKey(tableToken)) {
@@ -431,7 +451,7 @@ public class RecentWriteTracker {
             // CAS insert - only succeeds if no entry exists
             WriteStats existing = writeStats.putIfAbsent(
                     tableToken,
-                    new WriteStats(writeTimestamp, rowCount, writerTxn, sequencerTxn, walTimestamp, tableMinTimestamp, tableMaxTimestamp)
+                    new WriteStats(writeTimestamp, rowCount, writerTxn, sequencerTxn, walTimestamp, tableMinTimestamp, tableMaxTimestamp, rowCountSource)
             );
             if (existing != null) {
                 // Another thread (likely a writer) inserted first - their data wins
@@ -571,6 +591,18 @@ public class RecentWriteTracker {
     }
 
     /**
+     * Selects metadata that can resolve the table's logical count.
+     */
+    public enum RowCountSource {
+        TXN,
+        DELTA;
+
+        public static RowCountSource of(TxReader reader) {
+            return reader.hasAnyDelta() ? DELTA : TXN;
+        }
+    }
+
+    /**
      * Holds statistics for a single table write.
      * <p>
      * Uses volatile fields for lock-free concurrent access. This allows zero-allocation
@@ -613,12 +645,14 @@ public class RecentWriteTracker {
         private long tableMinTimestamp;
         // Writer fields - updated by TableWriter only
         private volatile long rowCount;
+        private volatile RowCountSource rowCountSource;
         private volatile long timestamp;
         private volatile long writerTxn;
 
-        WriteStats(long timestamp, long rowCount, long writerTxn, long sequencerTxn, long walTimestamp, long tableMinTimestamp, long tableMaxTimestamp) {
+        WriteStats(long timestamp, long rowCount, long writerTxn, long sequencerTxn, long walTimestamp, long tableMinTimestamp, long tableMaxTimestamp, RowCountSource rowCountSource) {
             this.timestamp = timestamp;
             this.rowCount = rowCount;
+            this.rowCountSource = rowCountSource;
             this.writerTxn = writerTxn;
             this.sequencerTxn = new AtomicLong(sequencerTxn);
             this.walTimestamp = new AtomicLong(walTimestamp);
@@ -1070,6 +1104,10 @@ public class RecentWriteTracker {
             return writerTxn;
         }
 
+        public boolean hasDelta() {
+            return rowCountSource == RowCountSource.DELTA;
+        }
+
         /**
          * Updates replica download fields. Unlike updateWal, this records to the batch
          * histogram instead of the transaction histogram, since replicas download data
@@ -1161,10 +1199,11 @@ public class RecentWriteTracker {
         /**
          * Updates writer fields only, preserving sequencerTxn.
          */
-        private void updateWriter(long timestamp, long rowCount, long writerTxn) {
+        private void updateWriter(long timestamp, long rowCount, long writerTxn, RowCountSource rowCountSource) {
             this.timestamp = timestamp;
             this.rowCount = rowCount;
             this.writerTxn = writerTxn;
+            this.rowCountSource = rowCountSource;
         }
 
         /**

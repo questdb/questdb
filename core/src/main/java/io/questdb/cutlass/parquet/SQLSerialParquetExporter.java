@@ -61,6 +61,7 @@ import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.io.File;
@@ -237,6 +238,16 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
                             }
                             final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
+                            // This loop reads base rows only. COPY routes tables with Delta-active
+                            // partitions through a temp table; a partition that switched and took
+                            // late rows after that choice would lose them here.
+                            if (reader.getTxFile().getPartitionHasDelta(partitionIndex)) {
+                                throw CopyExportException.instance(phase, -1)
+                                        .put("partition has Delta rows that a table export cannot read, retry COPY [table=")
+                                        .put(tableToken.getTableName())
+                                        .put(", partitionIndex=").put(partitionIndex)
+                                        .put(']');
+                            }
                             boolean emptyPartition = reader.openPartition(partitionIndex) <= 0;
 
                             // skip parquet conversion if the partition is already in parquet format
@@ -450,19 +461,31 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
         }
     }
 
+    // Opens the page-frame cursor of a zero-copy mode, or returns null when its snapshot
+    // has custom (Delta) frames. Those have no raw page addresses, and the streaming writer
+    // keeps input pointers until a row group flushes, so they export row by row instead.
+    private @Nullable PageFrameCursor openPageFrameCursor(RecordCursorFactory factory) throws SqlException {
+        final PageFrameCursor pfc = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
+        if (!pfc.hasCustomFrames()) {
+            return pfc;
+        }
+        Misc.free(pfc);
+        return null;
+    }
+
     private void processHybridExport(
             RecordCursorFactory factory,
             ParquetExportMode mode,
             CopyExportRequestTask.StreamPartitionParquetExporter exporter,
             CopyExportRequestTask.Phase phase
     ) throws Exception {
-        boolean isPageFrameBacked = mode == ParquetExportMode.PAGE_FRAME_BACKED;
-        PageFrameCursor pfc = null;
+        PageFrameCursor pfc = mode == ParquetExportMode.PAGE_FRAME_BACKED
+                ? openPageFrameCursor(((VirtualRecordCursorFactory) factory).getBaseFactory())
+                : null;
         RecordCursor cursor = null;
         try {
-            if (isPageFrameBacked) {
+            if (pfc != null) {
                 VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) factory;
-                pfc = vf.getBaseFactory().getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
                 pfc.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
                 streamBuffers.setUpPageFrameBacked(vf, pfc, sqlExecutionContext);
                 exporter.setUp(streamBuffers.getAdjustedMetadata(), pfc, streamBuffers.getBaseColumnMap());
@@ -529,7 +552,12 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
 
             switch (mode) {
                 case DIRECT_PAGE_FRAME -> {
-                    try (PageFrameCursor pfc = baseFactory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
+                    final PageFrameCursor directCursor = openPageFrameCursor(baseFactory);
+                    if (directCursor == null) {
+                        processHybridExport(baseFactory, ParquetExportMode.CURSOR_BASED, exporter, phase);
+                        break;
+                    }
+                    try (PageFrameCursor pfc = directCursor) {
                         pfc.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
                         RecordMetadata meta = baseFactory.getMetadata();
                         int colCount = meta.getColumnCount();

@@ -121,6 +121,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             lastSealedPartitionMaxTimestamp = prevLastSealedPartitionMaxTimestamp;
             fixedRowCount -= prevTransientRowCount;
             transientRowCount = prevTransientRowCount + 1; // When row cancel finishes 1 is subtracted. Add 1 to compensate.
+            partitionDeltaCount -= getPartitionHasDelta(getPartitionCount() - 1) ? 1 : 0;
+            partitionDeltaActiveCount -= isPartitionDeltaActive(getPartitionCount() - 1) ? 1 : 0;
             attachedPartitions.setPos(attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION);
             prevTransientRowCount = getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
         }
@@ -320,6 +322,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         transientRowCount = 0;
         fixedRowCount = 0;
         attachedPartitions.clear();
+        partitionDeltaCount = 0;
+        partitionDeltaActiveCount = 0;
         recordStructureVersion++;
         truncateVersion++;
         partitionTableVersion++;
@@ -333,6 +337,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         if (indexRaw > -1) {
             final int size = attachedPartitions.size();
             final int lim = size - LONGS_PER_TX_ATTACHED_PARTITION;
+            partitionDeltaCount -= getPartitionHasDeltaByRawIndex(indexRaw) ? 1 : 0;
+            partitionDeltaActiveCount -= isPartitionDeltaActiveByRawIndex(indexRaw) ? 1 : 0;
             if (indexRaw < lim) {
                 attachedPartitions.arrayCopy(indexRaw + LONGS_PER_TX_ATTACHED_PARTITION, indexRaw, lim - indexRaw);
             }
@@ -427,6 +433,51 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         if (prevMinTimestamp == Long.MAX_VALUE) {
             prevMinTimestamp = minTimestamp;
         }
+    }
+
+    /**
+     * Sets the delta-write bit, preserving REMOTE, VALID and the offset-3 value. Set-only: the bit
+     * is the replicated delta-mode gate and is never cleared in place -- DROP PARTITION removes the
+     * whole record.
+     */
+    public void setPartitionDeltaActiveByRawIndex(int indexRaw) {
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        if (!isPartitionDeltaActiveByRawIndex(indexRaw)) {
+            partitionDeltaActiveCount++;
+        }
+        attachedPartitions.setQuick(indexRaw + PARTITION_VERSION_OFFSET, getPartitionOffset3(indexRaw) | PARTITION_DELTA_WRITE_BIT);
+    }
+
+    public void setPartitionDeltaActiveByTimestamp(long timestamp) {
+        setPartitionDeltaActiveByRawIndex(findAttachedPartitionRawIndex(timestamp));
+    }
+
+    public void setPartitionHasDelta(int partitionIndex, boolean hasDelta) {
+        setPartitionHasDeltaByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, hasDelta);
+    }
+
+    public void setPartitionHasDeltaByRawIndex(int indexRaw, boolean hasDelta) {
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        final int offset = indexRaw + PARTITION_VERSION_OFFSET;
+        final long raw = attachedPartitions.getQuick(offset);
+        if (raw == -1L) {
+            // The legacy cleared word carries no flag bits.
+            throw CairoException.nonCritical().put("cannot set HAS_DELTA on partition with a cleared offset-3 word");
+        }
+        // Keyed on delta mode, not base format: a delta-active base may be native (offset-3
+        // holds its seqTxn word) or parquet. A partition outside delta mode has no business
+        // setting the catalog bit.
+        if (hasDelta && (raw & PARTITION_DELTA_WRITE_BIT) == 0) {
+            throw CairoException.nonCritical().put("cannot set HAS_DELTA on partition without delta-write mode");
+        }
+        if (getPartitionHasDeltaByRawIndex(indexRaw) != hasDelta) {
+            partitionDeltaCount += hasDelta ? 1 : -1;
+        }
+        attachedPartitions.setQuick(offset, hasDelta ? raw | PARTITION_HAS_DELTA_BIT : raw & ~PARTITION_HAS_DELTA_BIT);
     }
 
     public void setPartitionNative(long timestamp, long seqTxn) {
@@ -606,6 +657,13 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void updatePartitionSizeAndTxnByRawIndex(int index, long partitionSize) {
+        if (isPartitionDeltaActiveByRawIndex(index)) {
+            // The Delta state lives in this partition version and freezes its base.
+            throw CairoException.critical(0)
+                    .put("cannot write a new version of a delta-active partition [partition=")
+                    .ts(ColumnType.getTimestampDriver(timestampType), attachedPartitions.getQuick(index + PARTITION_TS_OFFSET))
+                    .put(']');
+        }
         recordStructureVersion++;
         updatePartitionSizeByRawIndex(index, partitionSize);
         // New partition version is written, reset the squash counter.
@@ -664,6 +722,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         // If by any action data is reset and table is partitioned, clear attachedPartitions
         if (maxTimestamp == Long.MIN_VALUE && PartitionBy.isPartitioned(partitionBy)) {
             attachedPartitions.clear();
+            partitionDeltaCount = 0;
+            partitionDeltaActiveCount = 0;
         }
         return calculateTxRecordSize(symbolColumnCount * Long.BYTES, attachedPartitions.size() * Long.BYTES);
     }
@@ -871,6 +931,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
                 long rowCount = 0;
                 for (int i = maxTimestampPartitionIndex, n = getPartitionCount() - 1; i < n; i++) {
                     rowCount += getPartitionSize(i);
+                    partitionDeltaCount -= getPartitionHasDelta(i + 1) ? 1 : 0;
+                    partitionDeltaActiveCount -= isPartitionDeltaActive(i + 1) ? 1 : 0;
                 }
                 attachedPartitions.setPos((maxTimestampPartitionIndex + 1) * LONGS_PER_TX_ATTACHED_PARTITION);
                 recordStructureVersion++;

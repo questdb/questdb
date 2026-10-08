@@ -30,7 +30,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.idx.CoveringRowCursor;
+import io.questdb.cairo.idx.CoveringRow;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
@@ -86,7 +86,7 @@ public final class CoveredColumnDecoder {
             long[] addrs,
             VarDataSink varData,
             int count,
-            CoveringRowCursor crc,
+            CoveringRow crc,
             int queryColCount,
             int[] coveredIncludeIdx,
             int[] columnTypeTags,
@@ -127,7 +127,7 @@ public final class CoveredColumnDecoder {
      * fixed-width covered layout, shared by the worker decode (above) and the eager
      * multi-key merge in {@code CoveringIndexRecordCursorFactory}, so the two cannot drift.
      */
-    public static boolean writeFixedWidthCovered(long addr, int count, int columnTypeTag, CoveringRowCursor crc, int includeIdx) {
+    public static boolean writeFixedWidthCovered(long addr, int count, int columnTypeTag, CoveringRow crc, int includeIdx) {
         switch (columnTypeTag) {
             case ColumnType.DOUBLE -> Unsafe.putDouble(
                     addr + (long) count * Double.BYTES, crc.getCoveredDouble(includeIdx));

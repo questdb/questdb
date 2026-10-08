@@ -359,7 +359,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             );
         } finally {
             try {
-                frameMemoryPool.releaseParquetBuffers();
+                frameMemoryPool.releaseDecodedFrameBuffers();
             } finally {
                 atom.release(slotId);
             }
@@ -520,7 +520,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             );
         } finally {
             try {
-                frameMemoryPool.releaseParquetBuffers();
+                frameMemoryPool.releaseDecodedFrameBuffers();
             } finally {
                 atom.release(slotId);
             }

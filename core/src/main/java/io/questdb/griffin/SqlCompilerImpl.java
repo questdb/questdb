@@ -946,14 +946,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Rejects ALTER ... ALTER COLUMN ... TYPE on a table that has a read-only partition, which
-     * includes every partition in cold storage. A type change rewrites the column in every
-     * partition, and conversions such as the one to SYMBOL first have to decode a parquet partition
-     * back to native; neither is possible for a read-only partition, so {@code TableWriter} refuses
-     * the change when it is applied - and on a WAL table that failure suspends the table. Rejecting
-     * the statement at compile time keeps the table healthy and gives the user an immediate error.
+     * Rejects type changes on read-only or delta-active partitions before WAL submission.
+     * {@code TableWriter} cannot rewrite their column data. Rejecting these statements at
+     * compile time prevents WAL apply from suspending the table.
      */
-    private static void rejectChangeColumnTypeOnReadOnlyPartitions(
+    private static void rejectColumnTypeChange(
             SqlExecutionContext executionContext,
             TableToken tableToken,
             int position
@@ -975,6 +972,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             .put(isCold
                                     ? "]; column data of partitions in cold storage cannot be rewritten"
                                     : "]; column data of read-only partitions cannot be rewritten");
+                }
+                if (txFile.isPartitionDeltaActive(i)) {
+                    throw SqlException.position(position)
+                            .put("cannot change column type, table has delta-active partitions [table=")
+                            .put(tableToken.getTableName())
+                            .put(", partition=").put(formatPartitionName(reader, txFile.getPartitionTimestampByIndex(i)))
+                            .put("]; column data of delta-active partitions cannot be rewritten");
                 }
             }
         }
@@ -1368,7 +1372,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         executionContext.getSecurityContext().authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
-        rejectChangeColumnTypeOnReadOnlyPartitions(executionContext, tableToken, tableNamePosition);
+        rejectColumnTypeChange(executionContext, tableToken, tableNamePosition);
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -2072,6 +2076,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             try (TableReader reader = engine.getReader(tableToken)) {
                 if (reader != null && !PartitionBy.isPartitioned(reader.getMetadata().getPartitionBy())) {
                     throw SqlException.$(pos, "Cannot convert non-partitioned table");
+                }
+                if (reader != null && reader.getTxFile().hasDeltaState()) {
+                    throw SqlException.$(pos, "cannot change table type, table has a delta-active partition or delta data");
                 }
                 // Converting a WAL table to non-WAL is intentionally allowed even when the
                 // table is FORMAT PARQUET or has parquet partitions. This is a very useful
@@ -4425,9 +4432,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     // update is delayed until operation execution (for non-wal tables) or pushed to wal job completely
                     break;
                 case ExecutionModel.EXPLAIN:
-                    sqlId = queryRegistry.register(sqlText, executionContext);
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
-                    compiledQuery.ofExplain(generateExplain((ExplainModel) executionModel, executionContext));
+                    // Like SELECT, EXPLAIN registers when it opens its base cursor, so the open runs
+                    // under the query memory tracker.
+                    final RecordCursorFactory explainFactory = generateExplain((ExplainModel) executionModel, executionContext);
+                    compiledQuery.ofExplain(generateProgressLogger
+                            ? new QueryProgress(queryRegistry, sqlText, explainFactory)
+                            : explainFactory);
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;
                 case ExecutionModel.COMPILE_VIEW:
@@ -4451,9 +4462,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
 
             short type = compiledQuery.getType();
-            if (type == CompiledQuery.EXPLAIN
-                    || type == CompiledQuery.RENAME_TABLE  // non-wal rename table is complete at this point
-            ) {
+            if (type == CompiledQuery.RENAME_TABLE) { // non-wal rename table is complete at this point
                 queryRegistry.unregister(sqlId, executionContext);
             }
         } catch (Throwable th) {

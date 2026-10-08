@@ -207,11 +207,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     Rnd getRandom();
 
     default TableReader getReader(TableToken tableToken, long version) {
-        return getCairoEngine().getReader(tableToken, version, this.getReaderPoolSupervisor());
+        final TableReader reader = getCairoEngine().getReader(tableToken, version, this.getReaderPoolSupervisor());
+        reader.setMemoryTracker(getMemoryTracker());
+        return reader;
     }
 
     default TableReader getReader(TableToken tableToken) {
-        return getCairoEngine().getReader(tableToken, this.getReaderPoolSupervisor());
+        final TableReader reader = getCairoEngine().getReader(tableToken, this.getReaderPoolSupervisor());
+        reader.setMemoryTracker(getMemoryTracker());
+        return reader;
     }
 
     /**

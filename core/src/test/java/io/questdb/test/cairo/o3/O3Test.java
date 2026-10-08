@@ -2062,7 +2062,7 @@ public class O3Test extends AbstractO3Test {
                 ts += step;
 
                 long txn = w.getTxn();
-                txnScoreboard.acquireTxn(0, txn);
+                txnScoreboard.acquireTxn(0, txn, w.getSeqTxn());
                 w.commit();
                 txnScoreboard.releaseTxn(0, txn);
             }

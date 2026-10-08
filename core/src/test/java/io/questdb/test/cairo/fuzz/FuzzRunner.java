@@ -155,8 +155,8 @@ public class FuzzRunner {
 
     public void after() {
         if (this.s0 != 0 || this.s1 != 0) {
-            LOG.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
-            System.out.printf("random seeds: %dL, %dL%n", s0, s1);
+            LOG.info().$("RNG state after warm-up: ").$(s0).$("L, ").$(s1).$('L').$();
+            System.out.printf("RNG state after warm-up: %dL, %dL%n", s0, s1);
         }
     }
 

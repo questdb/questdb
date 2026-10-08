@@ -863,6 +863,42 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByIndexedSkipsOlderIndexes() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    // The newer partitions hold every key, including NULL,
+                    // so the query must not open the first partition's index.
+                    if (Utf8s.containsAscii(name, "1970-01-01")
+                            && (Utf8s.endsWithAscii(name, ".k") || Utf8s.endsWithAscii(name, ".v"))) {
+                        return -1;
+                    }
+                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
+                }
+            };
+
+            execute("CREATE TABLE t AS (" +
+                    "SELECT " +
+                    "x, " +
+                    "rnd_symbol('a', 'b', null) s, " +
+                    "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
+                    "FROM long_sequence(49)" +
+                    "), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertQuery("SELECT ts, x, s FROM t LATEST ON ts PARTITION BY s")
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("Async index backward scan on: s")
+                    .returns("ts\tx\ts\n" +
+                            "1970-01-02T22:00:00.000000" + suffix + "\t47\tb\n" +
+                            "1970-01-02T23:00:00.000000" + suffix + "\t48\ta\n" +
+                            "1970-01-03T00:00:00.000000" + suffix + "\t49\t\n");
+        });
+    }
+
+    @Test
     public void testLatestByIndexedSymbolFilterNotDropped() throws Exception {
         // A WHERE predicate over an INDEXED SYMBOL combined with LATEST ON ... PARTITION BY
         // a non-symbol key used to be silently dropped. WhereClauseParser extracted the
