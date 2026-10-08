@@ -129,12 +129,13 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
                                 } catch (CairoException e) {
                                     Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, e.getInterruptionReason());
                                 }
+                                final int firstPollAt = kind == 3 ? 64 : 63;
                                 Assert.assertTrue(trace.signal.get());
-                                Assert.assertEquals(cancelAt < 64 ? 63 : 127, trace.visits);
+                                Assert.assertEquals(cancelAt <= firstPollAt ? firstPollAt : firstPollAt + 64, trace.visits);
                                 Assert.assertTrue(trace.visits - cancelAt <= 64);
                                 Assert.assertTrue(trace.visits < 256);
                                 for (int i = 0; i < trace.pollAtVisits.size(); i++) {
-                                    Assert.assertEquals(i * 64 + 63, trace.pollAtVisits.getQuick(i));
+                                    Assert.assertEquals(i * 64 + firstPollAt, trace.pollAtVisits.getQuick(i));
                                 }
                             }
                         }
@@ -163,7 +164,7 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
                         Assert.assertEquals(300, helper.findAsOfRow(300, breaker));
                         Assert.assertEquals(visits, trace.visits);
                         Assert.assertEquals(polls, trace.pollAtVisits.size());
-                        Assert.assertEquals(lookahead == 64 ? 1 : 4, polls);
+                        Assert.assertEquals(lookahead == 64 ? 0 : 4, polls);
                         if (lookahead == 64) {
                             Assert.assertTrue(trace.visits <= 64 + 10 + 65 + 1);
                             helper.toTop();

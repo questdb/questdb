@@ -229,9 +229,10 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         masterKey.commit();
         final long masterHash = masterKey.hash();
 
+        final boolean isPolling = filter != null;
         int rowVisitCount = 0;
         while (true) {
-            if ((++rowVisitCount & (CIRCUIT_BREAKER_CHECK_INTERVAL - 1)) == 0) {
+            if (isPolling && (++rowVisitCount & (CIRCUIT_BREAKER_CHECK_INTERVAL - 1)) == 0) {
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             }
             final long currentRowId = Rows.toRowID(frameIndex, rowIndex);
@@ -603,23 +604,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     }
 
     public long findNotKeyedAsOfMatch(long asOfRowId, SqlExecutionCircuitBreaker circuitBreaker) {
-        if (filter == null || asOfRowId == Long.MIN_VALUE) {
-            return asOfRowId;
-        }
-        // Master frames can arrive out of order. The cached interval contains no
-        // later qualifying row, so it also answers lookups that move backwards.
-        if (asOfRowId <= filteredAsOfRowId && asOfRowId >= filteredMatchRowId) {
-            return filteredMatchRowId;
-        }
-        final boolean isIncremental = filteredAsOfRowId != Long.MIN_VALUE && asOfRowId > filteredAsOfRowId;
-        final long stopRowId = isIncremental ? Math.max(filteredAsOfRowId, filterMissWatermark) : filterMissWatermark;
-        long matchRowId = backwardScanForFilterMatch(asOfRowId, stopRowId, circuitBreaker);
-        if (matchRowId == Long.MIN_VALUE && isIncremental && filteredAsOfRowId > filterMissWatermark) {
-            matchRowId = filteredMatchRowId;
-        }
-        filteredAsOfRowId = asOfRowId;
-        filteredMatchRowId = matchRowId;
-        return matchRowId;
+        return filter == null || asOfRowId == Long.MIN_VALUE ? asOfRowId : findFilteredAsOfMatch(asOfRowId, circuitBreaker);
     }
 
     /**
@@ -704,6 +689,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         long rowIndex = startRowIndex;
         timeFrameCursor.recordAt(record, frameIndex, rowIndex);
 
+        final boolean isPolling = filter != null;
         int rowVisitCount = 0;
         while (true) {
             long currentRowId = Rows.toRowID(frameIndex, rowIndex);
@@ -713,7 +699,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
                 break;
             }
 
-            if ((++rowVisitCount & (CIRCUIT_BREAKER_CHECK_INTERVAL - 1)) == 0) {
+            if (isPolling && (++rowVisitCount & (CIRCUIT_BREAKER_CHECK_INTERVAL - 1)) == 0) {
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             }
             // Position record and cache the key
@@ -926,6 +912,23 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         bookmarkedRowIndex = rowIndex;
     }
 
+    private long findFilteredAsOfMatch(long asOfRowId, SqlExecutionCircuitBreaker circuitBreaker) {
+        // Master frames can arrive out of order. The cached interval contains no
+        // later qualifying row, so it also answers lookups that move backwards.
+        if (asOfRowId <= filteredAsOfRowId && asOfRowId >= filteredMatchRowId) {
+            return filteredMatchRowId;
+        }
+        final boolean isIncremental = filteredAsOfRowId != Long.MIN_VALUE && asOfRowId > filteredAsOfRowId;
+        final long stopRowId = isIncremental ? Math.max(filteredAsOfRowId, filterMissWatermark) : filterMissWatermark;
+        long matchRowId = backwardScanForFilterMatch(asOfRowId, stopRowId, circuitBreaker);
+        if (matchRowId == Long.MIN_VALUE && isIncremental && filteredAsOfRowId > filterMissWatermark) {
+            matchRowId = filteredMatchRowId;
+        }
+        filteredAsOfRowId = asOfRowId;
+        filteredMatchRowId = matchRowId;
+        return matchRowId;
+    }
+
     private @Nullable MapValue findKeyMiss(Record masterRecord, RecordSink masterAsOfJoinMapSink) {
         if (keyMissMap == null || !keyMissMap.isOpen()) {
             return null;
@@ -946,8 +949,21 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         long scanHi = Math.min(rowLo + lookahead, timeFrame.getRowHi());
         long result = Long.MIN_VALUE;
 
+        if (lookahead <= CIRCUIT_BREAKER_CHECK_INTERVAL) {
+            for (long r = rowLo; r < scanHi; r++) {
+                timeFrameCursor.recordAtRowIndex(record, r);
+                long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
+                if (timestamp <= targetTimestamp) {
+                    result = r;
+                } else {
+                    return result;
+                }
+            }
+            return scanHi < timeFrame.getRowHi() ? -scanHi - 1 : result;
+        }
+
         long r = rowLo;
-        long chunkHi = Math.min(rowLo + CIRCUIT_BREAKER_CHECK_INTERVAL - 1, scanHi);
+        long chunkHi = Math.min(rowLo + CIRCUIT_BREAKER_CHECK_INTERVAL, scanHi);
         while (true) {
             for (; r < chunkHi; r++) {
                 timeFrameCursor.recordAtRowIndex(record, r);

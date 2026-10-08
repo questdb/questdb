@@ -315,6 +315,9 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
             CharSequence horizonClause,
             long[] offsetsMicros
     ) throws SqlException {
+        final String slaveFilter = generateSlaveFilter();
+        final boolean isOnFilter = rnd.nextBoolean();
+
         // Build HORIZON JOIN query
         sink.clear();
         sink
@@ -324,11 +327,8 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
         }
         sink
                 .put(", ").put(horizonAggregates)
-                .put(" FROM ").put(tradesInner).put(" AS t")
-                .put(" HORIZON JOIN prices AS p");
-        if (symbolEq) {
-            sink.put(" ON (t.sym = p.sym)");
-        }
+                .put(" FROM ").put(tradesInner).put(" AS t");
+        putHorizonSlave("prices", "p", symbolEq, slaveFilter, isOnFilter);
         sink
                 .put(' ').put(horizonClause)
                 .put(" ORDER BY h_offset");
@@ -367,10 +367,8 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
                     .put(offsetsMicros[i])
                     .put(", ts) AS ts, id, sym, price FROM ")
                     .put(tradesInner)
-                    .put(") TIMESTAMP(ts)) t ASOF JOIN prices p");
-            if (symbolEq) {
-                sink.put(" ON (t.sym = p.sym)");
-            }
+                    .put(") TIMESTAMP(ts)) t");
+            putAsOfSlave("prices", "p", symbolEq, slaveFilter);
         }
 
         sink.put(") GROUP BY h_offset");
@@ -410,6 +408,13 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
             CharSequence horizonClause,
             long[] offsetsMicros
     ) throws SqlException {
+        final String[] slaveFilters = new String[slaveCount];
+        final boolean[] isOnFilters = new boolean[slaveCount];
+        for (int s = 0; s < slaveCount; s++) {
+            slaveFilters[s] = generateSlaveFilter();
+            isOnFilters[s] = rnd.nextBoolean();
+        }
+
         // Build multi-slave HORIZON JOIN query
         sink.clear();
         sink.put("SELECT h.offset AS h_offset");
@@ -419,10 +424,7 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
         sink.put(", ").put(horizonAggregates)
                 .put(" FROM ").put(tradesInner).put(" AS t");
         for (int s = 0; s < slaveCount; s++) {
-            sink.put(" HORIZON JOIN prices").put(s).put(" AS p").put(s);
-            if (symbolEq) {
-                sink.put(" ON (t.sym = p").put(s).put(".sym)");
-            }
+            putHorizonSlave("prices" + s, "p" + s, symbolEq, slaveFilters[s], isOnFilters[s]);
         }
         sink.put(' ').put(horizonClause)
                 .put(" ORDER BY h_offset");
@@ -459,10 +461,7 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
                     .put(tradesInner)
                     .put(") TIMESTAMP(ts)) t");
             for (int s = 0; s < slaveCount; s++) {
-                sink.put(" ASOF JOIN prices").put(s).put(" p").put(s);
-                if (symbolEq) {
-                    sink.put(" ON (t.sym = p").put(s).put(".sym)");
-                }
+                putAsOfSlave("prices" + s, "p" + s, symbolEq, slaveFilters[s]);
             }
         }
 
@@ -556,6 +555,17 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
         }
 
         return "(trades" + sink + ")";
+    }
+
+    private String generateSlaveFilter() {
+        return switch (rnd.nextInt(7)) {
+            case 0, 1 -> null;
+            case 2 -> "$id % " + (2 + rnd.nextInt(20)) + " = 0";
+            case 3 -> "$sym IN ('sym" + rnd.nextInt(4) + "', 'sym" + rnd.nextInt(4) + "')";
+            case 4 -> "$sym != 'sym" + rnd.nextInt(4) + "'";
+            case 5 -> "$id < " + rnd.nextInt(5_000);
+            default -> "$id > " + rnd.nextInt(5_000);
+        };
     }
 
     private long generateTradeSpread(Rnd rnd) {
@@ -896,5 +906,42 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
         }
 
         return perSlaveColumns;
+    }
+
+    private void putAsOfSlave(String table, String alias, boolean symbolEq, String slaveFilter) {
+        sink.put(" ASOF JOIN ");
+        putSlaveTable(table, slaveFilter);
+        sink.put(' ').put(alias);
+        if (symbolEq) {
+            sink.put(" ON (t.sym = ").put(alias).put(".sym)");
+        }
+    }
+
+    private void putHorizonSlave(String table, String alias, boolean symbolEq, String slaveFilter, boolean isOnFilter) {
+        sink.put(" HORIZON JOIN ");
+        putSlaveTable(table, isOnFilter ? null : slaveFilter);
+        sink.put(" AS ").put(alias);
+        final boolean hasOnFilter = isOnFilter && slaveFilter != null;
+        if (symbolEq || hasOnFilter) {
+            sink.put(" ON (");
+            if (symbolEq) {
+                sink.put("t.sym = ").put(alias).put(".sym");
+            }
+            if (hasOnFilter) {
+                if (symbolEq) {
+                    sink.put(" AND ");
+                }
+                sink.put(slaveFilter.replace("$", alias + "."));
+            }
+            sink.put(')');
+        }
+    }
+
+    private void putSlaveTable(String table, String slaveFilter) {
+        if (slaveFilter == null) {
+            sink.put(table);
+        } else {
+            sink.put('(').put(table).put(" WHERE ").put(slaveFilter.replace("$", "")).put(')');
+        }
     }
 }
