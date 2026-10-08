@@ -62,6 +62,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
 public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     private static final int CIRCUIT_BREAKER_CHECK_INTERVAL = 64;
     private static final int LINEAR_SCAN_LIMIT = 64;
+    private static final long UNRESOLVED_ROW_ID = -1;
     // Adaptive scan thresholds (set at construction, used by findKeyedAsOfMatch)
     private final long bwdScanAbsoluteThreshold;
     private final long bwdScanMinGap;
@@ -189,7 +190,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             MapKey targetKey = keyToRowIdMap.withKey();
             targetKey.put(masterRecord, masterAsOfJoinMapSink);
             MapValue targetValue = targetKey.findValue();
-            if (targetValue != null) {
+            if (targetValue != null && targetValue.getLong(0) != UNRESOLVED_ROW_ID) {
                 return targetValue.getLong(0);
             }
 
@@ -254,20 +255,18 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             slaveKey.put(record, slaveAsOfJoinMapSink);
             slaveKey.commit();
             final long slaveHash = slaveKey.hash();
+            final MapValue value = slaveKey.createValue(slaveHash);
             final boolean isKeyResolved;
             if (filter == null) {
-                final MapValue value = slaveKey.createValue(slaveHash);
                 if (value.isNew()) {
                     value.putLong(0, currentRowId);
                 }
                 isKeyResolved = true;
-            } else if (slaveKey.findValue() != null) {
-                isKeyResolved = true;
-            } else if (filter.getBool(record)) {
-                slaveKey.createValue(slaveHash).putLong(0, currentRowId);
+            } else if (!value.isNew() && value.getLong(0) != UNRESOLVED_ROW_ID) {
                 isKeyResolved = true;
             } else {
-                isKeyResolved = false;
+                isKeyResolved = filter.getBool(record);
+                value.putLong(0, isKeyResolved ? currentRowId : UNRESOLVED_ROW_ID);
             }
 
             if (isKeyResolved) {
@@ -278,7 +277,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
                     final MapKey targetKey = keyToRowIdMap.withKey();
                     targetKey.put(masterRecord, masterAsOfJoinMapSink);
                     final MapValue targetValue = targetKey.findValue();
-                    if (targetValue != null) {
+                    if (targetValue != null && targetValue.getLong(0) != UNRESOLVED_ROW_ID) {
                         // Found the target key in the map
                         return targetValue.getLong(0);
                     }
@@ -569,8 +568,8 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         }
 
         if (asOfRowId != prevAsOfRowId) {
-            if (isForwardScanMode && filter != null
-                    && asOfRowId - prevAsOfRowId > Math.max(backwardScanRows - bwdScanRowsAtPositionStart, bwdScanMinGap)) {
+            if (isForwardScanMode && filter != null && asOfRowId > prevAsOfRowId
+                    && rowGapLowerBound(prevAsOfRowId, asOfRowId) > Math.max(backwardScanRows - bwdScanRowsAtPositionStart, bwdScanMinGap)) {
                 isForwardScanMode = false;
                 forwardWatermark = Long.MIN_VALUE;
                 bwdScanRowsAtPositionStart = backwardScanRows;
@@ -1024,5 +1023,14 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         } else if (missValue.getLong(0) < rowId) {
             missValue.putLong(0, rowId);
         }
+    }
+
+    private long rowGapLowerBound(long fromRowId, long toRowId) {
+        final int toFrameIndex = Rows.toPartitionIndex(toRowId);
+        if (Rows.toPartitionIndex(fromRowId) == toFrameIndex) {
+            return toRowId - fromRowId;
+        }
+        timeFrameCursor.jumpTo(toFrameIndex);
+        return timeFrameCursor.open() > 0 ? Rows.toLocalRowID(toRowId) - timeFrame.getRowLo() : 0;
     }
 }

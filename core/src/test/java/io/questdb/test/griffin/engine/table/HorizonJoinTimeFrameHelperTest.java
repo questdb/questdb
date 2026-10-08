@@ -294,6 +294,38 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
     }
 
     @Test
+    public void testFilteredForwardScanSurvivesFrameCrossing() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Trace trace = new Trace();
+            Cursor cursor = new Cursor(trace, 4096, 4096, 4096, 4096, 4096, 32_768);
+            SqlExecutionCircuitBreaker breaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+            Function filter = new BooleanFunction() {
+                @Override
+                public boolean getBool(Record record) {
+                    return record.getRowId() == 0 || record.getRowId() >= Rows.toRowID(5, 19_000);
+                }
+            };
+            try (PollingEngine engine = new PollingEngine(root, new State());
+                 Map map = newMap(engine);
+                 HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
+                         engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter, new ArrayColumnTypes().add(ColumnType.INT)
+                 )) {
+                helper.of(cursor, null);
+                Assert.assertEquals(0, helper.findKeyedAsOfMatch(Rows.toRowID(2, 100), cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(8_293, trace.rows);
+                Assert.assertEquals(0, helper.findKeyedAsOfMatch(Rows.toRowID(2, 101), cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(8_294, trace.rows);
+                Assert.assertEquals(0, helper.findKeyedAsOfMatch(Rows.toRowID(3, 100), cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(12_389, trace.rows);
+                Assert.assertEquals(0, helper.findKeyedAsOfMatch(Rows.toRowID(4, 100), cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(16_485, trace.rows);
+                Assert.assertEquals(Rows.toRowID(5, 20_000), helper.findKeyedAsOfMatch(Rows.toRowID(5, 20_000), cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(16_486, trace.rows);
+            }
+        });
+    }
+
+    @Test
     public void testFilteredKeyMissBoundsNextPosition() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             State state = new State();
@@ -475,6 +507,10 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
             Assert.assertEquals(200, helper.findNotKeyedAsOfMatch(255, breaker));
             Assert.assertEquals(258, trace.visits);
             Assert.assertEquals(200, helper.findNotKeyedAsOfMatch(230, breaker));
+            Assert.assertEquals(258, trace.visits);
+
+            helper.toTop();
+            Assert.assertEquals(200, helper.findNotKeyedAsOfMatch(240, breaker));
             Assert.assertEquals(258, trace.visits);
         });
     }
