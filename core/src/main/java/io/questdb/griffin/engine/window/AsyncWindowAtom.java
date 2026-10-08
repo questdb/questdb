@@ -362,6 +362,15 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
     }
 
     /**
+     * Whether the worker slots start their window functions afresh at every key, see
+     * {@link #setKeyStartReset}.
+     */
+    @TestOnly
+    public boolean isKeyStartReset() {
+        return slots.size() > 1 && slots.getQuick(1).resetAtKeyStarts;
+    }
+
+    /**
      * Steps the rows go through after the window functions.
      */
     public int getStageCount() {

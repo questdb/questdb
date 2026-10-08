@@ -92,6 +92,8 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
     // the cursor of a plain scan whose keys are sharded by hash, see shardKeyColumnIndex
     private AsyncWindowShardCursor shardCursor;
     private final int shardKeyColumnIndex;
+    // the scan's key column in the scan's own metadata, for EXPLAIN when the window drops it
+    private int scanKeyColumnIndex = -1;
     private final boolean sliceMode;
     // the slice mode's WHERE for the query's thread, which this factory owns, or null
     private Function prefilter;
@@ -229,6 +231,7 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
         this.configuration = from.configuration;
         this.keyColumnIndex = from.keyColumnIndex;
         this.scan = from.scan;
+        this.scanKeyColumnIndex = from.scanKeyColumnIndex;
         this.ownerStages = from.ownerStages;
         this.splitPlan = splitPlan;
         this.windowFunctions = from.windowFunctions;
@@ -397,6 +400,13 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
         this.timestampOutputIndex = timestampOutputIndex;
     }
 
+    /**
+     * The scan's key column in the scan's metadata, which EXPLAIN names when the output drops it.
+     */
+    public void setScanKeyColumnIndex(int scanKeyColumnIndex) {
+        this.scanKeyColumnIndex = scanKeyColumnIndex;
+    }
+
     public void setChainSplit(AsyncWindowChainSplit chainSplit) {
         this.chainSplit = chainSplit;
     }
@@ -527,7 +537,7 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
             sink.attr("keyShards").putBaseColumnName(keyColumnIndex);
         } else {
             // a single key the window does not read
-            sink.attr("keyShards").val(1);
+            sink.attr("keyShards").val(scan.getMetadata().getColumnName(scanKeyColumnIndex));
         }
         if (atom.isKeyRunEnabled()) {
             sink.attr("keyRuns").val(true);

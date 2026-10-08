@@ -14212,6 +14212,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
         factory.setChainSplit(AsyncWindowChainSplit.of(splitPlan));
         factory.setKeyOrderAscending(!shardMode && keyMajorScan.isKeyMajorAscending());
+        factory.setScanKeyColumnIndex(scanKeyColumnIndex);
         if (dropPartitionBy) {
             ((AsyncWindowAtom) factory.getAtom()).setKeyStartReset(true);
         }
@@ -16688,6 +16689,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return false;
         }
         if (reader.getTableToken().isLiveView()) {
+            return false;
+        }
+        // a table too small for the parallel window keeps its plain scan, see generateAsyncWindow()
+        final long minRows = configuration.getSqlParallelWindowMinRows();
+        if (minRows > 0 && reader.size() < minRows) {
             return false;
         }
         if (manyKeys) {

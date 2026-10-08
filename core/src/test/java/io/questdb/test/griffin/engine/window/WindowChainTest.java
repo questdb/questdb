@@ -178,10 +178,125 @@ public class WindowChainTest extends AbstractCairoTest {
             createTrade(engine, sqlExecutionContext, 3_000);
             sqlExecutionContext.setParallelWindowEnabled(true);
             final String[] queries = {q48("BIG"), q52("BIG"), q61Index(), q61ManualOpt(), q72("BIG"), q73("'K1', 'BIG'"), q74ManualOpt("'K1', 'BIG'")};
-            for (String query : queries) {
+            final String[] expected = {
+                    "QUERY PLAN\n"
+                            + "Async Window workers: 1\n"
+                            + "  functions: [avg(price) over ( rows between 19 preceding and current row)]\n"
+                            + "  keyShards: sym\n"
+                            + "  keySplit: warmup 19 rows\n"
+                            + "    FilterOnValues symbolOrder: asc\n"
+                            + "      keyMajor: true\n"
+                            + "        Cursor-order scan\n"
+                            + "            Index forward scan on: sym\n"
+                            + "              filter: sym=1\n"
+                            + "        Frame forward scan on: trade\n",
+                        "QUERY PLAN\n"
+                            + "Async Window workers: 1\n"
+                            + "  functions: [sum(size) over (rows between unbounded preceding and current row)]\n"
+                            + "  keyShards: sym\n"
+                            + "  keySplit: running carry, folded\n"
+                            + "    FilterOnValues symbolOrder: asc\n"
+                            + "      keyMajor: true\n"
+                            + "        Cursor-order scan\n"
+                            + "            Index forward scan on: sym\n"
+                            + "              filter: sym=1\n"
+                            + "        Frame forward scan on: trade\n",
+                        "QUERY PLAN\n"
+                            + "Encode sort\n"
+                            + "  keys: [sym, seqDecr]\n"
+                            + "    SelectedRecord\n"
+                            + "        Async Window workers: 1\n"
+                            + "          functions: [lag(seq, 1, NULL) over (partition by [sym])]\n"
+                            + "          keyShards: sym\n"
+                            + "          keySplit: warmup 1 rows\n"
+                            + "          then: project\n"
+                            + "          functions: [sym,seq,seq-lag]\n"
+                            + "          then: filter\n"
+                            + "          filter: seq_delta<0\n"
+                            + "            SortedSymbolIndex\n"
+                            + "              keyMajor: true\n"
+                            + "                Index forward scan on: sym\n"
+                            + "                  symbolOrder: asc\n"
+                            + "                Frame forward scan on: trade\n",
+                        "QUERY PLAN\n"
+                            + "Encode sort\n"
+                            + "  keys: [sym, seqDecr]\n"
+                            + "    SelectedRecord\n"
+                            + "        Async Window workers: 1\n"
+                            + "          functions: [lag(seq, 1, NULL) over (partition by [sym])]\n"
+                            + "          keyShards: sym\n"
+                            + "          keySplit: warmup 1 rows\n"
+                            + "          then: filter\n"
+                            + "          filter: seq<prev_seq\n"
+                            + "            SortedSymbolIndex\n"
+                            + "              keyMajor: true\n"
+                            + "                Index forward scan on: sym\n"
+                            + "                  symbolOrder: asc\n"
+                            + "                Frame forward scan on: trade\n",
+                        "QUERY PLAN\n"
+                            + "Async Window workers: 1\n"
+                            + "  functions: [lag(price, 1, NULL) over ()]\n"
+                            + "  keyShards: sym\n"
+                            + "  keySplit: warmup 1 rows, running carry\n"
+                            + "  then: project\n"
+                            + "  functions: [case([(price is null!=lag is null or price!=lag),1,0]),time,price,size]\n"
+                            + "  then: window\n"
+                            + "  functions: [sum(price_changed) over (rows between unbounded preceding and current row)]\n"
+                            + "  then: group by\n"
+                            + "  keys: [pricegroup]\n"
+                            + "  values: [first(price),min(time),max(time),count(*),sum(size::double)]\n"
+                            + "    SelectedRecord\n"
+                            + "        FilterOnValues symbolOrder: asc\n"
+                            + "          keyMajor: true\n"
+                            + "            Cursor-order scan\n"
+                            + "                Index forward scan on: sym\n"
+                            + "                  filter: sym=1\n"
+                            + "            Frame forward scan on: trade\n",
+                        "QUERY PLAN\n"
+                            + "Async Window workers: 1\n"
+                            + "  functions: [lag(price, 1, NULL) over (partition by [sym])]\n"
+                            + "  keyShards: sym\n"
+                            + "  keySplit: warmup 1 rows, running carry\n"
+                            + "  then: project\n"
+                            + "  functions: [sym,case([(price is null!=lag is null or price!=lag),1,0]),time,price,size]\n"
+                            + "  then: window\n"
+                            + "  functions: [sum(price_changed) over (partition by [sym] rows between unbounded preceding and current row)]\n"
+                            + "  then: group by\n"
+                            + "  keys: [sym,pricegroup]\n"
+                            + "  values: [first(price),min(time),max(time),count(*),sum(size::double)]\n"
+                            + "    FilterOnValues symbolOrder: asc\n"
+                            + "      keyMajor: true\n"
+                            + "        Cursor-order scan\n"
+                            + "            Index forward scan on: sym\n"
+                            + "              filter: sym=1\n"
+                            + "            Index forward scan on: sym deferred: true\n"
+                            + "              filter: sym='K1'\n"
+                            + "        Frame forward scan on: trade\n",
+                        "QUERY PLAN\n"
+                            + "Async Window workers: 1\n"
+                            + "  functions: [lag(price, 1, NULL) over (partition by [sym])]\n"
+                            + "  keyShards: sym\n"
+                            + "  keySplit: warmup 1 rows, running carry\n"
+                            + "  then: project\n"
+                            + "  functions: [sym,case([(price is null!=lag is null or price!=lag),1,0]),price,time,size]\n"
+                            + "  then: window\n"
+                            + "  functions: [sum(price_changed) over (partition by [sym] rows between unbounded preceding and current row)]\n"
+                            + "  then: group by\n"
+                            + "  keys: [sym,pricegroup]\n"
+                            + "  values: [first(price),min(time),max(time),count(*),sum(size::double)]\n"
+                            + "    FilterOnValues symbolOrder: asc\n"
+                            + "      keyMajor: true\n"
+                            + "        Cursor-order scan\n"
+                            + "            Index forward scan on: sym\n"
+                            + "              filter: sym=1\n"
+                            + "            Index forward scan on: sym deferred: true\n"
+                            + "              filter: sym='K1'\n"
+                            + "        Frame forward scan on: trade\n"
+            };
+            for (int i = 0; i < queries.length; i++) {
                 final StringSink plan = new StringSink();
-                engine.print("explain " + query, plan, sqlExecutionContext);
-                System.out.println("PLAN " + query + "\n" + plan);
+                engine.print("explain " + queries[i], plan, sqlExecutionContext);
+                TestUtils.assertEquals(queries[i], expected[i], plan);
             }
             sqlExecutionContext.setParallelWindowEnabled(false);
         });
@@ -279,6 +394,90 @@ public class WindowChainTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupsSpanningTasks() throws Exception {
+        // runs of one price over hundreds of rows: a group spans many tasks of 50 rows, so tasks
+        // that continue it, end it, and hold nothing but it are all met
+        assertMemoryLeak(() -> {
+            createLongRuns(engine, sqlExecutionContext);
+            for (String query : new String[]{q72("R"), q72("S"), q73("'R', 'S', 'T'"), q73("'T'"), q74ManualOpt("'R', 'S', 'T'")}) {
+                assertMatchesSerial(engine, sqlExecutionContext, query, AsyncWindowStage.KIND_GROUP_BY);
+                sqlExecutionContext.setParallelWindowEnabled(true);
+                try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+                    Assert.assertNotEquals(query, AsyncWindowSplitPlan.MODE_NONE, findAsyncFactory(factory).getSplitPlan().getMode());
+                } finally {
+                    sqlExecutionContext.setParallelWindowEnabled(false);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGroupsSpanningTasksOnWorkerPool() throws Exception {
+        assertMemoryLeak(() -> inPool((engine, ctx) -> {
+            createLongRuns(engine, ctx);
+            long workerTasks = 0;
+            for (String query : new String[]{q72("R"), q73("'R', 'S', 'T'"), q74ManualOpt("'R', 'S', 'T'")}) {
+                for (int run = 0; run < 3; run++) {
+                    workerTasks += assertMatchesSerial(engine, ctx, query, AsyncWindowStage.KIND_GROUP_BY);
+                }
+            }
+            Assert.assertTrue(workerTasks > 0);
+        }));
+    }
+
+    @Test
+    public void testHashShardsWithoutIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrade(engine, sqlExecutionContext, 3_000, false);
+            for (String query : new String[]{q61Index(), q61ManualOpt(), q61ManualOpt() + " LIMIT 5", q61Index() + " LIMIT -4"}) {
+                assertMatchesSerial(engine, sqlExecutionContext, query, AsyncWindowStage.KIND_FILTER);
+                sqlExecutionContext.setParallelWindowEnabled(true);
+                try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+                    Assert.assertTrue(query, findAsyncFactory(factory).isShardMode());
+                } finally {
+                    sqlExecutionContext.setParallelWindowEnabled(false);
+                }
+            }
+            // switched off: the plain scan stays, and so does the serial window
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_SHARD_ENABLED, "false");
+            assertMatchesSerial(engine, sqlExecutionContext, q61ManualOpt(), -1);
+        });
+    }
+
+    @Test
+    public void testHashShardsWithoutIndexOnWorkerPool() throws Exception {
+        assertMemoryLeak(() -> inPool((engine, ctx) -> {
+            createTrade(engine, ctx, 20_000, false);
+            long workerTasks = 0;
+            for (int run = 0; run < 3; run++) {
+                workerTasks += assertMatchesSerial(engine, ctx, q61Index(), AsyncWindowStage.KIND_FILTER);
+                workerTasks += assertMatchesSerial(engine, ctx, q61ManualOpt(), AsyncWindowStage.KIND_FILTER);
+            }
+            Assert.assertTrue(workerTasks > 0);
+        }));
+    }
+
+    @Test
+    public void testKeyMajorCopiesWithoutPartitionMaps() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrade(engine, sqlExecutionContext, 3_000);
+            // lag cannot compute key runs: the workers' copies drop the PARTITION BY
+            assertKeyStartReset(engine, sqlExecutionContext, q61ManualOpt(), true);
+            assertKeyStartReset(engine, sqlExecutionContext, q73(allKeys()), true);
+            // a bounded average computes key runs, which keep their state in fields already
+            assertKeyStartReset(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT sym, s FROM (SELECT sym, avg(price) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) s FROM trade) ORDER BY sym, s",
+                    false
+            );
+            // key runs switched off: the copies drop the partitions
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_KEY_RUNS_ENABLED, "false");
+            assertKeyStartReset(engine, sqlExecutionContext, q61ManualOpt(), false);
+        });
+    }
+
+    @Test
     public void testOnWorkerPool() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_TASK_ROWS, 200);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MAX_KEY_ROWS, 5_000);
@@ -301,44 +500,77 @@ public class WindowChainTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MAX_KEY_ROWS, 5_000);
         assertMemoryLeak(() -> inPool((engine, ctx) -> {
             createTrade(engine, ctx, 20_000);
-            final String query = q73(allKeys());
-            final String expected = serial(engine, ctx, query);
-            final NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
-                    engine,
-                    new DefaultSqlExecutionCircuitBreakerConfiguration()
-            );
-            try {
-                ctx.with(ctx.getSecurityContext(), ctx.getBindVariableService(), ctx.getRandom(), ctx.getRequestFd(), circuitBreaker);
-                ctx.setParallelWindowEnabled(true);
-                try (RecordCursorFactory factory = engine.select(query, ctx)) {
-                    final AsyncWindowRecordCursorFactory async = findAsyncFactory(factory);
-                    try (RecordCursor cursor = async.getCursor(ctx)) {
-                        for (int i = 0; i < 50; i++) {
-                            Assert.assertTrue(cursor.hasNext());
-                        }
-                        circuitBreaker.cancel();
-                        try {
-                            //noinspection StatementWithEmptyBody
-                            while (cursor.hasNext()) {
-                            }
-                            Assert.fail("cancelled query ran to completion");
-                        } catch (CairoException e) {
-                            Assert.assertTrue(e.getMessage(), e.isCancellation());
-                        }
-                        circuitBreaker.clearCancelSentinel();
-                        circuitBreaker.resetTimer();
+            assertCancelMidQuery(engine, ctx, q73(allKeys()));
+        }));
+    }
+
+    @Test
+    public void testCancelMidQueryHashShards() throws Exception {
+        assertMemoryLeak(() -> inPool((engine, ctx) -> {
+            createTrade(engine, ctx, 20_000, false);
+            assertCancelMidQuery(engine, ctx, q61Index());
+        }));
+    }
+
+    @Test
+    public void testCancelMidQueryRowSlices() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_TASK_ROWS, 200);
+        assertMemoryLeak(() -> inPool((engine, ctx) -> {
+            createTrade(engine, ctx, 20_000);
+            assertCancelMidQuery(engine, ctx, q55("T"));
+        }));
+    }
+
+    @Test
+    public void testHashShardsOverParquet() throws Exception {
+        // a plan over a plain scan refuses a changed partition format, so only new plans meet Parquet
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 64);
+        assertMemoryLeak(() -> {
+            createTrade(engine, sqlExecutionContext, 3_000, false);
+            execute("alter table trade convert partition to parquet list '1970-01-01'");
+            for (String query : new String[]{q61Index(), q61ManualOpt(), q55("T"), q61ManualOpt() + " LIMIT 5"}) {
+                assertMatchesSerial(engine, sqlExecutionContext, query, null);
+            }
+        });
+    }
+
+    private static void assertCancelMidQuery(CairoEngine engine, SqlExecutionContextImpl ctx, String query) throws Exception {
+        final String expected = serial(engine, ctx, query);
+        final NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                engine,
+                new DefaultSqlExecutionCircuitBreakerConfiguration()
+        );
+        try {
+            ctx.with(ctx.getSecurityContext(), ctx.getBindVariableService(), ctx.getRandom(), ctx.getRequestFd(), circuitBreaker);
+            ctx.setParallelWindowEnabled(true);
+            try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                final AsyncWindowRecordCursorFactory async = findAsyncFactory(factory);
+                try (RecordCursor cursor = async.getCursor(ctx)) {
+                    for (int i = 0; i < 50; i++) {
+                        Assert.assertTrue(cursor.hasNext());
                     }
-                    assertSlotsReleased(factory);
-                    try (RecordCursor cursor = factory.getCursor(ctx)) {
-                        TestUtils.assertEquals(expected, rawRows(cursor, factory.getMetadata()));
+                    circuitBreaker.cancel();
+                    try {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                        }
+                        Assert.fail("cancelled query ran to completion");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.getMessage(), e.isCancellation());
                     }
-                } finally {
-                    ctx.setParallelWindowEnabled(false);
+                    circuitBreaker.clearCancelSentinel();
+                    circuitBreaker.resetTimer();
+                }
+                assertSlotsReleased(factory);
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    TestUtils.assertEquals(expected, rawRows(cursor, factory.getMetadata()));
                 }
             } finally {
-                Misc.free(circuitBreaker);
+                ctx.setParallelWindowEnabled(false);
             }
-        }));
+        } finally {
+            Misc.free(circuitBreaker);
+        }
     }
 
     @Test
@@ -417,6 +649,40 @@ public class WindowChainTest extends AbstractCairoTest {
                     "SELECT sym, price, count() cnt FROM runs ORDER BY sym, price";
             assertMatchesSerial(engine, sqlExecutionContext, byPrice, null);
         });
+    }
+
+    private void assertKeyStartReset(CairoEngine engine, SqlExecutionContext ctx, String query, boolean expected) throws Exception {
+        assertMatchesSerial(engine, ctx, query, null);
+        ctx.setParallelWindowEnabled(true);
+        try (RecordCursorFactory factory = engine.select(query, ctx)) {
+            Assert.assertEquals(query, expected, ((AsyncWindowAtom) findAsyncFactory(factory).getAtom()).isKeyStartReset());
+        } finally {
+            ctx.setParallelWindowEnabled(false);
+        }
+    }
+
+    /**
+     * Table {@code trade} of price runs over hundreds of rows: keys R (half of the rows), S and
+     * T, interleaved; the price of each key changes every 400 of its rows, sizes vary, and one
+     * size in thirteen is NULL.
+     */
+    private void createLongRuns(CairoEngine engine, SqlExecutionContext ctx) throws Exception {
+        engine.execute(
+                "create table trade (time timestamp, sym symbol index type " + indexType + ", ex symbol, price float, size float, seq int)" +
+                        " timestamp(time) partition by DAY",
+                ctx
+        );
+        engine.execute(
+                "insert into trade select" +
+                        " (x * 30_000_000L)::timestamp," +
+                        " case when x % 4 < 2 then 'R' when x % 4 = 2 then 'S' else 'T' end," +
+                        " 'Q'," +
+                        " (100 + (x / 1_600) % 3)::float," +
+                        " case when x % 13 = 0 then null else (x % 11 + 0.5)::float end," +
+                        " (x % 31)::int" +
+                        " from long_sequence(9_000)",
+                ctx
+        );
     }
 
     private static String allKeys() {
@@ -575,8 +841,12 @@ public class WindowChainTest extends AbstractCairoTest {
      * Three DAY partitions.
      */
     private void createTrade(CairoEngine engine, SqlExecutionContext ctx, int rows) throws Exception {
+        createTrade(engine, ctx, rows, true);
+    }
+
+    private void createTrade(CairoEngine engine, SqlExecutionContext ctx, int rows, boolean indexed) throws Exception {
         engine.execute(
-                "create table trade (time timestamp, sym symbol index type " + indexType + ", ex symbol, price float, size float, seq int)" +
+                "create table trade (time timestamp, sym symbol" + (indexed ? " index type " + indexType : "") + ", ex symbol, price float, size float, seq int)" +
                         " timestamp(time) partition by DAY",
                 ctx
         );

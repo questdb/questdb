@@ -203,7 +203,7 @@ public class AsyncWindowSplitPlan implements Plannable {
                     sink.val(", running carry");
                 }
             }
-            case MODE_PREFIX -> sink.val("running carry");
+            case MODE_PREFIX -> sink.val(hasFold() ? "running carry, folded" : "running carry");
             default -> sink.val("none");
         }
     }
