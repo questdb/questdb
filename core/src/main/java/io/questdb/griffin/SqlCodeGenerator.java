@@ -548,6 +548,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final IntList tempVecConstructorArgIndexes = new IntList();
     private final ObjList<VectorAggregateFunctionConstructor> tempVecConstructors = new ObjList<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
+    // Primary factories that generateQuery0() built for a QueryModelWrapper and handed out only
+    // inside a SharedRecordCursorFactory, which borrows its primary and does not close it. No
+    // node of the plan owns these factories, so generate() frees them when its outermost attempt
+    // fails. A successful attempt leaves them without an owner as well: the returned plan reads
+    // them through the borrowing factories, and closing that plan does not close them
+    // (https://github.com/questdb/questdb/issues/7803, section 3).
+    private final ObjList<RecordCursorFactory> unownedSharedFactories = new ObjList<>();
     private final boolean validateSampleByFillType;
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     // Each recursively active generate() invocation owns separate parser scratch state.
@@ -920,12 +927,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final boolean isOutermost = whereClauseParserDepth == 0;
         try {
             return generateAttempt(model, executionContext);
+        } catch (Throwable th) {
+            if (isOutermost) {
+                // The failed attempt returns no plan, so nothing can read these factories any
+                // more, and no node of the partial plan closed them. A nested attempt must not
+                // free them: the cache keeps serving them to the enclosing attempt.
+                Misc.freeObjList(unownedSharedFactories, th);
+            }
+            throw th;
         } finally {
             if (isOutermost) {
                 // The cache borrows factories from the returned tree. A retry can reuse model
                 // identities, so neither borrowed factories nor snapshots may survive an attempt.
                 generationState.clear();
                 sharedFactoryCache.clear();
+                unownedSharedFactories.clear();
             }
         }
     }
@@ -9281,6 +9297,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 cached = false;
             }
             if (primaryFactory.supportsSharedCursors()) {
+                if (!cached) {
+                    // This call built the primary factory, and the SharedRecordCursorFactory
+                    // below only borrows it, so the caller's cleanup does not reach it.
+                    unownedSharedFactories.add(primaryFactory);
+                }
                 sharedFactoryCache.put(delegate, primaryFactory);
                 return new SharedRecordCursorFactory(primaryFactory, sid);
             }

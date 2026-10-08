@@ -1169,6 +1169,32 @@ public class LateralJoinTest extends AbstractCairoTest {
         Assert.assertEquals(0, oldModel.getLateralCountTemplates().size());
     }
 
+    // The joined sub-query reads o.x, so the rewriter gives it a reference to the shared
+    // __qdb_outer_ref__ source, and the code generator builds that source for the reference
+    // before it reaches the ASOF JOIN, which fails for the lack of a designated timestamp.
+    // No factory of the partial plan owns the source, because the reference only borrows it,
+    // so generate() has to free it.
+    @Test
+    public void testLateralFailedCompilationFreesSharedSource() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, x INT)");
+            execute("CREATE TABLE a (id INT, k INT)");
+            execute("CREATE TABLE b (id INT, k INT, x INT)");
+
+            assertQuery("""
+                    SELECT o.id, l.aid, l.rid, l.sid
+                    FROM o
+                    JOIN LATERAL (
+                        SELECT a.id aid, r.id rid, s.id sid
+                        FROM a
+                        JOIN (SELECT id, k FROM b WHERE x != o.x) r ON r.k = a.k
+                        ASOF JOIN b s
+                    ) l
+                    """)
+                    .fails(171, "left side of time series join has no timestamp");
+        });
+    }
+
     // The testLateralMultiCorrelation* tests cover a lateral body that holds more
     // correlation predicates than outer columns, e.g. `k = a.x AND x = a.x`. The
     // outer-ref elimination maps each outer column to one inner column and used to
@@ -5717,6 +5743,83 @@ public class LateralJoinTest extends AbstractCairoTest {
                     k
                     2
                     """);
+        });
+    }
+
+    // The testLateralRejectedBodyFreesSharedSource* tests cover a body whose LEFT JOIN reads
+    // an outer column after a FULL JOIN. The rewriter joins the __qdb_outer_ref__ model after
+    // the FULL JOIN, so the LEFT JOIN's rewritten ON clause does not resolve and the
+    // compilation fails. By then the code generator has built the shared __qdb_outer_ref__
+    // source for the reference inside the joined sub-query. No factory of the partial plan
+    // owns it, because the reference only borrows it, so generate() has to free it. The tests
+    // differ in the factory that the source compiles to.
+
+    // Two outer columns: the source is a parallel GROUP BY, which owns NATIVE_OFFLOAD memory.
+    @Test
+    public void testLateralRejectedBodyFreesSharedSourceAsyncGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, x INT, y INT)");
+            execute("CREATE TABLE a (id INT, k INT)");
+            execute("CREATE TABLE b (id INT, k INT, x INT)");
+
+            assertQuery("""
+                    SELECT o.id, t.aid, t.cid, t.sid
+                    FROM o
+                    CROSS JOIN LATERAL (
+                        SELECT a.id aid, c.id cid, s.id sid
+                        FROM a
+                        FULL JOIN b c ON c.k = a.k
+                        LEFT JOIN (SELECT id, k FROM b WHERE x != o.x AND k != o.y) s ON s.k = a.k
+                    ) t
+                    """)
+                    .fails(0, "Invalid column: __qdb_outer_ref__0_y");
+        });
+    }
+
+    // Columns of two outer tables: the source reads their join, whose metadata owns
+    // NATIVE_JOIN_MAP memory.
+    @Test
+    public void testLateralRejectedBodyFreesSharedSourceJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, x INT)");
+            execute("CREATE TABLE o2 (id INT, z INT)");
+            execute("CREATE TABLE a (id INT, k INT)");
+            execute("CREATE TABLE b (id INT, k INT, x INT)");
+
+            assertQuery("""
+                    SELECT o.id, t.aid, t.cid, t.sid
+                    FROM o
+                    JOIN o2 ON o2.id = o.id
+                    CROSS JOIN LATERAL (
+                        SELECT a.id aid, c.id cid, s.id sid
+                        FROM a
+                        FULL JOIN b c ON c.k = a.k
+                        LEFT JOIN (SELECT id, k FROM b WHERE x != o.x AND k != o2.z) s ON s.k = a.k
+                    ) t
+                    """)
+                    .fails(0, "Invalid column: __qdb_outer_ref__0_z");
+        });
+    }
+
+    // One INT outer column: the source is a vectorized GROUP BY, which owns NATIVE_ROSTI memory.
+    @Test
+    public void testLateralRejectedBodyFreesSharedSourceVectorizedGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, x INT)");
+            execute("CREATE TABLE a (id INT, k INT)");
+            execute("CREATE TABLE b (id INT, k INT, x INT)");
+
+            assertQuery("""
+                    SELECT o.id, t.aid, t.cid, t.sid
+                    FROM o
+                    CROSS JOIN LATERAL (
+                        SELECT a.id aid, c.id cid, s.id sid
+                        FROM a
+                        FULL JOIN b c ON c.k = a.k
+                        LEFT JOIN (SELECT id, k FROM b WHERE x != o.x) s ON s.k = a.k
+                    ) t
+                    """)
+                    .fails(0, "Invalid column: __qdb_outer_ref__0_x");
         });
     }
 
