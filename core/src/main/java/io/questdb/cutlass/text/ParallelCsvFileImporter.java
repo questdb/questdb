@@ -878,12 +878,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     // when DATE type is mis-detected as STRING we
                     // would not have either date format nor locale to
                     // use when populating this field
+                    // every wire kind is listed, so javac names this switch for a new one
                     switch (WireKind.of(columnType)) {
-                        case DATE:
+                        case DATE -> {
                             logTypeError(i, detectedType);
                             types.setQuick(i, BadDateAdapter.INSTANCE);
-                            break;
-                        case TIMESTAMP:
+                        }
+                        case TIMESTAMP -> {
                             // different timestamp type
                             if (detectedAdapter instanceof TimestampAdapter) {
                                 ((TimestampAdapter) detectedAdapter).reCompileDateFormat(ColumnType.getTimestampDriver(columnType).getTimestampDateFormatFactory());
@@ -893,13 +894,14 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                 logTypeError(i, detectedType);
                                 types.setQuick(i, BadTimestampAdapter.INSTANCE);
                             }
-                            break;
-                        case BINARY:
-                            throw TextException.$("cannot import text into BINARY column [index=").put(i).put(']');
-                        case null, default:
-                            // a type without a wire kind gets no adapter: getTypeAdapter() refuses it
-                            types.setQuick(i, typeManager.getTypeAdapter(columnType));
-                            break;
+                        }
+                        case BINARY -> throw TextException.$("cannot import text into BINARY column [index=").put(i).put(']');
+                        case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, FLOAT, DOUBLE, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT,
+                             GEOLONG, UUID, LONG128, IPV4, VARCHAR, ARRAY, INTERVAL, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
+                             DECIMAL128, DECIMAL256 ->
+                                types.setQuick(i, typeManager.getTypeAdapter(columnType));
+                        // a type without a wire kind gets no adapter: getTypeAdapter() refuses it
+                        case null -> types.setQuick(i, typeManager.getTypeAdapter(columnType));
                     }
                 }
             }

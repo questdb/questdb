@@ -98,18 +98,26 @@ public final class RelationRules {
      */
     public static short[] alter(short fromTag) {
         final IntList out = new IntList();
-        final RelationKind k = kind(fromTag);
-        switch (k) {
-            case BOOL, TEMPORAL -> addNumbersAndTemporalsAndColumnTexts(out);
+        // a switch expression, so javac names this rule for a new relation kind
+        final IntList row = switch (kind(fromTag)) {
+            case BOOL, TEMPORAL -> {
+                addNumbersAndTemporalsAndColumnTexts(out);
+                yield out;
+            }
             case INT, FLOAT -> {
                 addNumbersAndTemporalsAndColumnTexts(out);
                 addKind(out, RelationKind.DECIMAL);
+                yield out;
             }
-            case CHAR, UUID, IPV4 -> addColumnTexts(out);
+            case CHAR, UUID, IPV4 -> {
+                addColumnTexts(out);
+                yield out;
+            }
             case DECIMAL -> {
                 addKind(out, RelationKind.FLOAT);
                 addPersistedText(out);
                 addKind(out, RelationKind.DECIMAL);
+                yield out;
             }
             case TEXT -> {
                 if (isPersisted(fromTag)) {
@@ -118,11 +126,11 @@ public final class RelationRules {
                     addKind(out, RelationKind.UUID);
                     addKind(out, RelationKind.DECIMAL);
                 }
+                yield out;
             }
-            case SYMBOL, LONG256, LONG128, BINARY, GEO, ARRAY, INTERVAL, UNDEF, PSEUDO, NULL -> {
-            }
-        }
-        return apply(fromTag, out, ALTER_ADD, NO_CELLS, true);
+            case SYMBOL, LONG256, LONG128, BINARY, GEO, ARRAY, INTERVAL, UNDEF, PSEUDO, NULL -> out;
+        };
+        return apply(fromTag, row, ALTER_ADD, NO_CELLS, true);
     }
 
     /**
@@ -152,7 +160,8 @@ public final class RelationRules {
     public static int[] caseEscalation(int fromType) {
         final short fromTag = tagOf(fromType);
         final IntList out = new IntList();
-        switch (kind(fromTag)) {
+        // a switch expression, so javac names this rule for a new relation kind
+        final IntList row = switch (kind(fromTag)) {
             case INT, FLOAT -> {
                 final TypeDriver from = findTypeDriver(fromTag);
                 for (short o = 0; o <= MAX_TAG; o++) {
@@ -162,6 +171,7 @@ public final class RelationRules {
                         out.add(common);
                     }
                 }
+                yield out;
             }
             case CHAR, SYMBOL, TEXT -> {
                 final int rank = textRank(fromTag);
@@ -176,6 +186,7 @@ public final class RelationRules {
                         addSelfPairs(out, RelationKind.IPV4);
                     }
                 }
+                yield out;
             }
             case UUID, IPV4 -> {
                 // the parsed type, from the texts a column can have
@@ -187,6 +198,7 @@ public final class RelationRules {
                 }
                 out.add(fromTag);
                 out.add(fromTag);
+                yield out;
             }
             case TEMPORAL -> {
                 if (fromTag == TIMESTAMP) {
@@ -199,24 +211,25 @@ public final class RelationRules {
                     out.add(fromTag);
                     out.add(fromTag);
                 }
+                yield out;
             }
             case BOOL, LONG256, BINARY -> {
                 out.add(fromTag);
                 out.add(fromTag);
+                yield out;
             }
-            case LONG128, GEO, DECIMAL, ARRAY, INTERVAL, UNDEF, PSEUDO, NULL -> {
-            }
-        }
+            case LONG128, GEO, DECIMAL, ARRAY, INTERVAL, UNDEF, PSEUDO, NULL -> out;
+        };
         for (int[] cell : CASE_REPLACE) {
             if (cell[0] == fromTag) {
-                for (int i = 0, n = out.size(); i < n; i += 2) {
-                    if (out.getQuick(i) == cell[1]) {
-                        out.setQuick(i + 1, cell[2]);
+                for (int i = 0, n = row.size(); i < n; i += 2) {
+                    if (row.getQuick(i) == cell[1]) {
+                        row.setQuick(i + 1, cell[2]);
                     }
                 }
             }
         }
-        return out.toArray();
+        return row.toArray();
     }
 
     /**
@@ -226,12 +239,14 @@ public final class RelationRules {
     public static short[] copier(short fromTag) {
         final IntList out = new IntList();
         final RelationKind k = kind(fromTag);
-        switch (k) {
+        // a switch expression, so javac names this rule for a new relation kind
+        final IntList row = switch (k) {
             case INT, FLOAT, TEMPORAL -> {
                 addNumbersAndTemporals(out);
                 if (k == RelationKind.INT) {
                     addKind(out, RelationKind.DECIMAL);
                 }
+                yield out;
             }
             case CHAR -> {
                 addNumbersAndTemporals(out);
@@ -240,6 +255,7 @@ public final class RelationRules {
                 // the one-character geohash
                 addGeoUpTo(out, 8, 8);
                 addKind(out, RelationKind.DECIMAL);
+                yield out;
             }
             case TEXT -> {
                 if (isPersisted(fromTag)) {
@@ -253,20 +269,33 @@ public final class RelationRules {
                     addGeoUpTo(out, 0, Integer.MAX_VALUE);
                     addKind(out, RelationKind.DECIMAL);
                 }
+                yield out;
             }
-            case GEO -> addGeoUpTo(out, 0, bits(fromTag));
-            case DECIMAL -> addKind(out, RelationKind.DECIMAL);
+            case GEO -> {
+                addGeoUpTo(out, 0, bits(fromTag));
+                yield out;
+            }
+            case DECIMAL -> {
+                addKind(out, RelationKind.DECIMAL);
+                yield out;
+            }
             case UUID, LONG128 -> {
                 addKind(out, RelationKind.UUID);
                 addKind(out, RelationKind.LONG128);
                 addPersistedText(out);
+                yield out;
             }
-            case SYMBOL -> addColumnTexts(out);
-            case BOOL, LONG256, BINARY, IPV4, ARRAY -> out.add(fromTag);
-            case INTERVAL, UNDEF, PSEUDO, NULL -> {
+            case SYMBOL -> {
+                addColumnTexts(out);
+                yield out;
             }
-        }
-        return apply(fromTag, out, COPIER_ADD, NO_CELLS, true);
+            case BOOL, LONG256, BINARY, IPV4, ARRAY -> {
+                out.add(fromTag);
+                yield out;
+            }
+            case INTERVAL, UNDEF, PSEUDO, NULL -> out;
+        };
+        return apply(fromTag, row, COPIER_ADD, NO_CELLS, true);
     }
 
     /**

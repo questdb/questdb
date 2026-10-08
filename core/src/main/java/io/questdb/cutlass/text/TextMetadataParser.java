@@ -239,9 +239,10 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
 
         columnNames.add(name);
 
-        // the declared type's wire kind names the text form the column is parsed from
+        // the declared type's wire kind names the text form the column is parsed from; every wire
+        // kind is listed, so javac names this switch for a new one
         switch (WireKind.of(type)) {
-            case DATE:
+            case DATE -> {
                 DateLocale dateLocale = locale == null ? this.dateLocale : dateLocaleFactory.getLocale(locale);
 
                 if (dateLocale == null) {
@@ -253,8 +254,8 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                     throw JsonException.$(0, "DATE format pattern is required");
                 }
                 columnTypes.add(typeManager.nextDateAdapter().of(dateFormatFactory.get(pattern), dateLocale));
-                break;
-            case TIMESTAMP:
+            }
+            case TIMESTAMP -> {
                 DateLocale timestampLocale =
                         locale == null ?
                                 this.dateLocale
@@ -268,22 +269,15 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                     throw JsonException.$(0, "TIMESTAMP format pattern is required");
                 }
                 columnTypes.add(typeManager.nextTimestampAdapter(utf8, ColumnType.getTimestampDriver(type).getTimestampDateFormatFactory().get(pattern), timestampLocale, pattern.toString()));
-                break;
-            case SYMBOL:
-                columnTypes.add(typeManager.nextSymbolAdapter(index));
-                break;
-            case DECIMAL8:
-            case DECIMAL16:
-            case DECIMAL32:
-            case DECIMAL64:
-            case DECIMAL128:
-            case DECIMAL256:
-                columnTypes.add(typeManager.nextDecimalAdapter(type));
-                break;
-            case null, default:
-                // a type without a wire kind gets no adapter: getTypeAdapter() refuses it
-                columnTypes.add(typeManager.getTypeAdapter(type));
-                break;
+            }
+            case SYMBOL -> columnTypes.add(typeManager.nextSymbolAdapter(index));
+            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 ->
+                    columnTypes.add(typeManager.nextDecimalAdapter(type));
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, FLOAT, DOUBLE, STRING, LONG256, GEOBYTE, GEOSHORT, GEOINT,
+                 GEOLONG, BINARY, UUID, LONG128, IPV4, VARCHAR, ARRAY, INTERVAL ->
+                    columnTypes.add(typeManager.getTypeAdapter(type));
+            // a type without a wire kind gets no adapter: getTypeAdapter() refuses it
+            case null -> columnTypes.add(typeManager.getTypeAdapter(type));
         }
         // prepare for next iteration
         clearStage();
