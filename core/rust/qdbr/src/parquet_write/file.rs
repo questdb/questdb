@@ -347,7 +347,7 @@ impl<W: Write> ChunkedWriter<W> {
     }
 
     /// Returns the thrift row groups accumulated during writing.
-    /// Only valid after `finish()` has been called.
+    /// Page-index offsets are finalized by `finish()`.
     pub fn row_groups(&self) -> &[parquet2::thrift_format::RowGroup] {
         self.writer.row_groups()
     }
@@ -360,6 +360,11 @@ impl<W: Write> ChunkedWriter<W> {
     /// Returns bloom filter bitsets captured during write, per row group per column.
     pub fn bloom_bitsets(&self) -> &[Vec<Option<Vec<u8>>>] {
         self.writer.bloom_bitsets()
+    }
+
+    /// Takes the bloom bitsets captured since the previous call.
+    pub fn take_bloom_bitsets(&mut self) -> Vec<Vec<Option<Vec<u8>>>> {
+        self.writer.take_bloom_bitsets()
     }
 }
 

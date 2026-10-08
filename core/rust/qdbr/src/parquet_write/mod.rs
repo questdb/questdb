@@ -1449,6 +1449,45 @@ mod tests {
     }
 
     #[test]
+    fn test_taking_bloom_bitsets_preserves_parquet_output() {
+        let values = [10i64, 20];
+        let partition = Partition {
+            table: "test".into(),
+            columns: vec![make_column_with_top(
+                "val",
+                ColumnTypeTag::Long,
+                &values,
+                0,
+                0,
+            )],
+        };
+        let (schema, metadata) =
+            schema::to_parquet_schema(&partition, false, -1, SeqTxn::UNSET).unwrap();
+        let mut outputs = Vec::new();
+        for take_bitsets in [false, true] {
+            let mut bytes = Vec::new();
+            let mut writer = ParquetWriter::new(&mut bytes)
+                .with_bloom_filter_columns([0].into_iter().collect())
+                .chunked(schema.clone(), schema::to_encodings(&partition))
+                .unwrap();
+            for group_count in 1..=2 {
+                writer.write_chunk(&partition).unwrap();
+                if take_bitsets {
+                    let groups = writer.take_bloom_bitsets();
+                    assert_eq!(groups.len(), 1);
+                    assert_eq!(groups[0].len(), 1);
+                    assert!(groups[0][0].as_ref().is_some_and(|bits| !bits.is_empty()));
+                    assert!(writer.bloom_bitsets().is_empty());
+                }
+                assert_eq!(writer.row_groups().len(), group_count);
+            }
+            writer.finish(metadata.clone()).unwrap();
+            outputs.push(bytes);
+        }
+        assert_eq!(outputs[0], outputs[1]);
+    }
+
+    #[test]
     fn test_bloom_filter_roundtrip_i64() {
         use crate::allocator::TestAllocatorState;
         use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
