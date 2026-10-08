@@ -25,14 +25,18 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
@@ -57,7 +61,9 @@ import java.util.stream.Stream;
  * The file system calls of a 1-row WAL commit and of the WAL apply pass that applies it, outside ADAPTIVE.
  * NOSYNC, ASYNC and SYNC must make exactly the calls the base version makes (OSS {@code d3b877cc}, measured
  * with this test): the same kinds, the same number of times, on the same files. A file that rides along
- * with every commit or every apply pass shows up here as extra opens, maps and msyncs.
+ * with every commit or every apply pass shows up here as extra opens, maps and msyncs. The apply pass is
+ * measured on fixed-size columns and again with STRING, VARCHAR (not inlined) and ARRAY columns, whose data
+ * file length the segment-length guard checks against the last aux entry: a read of that entry shows up here.
  * <p>
  * In every mode, ADAPTIVE included, a WAL table keeps only files the base version writes in its WAL segments
  * and in {@code txn_seq}. A file written through a mapping makes no system call on a NOSYNC commit, so only
@@ -93,12 +99,17 @@ public class WalSyscallCountTest extends AbstractCairoTest {
 
     @Test
     public void testApplyPass() throws Exception {
-        assertCalls(false);
+        assertCalls(false, false);
+    }
+
+    @Test
+    public void testApplyPassVarSize() throws Exception {
+        assertCalls(false, true);
     }
 
     @Test
     public void testCommit() throws Exception {
-        assertCalls(true);
+        assertCalls(true, false);
     }
 
     @Test
@@ -146,7 +157,7 @@ public class WalSyscallCountTest extends AbstractCairoTest {
                 execute("INSERT INTO x VALUES (" + (i + 1) * 1_000_000L + ", " + i + ", 'a" + i + "')");
             }
             try (WalWriter writer = getWalWriter("x")) {
-                appendRow(writer, 3);
+                appendRow(writer, 3, null);
                 // A concurrent ADD COLUMN ... SYMBOL makes the commit rewrite its pending event.
                 execute("ALTER TABLE x ADD COLUMN c SYMBOL");
                 writer.commit();
@@ -183,13 +194,18 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         }
     }
 
-    private static void appendRow(WalWriter writer, long i) {
+    private static void appendRow(WalWriter writer, long i, @Nullable DirectArray array) {
         final TableWriter.Row row = writer.newRow((i + 1) * 1_000_000L);
         row.putLong(1, i);
+        if (array != null) {
+            row.putStr(2, "string " + i);
+            row.putVarchar(3, new Utf8String("varchar too long to inline " + i));
+            row.putArray(4, array);
+        }
         row.append();
     }
 
-    private static String expected(String commitMode, boolean isV2, boolean isCommit) {
+    private static String expected(String commitMode, boolean isV2, boolean isCommit, boolean isVarSize) {
         if (isCommit) {
             // A V2 commit in SYNC msyncs the open part file ahead of the header: one more than base, which
             // synced the header alone and left the record it publishes to writeback.
@@ -199,33 +215,46 @@ public class WalSyscallCountTest extends AbstractCairoTest {
                 default -> "calls: ; opened: ";
             };
         }
+        // The var-size columns add six files to open, close and sync, and three maps; base reads none of them
+        // (measured on d3b877cc).
+        final int files = isVarSize ? 6 : 0;
         final String msyncs = switch (commitMode) {
-            case "async" -> " msyncAsync=3";
-            case "sync" -> " msyncSync=3";
+            case "async" -> " msyncAsync=" + (3 + files);
+            case "sync" -> " msyncSync=" + (3 + files);
             default -> "";
         };
         // A V2 apply pass also opens the sequencer part file "0".
-        return "calls: close=" + (isV2 ? 11 : 10) + " madvise=3 mmap=3 mmapNoCache=1 mremap=1" + msyncs
-                + " munmap=4 openRO=" + (isV2 ? 6 : 5) + " readNonNegativeLong=3; opened: "
-                + (isV2 ? "0=1 " : "") + "_event=1 _event.i=1 _txnlog=1 ts.d=1 v.d=1";
+        return "calls: close=" + ((isV2 ? 11 : 10) + 2 * files) + " madvise=3 mmap=" + (3 + files / 2)
+                + " mmapNoCache=1 mremap=1" + msyncs + " munmap=" + (4 + files / 2) + " openRO=" + ((isV2 ? 6 : 5) + files)
+                + " readNonNegativeLong=3; opened: " + (isV2 ? "0=1 " : "") + "_event=1 _event.i=1 _txnlog=1 "
+                + (isVarSize ? "a.d=1 a.i=1 s.d=1 s.i=1 ts.d=1 v.d=1 vc.d=1 vc.i=1" : "ts.d=1 v.d=1");
     }
 
-    private void assertCalls(boolean isCommit) throws Exception {
+    private void assertCalls(boolean isCommit, boolean isVarSize) throws Exception {
         Assume.assumeFalse("ADAPTIVE makes its own calls; only its file set must match base", "adaptive".equals(commitMode));
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, isV2 ? 1000 : 0);
         final CountingFacade ff = new CountingFacade();
         assertMemoryLeak(ff, () -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG" + (isVarSize ? ", s STRING, vc VARCHAR, a DOUBLE[]" : "")
+                    + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
             final TableToken token = engine.verifyTableName("x");
             final List<String> calls = new ArrayList<>();
             try (
                     ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 0);
-                    WalWriter writer = getWalWriter("x")
+                    WalWriter writer = getWalWriter("x");
+                    DirectArray array = isVarSize ? new DirectArray() : null
             ) {
+                if (array != null) {
+                    array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+                    array.setDimLen(0, 2);
+                    array.applyShape();
+                    array.putDouble(0, 1.5);
+                    array.putDouble(1, 2.5);
+                }
                 for (int i = 0; i < WARMUP + MEASURED; i++) {
-                    appendRow(writer, i);
+                    appendRow(writer, i, array);
                     ff.start(isCommit && i >= WARMUP);
                     writer.commit();
                     ff.start(!isCommit && i >= WARMUP);
@@ -246,8 +275,9 @@ public class WalSyscallCountTest extends AbstractCairoTest {
             Assert.assertEquals("passes measured", MEASURED, ff.summaries.size());
             final String actual = String.join("\n", calls);
             Assert.assertEquals(
-                    (isCommit ? "commit" : "apply pass") + " calls differ from base [mode=" + commitMode + ", v2=" + isV2 + ']',
-                    expected(commitMode, isV2, isCommit),
+                    (isCommit ? "commit" : "apply pass") + " calls differ from base [mode=" + commitMode + ", v2=" + isV2
+                            + ", varSize=" + isVarSize + ']',
+                    expected(commitMode, isV2, isCommit, isVarSize),
                     actual
             );
         });
@@ -399,6 +429,24 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         public long read(long fd, long buf, long size, long offset) {
             count("read");
             return super.read(fd, buf, size, offset);
+        }
+
+        @Override
+        public long readIntAsUnsignedLong(long fd, long offset) {
+            count("readIntAsUnsignedLong");
+            return super.readIntAsUnsignedLong(fd, offset);
+        }
+
+        @Override
+        public byte readNonNegativeByte(long fd, long offset) {
+            count("readNonNegativeByte");
+            return super.readNonNegativeByte(fd, offset);
+        }
+
+        @Override
+        public int readNonNegativeInt(long fd, long offset) {
+            count("readNonNegativeInt");
+            return super.readNonNegativeInt(fd, offset);
         }
 
         @Override
