@@ -25,13 +25,21 @@
 package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.std.Files;
+import io.questdb.std.Os;
+import io.questdb.std.str.Path;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.File;
@@ -46,6 +54,9 @@ import java.io.File;
  *   <li>SYNC fsyncs a partition directory after its column files exist, and the table directory after it,
  *   before the commit that publishes the partition. A barrier issued before the files exist persists an
  *   empty directory.</li>
+ *   <li>SYNC fsyncs each partition directory in which ALTER COLUMN TYPE creates converted column files, and the
+ *   partition directory a parquet conversion creates and then the table directory, before the commit that
+ *   publishes them. A failed one poisons the engine, as every failed barrier does.</li>
  *   <li>ADAPTIVE takes no directory barrier in {@code TableWriter.openPartition}: the durable epoch makes
  *   directory entries durable, and recovery re-creates the later ones when it replays the WAL. That holds
  *   also when {@code syncfs} is not filesystem-wide (macOS, Windows), where the epoch fsyncs the dirty
@@ -74,6 +85,78 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testAdaptiveWalSegmentsSurviveCrash() throws Exception {
         assertWalSegmentsSurviveCrash("adaptive");
+    }
+
+    @Test
+    public void testSyncAlterColumnTypeNonWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncSchemaChangeBarrierFailureIsFailStop(false, false, "ALTER TABLE x ALTER COLUMN v TYPE LONG", "convertColumn0");
+    }
+
+    @Test
+    public void testSyncAlterColumnTypeNonWalSurvivesCrash() throws Exception {
+        assertSyncSchemaChangeSurvivesCrash(false, false, "ALTER TABLE x ALTER COLUMN v TYPE LONG", this::assertConvertedColumnNames);
+    }
+
+    @Test
+    public void testSyncAlterColumnTypeOverParquetFailedBarrierIsFailStop() throws Exception {
+        assertSyncSchemaChangeBarrierFailureIsFailStop(false, true, "ALTER TABLE x ALTER COLUMN v TYPE DECIMAL(10,2)", "fsyncConvertedPartitionDir");
+    }
+
+    @Test
+    public void testSyncAlterColumnTypeOverParquetSurvivesCrash() throws Exception {
+        // The parquet decoder cannot read DOUBLE as DECIMAL, so the change first converts the parquet partition
+        // back to native, in a new partition directory.
+        assertSyncSchemaChangeSurvivesCrash(false, true, "ALTER TABLE x ALTER COLUMN v TYPE DECIMAL(10,2)", this::assertConvertedColumnNames);
+    }
+
+    @Test
+    public void testSyncAlterColumnTypeWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncSchemaChangeBarrierFailureIsFailStop(true, false, "ALTER TABLE x ALTER COLUMN v TYPE LONG", "convertColumn0");
+    }
+
+    @Test
+    public void testSyncAlterColumnTypeWalSurvivesCrash() throws Exception {
+        assertSyncSchemaChangeSurvivesCrash(true, false, "ALTER TABLE x ALTER COLUMN v TYPE LONG", this::assertConvertedColumnNames);
+    }
+
+    @Test
+    public void testSyncConvertToNativeNonWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncSchemaChangeBarrierFailureIsFailStop(false, true, "ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2024-01-01'", "fsyncConvertedPartitionDir");
+    }
+
+    @Test
+    public void testSyncConvertToNativeNonWalSurvivesCrash() throws Exception {
+        assertSyncSchemaChangeSurvivesCrash(false, true, "ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2024-01-01'", this::assertAllColumns);
+    }
+
+    @Test
+    public void testSyncConvertToNativeWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncSchemaChangeBarrierFailureIsFailStop(true, true, "ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2024-01-01'", "fsyncConvertedPartitionDir");
+    }
+
+    @Test
+    public void testSyncConvertToNativeWalSurvivesCrash() throws Exception {
+        assertSyncSchemaChangeSurvivesCrash(true, true, "ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2024-01-01'", this::assertAllColumns);
+    }
+
+    @Test
+    public void testSyncConvertToParquetNonWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncSchemaChangeBarrierFailureIsFailStop(false, false, "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'", "fsyncConvertedPartitionDir");
+    }
+
+    @Test
+    public void testSyncConvertToParquetNonWalSurvivesCrash() throws Exception {
+        assertSyncSchemaChangeSurvivesCrash(false, false, "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'", this::assertParquetPartitionNames);
+    }
+
+    @Test
+    public void testSyncConvertToParquetWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncSchemaChangeBarrierFailureIsFailStop(true, false, "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'", "fsyncConvertedPartitionDir");
+    }
+
+    @Test
+    public void testSyncConvertToParquetWalSurvivesCrash() throws Exception {
+        assertSyncSchemaChangeSurvivesCrash(true, false, "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'", this::assertParquetPartitionNames);
     }
 
     @Test
@@ -178,6 +261,15 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         row.append();
     }
 
+    private static boolean isCalledFrom(String methodName) {
+        for (StackTraceElement frame : Thread.currentThread().getStackTrace()) {
+            if (methodName.equals(frame.getMethodName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * An ADAPTIVE WAL table gets two new partitions after the baseline. The kernel wrote {@code _txn} and
      * {@code _cv} back before the power loss, so they name both partitions, while no directory barrier made
@@ -229,6 +321,60 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         });
     }
 
+    private void assertAllColumns() throws Exception {
+        assertQuery("SELECT ts, s, v FROM x").timestamp("ts").expectSize().returns("""
+                ts\ts\tv
+                2024-01-01T00:00:00.000000Z\ta\t1.0
+                2024-01-02T00:00:00.000000Z\tb\t2.0
+                2024-01-03T00:00:00.000000Z\ta\t3.0
+                """);
+        assertIndexedSymbolFilter();
+    }
+
+    /**
+     * The column converter writes the new column through a mapping that it unmaps without {@code msync}, and the
+     * crash model credits the later {@code fsync} only with bytes it saw written, so it cannot check the
+     * converted values. It checks that each partition's file of the converted column survives under the name
+     * the durable {@code _txn} and {@code _cv} give it, and reads the other columns and the index.
+     */
+    private void assertConvertedColumnNames() throws Exception {
+        try (TableReader reader = engine.getReader(engine.verifyTableName("x")); Path path = new Path()) {
+            final int columnIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("v"));
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                final long partitionTimestamp = reader.getPartitionTimestampByIndex(i);
+                path.of(root).concat(reader.getTableToken().getDirName());
+                TableUtils.setPathForNativePartition(
+                        path,
+                        reader.getMetadata().getTimestampType(),
+                        reader.getPartitionedBy(),
+                        partitionTimestamp,
+                        reader.getPartitionNameTxnByIndex(i)
+                );
+                final long columnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(partitionTimestamp, columnIndex);
+                final boolean exists = Files.exists(TableUtils.dFile(path, "v", columnNameTxn));
+                Assert.assertTrue("converted column file lost: " + path, exists);
+            }
+        }
+        assertQuery("SELECT ts, s FROM x").timestamp("ts").expectSize().returns("""
+                ts\ts
+                2024-01-01T00:00:00.000000Z\ta
+                2024-01-02T00:00:00.000000Z\tb
+                2024-01-03T00:00:00.000000Z\ta
+                """);
+        assertIndexedSymbolFilter();
+    }
+
+    /**
+     * Reads the index files of every partition.
+     */
+    private void assertIndexedSymbolFilter() throws Exception {
+        assertQuery("SELECT ts FROM x WHERE s = 'a'").timestamp("ts").returns("""
+                ts
+                2024-01-01T00:00:00.000000Z
+                2024-01-03T00:00:00.000000Z
+                """);
+    }
+
     private void assertNotSuspended(TableToken token) {
         Assert.assertFalse(
                 "table must not be suspended: " + engine.getTableSequencerAPI().getTxnTracker(token).getErrorMessage(),
@@ -236,8 +382,116 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         );
     }
 
+    /**
+     * The parquet encoder writes {@code data.parquet} and {@code _pm} through JNI, which the crash model does not
+     * see, so it cannot check their content; it checks that the new partition directory and the files in it
+     * survive under their names.
+     */
+    private void assertParquetPartitionNames() {
+        final File[] dirs = new File(root, engine.verifyTableName("x").getDirName())
+                .listFiles((dir, name) -> name.startsWith("2024-01-01."));
+        Assert.assertNotNull(dirs);
+        Assert.assertEquals("the converted partition directory must survive", 1, dirs.length);
+        Assert.assertTrue(new File(dirs[0], TableUtils.PARQUET_PARTITION_NAME).exists());
+        Assert.assertTrue(new File(dirs[0], TableUtils.PARQUET_METADATA_FILE_NAME).exists());
+    }
+
     private void assertRows(String expected) throws Exception {
         assertQuery("SELECT ts, v FROM x").timestamp("ts").expectSize().returns(expected);
+    }
+
+    /**
+     * Under SYNC, a directory barrier of a schema change fails. The engine must be poisoned, as for every other
+     * failed barrier: a non-WAL statement fails with a {@link CairoError}, and a WAL apply does not merely
+     * suspend the table while the engine keeps taking writes.
+     *
+     * @param barrierCaller the method whose directory fsync fails
+     */
+    private void assertSyncSchemaChangeBarrierFailureIsFailStop(
+            boolean wal,
+            boolean isFirstPartitionParquet,
+            String ddl,
+            String barrierCaller
+    ) throws Exception {
+        Assume.assumeFalse("a directory takes no fsync on Windows", Os.isWindows());
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        final FsyncAndCloseFailureFacade ff = new FsyncAndCloseFailureFacade(barrierCaller);
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, s SYMBOL INDEX, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY "
+                    + (wal ? "WAL" : "BYPASS WAL"));
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'a', 1.0),
+                        ('2024-01-02T00:00:00.000000Z', 'b', 2.0),
+                        ('2024-01-03T00:00:00.000000Z', 'a', 3.0)
+                    """);
+            if (isFirstPartitionParquet) {
+                execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            }
+            drainWalQueue();
+            Throwable failure = null;
+            ff.isArmed = true;
+            try {
+                execute(ddl);
+                drainWalQueue();
+            } catch (Throwable th) {
+                failure = th;
+            } finally {
+                ff.isArmed = false;
+            }
+            final boolean isPoisoned = engine.isDurabilityFailed();
+            engine.resetDurabilityFailure();
+            releaseEngineHandles();
+            Assert.assertEquals("the injected fsync failure must have been reached", 1, ff.failureCount);
+            Assert.assertTrue("a failed barrier must poison the engine, failure: " + failure, isPoisoned);
+            if (!wal) {
+                Assert.assertTrue(
+                        "the statement must fail with a data-sync CairoError, failure: " + failure,
+                        failure instanceof CairoError && CairoException.isDataSyncFailure(failure)
+                );
+            }
+        });
+    }
+
+    /**
+     * A schema change that rewrites data returns under SYNC, then the power fails. Each name it created must
+     * survive: the converted column files in every partition directory, the partition directory a parquet
+     * conversion creates, and the index files it copies or restores there. Otherwise the durable {@code _meta}
+     * and {@code _txn} name files that are gone and the table does not open.
+     */
+    private void assertSyncSchemaChangeSurvivesCrash(
+            boolean wal,
+            boolean isFirstPartitionParquet,
+            String ddl,
+            TestUtils.LeakProneCode assertAfterCrash
+    ) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        runWithCrashFacade(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, s SYMBOL INDEX, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY "
+                    + (wal ? "WAL" : "BYPASS WAL"));
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'a', 1.0),
+                        ('2024-01-02T00:00:00.000000Z', 'b', 2.0),
+                        ('2024-01-03T00:00:00.000000Z', 'a', 3.0)
+                    """);
+            if (isFirstPartitionParquet) {
+                execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            }
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("x");
+            markDurableBaseline();
+            execute(ddl);
+            drainWalQueue();
+            if (wal) {
+                recoverAfterCrash(new TableToken[]{token});
+                assertNotSuspended(token);
+            } else {
+                crashAndReopen();
+            }
+            assertAfterCrash.run();
+            releaseEngineHandles();
+        });
     }
 
     /**
@@ -284,6 +538,32 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         crashFf = facade;
         crashFf.setDbRoot(root);
         assertMemoryLeak(crashFf, body);
+    }
+
+    /**
+     * Fails the next {@code fsyncAndClose} called from {@code caller} once armed, with a genuine data-sync
+     * failure, then behaves normally.
+     */
+    private static final class FsyncAndCloseFailureFacade extends TestFilesFacadeImpl {
+        private final String caller;
+        int failureCount;
+        boolean isArmed;
+
+        FsyncAndCloseFailureFacade(String caller) {
+            this.caller = caller;
+        }
+
+        @Override
+        public void fsyncAndClose(long fd) {
+            if (isArmed && isCalledFrom(caller)) {
+                isArmed = false;
+                failureCount++;
+                // FilesFacadeImpl closes the fd before it throws. So must this fake, or the leak is its own.
+                super.close(fd);
+                throw CairoException.dataSyncFailure(5, "fsyncAndClose").put("injected fsync failure");
+            }
+            super.fsyncAndClose(fd);
+        }
     }
 
     /**

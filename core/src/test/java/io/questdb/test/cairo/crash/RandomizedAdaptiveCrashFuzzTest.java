@@ -667,7 +667,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0);
         runWithCrashFacade(() -> {
             SweepResult r = forEachAdaptiveCrashPoint(new ConvertPartitionWorkload());
-            Assert.assertEquals("W=0 convert atomic boundary drifted", 9, r.atomicCommitDurabilityOpCount);
+            Assert.assertTrue("W=0 convert sweep must stop before the best-effort tail", r.stoppedAtDeclaredBoundary);
             Assert.assertFalse("convert-partition sweep truncated (atomic ops > cap) — raise the cap", r.truncated);
         });
     }
@@ -772,24 +772,48 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
 
         @Override
         public int atomicCommitDurabilityOpCount(int countedOps) {
-            // Both W=0 and the safe W>0 fallback have N=24: ops 1-4 the WAL event msync/fdatasync pairs
-            // (_event, _event.i), 5-6 the sequencer txn-log entry (msync + fdatasync) -- where the transaction
-            // becomes DURABLE -- 7-9 parquet production (data.parquet, _pm, the partition dir), 10-11 the
-            // apply's async column-flush kicks, then 12-24 the epoch tail (syncfs, _cv, _txn, the three .epoch
-            // copies, the manifest, the table-dir fsync, _snapshot).
-            // Everything from op 7 on is MATERIALIZATION, re-derivable from the WAL that op 6 made
-            // durable; ops 1-9 must nevertheless fail loudly, so the boundary is the last
-            // parquet-production op. Op 10 starts the explicitly best-effort tail: a fault there is allowed to be consumed because
-            // the conversion transaction and logical rows are already durable, and the oracle still verifies
-            // no suspension or data change after reboot.
-            // This equality is a drift tripwire, not the load-bearing bound. The message prints the phase's
-            // ops so the next drift says WHICH barrier moved instead of just a number.
-            Assert.assertEquals(
-                    "unexpected convert durability-op count; this phase's ops were:\n" + phaseDurabilityOps(),
-                    24,
-                    countedOps
+            // The phase runs the WAL event barriers (_event, _event.i), the sequencer txn-log entry -- where the
+            // transaction becomes DURABLE -- then parquet production (data.parquet, _pm, the new partition
+            // directory), then the apply's async column-flush kicks and the epoch tail (syncfs, _cv, _txn, the
+            // .epoch copies, the manifest, the table directory, _snapshot).
+            // Everything after the txn-log entry is MATERIALIZATION, re-derivable from the WAL; parquet
+            // production must nevertheless fail loudly, so the boundary is its last op, the partition directory
+            // fsync. A fault after it is allowed to be consumed because the conversion transaction and logical
+            // rows are already durable, and the oracle still verifies no suspension or data change after reboot.
+            // The boundary is found by operation kind, so a barrier added to or removed from either side does
+            // not move it by hand; the assertion fails, printing the phase's ops, only if the order it relies on
+            // changes.
+            final String ops = phaseDurabilityOps();
+            final String[] lines = ops.split("\n");
+            int lastWalOp = -1;
+            int txnLogOp = -1;
+            int parquetDataOp = -1;
+            int parquetMetaOp = -1;
+            int partitionDirOp = -1;
+            for (int i = 0; i < lines.length; i++) {
+                // <global op number> <kind> <db-root-relative path>
+                final String[] op = lines[i].split(" ");
+                final String path = op[2];
+                if (path.contains("/wal") || path.contains("/txn_seq/")) {
+                    lastWalOp = i + 1;
+                    if (path.endsWith("/_txnlog")) {
+                        txnLogOp = i + 1;
+                    }
+                } else if (path.endsWith("/data.parquet")) {
+                    parquetDataOp = i + 1;
+                } else if (path.endsWith("/_pm")) {
+                    parquetMetaOp = i + 1;
+                } else if (partitionDirOp < 0 && parquetMetaOp > 0 && op[1].endsWith("-dir") && path.contains("/2024-01-01.")) {
+                    partitionDirOp = i + 1;
+                }
+            }
+            Assert.assertEquals(ops, countedOps, lines.length);
+            Assert.assertTrue(
+                    "convert durability ops out of the expected order; this phase's ops were:\n" + ops,
+                    txnLogOp > 0 && txnLogOp == lastWalOp && txnLogOp < parquetDataOp
+                            && parquetDataOp < parquetMetaOp && parquetMetaOp < partitionDirOp
             );
-            return 9;
+            return partitionDirOp;
         }
 
         @Override
