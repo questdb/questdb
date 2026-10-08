@@ -263,6 +263,39 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
     }
 
     @Test
+    public void testFilteredForwardScanEndsAfterLargeGap() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Trace trace = new Trace();
+            Cursor cursor = new Cursor(trace, 32_768);
+            SqlExecutionCircuitBreaker breaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+            Function filter = new BooleanFunction() {
+                @Override
+                public boolean getBool(Record record) {
+                    trace.visit();
+                    return record.getRowId() == 10 || record.getRowId() >= 29_000;
+                }
+            };
+            try (PollingEngine engine = new PollingEngine(root, new State());
+                 Map map = newMap(engine);
+                 HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
+                         engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter, new ArrayColumnTypes().add(ColumnType.INT)
+                 )) {
+                helper.of(cursor, null);
+                Assert.assertEquals(10, helper.findKeyedAsOfMatch(8_300, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(8_291, trace.visits);
+                // The deep hit switches to a forward scan over the one-row gap.
+                Assert.assertEquals(10, helper.findKeyedAsOfMatch(8_301, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(8_292, trace.visits);
+                // A gap longer than that scan returns to backward lookups instead of scanning 21,699 rows.
+                Assert.assertEquals(30_000, helper.findKeyedAsOfMatch(30_000, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(8_293, trace.visits);
+                Assert.assertEquals(30_010, helper.findKeyedAsOfMatch(30_010, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(8_294, trace.visits);
+            }
+        });
+    }
+
+    @Test
     public void testFilteredKeyMissBoundsNextPosition() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             State state = new State();
