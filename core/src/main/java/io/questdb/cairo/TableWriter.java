@@ -10250,9 +10250,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Shortens an open file to {@code targetBytes}, or does nothing if it is already that size or smaller.
+     * Shortens an open file to {@code liveBytes} rounded up by {@link TableUtils#alignedSize(long)}, or does nothing
+     * if it is already that size or smaller. A trimmed partition can be appended to again, and on XFS growing a file
+     * that ends partway through a page waits for a synchronous write of its last block.
      */
-    private void trimFileTo(long fd, long targetBytes) {
+    private void trimFileTo(long fd, long liveBytes) {
+        final long targetBytes = TableUtils.alignedSize(liveBytes);
         final long currentBytes = ff.length(fd);
         if (currentBytes <= targetBytes) {
             return;

@@ -5280,7 +5280,7 @@ public class WalWriterTest extends AbstractCairoTest {
         // rollback to offset 0 only performs real IO when it forces MemoryPARWImpl
         // to remap a different page (jumpTo()'s p > pageLo && p < pageHi fast path
         // otherwise just moves the in-memory append pointer, and TableUtils
-        // .allocateDiskSpace() skips ff.allocate() whenever the file is already
+        // .allocateDiskSpaceAligned() skips ff.allocate() whenever the file is already
         // that long, which it is once rows have been appended). A small append
         // page size plus enough buffered rows forces the designated-timestamp
         // column across a page boundary, so its rollback must remap page 0 via

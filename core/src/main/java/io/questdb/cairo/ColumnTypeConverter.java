@@ -192,8 +192,7 @@ public class ColumnTypeConverter {
             srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
             columnSizesSink.setSrcOffsets(skipBytes, -1);
 
-            // Exact, not page-rounded: the destination file must end up exactly as long as the rows written into it.
-            TableUtils.allocateDiskSpace(ff, dstFixFd, dstByteOffset + dstMapBytes);
+            TableUtils.allocateDiskSpaceAligned(ff, dstFixFd, dstByteOffset + dstMapBytes);
             dstMapAddress = TableUtils.mapAppendColumnBuffer(ff, dstFixFd, dstByteOffset, dstMapBytes, true, memoryTag);
             columnSizesSink.setDestSizes(dstByteOffset + dstMapBytes, -1);
 
@@ -222,7 +221,7 @@ public class ColumnTypeConverter {
         final long dstColumnTypeSize = ColumnType.sizeOf(dstColumnType);
         final long dstByteOffset = dstRowOffset * dstColumnTypeSize;
         final long padBytes = gapRowCount * dstColumnTypeSize;
-        TableUtils.allocateDiskSpaceToPage(ff, dstFixFd, dstByteOffset + padBytes);
+        TableUtils.allocateDiskSpaceAligned(ff, dstFixFd, dstByteOffset + padBytes);
         long addr = TableUtils.mapAppendColumnBuffer(ff, dstFixFd, dstByteOffset, padBytes, true, memoryTag);
         try {
             TableUtils.setNull(dstColumnType, addr, gapRowCount);
@@ -384,7 +383,7 @@ public class ColumnTypeConverter {
         final long targetDataOffset = dstRowOffset > 0 ? driver.getDataVectorSizeAtFromFd(ff, dstFixFd, dstRowOffset - 1) : 0;
         final long dataSize = gapRowCount * driver.getDataVectorMinEntrySize();
         if (dataSize > 0) {
-            TableUtils.allocateDiskSpaceToPage(ff, dstVarFd, targetDataOffset + dataSize);
+            TableUtils.allocateDiskSpaceAligned(ff, dstVarFd, targetDataOffset + dataSize);
             long dataAddr = TableUtils.mapAppendColumnBuffer(ff, dstVarFd, targetDataOffset, dataSize, true, memoryTag);
             try {
                 driver.setDataVectorEntriesToNull(dataAddr, gapRowCount);
@@ -395,7 +394,7 @@ public class ColumnTypeConverter {
 
         final long dstAuxOffset = driver.getAuxVectorSize(dstRowOffset);
         final long auxSize = driver.getAuxVectorSize(gapRowCount);
-        TableUtils.allocateDiskSpaceToPage(ff, dstFixFd, dstAuxOffset + auxSize);
+        TableUtils.allocateDiskSpaceAligned(ff, dstFixFd, dstAuxOffset + auxSize);
         long auxAddr = TableUtils.mapAppendColumnBuffer(ff, dstFixFd, dstAuxOffset, auxSize, true, memoryTag);
         try {
             driver.setPartAuxVectorNull(auxAddr, targetDataOffset + driver.getDataVectorMinEntrySize(), gapRowCount);
@@ -409,7 +408,7 @@ public class ColumnTypeConverter {
      * always assumes is already there.
      */
     public static void seedStringAuxVector(long dstFixFd, FilesFacade ff) {
-        TableUtils.allocateDiskSpaceToPage(ff, dstFixFd, Long.BYTES);
+        TableUtils.allocateDiskSpaceAligned(ff, dstFixFd, Long.BYTES);
         long addr = TableUtils.mapAppendColumnBuffer(ff, dstFixFd, 0, Long.BYTES, true, memoryTag);
         try {
             Unsafe.putLong(addr, 0L);
