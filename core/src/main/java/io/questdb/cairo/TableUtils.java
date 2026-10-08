@@ -278,12 +278,8 @@ public final class TableUtils {
     }
 
     /**
-     * Ensures the file is at least {@code size} bytes long. When it has to grow, it grows to a
-     * whole number of pages, so it never ends mid-block.
-     * <p>
-     * When XFS grows a file whose EOF is not block-aligned, xfs_setattr_size() zeroes the partial
-     * tail block and writes it back synchronously, under the inode's exclusive IO and MMAP locks.
-     * An exact-size file that later grows would wait for that disk write.
+     * Grows the file to at least {@code size} bytes, rounded up to a whole page. On XFS, growing
+     * a file that ends mid-block waits for a synchronous disk write.
      */
     public static void allocateDiskSpace(FilesFacade ff, long fd, long size) {
         if (ff.length(fd) < size && !ff.allocate(fd, Files.ceilPageSize(size))) {
