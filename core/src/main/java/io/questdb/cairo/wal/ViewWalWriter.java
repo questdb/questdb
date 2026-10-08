@@ -25,6 +25,7 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -161,15 +162,23 @@ public class ViewWalWriter extends WalWriterBase {
     }
 
     private long getSequencerTxn() {
-        long seqTxn = sequencer.nextTxn(tableToken, walId, 0L, segmentId, lastSegmentTxn, Long.MAX_VALUE, -1L, 0L);
-        assert seqTxn != NO_TXN;
-        // Group commit leaves the log's flush to a batch that only table WAL writers run.
-        if (configuration.getCommitMode() == CommitMode.ADAPTIVE && configuration.getAdaptiveCommitGroupWindowUs() > 0) {
-            final SeqTxnTracker tracker = sequencer.getTxnTracker(tableToken);
-            final long orphanSweepMark = tracker.snapshotOrphanSweepMark();
-            tracker.markWriterDurable(walId, orphanSweepMark, sequencer.fdatasyncTxnLog(tableToken));
+        try {
+            long seqTxn = sequencer.nextTxn(tableToken, walId, 0L, segmentId, lastSegmentTxn, Long.MAX_VALUE, -1L, 0L);
+            assert seqTxn != NO_TXN;
+            // Group commit leaves the log's flush to a batch that only table WAL writers run.
+            if (configuration.getCommitMode() == CommitMode.ADAPTIVE && configuration.getAdaptiveCommitGroupWindowUs() > 0) {
+                final SeqTxnTracker tracker = sequencer.getTxnTracker(tableToken);
+                final long orphanSweepMark = tracker.snapshotOrphanSweepMark();
+                tracker.markWriterDurable(walId, orphanSweepMark, sequencer.fdatasyncTxnLog(tableToken));
+            }
+            return lastSeqTxn = seqTxn;
+        } catch (CairoException e) {
+            // The log is flushed in the append or right after it. A failed flush stops the engine, as on the commit path.
+            if (e.isDataSyncFailure()) {
+                sequencer.handleDataSyncFailure(e);
+            }
+            throw e;
         }
-        return lastSeqTxn = seqTxn;
     }
 
     private void mayRollSegmentOnNextRow() {

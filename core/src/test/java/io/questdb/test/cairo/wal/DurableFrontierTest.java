@@ -28,7 +28,10 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DefaultDdlListener;
 import io.questdb.cairo.RecoveryCoordinator;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
@@ -42,6 +45,7 @@ import io.questdb.test.cairo.wal.GroupCommitTestUtils.ExposedFlusher;
 import io.questdb.test.cairo.wal.GroupCommitTestUtils.FailingSeqFdatasyncFacade;
 import io.questdb.test.cairo.wal.GroupCommitTestUtils.FailingWalFdatasyncFacade;
 import io.questdb.test.cairo.wal.GroupCommitTestUtils.WalFdatasyncFacade;
+import io.questdb.test.std.SyncAttributingFilesFacade;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -340,6 +344,49 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
     }
 
     @Test
+    public void testDropAndViewChangeFlushFailureStopsTheEngine() throws Exception {
+        // DROP TABLE and ALTER VIEW flush the sequencer log in the append (SYNC: msync, ADAPTIVE W=0: fdatasync) or
+        // after it (ADAPTIVE W>0). A failed flush must stop the engine, as on the insert path. NOSYNC and ASYNC do not
+        // flush the log, so they never see the failure.
+        final String[][] modes = {
+                {"sync", "0"},
+                {"adaptive", "0"},
+                {"adaptive", String.valueOf(WINDOW_US)},
+                {"nosync", "0"},
+                {"async", "0"}
+        };
+        final String[] statements = {"drop table drop_t%d", "alter view v%d as (select ts, y from base_t%d)"};
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "1h");
+        final FailingSeqLogFlushFacade ff = new FailingSeqLogFlushFacade();
+        try {
+            assertMemoryLeak(ff, () -> {
+                final StringBuilder expected = new StringBuilder();
+                final StringBuilder actual = new StringBuilder();
+                int i = 0;
+                for (String[] mode : modes) {
+                    setCommitMode(mode, i);
+                    final boolean flushes = !"nosync".equals(mode[0]) && !"async".equals(mode[0]);
+                    for (String statement : statements) {
+                        execute("create table base_t" + i + " (ts timestamp, x int, y int) timestamp(ts) partition by day wal");
+                        execute("create table drop_t" + i + " (ts timestamp, x int) timestamp(ts) partition by day wal");
+                        execute("insert into drop_t" + i + " values (1, 1)");
+                        execute("create view v" + i + " as (select ts, x from base_t" + i + ")");
+                        final String sql = String.format(statement, i, i);
+                        final String row = mode[0] + " W=" + mode[1] + ", " + sql + ": ";
+                        expected.append(row).append(flushes ? "engine stopped" : "no flush").append('\n');
+                        actual.append(row).append(failNextLogFlush(ff, sql, "insert into base_t" + i + " values (1, 1, 1)")).append('\n');
+                        engine.resetDurabilityFailure();
+                        i++;
+                    }
+                }
+                Assert.assertEquals(expected.toString(), actual.toString());
+            });
+        } finally {
+            engine.resetDurabilityFailure();
+        }
+    }
+
+    @Test
     public void testDropAndViewChangeFlushTheSequencerLogV1() throws Exception {
         assertDropAndViewChangeFlushTheSequencerLog(0);
     }
@@ -397,6 +444,50 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
     @Test
     public void testDurableAppendsMoveTheDurableFrontierSync() throws Exception {
         assertDurableAppendsMoveTheDurableFrontier("sync", 0);
+    }
+
+    @Test
+    public void testFailedCreateCleanupFlushFailureKeepsTheCreateError() throws Exception {
+        // A WAL table's failed CREATE drops its sequencer entry, which flushes the log in these modes. When that flush
+        // fails, the engine stops, and the error the caller gets must still carry the create's own failure.
+        final String[][] modes = {{"sync", "0"}, {"adaptive", "0"}, {"adaptive", String.valueOf(WINDOW_US)}};
+        final FailingSeqLogFlushFacade ff = new FailingSeqLogFlushFacade();
+        try {
+            assertMemoryLeak(ff, () -> {
+                final StringBuilder expected = new StringBuilder();
+                final StringBuilder actual = new StringBuilder();
+                for (int i = 0; i < modes.length; i++) {
+                    setCommitMode(modes[i], i);
+                    engine.setDdlListener(new DefaultDdlListener() {
+                        @Override
+                        public void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
+                            ff.failNextFlush();
+                            throw CairoException.critical(0).put("injected create failure");
+                        }
+                    });
+                    final AtomicInteger fatalCalls = new AtomicInteger();
+                    engine.setDurabilityFailureHandler(failure -> fatalCalls.incrementAndGet());
+                    String outcome = "create succeeded";
+                    try {
+                        execute("create table cr_t" + i + " (ts timestamp, x int) timestamp(ts) partition by day wal");
+                    } catch (Throwable th) {
+                        final Throwable[] suppressed = th.getSuppressed();
+                        outcome = th.getClass().getSimpleName()
+                                + ", engine stopped: " + (engine.isDurabilityFailed() && fatalCalls.get() == 1)
+                                + ", create error kept: " + (suppressed.length == 1 && String.valueOf(suppressed[0].getMessage()).contains("injected create failure"));
+                    }
+                    engine.setDdlListener(DefaultDdlListener.INSTANCE);
+                    final String row = modes[i][0] + " W=" + modes[i][1] + ": ";
+                    expected.append(row).append("flush failed, CairoError, engine stopped: true, create error kept: true\n");
+                    actual.append(row).append(ff.disarm() ? "flush failed, " : "no flush, ").append(outcome).append('\n');
+                    engine.resetDurabilityFailure();
+                }
+                Assert.assertEquals(expected.toString(), actual.toString());
+            });
+        } finally {
+            engine.setDdlListener(DefaultDdlListener.INSTANCE);
+            engine.resetDurabilityFailure();
+        }
     }
 
     @Test
@@ -825,6 +916,33 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
         return engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName(name));
     }
 
+    private static String failNextLogFlush(FailingSeqLogFlushFacade ff, String sql, String nextWrite) throws Exception {
+        final AtomicInteger fatalCalls = new AtomicInteger();
+        engine.setDurabilityFailureHandler(failure -> fatalCalls.incrementAndGet());
+        ff.failNextFlush();
+        Throwable thrown = null;
+        try {
+            execute(sql);
+        } catch (Throwable th) {
+            thrown = th;
+        }
+        if (!ff.disarm()) {
+            return thrown == null ? "no flush" : "no flush, failed: " + thrown;
+        }
+        if (thrown == null) {
+            return "flush failed, statement succeeded";
+        }
+        if (!engine.isDurabilityFailed() || fatalCalls.get() != 1) {
+            return "flush failed, engine runs: " + thrown;
+        }
+        try {
+            execute(nextWrite);
+            return "poisoned engine took a write";
+        } catch (CairoError e) {
+            return e.getMessage().contains("engine is poisoned") ? "engine stopped" : "next write failed: " + e;
+        }
+    }
+
     private static WalFdatasyncFacade ffOf() {
         return (WalFdatasyncFacade) ff;
     }
@@ -841,11 +959,64 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
         engine.releaseInactiveTableSequencers();
     }
 
+    // The harness reloads the configuration only when the last property set changed it, so the epoch interval, which
+    // differs on every call, goes last. The assertions prove that the row runs the mode it names.
+    private static void setCommitMode(String[] mode, int row) {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode[0]);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, mode[1]);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, (60 + row) + "m");
+        Assert.assertEquals(mode[0], CommitMode.toString(engine.getConfiguration().getCommitMode()));
+        Assert.assertEquals(Long.parseLong(mode[1]), engine.getConfiguration().getAdaptiveCommitGroupWindowUs());
+    }
+
     // Sets each property once: the test harness can lose a configuration change when a property is set again.
     private static void setGroupCommit(long windowUs, int seqPartTxnCount) {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, seqPartTxnCount);
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(windowUs));
+    }
+
+    /**
+     * Fails the next flush of a sequencer file once, after issuing it: an {@code fdatasync}, or a synchronous
+     * {@code msync} (the SYNC append's flush).
+     */
+    private static class FailingSeqLogFlushFacade extends SyncAttributingFilesFacade {
+        private boolean armed;
+        private boolean injected;
+
+        @Override
+        public void fdatasync(long fd) {
+            super.fdatasync(fd);
+            failIfArmed(pathOfFd(fd), "fdatasync");
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            super.msync(addr, len, async);
+            if (!async) {
+                failIfArmed(pathOfAddress(addr), "msync");
+            }
+        }
+
+        // Returns whether the armed failure was injected, and disarms.
+        boolean disarm() {
+            final boolean wasInjected = injected;
+            armed = false;
+            injected = false;
+            return wasInjected;
+        }
+
+        void failNextFlush() {
+            armed = true;
+        }
+
+        private void failIfArmed(String path, String operation) {
+            if (armed && WalFdatasyncFacade.isSequencerFile(path)) {
+                armed = false;
+                injected = true;
+                throw CairoException.dataSyncFailure(5, operation).put("injected sequencer log flush failure");
+            }
+        }
     }
 
     @FunctionalInterface

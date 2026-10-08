@@ -276,7 +276,15 @@ public class TableConverter {
                     // advanceDurableEpoch() flushes the table and then may decline to publish the epoch, for
                     // example when its pin slot is busy. Only the flush matters here, so check that.
                     if (writer.getEffectiveCommitMode() == CommitMode.ADAPTIVE && seqTxn > 0 && seqTxn > tracker.getLocalDurableSeqTxn()) {
-                        writer.advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
+                        try {
+                            writer.advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
+                        } catch (CairoException e) {
+                            // No further save point on close; the caller stops the engine.
+                            if (e.isDataSyncFailure()) {
+                                writer.markDistressed();
+                            }
+                            throw e;
+                        }
                         if (tracker.getLocalDurableSeqTxn() < seqTxn) {
                             throw CairoException.critical(0)
                                     .put("could not make replayed WAL durable before conversion [table=").put(token.getTableName())
@@ -410,15 +418,22 @@ public class TableConverter {
                         .put(']');
             }
             DurableEpochManifest.fsyncDirectory(configuration, markerPath, tableRootLen);
+            Throwable failure = null;
             try {
                 applyOutstandingWal(engine, token, lastSeqTxn);
-            } finally {
-                // Remove the marker on every outcome that returns here, an exception included. The table then
-                // stays a WAL table, and the next startup retries both the replay and the conversion. Only a
-                // crash leaves the marker behind.
-                markerPath.trimTo(tableRootLen).concat(REPLAY_FILE_NAME);
-                ff.removeQuiet(markerPath.$());
+            } catch (Throwable th) {
+                failure = th;
             }
+            // Remove the marker on every outcome that returns here, an exception included. The table then
+            // stays a WAL table, and the next startup retries both the replay and the conversion. Only a
+            // crash leaves the marker behind. A failed flush then stops the engine, and the production
+            // callback halts the process inside that call, so the marker must be gone first.
+            markerPath.trimTo(tableRootLen).concat(REPLAY_FILE_NAME);
+            ff.removeQuiet(markerPath.$());
+            if (CairoException.isDataSyncFailure(failure)) {
+                engine.handleDataSyncFailure(failure);
+            }
+            CairoException.rethrowCleanupFailure(failure);
         }
     }
 
