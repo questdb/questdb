@@ -24,19 +24,25 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.idx.PostingIndexChainEntry;
+import io.questdb.cairo.idx.PostingIndexChainWriter;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Vect;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 /**
@@ -436,6 +442,189 @@ public class RecoveryCoordinator {
     }
 
     /**
+     * Removes, from one partition, the value and cover files of one POSTING column version whose generation the
+     * chain does not name at or below the save point's txn. Leaves everything when the chain is absent, empty or
+     * does not walk cleanly. Returns the number of files removed.
+     */
+    private int removeUnnamedPostingGenerations(
+            Path path,
+            int partitionLen,
+            CharSequence columnName,
+            long columnNameTxn,
+            long epochTxn,
+            PostingIndexChainWriter chain,
+            PostingIndexChainEntry.Snapshot entry,
+            LongList namedSealTxns,
+            LongList orphanSealTxns
+    ) {
+        final LPSZ keyFile = PostingIndexUtils.keyFileName(path.trimTo(partitionLen), columnName, columnNameTxn);
+        final long keyFileSize = ff.length(keyFile);
+        if (keyFileSize < PostingIndexUtils.KEY_FILE_RESERVED) {
+            return 0;
+        }
+        namedSealTxns.clear();
+        boolean trimNeeded = false;
+        try (MemoryCMR keyMem = Vm.getCMRInstance(ff, keyFile, keyFileSize, MemoryTag.MMAP_INDEX_READER)) {
+            chain.resetState();
+            chain.openExisting(keyMem);
+            if (!chain.hasHead() || chain.getRegionLimit() > keyFileSize) {
+                return 0;
+            }
+            long offset = chain.getHeadEntryOffset();
+            for (long visited = 0; offset != PostingIndexUtils.V2_NO_HEAD; visited++) {
+                if (visited >= chain.getEntryCount() || offset < chain.getRegionBase()
+                        || offset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE > chain.getRegionLimit()) {
+                    return 0;
+                }
+                PostingIndexChainEntry.read(keyMem, offset, 0, entry);
+                if (entry.txnAtSeal > epochTxn) {
+                    trimNeeded = true;
+                } else {
+                    if (namedSealTxns.size() == 0 && entry.genCount > 1) {
+                        // The restored head: gens appended to it after the save point are in flight too.
+                        final long lastGenTxnAtSeal = PostingIndexChainEntry.resolveGenDirOffset(offset, entry.genCount - 1, entry.coveringFormat, entry.coverCount)
+                                + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL;
+                        if (lastGenTxnAtSeal + Long.BYTES > chain.getRegionLimit()) {
+                            return 0;
+                        }
+                        trimNeeded |= keyMem.getLong(lastGenTxnAtSeal) > epochTxn;
+                    }
+                    namedSealTxns.add(entry.sealTxn);
+                }
+                offset = entry.prevEntryOffset;
+            }
+            if (trimNeeded) {
+                // The chain stops naming the entries above the save point before their files go. Otherwise its head
+                // names a removed file: the O3 rollback reads it, and the purge replay's live-head check lets the
+                // save point's file go. This is the walk the writer runs at open, made durable before the unlinks.
+                try (MemoryCMARW keyRwMem = Vm.getCMARWInstance(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), keyFileSize, MemoryTag.MMAP_INDEX_WRITER, CairoConfiguration.O_NONE)) {
+                    chain.resetState();
+                    chain.openExisting(keyRwMem);
+                    orphanSealTxns.clear();
+                    chain.recoveryDropAbandoned(keyRwMem, epochTxn, orphanSealTxns);
+                    keyRwMem.setSize(Math.max(Math.max(chain.getRegionLimit(), PostingIndexUtils.KEY_FILE_RESERVED), keyFileSize));
+                    keyRwMem.sync(false);
+                }
+            }
+        } catch (CairoException e) {
+            LOG.error().$("could not check posting index chain, leaving its files [path=").$(keyFile)
+                    .$(", error=").$safe(e.getFlyweightMessage()).I$();
+            return 0;
+        }
+        final int[] removed = {0};
+        PostingIndexUtils.scanSealedFiles(ff, path, partitionLen, columnName, new PostingIndexUtils.SealedFileVisitor() {
+            @Override
+            public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
+                if (filePostingColumnNameTxn == columnNameTxn && namedSealTxns.indexOf(sealTxn) < 0
+                        && ff.removeQuiet(PostingIndexUtils.coverDataFileName(path.trimTo(partitionLen), columnName, includeIdx, filePostingColumnNameTxn, coveredColumnNameTxn, sealTxn))) {
+                    removed[0]++;
+                }
+                path.trimTo(partitionLen);
+            }
+
+            @Override
+            public void onValueFile(long fileColumnNameTxn, long sealTxn) {
+                if (fileColumnNameTxn == columnNameTxn && namedSealTxns.indexOf(sealTxn) < 0
+                        && ff.removeQuiet(PostingIndexUtils.valueFileName(path.trimTo(partitionLen), columnName, fileColumnNameTxn, sealTxn))) {
+                    removed[0]++;
+                }
+                path.trimTo(partitionLen);
+            }
+        });
+        path.trimTo(partitionLen);
+        return removed[0];
+    }
+
+    /**
+     * In every partition of the save point, removes the value and cover files of each POSTING column whose
+     * generation the column's chain does not name at or below the save point's txn. A reseal after the save point
+     * in a partition that no writer reopens with its chain walk (an older partition taking rows in place) leaves
+     * such files, and a power loss can revert their chain record while the file stays. No reader or writer exists
+     * yet, and no reader at or above the save point's txn picks an entry sealed above it. The partitions, column
+     * versions and txn come from the save point's copies, which the restore then copies over the live files.
+     */
+    private void removeUnnamedPostingGenerations(TableToken token, Path path, SnapshotMarker.Candidate candidate, boolean metadataBound) {
+        final int epochGeneration = candidate.generation;
+        TableMetadata metadata = null;
+        TxReader txReader = null;
+        ColumnVersionReader cvReader = null;
+        try {
+            if (metadataBound) {
+                final TableReaderMetadata epochMetadata = new TableReaderMetadata(configuration);
+                metadata = epochMetadata;
+                epochMetadata.loadMetadata(epochCopyPath(path, token, TableUtils.META_FILE_NAME, epochGeneration).$());
+            } else {
+                metadata = engine.getTableMetadata(token);
+            }
+            boolean hasPostingColumn = false;
+            for (int c = 0, n = metadata.getColumnCount(); c < n; c++) {
+                hasPostingColumn |= IndexType.isPosting(metadata.getColumnMetadata(c).getIndexType());
+            }
+            if (!hasPostingColumn) {
+                return;
+            }
+            final int timestampType = metadata.getTimestampType();
+            final int partitionBy = metadata.getPartitionBy();
+            txReader = new TxReader(ff);
+            txReader.ofRO(epochCopyPath(path, token, TableUtils.TXN_FILE_NAME, epochGeneration).$(), timestampType, partitionBy);
+            cvReader = new ColumnVersionReader();
+            cvReader.ofRO(ff, epochCopyPath(path, token, TableUtils.COLUMN_VERSION_FILE_NAME, epochGeneration).$());
+            if (!txReader.unsafeLoadAll() || !cvReader.readSafe()) {
+                return;
+            }
+            final long epochTxn = txReader.getTxn();
+            final PostingIndexChainWriter chain = new PostingIndexChainWriter();
+            final PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+            final LongList namedSealTxns = new LongList();
+            final LongList orphanSealTxns = new LongList();
+            tablePath(path, token);
+            final int rootLen = path.size();
+            int removed = 0;
+            for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
+                final long partitionTimestamp = txReader.getPartitionTimestampByIndex(i);
+                TableUtils.setPathForNativePartition(path.trimTo(rootLen), timestampType, partitionBy, partitionTimestamp, txReader.getPartitionNameTxn(i));
+                final int partitionLen = path.size();
+                int removedInPartition = 0;
+                for (int c = 0, m = metadata.getColumnCount(); c < m; c++) {
+                    if (IndexType.isPosting(metadata.getColumnMetadata(c).getIndexType())) {
+                        removedInPartition += removeUnnamedPostingGenerations(
+                                path,
+                                partitionLen,
+                                metadata.getColumnName(c),
+                                cvReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(c)),
+                                epochTxn,
+                                chain,
+                                entry,
+                                namedSealTxns,
+                                orphanSealTxns
+                        );
+                    }
+                }
+                if (removedInPartition > 0) {
+                    removed += removedInPartition;
+                    // Unlinks that a power loss reverts come back unnamed: a leak, never a removed live file.
+                    if (!Os.isWindows()) {
+                        final long dirFd = TableUtils.openRONoCache(ff, path.trimTo(partitionLen).$(), LOG);
+                        if (dirFd > -1) {
+                            ff.fsyncAndClose(dirFd);
+                        }
+                    }
+                }
+            }
+            if (removed > 0) {
+                LOG.info().$("adaptive recovery removed posting index files the save point does not name [table=").$(token)
+                        .$(", epochTxn=").$(epochTxn)
+                        .$(", files=").$(removed).I$();
+            }
+        } finally {
+            tablePath(path, token);
+            Misc.free(cvReader);
+            Misc.free(txReader);
+            Misc.free(metadata);
+        }
+    }
+
+    /**
      * Finishes the {@code _todo_} repair of a {@code _meta} swap that a crash interrupted, so that this pass
      * reads the metadata the table will actually open with.
      * <p>
@@ -650,6 +839,10 @@ public class RecoveryCoordinator {
                     .$(", epochSeqTxn=").$(epochSeqTxn).I$();
             return;
         }
+
+        // Before the restore: once the live files match the save point, a later start restores nothing and would not
+        // repeat it.
+        removeUnnamedPostingGenerations(token, src, selected, metadataBound);
 
         if (metadataBound) {
             restoreMetadataFile(token, src, dst, epochGeneration);
