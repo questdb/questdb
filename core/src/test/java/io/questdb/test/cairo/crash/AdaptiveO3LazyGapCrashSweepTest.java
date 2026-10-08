@@ -160,13 +160,15 @@ public class AdaptiveO3LazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepT
     }
 
     /**
-     * A rewinding crash point (mid lazy M-batch) empirically chosen during this investigation: the
-     * pre-crash O3 apply has pushed the pooled {@code TxnScoreboard}'s {@code max} up, and recovery then
-     * rewinds {@code _txn} to the durable epoch cut and re-derives only PART of the gap — so the live
-     * (post-recovery) data txn sits BELOW the stale scoreboard {@code max}. (At this point the isolated
-     * sweep recovers 6 of the 9 rows.)
+     * The A/B's rewinding crash point, pinned by phase rather than by an op count from the batch start: this
+     * many lazy rows are applied, each as its own txn, and the crash fires on the first durability op of the
+     * next lazy row's commit, before that row is published. Each pre-crash O3 apply pushes the pooled
+     * {@code TxnScoreboard}'s {@code max} up; recovery rewinds {@code _txn} to the durable epoch cut and the
+     * WAL apply replays the applied rows as ONE block, so with two or more of them the live (post-recovery)
+     * data txn sits BELOW the stale scoreboard {@code max}. Recovery restores {@code LAZY_K} plus this many
+     * rows. A change to the number of durability ops per commit cannot move this point.
      */
-    private static final int SCOREBOARD_REWIND_CRASH_K = 27;
+    private static final int SCOREBOARD_APPLIED_LAZY_ROWS = 2;
 
     /**
      * THE DISCRIMINATOR (the proof-of-mechanism half of the verdict). A single-variable A/B on the ONE
@@ -178,30 +180,26 @@ public class AdaptiveO3LazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepT
      * <ul>
      *   <li>WITH eviction — the fresh-restart model the driver applies: the read comes back a clean
      *       identity prefix, table not suspended.</li>
-     *   <li>WITHOUT eviction — historically the live-engine artifact the throwaway scan hit: the
-     *       scoreboard's stale pre-crash {@code max} high-water mark (anonymous native memory
-     *       {@code crash()} cannot roll back) sat above the rewound {@code _txn}, so a reader could never
-     *       satisfy {@code TxnScoreboardV2.acquireTxn} ({@code updateMax} fails on {@code txn < max}) —
-     *       a spurious {@code Transaction read timeout}, or a lingering {@code SUSPENDED}.</li>
+     *   <li>WITHOUT eviction — the live-engine artifact the throwaway scan hit: the scoreboard's stale
+     *       pre-crash {@code max} high-water mark (anonymous native memory {@code crash()} cannot roll
+     *       back) sits above the rewound {@code _txn}, so a reader can never satisfy
+     *       {@code TxnScoreboardV2.acquireTxn} ({@code updateMax} fails on {@code txn < max}) — a spurious
+     *       {@code Transaction read timeout}, or a lingering {@code SUSPENDED}.</li>
      * </ul>
-     *
-     * <p><b>Both arms now recover cleanly.</b> The rewind itself is unchanged — each arm logs
-     * {@code adaptive epoch roll-forward restored durable cut [epochSeqTxn=4]} — but a stale pooled
-     * scoreboard no longer strands the post-recovery reader, so the artifact does not reproduce and the
-     * arms agree. The A/B therefore no longer PROVES the W1 report's flagged suspension/{@code [0,0,..]}
-     * observation was a harness artifact; that classification stands on the isolated sweep
-     * ({@link #testO3LazyGapSweepRecoversCleanlyAtEveryCrashPoint}), which shows it at no crash point.
-     *
-     * <p>What this test pins NOW is the stronger property: adaptive O3 lazy-gap recovery is INDEPENDENT
-     * of scoreboard eviction. A regression that reintroduced the stranded-reader artifact — making
-     * correctness depend on a fresh scoreboard — trips the WITHOUT-eviction assertion below.
+     * Artifact present ONLY when the isolation is removed, and gone when it is restored, is proof the W1
+     * report's flagged suspension observation was a HARNESS ARTIFACT of the non-isolated scan. A real
+     * restart always starts with a fresh scoreboard, so it never sees the artifact.
+     * <p>
+     * The crash point must be one where the scoreboard really is stale: see
+     * {@link #SCOREBOARD_APPLIED_LAZY_ROWS}. A crash before the second lazy apply leaves the recovered txn
+     * equal to the pre-crash {@code max}, and the arms then agree for want of a stale scoreboard.
      */
     @Test
     public void testStaleScoreboardArtifactPresentOnlyWithoutEviction() throws Exception {
-        final String withoutEviction = runScoreboardArm(SCOREBOARD_REWIND_CRASH_K, false);
-        final String withEviction = runScoreboardArm(SCOREBOARD_REWIND_CRASH_K, true);
+        final String withoutEviction = runScoreboardArm(false);
+        final String withEviction = runScoreboardArm(true);
 
-        LOG.info().$("[O3 lazy-gap scoreboard A/B] k=").$(SCOREBOARD_REWIND_CRASH_K)
+        LOG.info().$("[O3 lazy-gap scoreboard A/B] appliedLazyRows=").$(SCOREBOARD_APPLIED_LAZY_ROWS)
                 .$(" withoutEviction=").$(withoutEviction)
                 .$(" withEviction=").$(withEviction).$();
 
@@ -212,32 +210,42 @@ public class AdaptiveO3LazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepT
                         + "clean identity prefix, got: " + withEviction,
                 withEviction.startsWith("IDENTITY")
         );
-
-        // WITHOUT eviction: recovery is no longer sensitive to the stale pooled scoreboard either. Both
-        // arms perform the SAME epoch rewind (the run log shows "adaptive epoch roll-forward restored
-        // durable cut [epochSeqTxn=4]" in each), so the rewind this scenario exists to exercise still
-        // happens — what changed is that a reader opening at the rewound txn is no longer stranded by the
-        // surviving pre-crash `max`. Eviction is therefore a harness nicety, not a correctness requirement.
-        Assert.assertTrue(
-                "WITHOUT scoreboard eviction the O3 lazy-gap table must ALSO recover to a clean identity "
-                        + "prefix — recovery must not depend on the pooled scoreboard being evicted, got: "
-                        + withoutEviction,
-                withoutEviction.startsWith("IDENTITY")
-        );
-        // Same scenario, same crash point, isolation the only variable -> the arms must now AGREE.
+        // The crash point itself: the epoch rows plus the applied lazy rows survive, the row whose commit
+        // crashed does not. Any other count means the crash no longer lands where the scoreboard is stale.
+        final List<Long> expectedRows = new ArrayList<>();
+        for (long v = 0; v < LAZY_K + SCOREBOARD_APPLIED_LAZY_ROWS; v++) {
+            expectedRows.add(v);
+        }
         Assert.assertEquals(
-                "scoreboard eviction must not change the recovered outcome (arms must agree)",
+                "the crash must land after " + SCOREBOARD_APPLIED_LAZY_ROWS + " lazy applies and before the "
+                        + "next lazy row is published",
+                "IDENTITY:" + expectedRows, withEviction
+        );
+
+        // WITHOUT eviction: the stale pooled scoreboard reintroduces a spurious post-recovery artifact that
+        // the isolated sweep never shows. A stale scoreboard can only make a reader wait or the table
+        // suspend; other rows here would be a real defect, not this artifact.
+        Assert.assertTrue(
+                "WITHOUT scoreboard eviction the stale live scoreboard must reintroduce a spurious "
+                        + "post-recovery artifact (read timeout or suspend) absent from the isolated sweep, got: "
+                        + withoutEviction,
+                withoutEviction.startsWith("READ_TIMEOUT") || withoutEviction.equals("SUSPENDED")
+        );
+        // And the two arms must DIFFER — same scenario, same crash point, isolation the only variable.
+        Assert.assertNotEquals(
+                "the scoreboard-eviction isolation must be the discriminating variable (arms must differ)",
                 withEviction, withoutEviction
         );
     }
 
     /**
-     * Runs the lazy-gap scenario once at crash point {@code k} with the FULL driver-style recovery, then
-     * evicts the pooled {@code TxnScoreboard} before the observing read ONLY if {@code evictScoreboard}.
+     * Runs the lazy-gap scenario once, crashing at the point {@link #SCOREBOARD_APPLIED_LAZY_ROWS} names,
+     * with the FULL driver-style recovery, then evicts the pooled {@code TxnScoreboard} before the observing
+     * read ONLY if {@code evictScoreboard}.
      * Returns a compact outcome tag: {@code IDENTITY:[..]}, {@code NON_IDENTITY:[..]}, {@code SUSPENDED},
      * or {@code READ_TIMEOUT:<msg>}. Leak-safe: drops the table + reclaims per-cycle fds before returning.
      */
-    private String runScoreboardArm(int k, boolean evictScoreboard) throws Exception {
+    private String runScoreboardArm(boolean evictScoreboard) throws Exception {
         final String[] outcome = new String[1];
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
@@ -261,9 +269,14 @@ public class AdaptiveO3LazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepT
                 final Set<Long> fdBaseline = new HashSet<>(crashFf.noCacheOpenFdsSnapshot());
                 markDurableBaseline();
                 final int base = crashFf.durabilityOpCount();
-                crashFf.armCrashAt(base + k);
+                int crashOp = -1;
                 try {
                     for (int i = LAZY_K; i < LAZY_K + LAZY_M; i++) {
+                        if (i == LAZY_K + SCOREBOARD_APPLIED_LAZY_ROWS) {
+                            // the first durability op of this row's commit
+                            crashOp = crashFf.durabilityOpCount() + 1;
+                            crashFf.armCrashAt(crashOp);
+                        }
                         insertO3Row(table, LAZY_TS_HOUR[i], i);
                         drainWalQueue();
                         if (anyTableSuspended(tt)) {
@@ -273,6 +286,14 @@ public class AdaptiveO3LazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepT
                 } catch (CrashSimulationError propagated) {
                     // expected: crash fired on the WAL-commit fsync path
                 }
+                Assert.assertTrue(
+                        "the lazy batch must reach row " + (LAZY_K + SCOREBOARD_APPLIED_LAZY_ROWS) + " to arm the crash",
+                        crashOp > 0
+                );
+                Assert.assertFalse("the armed crash must fire", crashFf.isCrashArmed());
+                final String crashedOp = crashFf.durabilityOpLog().get(crashOp - 1);
+                LOG.info().$("[O3 lazy-gap scoreboard A/B] evict=").$(evictScoreboard)
+                        .$(" crash at k=").$(crashOp - base).$(" of the lazy batch: ").$(crashedOp).$();
 
                 // Driver-faithful recovery EXCEPT the scoreboard eviction is the toggled variable.
                 engine.releaseAllReaders();

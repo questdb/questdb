@@ -254,7 +254,6 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
      * {@link #testMultiPartitionLazyGapSweepRecoversCleanlyAtEveryCrashPoint}) so the recovery-enabled arm
      * lands on a genuine, non-degenerate PARTIAL result (strictly more than {@link #LAZY_K}, strictly
      * fewer than {@link #ROWS}) — chosen the same way the sibling lazy-gap sweeps chose theirs ({@code
-     * AdaptiveO3LazyGapCrashSweepTest.SCOREBOARD_REWIND_CRASH_K}, {@code
      * AdaptiveIndexedSymbolLazyGapCrashSweepTest.REPRESENTATIVE_REWIND_CRASH_K}, {@code
      * AdaptiveMultiTableLazyGapCrashSweepTest.REPRESENTATIVE_REWIND_CRASH_K}).
      */
