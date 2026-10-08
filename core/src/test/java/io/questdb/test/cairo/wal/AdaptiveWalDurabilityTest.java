@@ -25,6 +25,8 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableToken;
@@ -33,6 +35,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.Files;
 import io.questdb.std.LongList;
 import io.questdb.std.Os;
@@ -45,6 +48,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -872,6 +876,66 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A writeback error on any WAL segment file fails the ADAPTIVE commit and keeps the durable frontier
+     * where it was, at window 0 and above, with the writeback drain on and off. Linux reports a writeback
+     * error once per open file, to the first call that waits on that file's writeback, and the facade does
+     * the same: with the drain on, {@code sync_file_range} gets the error and the {@code fdatasync} after it
+     * succeeds.
+     */
+    @Test
+    public void testWritebackErrorFailsTheCommit() throws Exception {
+        final String[] files = {"_event", "_event.i", "s.d", "ts.d", "txt.d", "txt.i", "v.d"};
+        final WritebackDrainFacade ff = new WritebackDrainFacade();
+        assertMemoryLeak(ff, () -> {
+            final List<String> acknowledged = new ArrayList<>();
+            int t = 0;
+            for (long window : new long[]{0, 50_000}) {
+                // The window differs on every pass and is set last, so the configuration is rebuilt.
+                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+                node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, window);
+                Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
+                Assert.assertEquals(window, engine.getConfiguration().getAdaptiveCommitGroupWindowUs());
+                for (boolean drain : new boolean[]{true, false}) {
+                    ff.drain = drain;
+                    for (String file : files) {
+                        final String name = "x" + t++;
+                        execute("CREATE TABLE " + name + " (ts TIMESTAMP, v LONG, s SYMBOL, txt VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        try (WalWriter writer = getWalWriter(name)) {
+                            appendRow(writer, 0);
+                            ff.segmentSyncs.clear();
+                            writer.commit();
+                            Assert.assertEquals("the files a commit barriers", Arrays.toString(files), ff.barrieredFiles());
+                        }
+                        // Closing the writer flushes the pending sequencer record at W > 0.
+                        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName(name));
+                        Assert.assertEquals(1, tracker.getLocalDurableSeqTxn());
+                        final String row = "window=" + window + "us, drain " + (drain ? "on" : "off") + ", error on " + file;
+                        boolean failed = false;
+                        try (WalWriter writer = getWalWriter(name)) {
+                            appendRow(writer, 1);
+                            ff.failNextWait(file);
+                            try {
+                                writer.commit();
+                            } catch (CairoError e) {
+                                failed = CairoException.isDataSyncFailure(e);
+                            }
+                        } finally {
+                            engine.resetDurabilityFailure();
+                        }
+                        Assert.assertNotNull(row + ": no call waited on the file", ff.writebackErrorCall);
+                        final long durable = tracker.getLocalDurableSeqTxn();
+                        if (!failed || durable != 1) {
+                            acknowledged.add(row + ": the error went to " + ff.writebackErrorCall + ", the commit "
+                                    + (failed ? "failed" : "returned") + ", durable frontier 1 -> " + durable);
+                        }
+                    }
+                }
+            }
+            Assert.assertTrue("commits not failed by a writeback error:\n" + String.join("\n", acknowledged), acknowledged.isEmpty());
+        });
+    }
+
     private int readMarkerGeneration(TableToken token) {
         try (io.questdb.std.str.Path p = new io.questdb.std.str.Path();
              SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
@@ -901,6 +965,14 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     // ---------- helpers ----------
+
+    private static void appendRow(WalWriter writer, long v) {
+        final TableWriter.Row row = writer.newRow(v * 60_000_000L);
+        row.putLong(1, v);
+        row.putSym(2, "s" + v);
+        row.putVarchar(3, new Utf8String("a varchar longer than its inline prefix " + v));
+        row.append();
+    }
 
     /**
      * Returns true if the given path is a WAL segment column data file (.d file or fixed-size
@@ -1331,8 +1403,11 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         final Map<String, Map<String, int[]>> segmentSyncs = new TreeMap<>();
         private final Map<Long, String> addrToFile = new HashMap<>();
         private final Map<Long, String> fdToFile = new HashMap<>();
+        boolean drain = true;
         int probeCount, syncFileRangeCount;
         String probedPath;
+        String writebackErrorCall;
+        private String writebackErrorFile;
 
         @Override
         public void barrierFsync(long fd) {
@@ -1347,11 +1422,19 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         }
 
         @Override
+        public void fdatasync(long fd) {
+            if (takeWritebackError(fdToFile.get(fd), "fdatasync")) {
+                throw CairoException.dataSyncFailure(5, "fdatasync").put("injected writeback error");
+            }
+            super.fdatasync(fd);
+        }
+
+        @Override
         public boolean isSyncFileRangeEffective(Utf8Sequence root) {
             probeCount++;
             probedPath = root.toString();
-            // Pin the drain on, so the test runs where the real probe says no: off Linux, or on ZFS.
-            return true;
+            // Pinned, so the test runs where the real probe says no: off Linux, or on ZFS.
+            return drain;
         }
 
         @Override
@@ -1372,6 +1455,9 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         @Override
         public void msync(long addr, long len, boolean async) {
             countSegmentSync(addrToFile.get(addr), async ? "msyncAsync" : "msyncSync");
+            if (!async && takeWritebackError(addrToFile.get(addr), "msync")) {
+                throw CairoException.dataSyncFailure(5, "msync").put("injected writeback error");
+            }
             super.msync(addr, len, async);
         }
 
@@ -1395,13 +1481,35 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         public int syncFileRange(long fd, long offset, long nbytes, int flags) {
             syncFileRangeCount++;
             countSegmentSync(fdToFile.get(fd), "syncFileRange");
+            if (takeWritebackError(fdToFile.get(fd), "sync_file_range")) {
+                return -1;
+            }
             return super.syncFileRange(fd, offset, nbytes, flags);
+        }
+
+        private String barrieredFiles() {
+            final List<String> files = new ArrayList<>();
+            for (Map.Entry<String, Map<String, int[]>> file : segmentSyncs.entrySet()) {
+                if (file.getValue().containsKey("barrierFsync")) {
+                    files.add(file.getKey());
+                }
+            }
+            return files.toString();
         }
 
         private void countSegmentSync(String file, String call) {
             if (file != null) {
                 segmentSyncs.computeIfAbsent(file, k -> new TreeMap<>()).computeIfAbsent(call, k -> new int[1])[0]++;
             }
+        }
+
+        /**
+         * The next call that waits on the writeback of this segment file gets a writeback error, as Linux
+         * reports one to the first waiter on each open file.
+         */
+        private void failNextWait(String file) {
+            writebackErrorFile = file;
+            writebackErrorCall = null;
         }
 
         private String segmentSyncSummary() {
@@ -1416,6 +1524,15 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                 }
             }
             return sb.toString();
+        }
+
+        private boolean takeWritebackError(String file, String call) {
+            if (file != null && file.equals(writebackErrorFile)) {
+                writebackErrorFile = null;
+                writebackErrorCall = call;
+                return true;
+            }
+            return false;
         }
 
         private void trackMapping(long addr, long fd) {

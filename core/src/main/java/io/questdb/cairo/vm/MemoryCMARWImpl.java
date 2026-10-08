@@ -443,8 +443,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         } else {
             dirtyLen = size;
         }
-        if (dirtyLen > 0) {
-            ff.syncFileRange(fd, 0, dirtyLen, Files.SYNC_FILE_RANGE_WRITE | Files.SYNC_FILE_RANGE_WAIT_AFTER);
+        if (dirtyLen > 0 && ff.syncFileRange(fd, 0, dirtyLen, Files.SYNC_FILE_RANGE_WRITE | Files.SYNC_FILE_RANGE_WAIT_AFTER) != 0) {
+            throw CairoException.dataSyncFailure(ff.errno(), "sync_file_range").put("could not sync_file_range [fd=").put(fd).put(']');
         }
     }
 

@@ -243,8 +243,8 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         if (pageAddress != 0) {
             final long pageStart = pageOffset(mappedPage);
             final long dirtyLen = appendOnly ? inPageWritten() : getPageSize();
-            if (dirtyLen > 0) {
-                ff.syncFileRange(fd, pageStart, dirtyLen, Files.SYNC_FILE_RANGE_WRITE | Files.SYNC_FILE_RANGE_WAIT_AFTER);
+            if (dirtyLen > 0 && ff.syncFileRange(fd, pageStart, dirtyLen, Files.SYNC_FILE_RANGE_WRITE | Files.SYNC_FILE_RANGE_WAIT_AFTER) != 0) {
+                throw CairoException.dataSyncFailure(ff.errno(), "sync_file_range").put("could not sync_file_range [fd=").put(fd).put(']');
             }
         }
     }

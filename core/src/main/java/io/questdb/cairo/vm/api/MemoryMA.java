@@ -106,7 +106,9 @@ public interface MemoryMA extends MemoryM, MemoryA {
      * {@code sync_file_range(WRITE | WAIT_AFTER)} and WAITS for that writeback to complete. Issues NO device
      * flush — the content sits in the device cache until a later device flush (the {@code _cv} commit's
      * {@code msync(MS_SYNC)}) makes it (and everything else in the device cache) durable. MUST NOT advance
-     * any {@code lastSynced*} watermark, for the same reason as {@link #syncFlushKick()}.
+     * any {@code lastSynced*} watermark, for the same reason as {@link #syncFlushKick()}. A writeback error
+     * is thrown as a data-sync failure: Linux reports it once per open file, so a later {@code fdatasync} of
+     * the file would not see it.
      * <p>
      * Default keeps current behavior: a no-op (see {@link #syncFlushKick()}).
      */
