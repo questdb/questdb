@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -35,6 +36,7 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -62,6 +64,9 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
     // the block the scan stops at the start of; -1 when the scan runs to the table start
     private int scanStopBlock = -1;
     private @Nullable WindowJoinPrevailingSummaries summaries;
+    // optional dense slave key -> master key map, see setDenseLookup()
+    private long denseLookupAddress;
+    private int denseLookupCount;
 
     WindowJoinPrevailingCache() {
         this.cache = new DirectIntLongHashMap(
@@ -138,14 +143,20 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
                     nextSummaryBlock = scanStopBlock - 1;
                     break;
                 }
+                // the key column's memory, when the frame has it as plain values: read it directly
+                final long keyAddress = slaveRecord instanceof PageFrameMemoryRecord frameRecord ? frameRecord.getPageAddress(slaveSymbolIndex) : 0;
                 for (long r = scanStart; r >= rowLo; r--) {
                     if ((rowsScanned++ & (CIRCUIT_BREAKER_CHECK_ROWS - 1)) == 0) {
                         circuitBreaker.statefulThrowExceptionIfTripped();
                     }
-                    slaveTimeFrameHelper.recordAtRowIndex(r);
-
-                    final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                    final int matchingMasterKey = slaveSymbolLookupMap.get(AsyncWindowJoinFastAtom.toSymbolMapKey(slaveKey));
+                    final int slaveKey;
+                    if (keyAddress != 0) {
+                        slaveKey = Unsafe.getInt(keyAddress + (r << 2));
+                    } else {
+                        slaveTimeFrameHelper.recordAtRowIndex(r);
+                        slaveKey = slaveRecord.getInt(slaveSymbolIndex);
+                    }
+                    final int matchingMasterKey = lookupMasterKey(slaveSymbolLookupMap, slaveKey);
                     if (matchingMasterKey == masterKey) {
                         // Hurray! We've found the key.
                         final long rowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), r);
@@ -173,6 +184,25 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
             return findBelowScanStop(slaveTimeFrameHelper, slaveRecord, slaveSymbolIndex, slaveSymbolLookupMap, masterKey, masterCacheKey);
         }
         return Long.MIN_VALUE;
+    }
+
+    /**
+     * Gives the backward scan a dense array for the slave key to master key lookup, in place of the
+     * hash map: {@code count} ints at {@code address}, the master key of slave key k at index k + 1,
+     * of NULL at index 0, {@link StaticSymbolTable#VALUE_NOT_FOUND} for a key that cannot join. It
+     * must say what the hash map says. 0 switches it off.
+     */
+    public void setDenseLookup(long address, int count) {
+        this.denseLookupAddress = address;
+        this.denseLookupCount = count;
+    }
+
+    private int lookupMasterKey(DirectIntIntHashMap slaveSymbolLookupMap, int slaveKey) {
+        if (denseLookupAddress != 0) {
+            final int index = Math.max(slaveKey + 1, 0);
+            return index < denseLookupCount ? Unsafe.getInt(denseLookupAddress + ((long) index << 2)) : StaticSymbolTable.VALUE_NOT_FOUND;
+        }
+        return slaveSymbolLookupMap.get(AsyncWindowJoinFastAtom.toSymbolMapKey(slaveKey));
     }
 
     public DirectIntLongHashMap getCache() {

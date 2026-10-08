@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -349,12 +350,20 @@ public class WindowJoinPrevailingSummaries implements QuietCloseable {
                 }
                 slaveTimeFrameHelper.recordAt(frameIndex, 0);
                 final long rowLo = slaveTimeFrameHelper.getTimeFrameRowLo();
+                // the key column's memory, when the frame has it as plain values: read it directly
+                final long keyAddress = slaveRecord instanceof PageFrameMemoryRecord frameRecord ? frameRecord.getPageAddress(slaveSymbolIndex) : 0;
                 for (r = Math.min(r, slaveTimeFrameHelper.getTimeFrameRowHi() - 1); r >= rowLo; r--) {
                     if ((rowsScanned++ & (CIRCUIT_BREAKER_CHECK_ROWS - 1)) == 0) {
                         circuitBreaker.statefulThrowExceptionIfTripped();
                     }
-                    slaveTimeFrameHelper.recordAtRowIndex(r);
-                    final int slaveMapKey = AsyncWindowJoinFastAtom.toSymbolMapKey(slaveRecord.getInt(slaveSymbolIndex));
+                    final int slaveKey;
+                    if (keyAddress != 0) {
+                        slaveKey = Unsafe.getInt(keyAddress + (r << 2));
+                    } else {
+                        slaveTimeFrameHelper.recordAtRowIndex(r);
+                        slaveKey = slaveRecord.getInt(slaveSymbolIndex);
+                    }
+                    final int slaveMapKey = AsyncWindowJoinFastAtom.toSymbolMapKey(slaveKey);
                     final int s = slaveMapKey < slaveSlotCount ? Unsafe.getInt(slaveSlotsAddress + ((long) slaveMapKey << 2)) : -1;
                     if (s >= 0) {
                         final long address = base + ((long) s << 3);
