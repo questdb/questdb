@@ -6822,6 +6822,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // indexed (O(master lookups) vs Dense O(slave scan)), otherwise memoized (fast on
                             // sparse/illiquid symbols, dense-ts-cliff guarded). Unknown estimate -> fall
                             // through to Dense (do no harm).
+                            // The choice is made from the row counts when the query compiles. A cached
+                            // factory keeps it until it is compiled again, so a master that has grown
+                            // since (e.g. a "today" interval compiled just after midnight) stays on the
+                            // algorithm picked for its old size. The rows are the same either way.
                             if (configuration.isSqlAsOfAutoAlgoEnabled()) {
                                 final long masterLimit = masterLimitOrMinus1(model.getJoinModels().getQuick(0));
                                 final boolean isSlaveIndexed = slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex);
@@ -7222,6 +7226,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // stands between it and its table - serve it by Fast's per-row back-scan first, bounded by a
     // master-row and a back-scan budget, and hand over to the Dense scan once either runs out. A
     // master known to be large keeps plain Dense.
+    // Decided, and the budgets fixed, when the query compiles: a cached factory keeps both until it
+    // is compiled again. The budgets are absolute row counts, so a stale prelude still stops within
+    // them. EXPLAIN shows that the prelude is on, not the budgets, which depend on the table sizes.
     private void maybeEnableMultiKeyPrelude(
             AsOfJoinDenseRecordCursorFactoryBase denseJoin,
             IQueryModel model,
@@ -7253,11 +7260,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return;
         }
         final long backScanBudget = slaveN * backScanPct / 100L;
-        denseJoin.enableAdaptivePrelude(
-                backScanBudget,
-                masterRowBudget,
-                "fast master<=" + masterRowBudget + (isSmall ? " master~" + effMaster : " filtered") + " backscan<=" + backScanBudget
-        );
+        denseJoin.enableAdaptivePrelude(backScanBudget, masterRowBudget);
+        LOG.debug().$("multi-key ASOF prelude [masterRowBudget=").$(masterRowBudget)
+                .$(", master=").$(isSmall ? effMaster : -1)
+                .$(", backScanBudget=").$(backScanBudget)
+                .I$();
     }
 
     // Plan-time estimate of the rows a join side returns: the tightest upper bound the factory, or a

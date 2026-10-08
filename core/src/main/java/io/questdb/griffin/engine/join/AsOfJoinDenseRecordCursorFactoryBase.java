@@ -43,6 +43,7 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Dense ASOF JOIN cursor is an improvement over the Light cursor for the case where
@@ -81,8 +82,8 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
     protected static final ArrayColumnTypes TYPES_KEY = new ArrayColumnTypes();
     protected static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
     private final long toleranceInterval;
-    // Why the planner turned the Fast prelude on, for EXPLAIN; null when it did not.
-    private CharSequence adaptivePreludeReason;
+    // the planner turned the Fast prelude on; EXPLAIN shows it
+    private boolean isAdaptivePreludeEnabled;
     protected AsOfJoinDenseRecordCursorBase cursor;
 
     public AsOfJoinDenseRecordCursorFactoryBase(
@@ -103,15 +104,29 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
      * rows have been served, whichever comes first; then the Dense forward scan takes over for the
      * rest of the master. Both algorithms return the same rows, so the switch moves only cost.
      *
+     * <p>
+     * The back-scan budget is checked inside each back-scan: a master row whose back-scan would
+     * cross it is served by the Dense scan instead, so the back-scans walk at most one row more
+     * than the budget. The master-row budget is checked between master rows.
+     *
      * @param backScanBudget  slave rows the prelude's back-scans may walk in total, &gt;= 0
      * @param masterRowBudget master rows the prelude may serve, or -1 for no limit
-     * @param reason          the planner's reason, shown by EXPLAIN
      */
-    public void enableAdaptivePrelude(long backScanBudget, long masterRowBudget, CharSequence reason) {
+    public void enableAdaptivePrelude(long backScanBudget, long masterRowBudget) {
         assert backScanBudget >= 0;
         cursor.setAdaptiveBackScanBudget(backScanBudget);
         cursor.setAdaptiveMasterRowBudget(masterRowBudget);
-        this.adaptivePreludeReason = reason;
+        this.isAdaptivePreludeEnabled = true;
+    }
+
+    @TestOnly
+    public long getAdaptiveBackScanBudget() {
+        return cursor.adaptiveBackScanBudget;
+    }
+
+    @TestOnly
+    public long getAdaptiveBackScanUsed() {
+        return cursor.adaptiveBackScanUsed;
     }
 
     @Override
@@ -154,8 +169,9 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
     @Override
     public void toPlan(PlanSink sink) {
         putFactoryType(sink);
-        if (adaptivePreludeReason != null) {
-            sink.attr("prelude").val(adaptivePreludeReason);
+        if (isAdaptivePreludeEnabled) {
+            // the budgets depend on the table sizes; EXPLAIN keeps to what the plan is
+            sink.attr("prelude").val("fast");
         }
         sink.attr("condition").val(joinContext);
         sink.child(masterFactory);
@@ -204,8 +220,10 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                 // Fast keyed loop with correct frame save/restore (AbstractKeyedAsOfJoinRecordCursor),
                 // driving performKeyMatching (the targeted back-scan) below.
                 boolean has = super.hasNext();
-                if (adaptiveBackScanUsed > adaptiveBackScanBudget
-                        || (adaptiveMasterRowBudget >= 0 && ++adaptiveMasterRows > adaptiveMasterRowBudget)) {
+                // a back-scan that ran out of budget has already handed over, inside performKeyMatching
+                if (!adaptiveDenseMode
+                        && (adaptiveBackScanUsed > adaptiveBackScanBudget
+                        || (adaptiveMasterRowBudget >= 0 && ++adaptiveMasterRows > adaptiveMasterRowBudget))) {
                     switchToDenseMode();
                 }
                 return has;
@@ -286,7 +304,18 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                     rowLo = slaveTimeFrame.getRowLo();
                 }
                 slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(keyedFrameIndex, keyedRowId));
-                scanned++;
+                if (adaptiveBackScanUsed + ++scanned > adaptiveBackScanBudget) {
+                    // The budget runs out inside this back-scan, which could walk to the slave's
+                    // start (a key pair that never occurs together): hand over now and let the Dense
+                    // scan serve this master row too.
+                    adaptiveBackScanUsed += scanned;
+                    switchToDenseMode();
+                    final long minSlaveTimestamp = toleranceInterval == Numbers.LONG_NULL
+                            ? Long.MIN_VALUE
+                            : masterTimestamp - toleranceInterval;
+                    resolveViaDenseScan(masterTimestamp, minSlaveTimestamp, slaveKeyToFind);
+                    return;
+                }
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             }
             adaptiveBackScanUsed += scanned;

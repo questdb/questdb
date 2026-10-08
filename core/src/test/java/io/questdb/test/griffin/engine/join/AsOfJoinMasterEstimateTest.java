@@ -25,8 +25,13 @@
 package io.questdb.test.griffin.engine.join;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactoryBase;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -117,6 +122,31 @@ public class AsOfJoinMasterEstimateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntervalEstimateOpensOnlyCutPartitions() throws Exception {
+        // Sizing an interval master must not map every partition the interval covers - not even
+        // for a plain EXPLAIN: the partitions wholly inside count from the table's metadata, and
+        // only the two the interval's ends cut are opened and searched.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE quotes (sym SYMBOL, ex SYMBOL, ts TIMESTAMP, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO quotes SELECT 's' || (x % 7), 'X' || (x % 3), '2024-01-01'::timestamp + x * 60_000_000L, x FROM long_sequence(20000)");
+            execute("CREATE TABLE trades (sym SYMBOL, ex SYMBOL, ts TIMESTAMP, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO trades SELECT 's' || (x % 7), 'X' || (x % 3), '2024-01-01'::timestamp + x * 600_000_000L + 7, x FROM long_sequence(2000)");
+            try (TableReader reader = engine.getReader("trades")) {
+                Assert.assertEquals(14, reader.getPartitionCount());
+            }
+            engine.releaseAllReaders();
+            final String sql = "SELECT t.ts, q.bid FROM (SELECT * FROM trades WHERE ts BETWEEN '2024-01-02T12:00' AND '2024-01-11T12:00') t "
+                    + "ASOF JOIN quotes q ON (sym, ex)";
+            // nine whole days and two halves: the master may be small next to the slave, so the
+            // planner sized it
+            assertQuery(sql).noLeakCheck().assertsPlanContaining("AsOf Join Dense Dual Symbol");
+            try (TableReader reader = engine.getReader("trades")) {
+                Assert.assertEquals(2, reader.getOpenPartitionCount());
+            }
+        });
+    }
+
+    @Test
     public void testIntervalMasterOnUnindexedSlaveKeepsDense() throws Exception {
         assertMemoryLeak(() -> {
             createTables("", false);
@@ -161,7 +191,7 @@ public class AsOfJoinMasterEstimateTest extends AbstractCairoTest {
             assertOnlyJoinDiffers(sql, "asof_dense");
             assertAllHintsAgree(sql, SINGLE_KEY_HINTS);
             final String sql2 = "SELECT t.ts, t.sym, t.ex, q.bid FROM (SELECT * FROM trades WHERE px > 99990) t ASOF JOIN " + slave + " q ON (sym, ex)";
-            assertQuery(sql2).noLeakCheck().assertsPlanContaining("AsOf Join Dense Dual Symbol", "prelude: fast master<=300 filtered");
+            assertQuery(sql2).noLeakCheck().assertsPlanContaining("AsOf Join Dense Dual Symbol", "prelude: fast\n");
             assertAllHintsAgree(sql2, TWO_KEY_HINTS);
         });
     }
@@ -172,7 +202,7 @@ public class AsOfJoinMasterEstimateTest extends AbstractCairoTest {
             createTables("index type posting", false);
             // a filter the planner cannot size: the master may be small
             final String sql = "SELECT t.ts, t.sym, t.ex, q.bid, q.ts qts FROM (SELECT * FROM trades WHERE px > 99990) t ASOF JOIN quotes q ON (sym, ex)";
-            assertQuery(sql).noLeakCheck().assertsPlanContaining("AsOf Join Dense Dual Symbol", "prelude: fast master<=300 filtered backscan<=");
+            assertQuery(sql).noLeakCheck().assertsPlanContaining("AsOf Join Dense Dual Symbol", "prelude: fast\n");
             assertOnlyJoinDiffers(sql, "asof_dense");
             assertAllHintsAgree(sql, TWO_KEY_HINTS);
         });
@@ -183,7 +213,7 @@ public class AsOfJoinMasterEstimateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables("index type posting", false);
             final String sql = "SELECT t.ts, t.sym, t.ex, q.bid, q.ts qts FROM " + MASTER_INTERVAL + " t ASOF JOIN quotes q ON (sym, ex)";
-            assertQuery(sql).noLeakCheck().assertsPlanContaining("AsOf Join Dense Dual Symbol", "prelude: fast master<=300 master~51 backscan<=");
+            assertQuery(sql).noLeakCheck().assertsPlanContaining("AsOf Join Dense Dual Symbol", "prelude: fast\n");
             assertOnlyJoinDiffers(sql, "asof_dense");
             assertAllHintsAgree(sql, TWO_KEY_HINTS);
         });
@@ -216,9 +246,46 @@ public class AsOfJoinMasterEstimateTest extends AbstractCairoTest {
                     "(SELECT * FROM trades WHERE px < 3000)"
             }) {
                 final String sql = "SELECT t.ts, t.sym, t.ex, q.bid, q.ts qts FROM " + master + " t ASOF JOIN quotes q ON (sym, ex)";
-                assertQuery(sql).noLeakCheck().assertsPlanContaining("prelude: fast master<=30 ");
+                assertQuery(sql).noLeakCheck().assertsPlanContaining("prelude: fast\n");
                 assertAllHintsAgree(sql, TWO_KEY_HINTS);
             }
+        });
+    }
+
+    @Test
+    public void testTwoKeyPreludeBackScanBudgetHoldsInsideOneBackScan() throws Exception {
+        // The first master row's key pair never occurs in the slave, though both its symbols do:
+        // its back-scan would walk to the slave's start. The budget (1% of the slave) must stop it
+        // there and then, not after it, and the Dense scan must serve that row and the rest.
+        setProperty(PropertyKey.CAIRO_SQL_ASOF_MULTIKEY_FAST_MAX_BACKSCAN_PCT, 1);
+        assertMemoryLeak(() -> {
+            createTables("", false);
+            execute("INSERT INTO trades VALUES ('rare', 'X2', 0, '2024-01-03T09:00:00.000000Z', -1.0), "
+                    + "('s5', 'X1', 1, '2024-01-03T09:30:00.000000Z', -2.0), ('rare', 'X0', 0, '2024-01-03T09:40:00.000000Z', -3.0)");
+            final String sql = "SELECT t.ts, t.sym, t.ex, q.bid, q.ts qts FROM (SELECT * FROM trades WHERE px < 0) t ASOF JOIN quotes q ON (sym, ex)";
+            assertQuery(sql).noLeakCheck().assertsPlanContaining("AsOf Join Dense Dual Symbol", "prelude: fast\n");
+            try (RecordCursorFactory factory = select(sql)) {
+                RecordCursorFactory join = factory;
+                while (!(join instanceof AsOfJoinDenseRecordCursorFactoryBase)) {
+                    join = join.getBaseFactory();
+                    Assert.assertNotNull("no Dense ASOF factory", join);
+                }
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    while (cursor.hasNext()) {
+                        // drain
+                    }
+                }
+                final AsOfJoinDenseRecordCursorFactoryBase dense = (AsOfJoinDenseRecordCursorFactoryBase) join;
+                final long budget = dense.getAdaptiveBackScanBudget();
+                Assert.assertTrue("budget " + budget, budget > 1000);
+                Assert.assertTrue("walked " + dense.getAdaptiveBackScanUsed() + " for a budget of " + budget,
+                        dense.getAdaptiveBackScanUsed() <= budget + 1);
+                Assert.assertTrue("the back-scan did not reach the budget", dense.getAdaptiveBackScanUsed() > budget);
+            }
+            printSql(hinted(sql, "asof_linear"));
+            final String expected = sink.toString();
+            TestUtils.assertContains(expected, "2024-01-03T09:00:00.000000Z\trare\tX2\tnull\t\n");
+            assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().returns(expected);
         });
     }
 
@@ -238,7 +305,7 @@ public class AsOfJoinMasterEstimateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables("", false);
             final String sql = "SELECT t.ts, t.sym, t.ex, q.bid FROM " + MASTER_INTERVAL + " t ASOF JOIN quotes q ON (sym, ex, k)";
-            assertQuery(sql).noLeakCheck().assertsPlanContaining("AsOf Join Dense", "prelude: fast");
+            assertQuery(sql).noLeakCheck().assertsPlanContaining("AsOf Join Dense", "prelude: fast\n");
             assertQuery(sql).noLeakCheck().assertsPlanNotContaining("Dual Symbol");
             assertAllHintsAgree(sql, TWO_KEY_HINTS);
         });

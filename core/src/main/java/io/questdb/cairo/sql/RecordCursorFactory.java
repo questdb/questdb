@@ -121,6 +121,9 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * <p>
      * The default answers -1. A factory that only drops rows by a predicate it cannot size keeps
      * the default; the planner then asks its base factory, whose bound is still a bound.
+     * <p>
+     * A plan cached with the factory keeps the choice made from this estimate until the query is
+     * compiled again, however the table grows. Rows a live view holds in memory are not counted.
      *
      * @param executionContext the SQL execution context the query is compiled in
      * @return an upper bound on the row count, or -1 when unknown
