@@ -316,6 +316,24 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     /**
+     * The metadata of the scan the tasks read their frames from: a frame's columns are the
+     * scan's, in this order.
+     */
+    @TestOnly
+    public RecordMetadata getScanMetadata() {
+        return scan.getMetadata();
+    }
+
+    /**
+     * The cursor of a factory over a key-major scan, see {@link AsyncWindowRecordCursor}, else
+     * null.
+     */
+    @TestOnly
+    public AsyncWindowRecordCursor getKeyMajorCursor() {
+        return cursor;
+    }
+
+    /**
      * The cursor of a factory that shards a plain scan's keys by hash, see
      * {@link AsyncWindowShardCursor}, else null.
      */

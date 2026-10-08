@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -387,6 +388,65 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         @Override
         public long next() {
             return next - minValue;
+        }
+
+        /**
+         * {@link #hasNext()} and {@link #next()} over the decoded block in bulk: a block wholly
+         * within the cursor's row range is copied as it is; another one skips the values below
+         * the range and ends the cursor at the first above it, as {@code hasNext()} does. A
+         * constant-delta stream, a covering index's sidecar ordinals and the decoding of the next
+         * block go through {@code hasNext()}.
+         */
+        @Override
+        public long drainTo(DirectLongList sink, long rowIdBase, long maxRows) {
+            if (coverCount > 0) {
+                return RowCursor.drainRows(this, sink, rowIdBase, maxRows);
+            }
+            long n = 0;
+            while (n < maxRows) {
+                final int available = blockBufferEnd - blockBufferPos;
+                if (constantDeltaRemaining == 0 && available > 0) {
+                    final int count = (int) Math.min(available, maxRows - n);
+                    sink.ensureCapacity(count);
+                    final long dst = sink.getAppendAddress();
+                    final long src = blockBufferAddr + (long) blockBufferPos * Long.BYTES;
+                    final long min = minValue;
+                    if (bufferRangeChecked) {
+                        for (int i = 0; i < count; i++) {
+                            Unsafe.putLong(dst + (long) i * Long.BYTES, rowIdBase | (Unsafe.getLong(src + (long) i * Long.BYTES) - min));
+                        }
+                        blockBufferPos += count;
+                        sink.skip(count);
+                        n += count;
+                        continue;
+                    }
+                    final long max = maxValue;
+                    int copied = 0;
+                    for (int i = 0; i < count; i++) {
+                        final long value = Unsafe.getLong(src + (long) i * Long.BYTES);
+                        if (value > max) {
+                            // past the range: the cursor ends here, as hasNext() ends it
+                            blockBufferPos = blockBufferEnd;
+                            sink.skip(copied);
+                            return n + copied;
+                        }
+                        if (value >= min) {
+                            Unsafe.putLong(dst + (long) copied * Long.BYTES, rowIdBase | (value - min));
+                            copied++;
+                        }
+                    }
+                    blockBufferPos += count;
+                    sink.skip(copied);
+                    n += copied;
+                    continue;
+                }
+                if (!hasNext()) {
+                    break;
+                }
+                sink.add(rowIdBase | next());
+                n++;
+            }
+            return n;
         }
 
         private boolean advanceToNextRelevantGen() {
@@ -1141,6 +1201,20 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 return;
             }
             releaseResources();
+        }
+
+        // the NULL rows of the column top first, one at a time, then the index's rows in bulk
+        @Override
+        public long drainTo(DirectLongList sink, long rowIdBase, long maxRows) {
+            long n = 0;
+            while (n < maxRows && nullPos < nullCount) {
+                if (!hasNext()) {
+                    return n;
+                }
+                sink.add(rowIdBase | next());
+                n++;
+            }
+            return n < maxRows ? n + super.drainTo(sink, rowIdBase, maxRows - n) : n;
         }
 
         @Override

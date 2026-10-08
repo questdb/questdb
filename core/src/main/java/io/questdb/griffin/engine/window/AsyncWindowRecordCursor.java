@@ -56,11 +56,16 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
+
+import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.LongConsumer;
 
 /**
  * Computes a window partitioned by the key of a key-major index scan on the shared query
@@ -114,15 +119,14 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     private final AsyncWindowAtom atom;
     // MODE_PREFIX: each combined column's value at the last row returned, as raw bits
     private final long[] carry;
-    // OP_FOLD: each folded column's running sum and whether a value was counted, see applyCarry()
-    private final boolean[] foldCounted;
-    private final double[] foldSums;
-    // OP_REPLAY: each replayed column's function, the query thread's own, see applyCarry()
+    // whether a column is combined with a carry, not folded or replayed
+    private final boolean hasCarryOp;
+    // OP_REPLAY: each replayed column's function, the query thread's own, see ReplayChain
     private final ReplayableWindowFunction[] replayFunctions;
-    // whether a column is folded, see AsyncWindowSplitPlan.OP_FOLD
-    private final boolean hasFold;
     // whether a column is replayed, see AsyncWindowSplitPlan.OP_REPLAY
     private final boolean hasReplay;
+    // OP_FOLD, OP_REPLAY: the pass over every task's rows in walk order, null for neither
+    private final ReplayChain replayChain;
     // OP_REPLAY: the rows of ownerRows at which a key starts, ascending, see refillPrefix()
     private final LongList ownerKeyStarts = new LongList();
     private int ownerKeyStartIndex;
@@ -135,6 +139,10 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     private final RecordSink recordSink;
     private final long roundRows;
     private final Round[] rounds;
+    // whether the workers may compute the chain's rows column-wise, see AsyncWindowRowKernel
+    private final boolean rowKernelsEnabled;
+    // the kernels are compiled once the atom has every step, at the first execution
+    private boolean rowKernelsCompiled;
     // queue of what to return after the head, in scan order: rounds and streamed keys
     private final int[] segmentKeys;
     private final int[] segmentKinds;
@@ -214,8 +222,6 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         this.splitPlan = splitPlan;
         this.splitsKeys = splitPlan.getMode() != AsyncWindowSplitPlan.MODE_NONE;
         this.carry = new long[splitPlan.getPrefixCount()];
-        this.foldSums = new double[splitPlan.getPrefixCount()];
-        this.foldCounted = new boolean[splitPlan.getPrefixCount()];
         this.replayFunctions = new ReplayableWindowFunction[splitPlan.getPrefixCount()];
         boolean hasReplay = false;
         for (int j = 0, n = splitPlan.getPrefixCount(); j < n; j++) {
@@ -226,11 +232,11 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             }
         }
         this.hasReplay = hasReplay;
-        boolean hasFold = false;
+        boolean hasCarryOp = false;
         for (int j = 0, n = splitPlan.getPrefixCount(); j < n; j++) {
-            hasFold |= splitPlan.getPrefixOp(j) == AsyncWindowSplitPlan.OP_FOLD;
+            hasCarryOp |= !AsyncWindowSplitPlan.isFold(splitPlan.getPrefixOp(j));
         }
-        this.hasFold = hasFold;
+        this.hasCarryOp = hasCarryOp;
         this.taskRows = configuration.getSqlParallelWindowTaskRows();
         this.maxKeyRows = Math.max(taskRows, configuration.getSqlParallelWindowMaxKeyRows());
         // the prefix: no more than min.rows, which also gates the parallel plan, see prefix.rows
@@ -255,11 +261,15 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         this.record = new SelectedRecord(identity);
         final int roundCount = sequences.size();
         this.rounds = new Round[roundCount];
+        // every task of every round, the most the walk holds ahead of the rows being returned
+        this.replayChain = splitPlan.hasFold() ? new ReplayChain(splitPlan, replayFunctions, roundCount * tasksPerRound) : null;
         for (int i = 0; i < roundCount; i++) {
             final UnorderedPageFrameSequence<RoundAtom> sequence = sequences.getQuick(i);
             rounds[i] = new Round(sequence);
             sequence.getAtom().round = rounds[i];
+            sequence.getAtom().replayChain = replayChain;
         }
+        this.rowKernelsEnabled = configuration.isSqlParallelWindowKeyRunsEnabled();
         // a round can bring a streamed key with it, and the walk can meet several in a row
         final int segmentCapacity = 4 * roundCount;
         this.segmentKinds = new int[segmentCapacity];
@@ -290,6 +300,9 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             stopRounds();
         } catch (Throwable th) {
             failure = th;
+        }
+        if (replayChain != null) {
+            replayChain.reset();
         }
         for (int i = 0, n = atom.getSlotCount(); i < n; i++) {
             try {
@@ -368,6 +381,26 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     @TestOnly
     public long getParallelTaskCount() {
         return parallelTaskCount;
+    }
+
+    /**
+     * Tasks whose folded and replayed columns a worker thread computed, see {@link ReplayChain},
+     * since the cursor opened or rewound; -1 when the plan neither folds nor replays.
+     */
+    @TestOnly
+    public long getWorkerPassCount() {
+        if (replayChain == null) {
+            return -1;
+        }
+        // read under the lock, which the last pass's writes happened before
+        while (!replayChain.lock.compareAndSet(0, 1)) {
+            Os.pause();
+        }
+        try {
+            return replayChain.workerPassCount;
+        } finally {
+            replayChain.lock.set(0);
+        }
     }
 
     /**
@@ -523,6 +556,17 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         this.executionContext = executionContext;
         this.circuitBreaker = executionContext.getCircuitBreaker();
         this.groupSplit = splitsKeys && atom.hasGroupByStage();
+        assert !groupSplit || replayChain == null : "no step goes over a fold";
+        if (!rowKernelsCompiled) {
+            // The steps are appended to the atom after this cursor is built, see
+            // AsyncWindowRecordCursorFactory.withStage(): the workers compute the chain's rows
+            // column-wise where every step allows it. Written before any round is dispatched.
+            rowKernelsCompiled = true;
+            atom.compileRowKernels(columnTypes, rowKernelsEnabled);
+        }
+        if (replayChain != null) {
+            replayChain.reset();
+        }
         mode = MODE_UNDECIDED;
         isWorkerSlotsOpen = false;
         resetWalkState();
@@ -589,6 +633,9 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         // Ends the walk in a state the next pass can start from, also after a hasNext() that
         // threw: no round runs, and a sequence a failure left cancelled starts afresh.
         stopRounds();
+        if (replayChain != null) {
+            replayChain.reset();
+        }
         baseCursor.toTop();
         for (int i = 0, n = atom.getSlotCount(); i < n; i++) {
             atom.getSlot(i - 1).toTop();
@@ -640,80 +687,36 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         } finally {
             atom.release(slotId);
         }
+        // A task stops early only once its round is cancelled, which stays so: an active round
+        // after the task means it computed all its rows. The walk-order pass may go on from it.
+        final ReplayChain replayChain = roundAtom.replayChain;
+        if (replayChain != null && sequence.isActive()) {
+            replayChain.computed(task, workerId > -1);
+        }
     }
 
     // Combines the rows of the key the task continues with the key's running values at the end of
     // the previous rows returned, in place, before they are returned. In place, and before the task
     // is emitted: peekRecordBlock() exposes the chain's memory, so the rows must be final there.
+    // Folded and replayed columns are not combined: the ReplayChain computed them.
     private void applyCarry(Task task) {
+        assert task.continuesKey;
         final RecordChain chain = task.chain;
         final int n = carry.length;
-        final boolean continues = task.continuesKey;
-        for (int j = 0; j < n; j++) {
-            if (splitPlan.getPrefixOp(j) == AsyncWindowSplitPlan.OP_FOLD) {
-                // the running sums, from the key's sum before the task, or from scratch
-                final double before = continues ? Double.longBitsToDouble(carry[j]) : Double.NaN;
-                foldSums[j] = Double.isNaN(before) ? 0.0 : before;
-                foldCounted[j] = !Double.isNaN(before);
-            }
-        }
-        // A replayed frame goes through every row of the task, in walk order, starting afresh at
-        // each key the task starts. A key the task continues goes on from the state the key's
-        // rows before the task's left: the rows this thread computed itself (see
-        // replayPrefixRow()) or replayed here, task by task, in walk order.
-        final long rowCount = hasReplay || hasFold ? task.emittedRows : task.firstKeyRows;
-        final LongList keyStarts = task.keyStarts;
-        // a continued key's start is among the warm-up rows, or at the task's first row when
-        // there are none: either way not a start here
-        int keyStartIndex = continues ? 1 : 0;
-        long nextKeyStart = keyStartIndex < keyStarts.size() ? keyStarts.getQuick(keyStartIndex) - task.emitFrom : Long.MAX_VALUE;
+        final long rowCount = task.firstKeyRows;
         long offset = 0;
         for (long r = 0; r < rowCount; r++) {
-            if (r == nextKeyStart) {
-                // equal starts are keys without rows
-                do {
-                    keyStartIndex++;
-                    nextKeyStart = keyStartIndex < keyStarts.size() ? keyStarts.getQuick(keyStartIndex) - task.emitFrom : Long.MAX_VALUE;
-                } while (nextKeyStart == r);
-                for (int j = 0; j < n; j++) {
-                    if (replayFunctions[j] != null) {
-                        replayFunctions[j].replayKeyStart();
-                    } else if (splitPlan.getPrefixOp(j) == AsyncWindowSplitPlan.OP_FOLD) {
-                        // a key the task starts: its sum starts from scratch, as serially
-                        foldSums[j] = 0.0;
-                        foldCounted[j] = false;
-                    }
-                }
-            }
-            final boolean firstKey = r < task.firstKeyRows;
             for (int j = 0; j < n; j++) {
                 final int type = splitPlan.getPrefixType(j);
                 final int op = splitPlan.getPrefixOp(j);
+                if (AsyncWindowSplitPlan.isFold(op)) {
+                    continue;
+                }
                 final long address = chain.getAddress(offset, splitPlan.getPrefixColumn(j));
-                if (op == AsyncWindowSplitPlan.OP_REPLAY) {
-                    // the worker output the row's argument: the function computes the row from it
-                    final ReplayableWindowFunction function = replayFunctions[j];
-                    function.replayNext(Unsafe.getDouble(address));
-                    Unsafe.putDouble(address, function.getReplayedValue());
-                } else if (op == AsyncWindowSplitPlan.OP_FOLD) {
-                    // as SumOverUnboundedRowsFrameFunction.computeNext() adds, and its partitioned
-                    // twin, in the same order: every key's rows, each from its start
-                    final double value = Unsafe.getDouble(address);
-                    if (Numbers.isFinite(value)) {
-                        foldSums[j] += value;
-                        foldCounted[j] = true;
-                    }
-                    Unsafe.putDouble(address, foldCounted[j] ? foldSums[j] : Double.NaN);
-                } else if (!firstKey) {
-                    // the carries are the first key's: a key the task starts needs none
-                    continue;
-                } else if (!continues) {
-                    // a key the task starts needs no carry
-                    continue;
-                } else if (ColumnType.tagOf(type) == ColumnType.INT) {
-                    Unsafe.putInt(address, (int) AsyncWindowSplitPlan.combine(splitPlan.getPrefixOp(j), type, carry[j], Unsafe.getInt(address)));
+                if (ColumnType.tagOf(type) == ColumnType.INT) {
+                    Unsafe.putInt(address, (int) AsyncWindowSplitPlan.combine(op, type, carry[j], Unsafe.getInt(address)));
                 } else {
-                    Unsafe.putLong(address, AsyncWindowSplitPlan.combine(splitPlan.getPrefixOp(j), type, carry[j], Unsafe.getLong(address)));
+                    Unsafe.putLong(address, AsyncWindowSplitPlan.combine(op, type, carry[j], Unsafe.getLong(address)));
                 }
             }
             offset = chain.getNextRecordOffset(offset);
@@ -826,6 +829,9 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                 heldRows += task.rows.size();
                 collectedRows += emitted;
                 task.emittedRows = emitted;
+                if (replayChain != null) {
+                    replayChain.enqueue(task, carry);
+                }
             }
             if (task.largeKeyIndex > -1) {
                 streamKey = task.largeKeyIndex;
@@ -1254,8 +1260,14 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                     return;
                 }
             }
-        } else if (carry.length > 0 && (task.continuesKey || splitPlan.hasFold())) {
-            applyCarry(task);
+        } else {
+            if (replayChain != null) {
+                // the folded and replayed columns, computed in walk order by whichever thread got there
+                replayChain.awaitPassed(task);
+            }
+            if (hasCarryOp && task.continuesKey) {
+                applyCarry(task);
+            }
         }
         beginEmitting(task);
     }
@@ -1425,6 +1437,8 @@ public class AsyncWindowRecordCursor implements RecordCursor {
      */
     static class RoundAtom implements StatefulAtom {
         final AsyncWindowAtom atom;
+        // the cursor's walk-order pass over folded and replayed columns, or null
+        ReplayChain replayChain;
         Round round;
         // the round of an AsyncWindowShardCursor, when the factory hashes keys into shards
         AsyncWindowShardCursor.ShardRound shardRound;
@@ -1487,6 +1501,243 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     }
 
     /**
+     * The pass over the folded and replayed columns of every task's rows (see
+     * {@link AsyncWindowSplitPlan#OP_FOLD}, {@link AsyncWindowSplitPlan#OP_REPLAY}): the serial
+     * function's arithmetic, row after row in walk order, over the arguments the workers output.
+     * Its state at a task's first row is the one the rows before it in the walk left, the key's
+     * own when the task continues it, so it must go over the tasks one after another, in walk
+     * order.
+     * <p>
+     * It does, on whichever thread first finds the next task in walk order computed: the worker
+     * that computed it, after its task, or the one that computed the task before it, or the
+     * query's thread, which waits for a task's pass before it returns the task's rows. A worker
+     * never waits for the pass: it takes the lock or leaves the pass to the thread that holds it.
+     * That thread looks again once it has let go, so a task computed meanwhile is not left
+     * behind. The pass thus runs alongside the workers' computing and the query thread's
+     * returning of rows, where it once took the query's thread before every task.
+     * <p>
+     * Every thread that goes over a task holds the lock, which orders its writes to the
+     * functions' state before the next holder's reads. The query's thread enqueues a task, and
+     * writes the replayed functions' state from the rows it streams itself, before it dispatches
+     * the task's round. A cursor that rewinds or closes waits for every round first, see
+     * stopRounds(), and only then {@link #reset()}s the pass.
+     */
+    static final class ReplayChain {
+        // see passPublishing()
+        @TestOnly
+        static volatile LongConsumer passPublishingListener;
+        private final int[] columns;
+        private final boolean[] foldCounted;
+        private final double[] foldSums;
+        // the replayed functions by entry, null for a folded one
+        private final ReplayableWindowFunction[] functions;
+        private final AtomicInteger lock = new AtomicInteger();
+        private final int[] ops;
+        // each entry's index among the plan's prefix columns, as the carry holds them
+        private final int[] prefixIndexes;
+        // the tasks from head to tail, by their place in walk order modulo the length
+        private final Task[] ring;
+        // the next task to go over, written under the lock
+        private volatile long head;
+        // the next task's place in walk order, written by the query's thread
+        private volatile long tail;
+        // tasks a worker thread went over, under the lock, since the last reset
+        private long workerPassCount;
+
+        ReplayChain(AsyncWindowSplitPlan splitPlan, ReplayableWindowFunction[] replayFunctions, int taskCapacity) {
+            int count = 0;
+            for (int j = 0, n = splitPlan.getPrefixCount(); j < n; j++) {
+                if (AsyncWindowSplitPlan.isFold(splitPlan.getPrefixOp(j))) {
+                    count++;
+                }
+            }
+            this.columns = new int[count];
+            this.ops = new int[count];
+            this.prefixIndexes = new int[count];
+            this.functions = new ReplayableWindowFunction[count];
+            this.foldSums = new double[count];
+            this.foldCounted = new boolean[count];
+            for (int j = 0, k = 0, n = splitPlan.getPrefixCount(); j < n; j++) {
+                final int op = splitPlan.getPrefixOp(j);
+                if (AsyncWindowSplitPlan.isFold(op)) {
+                    columns[k] = splitPlan.getPrefixColumn(j);
+                    ops[k] = op;
+                    prefixIndexes[k] = j;
+                    functions[k] = replayFunctions[j];
+                    assert (op == AsyncWindowSplitPlan.OP_REPLAY) == (functions[k] != null);
+                    k++;
+                }
+            }
+            this.ring = new Task[Math.max(1, taskCapacity)];
+        }
+
+        /**
+         * Waits until the pass has gone over the task, going over it on this thread when no
+         * other does: the query's thread, before it returns the task's rows, once the task's
+         * round, and so every task before it in walk order, is computed.
+         */
+        void awaitPassed(Task task) {
+            while (!task.passDone) {
+                if (lock.compareAndSet(0, 1)) {
+                    try {
+                        passComputed();
+                    } finally {
+                        lock.set(0);
+                    }
+                    if (!task.passDone) {
+                        // Every task up to this one has been computed, unless one stopped early
+                        // in a cancelled round, whose rows no one returns.
+                        throw CairoException.nonCritical().put("parallel window task was not computed [walkPosition=").put(head).put(']');
+                    }
+                } else {
+                    Os.pause();
+                }
+            }
+        }
+
+        /**
+         * A worker computed all of the task's rows: goes over it, and the tasks after it that
+         * are computed, unless another thread is at it.
+         */
+        void computed(Task task, boolean workerThread) {
+            task.passComputed = true;
+            while (lock.compareAndSet(0, 1)) {
+                try {
+                    final long passed = passComputed();
+                    if (workerThread) {
+                        workerPassCount += passed;
+                    }
+                } finally {
+                    lock.set(0);
+                }
+                // a task computed while the lock was held may have found it taken
+                final long h = head;
+                if (h >= tail || !ring[(int) (h % ring.length)].passComputed) {
+                    return;
+                }
+            }
+        }
+
+        /**
+         * Appends a task to the walk, on the query's thread, before its round is dispatched. The
+         * first task after the rows the query's thread streamed itself starts the fold from the
+         * carry those rows left, when it continues their last key.
+         */
+        void enqueue(Task task, long[] carry) {
+            final long t = tail;
+            assert t - head < ring.length : "more tasks alive than the walk holds";
+            if (t == 0 && task.continuesKey) {
+                for (int k = 0, n = ops.length; k < n; k++) {
+                    if (ops[k] == AsyncWindowSplitPlan.OP_FOLD) {
+                        final double before = Double.longBitsToDouble(carry[prefixIndexes[k]]);
+                        foldSums[k] = Double.isNaN(before) ? 0.0 : before;
+                        foldCounted[k] = !Double.isNaN(before);
+                    }
+                }
+            }
+            task.passSeq = t;
+            task.passComputed = false;
+            task.passDone = false;
+            ring[(int) (t % ring.length)] = task;
+            tail = t + 1;
+        }
+
+        /**
+         * Forgets every task, once no task of the walk runs any more.
+         */
+        void reset() {
+            head = 0;
+            tail = 0;
+            workerPassCount = 0;
+            Arrays.fill(ring, null);
+            Arrays.fill(foldSums, 0.0);
+            Arrays.fill(foldCounted, false);
+        }
+
+        // Under the lock: goes over the computed tasks from the head on, in walk order. Returns
+        // how many.
+        private long passComputed() {
+            final long h0 = head;
+            long h = h0;
+            while (h < tail) {
+                final Task task = ring[(int) (h % ring.length)];
+                if (!task.passComputed) {
+                    break;
+                }
+                assert task.passSeq == h;
+                pass(task);
+                // head first: whoever sees passDone, and so may return the task and enqueue in
+                // its slot, also sees the head past it, which keeps tail - head within the ring
+                head = ++h;
+                assert passPublishing(task.passSeq);
+                task.passDone = true;
+            }
+            return h - h0;
+        }
+
+        // Between the pass's two writes of a task, under -ea only: lets a test stand in for a
+        // thread that sees the task's state while the passer is preempted there.
+        private static boolean passPublishing(long passSeq) {
+            final LongConsumer listener = passPublishingListener;
+            if (listener != null) {
+                listener.accept(passSeq);
+            }
+            return true;
+        }
+
+        // The serial functions' arithmetic over the task's rows, in walk order, in place: a
+        // replayed frame through its function, a folded sum as SumOverUnboundedRowsFrameFunction
+        // adds, and its partitioned twin. Each starts afresh at a key the task starts, and goes
+        // on from the state the walk's rows before left at a key the task continues.
+        private void pass(Task task) {
+            final RecordChain chain = task.chain;
+            final int n = ops.length;
+            final long rowCount = task.emittedRows;
+            final LongList keyStarts = task.keyStarts;
+            // a continued key's start is among the warm-up rows, or at the task's first row when
+            // there are none: either way not a start here
+            int keyStartIndex = task.continuesKey ? 1 : 0;
+            long nextKeyStart = keyStartIndex < keyStarts.size() ? keyStarts.getQuick(keyStartIndex) - task.emitFrom : Long.MAX_VALUE;
+            long offset = 0;
+            for (long r = 0; r < rowCount; r++) {
+                if (r == nextKeyStart) {
+                    // equal starts are keys without rows
+                    do {
+                        keyStartIndex++;
+                        nextKeyStart = keyStartIndex < keyStarts.size() ? keyStarts.getQuick(keyStartIndex) - task.emitFrom : Long.MAX_VALUE;
+                    } while (nextKeyStart == r);
+                    for (int k = 0; k < n; k++) {
+                        if (functions[k] != null) {
+                            functions[k].replayKeyStart();
+                        } else {
+                            // a key the task starts: its sum starts from scratch, as serially
+                            foldSums[k] = 0.0;
+                            foldCounted[k] = false;
+                        }
+                    }
+                }
+                for (int k = 0; k < n; k++) {
+                    final long address = chain.getAddress(offset, columns[k]);
+                    final ReplayableWindowFunction function = functions[k];
+                    if (function != null) {
+                        // the worker output the row's argument: the function computes the row from it
+                        function.replayNext(Unsafe.getDouble(address));
+                        Unsafe.putDouble(address, function.getReplayedValue());
+                    } else {
+                        final double value = Unsafe.getDouble(address);
+                        if (Numbers.isFinite(value)) {
+                            foldSums[k] += value;
+                            foldCounted[k] = true;
+                        }
+                        Unsafe.putDouble(address, foldCounted[k] ? foldSums[k] : Double.NaN);
+                    }
+                }
+                offset = chain.getNextRecordOffset(offset);
+            }
+        }
+    }
+
+    /**
      * Row ids of the walk and, once computed, their output rows.
      */
     static class Task implements QuietCloseable {
@@ -1514,6 +1765,11 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         private int largeKeyIndex = -1;
         // offset of the last record in the chain, written by the task's worker
         private long lastOffset = -1;
+        // ReplayChain: the task's place in walk order, whether its rows are all computed, and
+        // whether the pass went over them
+        private volatile boolean passComputed;
+        private volatile boolean passDone;
+        private long passSeq = -1;
 
         private Task(RecordChain chain, DirectLongList rows) {
             this.chain = chain;

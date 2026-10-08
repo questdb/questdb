@@ -14492,6 +14492,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (dropPartitionBy) {
             ((AsyncWindowAtom) factory.getAtom()).setKeyStartReset(true);
         }
+        if (!shardMode) {
+            // a task loads the columns its rows read, not every column of the table
+            ((AsyncWindowAtom) factory.getAtom()).setRowTouchedColumns(windowRowTouchedColumns(columns, baseMetadata, crossIndex));
+        }
         final boolean[] nonDecreasing = new boolean[functions.size()];
         final boolean[] nonNegative = new boolean[functions.size()];
         final boolean[] nonNull = new boolean[functions.size()];
@@ -15049,6 +15053,91 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    /**
+     * The scan's columns a row of a parallel window reads, by the scan's column index, for the
+     * touch-ahead of its tasks (see {@link io.questdb.griffin.engine.table.PageFrameRowToucher}):
+     * the columns of every output column's expression, of every window's PARTITION BY, and of its
+     * ORDER BY unless the function never reads it (a ROWS frame of a value aggregate, or a
+     * function without a frame such as {@code lag}). The steps after the window read the window's
+     * output only. Null, for every column, when an expression names a column the base does not
+     * resolve. The touch-ahead only loads what the rows read anyway, so a column missing here
+     * costs a cache miss, never a result.
+     */
+    private static boolean @Nullable [] windowRowTouchedColumns(
+            ObjList<QueryColumn> columns,
+            RecordMetadata baseMetadata,
+            @Nullable IntList crossIndex
+    ) {
+        final IntList indexes = new IntList();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn qc = columns.getQuick(i);
+            if (!collectLiteralColumns(qc.getAst(), baseMetadata, indexes)) {
+                return null;
+            }
+            if (qc.isWindowExpression()) {
+                final WindowExpression we = (WindowExpression) qc;
+                final ObjList<ExpressionNode> partitionBy = we.getPartitionBy();
+                for (int j = 0, m = partitionBy.size(); j < m; j++) {
+                    if (!collectLiteralColumns(partitionBy.getQuick(j), baseMetadata, indexes)) {
+                        return null;
+                    }
+                }
+                final CharSequence name = qc.getAst().token;
+                final boolean readsOrder = !(Chars.equalsIgnoreCase(name, "lag")
+                        || Chars.equalsIgnoreCase(name, "lead")
+                        || Chars.equalsIgnoreCase(name, "row_number")
+                        || (we.getFramingMode() == WindowExpression.FRAMING_ROWS && isFrameFunction(name)));
+                if (readsOrder) {
+                    final ObjList<ExpressionNode> orderBy = we.getOrderBy();
+                    for (int j = 0, m = orderBy.size(); j < m; j++) {
+                        if (!collectLiteralColumns(orderBy.getQuick(j), baseMetadata, indexes)) {
+                            return null;
+                        }
+                    }
+                }
+            }
+        }
+        int columnCount = 0;
+        for (int i = 0, n = indexes.size(); i < n; i++) {
+            final int index = indexes.getQuick(i);
+            final int scanIndex = crossIndex != null ? (index < crossIndex.size() ? crossIndex.getQuick(index) : -1) : index;
+            if (scanIndex < 0) {
+                return null;
+            }
+            indexes.setQuick(i, scanIndex);
+            columnCount = Math.max(columnCount, scanIndex + 1);
+        }
+        final boolean[] touched = new boolean[columnCount];
+        for (int i = 0, n = indexes.size(); i < n; i++) {
+            touched[indexes.getQuick(i)] = true;
+        }
+        return touched;
+    }
+
+    // Adds the base's columns an expression names. Returns false when a column does not resolve.
+    private static boolean collectLiteralColumns(@Nullable ExpressionNode node, RecordMetadata metadata, IntList indexes) {
+        if (node == null) {
+            return true;
+        }
+        if (node.type == LITERAL) {
+            final int index = SqlUtil.getColumnIndexQuiet(metadata, node.token);
+            if (index < 0) {
+                return false;
+            }
+            indexes.add(index);
+            return true;
+        }
+        if (!collectLiteralColumns(node.lhs, metadata, indexes) || !collectLiteralColumns(node.rhs, metadata, indexes)) {
+            return false;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (!collectLiteralColumns(node.args.getQuick(i), metadata, indexes)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     // Aggregates whose value over a ROWS frame depends on the frame's rows alone.
     private static boolean isFrameFunction(CharSequence name) {
         return Chars.equalsIgnoreCase(name, "avg")
@@ -15218,6 +15307,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     functions.extendAndSet(i, f);
                     // the function owns its PARTITION BY terms now
                     partitionByFunctions = null;
+                    if (dropPartitionBy && ac.getPartitionBy().size() > 0) {
+                        // one key at a time, as the partitioned function the serial plan runs
+                        wf.adoptPartitionedArithmetic();
+                    }
                     windowMapSpecs.extendAndSet(i, WindowMapSpec.of(
                             executionContext.getWindowContext(),
                             dropPartitionBy ? NO_PARTITION_BY : ac.getPartitionBy(),

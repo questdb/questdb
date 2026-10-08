@@ -232,6 +232,14 @@ public class AsyncWindowStage implements QuietCloseable, SymbolTableSource {
     }
 
     /**
+     * A projection's column references below this read its own columns, from it on the input's,
+     * see {@link #virtual}.
+     */
+    public int getReservedSlots() {
+        return reservedSlots;
+    }
+
+    /**
      * The metadata that names the columns the stage's functions read, for EXPLAIN.
      */
     public RecordMetadata getPlanMetadata() {
