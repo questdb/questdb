@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
@@ -180,11 +181,13 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             // A WAL table written here bypasses the WAL, so no replay can redo its rows, including those a column add
             // committed before this commit: an enrolled adaptive table takes a durable epoch at most once per interval.
             // Every cached writer, not only the ones this tick committed: a table that went quiet still takes the
-            // epoch its UDP rows owe within the interval.
-            for (int i = 0, n = writerCache.size(); i < n; i++) {
-                final TableWriter cachedWriter = writerCache.valueQuick(i).writer;
-                if (cachedWriter != null) {
-                    cachedWriter.advanceDurableEpochAtInterval("udp commit");
+            // epoch its UDP rows owe within the interval. Only ADAPTIVE enrols a table, so other modes skip the loop.
+            if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+                for (int i = 0, n = writerCache.size(); i < n; i++) {
+                    final TableWriter cachedWriter = writerCache.valueQuick(i).writer;
+                    if (cachedWriter != null) {
+                        cachedWriter.advanceDurableEpochAtInterval("udp commit");
+                    }
                 }
             }
         } finally {

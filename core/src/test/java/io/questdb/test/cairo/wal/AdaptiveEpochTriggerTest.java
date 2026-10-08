@@ -25,9 +25,13 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.DefaultDdlListener;
+import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpLexer;
@@ -43,6 +47,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -235,6 +240,56 @@ public class AdaptiveEpochTriggerTest extends AbstractCairoTest {
                     "flush-on-close disabled: a clean close must NOT advance the durable epoch",
                     floorAfterFirst, durableEpoch("x")
             );
+        });
+    }
+
+    // The UDP commit loop over the cached writers serves only enrolled adaptive tables: outside ADAPTIVE no tick,
+    // batch or idle, visits a writer, WAL table or not; in ADAPTIVE every tick visits each one, a quiet one included.
+    @Test
+    public void testUdpLoopVisitsCachedWritersOnlyInAdaptive() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table a (ts timestamp, v long) timestamp(ts) partition by day bypass wal");
+            execute("create table b (ts timestamp, v long) timestamp(ts) partition by day wal");
+            engine.releaseAllWriters();
+            engine.releaseInactive();
+            final AtomicInteger visits = new AtomicInteger();
+            try (CairoEngine e = new CairoEngine(configuration) {
+                @Override
+                public TableWriter getWriter(TableToken tableToken, @NotNull String lockReason) {
+                    final CairoConfiguration conf = getConfiguration();
+                    return new TableWriter(
+                            conf,
+                            tableToken,
+                            getMessageBus(),
+                            null,
+                            true,
+                            DefaultLifecycleManager.INSTANCE,
+                            conf.getDbRoot(),
+                            DefaultDdlListener.INSTANCE,
+                            this
+                    ) {
+                        @Override
+                        public void advanceDurableEpochAtInterval(CharSequence operation) {
+                            visits.incrementAndGet();
+                            super.advanceDurableEpochAtInterval(operation);
+                        }
+                    };
+                }
+            }) {
+                final long nanos = UDP_T0_MICROS * 1000L;
+                for (String mode : new String[]{"nosync", "async", "sync", "adaptive"}) {
+                    setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
+                    visits.set(0);
+                    try (LineUdpParserImpl parser = new LineUdpParserImpl(e, new DefaultLineUdpReceiverConfiguration())) {
+                        udpParse(parser, "a v=1i " + nanos + "\nb v=1i " + nanos + "\n");
+                        // One tick commits the batch, three idle ticks follow.
+                        for (int tick = 0; tick < 4; tick++) {
+                            parser.commitAll();
+                        }
+                    }
+                    Assert.assertEquals(mode, "adaptive".equals(mode) ? 8 : 0, visits.get());
+                }
+            }
         });
     }
 
