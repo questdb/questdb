@@ -243,6 +243,21 @@ public class LeadLagWindowFunctionFactoryHelper {
             }
         }
 
+        /**
+         * The rows back the function reads, k of {@code lag(x, k)}.
+         */
+        public long getLagOffset() {
+            return offset;
+        }
+
+        /**
+         * Whether a row with fewer than {@link #getLagOffset()} rows before it in its partition
+         * takes a default value of its own rather than NULL.
+         */
+        public boolean hasLagDefault() {
+            return defaultValue != null;
+        }
+
         @Override
         public boolean isIgnoreNulls() {
             return ignoreNulls;

@@ -138,6 +138,10 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     private final RecordSink recordSink;
     private final long roundRows;
     private final Round[] rounds;
+    // whether the workers may compute the chain's rows column-wise, see AsyncWindowRowKernel
+    private final boolean rowKernelsEnabled;
+    // the kernels are compiled once the atom has every step, at the first execution
+    private boolean rowKernelsCompiled;
     // queue of what to return after the head, in scan order: rounds and streamed keys
     private final int[] segmentKeys;
     private final int[] segmentKinds;
@@ -264,6 +268,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             sequence.getAtom().round = rounds[i];
             sequence.getAtom().replayChain = replayChain;
         }
+        this.rowKernelsEnabled = configuration.isSqlParallelWindowKeyRunsEnabled();
         // a round can bring a streamed key with it, and the walk can meet several in a row
         final int segmentCapacity = 4 * roundCount;
         this.segmentKinds = new int[segmentCapacity];
@@ -551,6 +556,13 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         this.circuitBreaker = executionContext.getCircuitBreaker();
         this.groupSplit = splitsKeys && atom.hasGroupByStage();
         assert !groupSplit || replayChain == null : "no step goes over a fold";
+        if (!rowKernelsCompiled) {
+            // The steps are appended to the atom after this cursor is built, see
+            // AsyncWindowRecordCursorFactory.withStage(): the workers compute the chain's rows
+            // column-wise where every step allows it. Written before any round is dispatched.
+            rowKernelsCompiled = true;
+            atom.compileRowKernels(columnTypes, rowKernelsEnabled);
+        }
         if (replayChain != null) {
             replayChain.reset();
         }

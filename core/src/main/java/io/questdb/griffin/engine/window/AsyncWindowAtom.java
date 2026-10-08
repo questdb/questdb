@@ -28,6 +28,7 @@ package io.questdb.griffin.engine.window;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
@@ -92,6 +93,12 @@ import java.util.concurrent.atomic.AtomicLong;
  * {@link AsyncWindowSplitPlan}.
  */
 public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
+    /**
+     * Makes the worker slots compute their row by row tasks without the column-wise kernels, see
+     * {@link AsyncWindowRowKernel}: tests compare the two.
+     */
+    @TestOnly
+    public static volatile boolean DEBUG_DISABLE_ROW_KERNELS = false;
     private final PerWorkerLocks perWorkerLocks;
     // The scan's WHERE as the Async JIT Filter compiled it, which slices apply to a frame's row
     // range at a time, see Slot.computeSlice(); null when there is none. The code is shared by
@@ -423,6 +430,68 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
     }
 
     /**
+     * The scan's columns the window's rows read, by column index, which the touch-ahead of a row
+     * by row computation loads; null for every column. Only what is loaded depends on it, never
+     * a result. Key runs pick their own, see {@link Slot#computeKeyRuns}.
+     */
+    public void setRowTouchedColumns(boolean @Nullable [] rowTouchedColumns) {
+        for (int i = 0, n = slots.size(); i < n; i++) {
+            slots.getQuick(i).rowTouchedColumns = rowTouchedColumns;
+        }
+    }
+
+    /**
+     * Compiles each worker slot's column-wise kernel of its row by row tasks (see
+     * {@link AsyncWindowRowKernel}), once the steps after the window are known: the cursor's
+     * output column types are the last step's.
+     */
+    public void compileRowKernels(ColumnTypes outputTypes, boolean enabled) {
+        final IntList types = new IntList(outputTypes.getColumnCount());
+        for (int i = 0, n = outputTypes.getColumnCount(); i < n; i++) {
+            types.add(outputTypes.getColumnType(i));
+        }
+        final int keyColumnIndex = slots.getQuick(0).keyRunColumnIndex;
+        for (int i = 1, n = slots.size(); i < n; i++) {
+            if (enabled) {
+                slots.getQuick(i).compileRowKernel(types, keyColumnIndex);
+            } else {
+                slots.getQuick(i).rowKernel = null;
+            }
+        }
+    }
+
+    /**
+     * Tasks a column-wise kernel computed (see {@link AsyncWindowRowKernel}) since the last
+     * {@link #resetTaskCounts()}.
+     */
+    @TestOnly
+    public long getRowKernelTaskCount() {
+        long count = 0;
+        for (int i = 1, n = slots.size(); i < n; i++) {
+            final AsyncWindowRowKernel kernel = slots.getQuick(i).rowKernel;
+            if (kernel != null) {
+                count += kernel.getTaskCount();
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Whether the worker slots compute their row by row tasks with a column-wise kernel.
+     */
+    public boolean isRowKernelEnabled() {
+        return slots.size() > 1 && slots.getQuick(1).rowKernel != null;
+    }
+
+    /**
+     * The columns a row by row computation loads, see {@link #setRowTouchedColumns}.
+     */
+    @TestOnly
+    public boolean @Nullable [] getRowTouchedColumns() {
+        return slots.getQuick(0).rowTouchedColumns;
+    }
+
+    /**
      * Whether the worker slots start their window functions afresh at every key, see
      * {@link #setKeyStartReset}.
      */
@@ -443,6 +512,9 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         for (int i = 0, n = slots.size(); i < n; i++) {
             slots.getQuick(i).taskCount = 0;
             slots.getQuick(i).keyRunTaskCount = 0;
+            if (slots.getQuick(i).rowKernel != null) {
+                slots.getQuick(i).rowKernel.resetCounts();
+            }
         }
     }
 
@@ -521,6 +593,10 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         private long sliceRowCount;
         // the window functions start afresh at each key of a task, see setKeyStartReset()
         private boolean resetAtKeyStarts;
+        // the columns a row by row computation loads, null for all, see setRowTouchedColumns()
+        private boolean[] rowTouchedColumns;
+        // the column-wise kernel of a worker slot's row by row tasks, or null, see compileRowKernels()
+        private AsyncWindowRowKernel rowKernel;
         private int stageCount;
         private final PageFrameRowToucher toucher = new PageFrameRowToucher();
         private final VirtualRecord virtualRecord;
@@ -807,6 +883,16 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             if (keyRunFunctions != null) {
                 return computeKeyRuns(rows, keyStarts, emitFrom, chain, circuitBreaker, sequence);
             }
+            if (rowKernel != null && carryStage < 0 && groupStage == null && groupSplit == null && prefilter == null && !DEBUG_DISABLE_ROW_KERNELS) {
+                // the record moves to other frames, so a stream on this slot positions it again
+                streamFrameIndex = -1;
+                final long lastOffset = rowKernel.compute(rows, keyStarts, emitFrom, resetAtKeyStarts, chain, pool, record, circuitBreaker, sequence);
+                if (lastOffset != AsyncWindowRowKernel.UNSUPPORTED) {
+                    return lastOffset;
+                }
+                // a frame read through a type conversion: the row path computes the task afresh
+                toTop();
+            }
             final long secondKeyStart = keyStarts.size() > 1 ? keyStarts.getQuick(1) : Long.MAX_VALUE;
             final int resetStage = resetStage();
             final int keyStartCount = keyStarts.size();
@@ -835,7 +921,7 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 if (frameIndex != currentFrameIndex) {
                     final PageFrameMemory frameMemory = pool.navigateTo(frameIndex);
                     record.init(frameMemory);
-                    toucher.of(frameAddressCache, frameIndex, frameMemory);
+                    toucher.of(frameAddressCache, frameIndex, frameMemory, rowTouchedColumns);
                     currentFrameIndex = frameIndex;
                 }
                 int n = 0;
@@ -1261,6 +1347,12 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             taskCount++;
         }
 
+        // Compiles the column-wise kernel of a worker slot's row by row tasks over its functions
+        // and steps, now that they are all known; see AsyncWindowRowKernel.
+        void compileRowKernel(IntList outputTypes, int keyColumnIndex) {
+            rowKernel = ownsFunctions ? AsyncWindowRowKernel.compile(functions, mapStatesCount, stages, outputTypes, crossIndex, keyColumnIndex) : null;
+        }
+
         /**
          * Computes the window and the stages after it for the row the record stands on. Returns
          * false when a filter stage drops the row.
@@ -1461,7 +1553,7 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             if (frameIndex != streamFrameIndex) {
                 final PageFrameMemory frameMemory = pool.navigateTo(frameIndex);
                 record.init(frameMemory);
-                toucher.of(frameAddressCache, frameIndex, frameMemory);
+                toucher.of(frameAddressCache, frameIndex, frameMemory, rowTouchedColumns);
                 streamFrameIndex = frameIndex;
                 streamTouchedHi = index;
             }
