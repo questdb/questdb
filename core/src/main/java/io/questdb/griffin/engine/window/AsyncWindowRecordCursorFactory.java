@@ -316,6 +316,15 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     /**
+     * The cursor of a factory over a key-major scan, see {@link AsyncWindowRecordCursor}, else
+     * null.
+     */
+    @TestOnly
+    public AsyncWindowRecordCursor getKeyMajorCursor() {
+        return cursor;
+    }
+
+    /**
      * The cursor of a factory that shards a plain scan's keys by hash, see
      * {@link AsyncWindowShardCursor}, else null.
      */
