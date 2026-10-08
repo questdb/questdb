@@ -4437,7 +4437,13 @@ public class CairoEngine implements Closeable, WriterSource {
             } catch (Throwable th) {
                 if (struct.isWalEnabled()) {
                     // tableToken.getLoggingName() === tableName, table cannot be renamed while creation hasn't finished
-                    tableSequencerAPI.dropTable(tableToken, true);
+                    try {
+                        tableSequencerAPI.dropTable(tableToken, true);
+                    } catch (Throwable cleanupEx) {
+                        // A failed flush of the log stops the engine; its error carries the create's own.
+                        cleanupEx.addSuppressed(th);
+                        throw cleanupEx;
+                    }
                 } else if (filesystemCreated) {
                     final FilesFacade ff = configuration.getFilesFacade();
                     try {

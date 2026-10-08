@@ -28,6 +28,9 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DefaultDdlListener;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.DurabilityTier;
@@ -1003,8 +1006,7 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
                 final StringBuilder actual = new StringBuilder();
                 int i = 0;
                 for (String[] mode : modes) {
-                    node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode[0]);
-                    node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, mode[1]);
+                    setCommitMode(mode, i);
                     final boolean flushes = !"nosync".equals(mode[0]) && !"async".equals(mode[0]);
                     for (String statement : statements) {
                         execute("create table base_t" + i + " (ts timestamp, x int, y int) timestamp(ts) partition by day wal");
@@ -1054,6 +1056,50 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
     @Test
     public void testDurableAppendsMoveTheDurableFrontierSync() throws Exception {
         assertDurableAppendsMoveTheDurableFrontier("sync", "0");
+    }
+
+    @Test
+    public void testFailedCreateCleanupFlushFailureKeepsTheCreateError() throws Exception {
+        // A WAL table's failed CREATE drops its sequencer entry, which flushes the log in these modes. When that flush
+        // fails, the engine stops, and the error the caller gets must still carry the create's own failure.
+        final String[][] modes = {{"sync", "0"}, {"adaptive", "0"}, {"adaptive", String.valueOf(WINDOW_US)}};
+        final FailingSeqLogFlushFacade ff = new FailingSeqLogFlushFacade();
+        try {
+            assertMemoryLeak(ff, () -> {
+                final StringBuilder expected = new StringBuilder();
+                final StringBuilder actual = new StringBuilder();
+                for (int i = 0; i < modes.length; i++) {
+                    setCommitMode(modes[i], i);
+                    engine.setDdlListener(new DefaultDdlListener() {
+                        @Override
+                        public void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
+                            ff.failNextFlush();
+                            throw CairoException.critical(0).put("injected create failure");
+                        }
+                    });
+                    final AtomicInteger fatalCalls = new AtomicInteger();
+                    engine.setDurabilityFailureHandler(failure -> fatalCalls.incrementAndGet());
+                    String outcome = "create succeeded";
+                    try {
+                        execute("create table cr_t" + i + " (ts timestamp, x int) timestamp(ts) partition by day wal");
+                    } catch (Throwable th) {
+                        final Throwable[] suppressed = th.getSuppressed();
+                        outcome = th.getClass().getSimpleName()
+                                + ", engine stopped: " + (engine.isDurabilityFailed() && fatalCalls.get() == 1)
+                                + ", create error kept: " + (suppressed.length == 1 && String.valueOf(suppressed[0].getMessage()).contains("injected create failure"));
+                    }
+                    engine.setDdlListener(DefaultDdlListener.INSTANCE);
+                    final String row = modes[i][0] + " W=" + modes[i][1] + ": ";
+                    expected.append(row).append("flush failed, CairoError, engine stopped: true, create error kept: true\n");
+                    actual.append(row).append(ff.disarm() ? "flush failed, " : "no flush, ").append(outcome).append('\n');
+                    engine.resetDurabilityFailure();
+                }
+                Assert.assertEquals(expected.toString(), actual.toString());
+            });
+        } finally {
+            engine.setDdlListener(DefaultDdlListener.INSTANCE);
+            engine.resetDurabilityFailure();
+        }
     }
 
     /**
@@ -1510,6 +1556,16 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
         final Field distressed = WalWriter.class.getSuperclass().getDeclaredField("distressed");
         distressed.setAccessible(true);
         distressed.setBoolean(writer, true);
+    }
+
+    // The harness reloads the configuration only when the last property set changed it, so the epoch interval, which
+    // differs on every call, goes last. The assertions prove that the row runs the mode it names.
+    private static void setCommitMode(String[] mode, int row) {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode[0]);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, mode[1]);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, (60 + row) + "m");
+        Assert.assertEquals(mode[0], CommitMode.toString(engine.getConfiguration().getCommitMode()));
+        Assert.assertEquals(Long.parseLong(mode[1]), engine.getConfiguration().getAdaptiveCommitGroupWindowUs());
     }
 
     private void assertDropAndViewChangeFlushTheSequencerLog(int seqPartTxnCount) throws Exception {
