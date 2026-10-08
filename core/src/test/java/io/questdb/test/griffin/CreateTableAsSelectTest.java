@@ -214,6 +214,37 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCtasCastBetweenUuidAndLong128() throws Exception {
+        // CTAS copies the 16 bytes unchanged between UUID and LONG128, as on master; a round trip
+        // gives the UUID back
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (u UUID, l LONG128, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO src VALUES ('11111111-2222-3333-4444-555555555555', to_long128(1, 2), 0), (NULL, NULL, 1)");
+            execute("CREATE TABLE l_as_u AS (SELECT l, ts FROM src), CAST(l AS UUID)");
+            execute("CREATE TABLE u_as_l AS (SELECT u, ts FROM src), CAST(u AS LONG128)");
+            execute("CREATE TABLE u_back AS (SELECT u, ts FROM u_as_l), CAST(u AS UUID)");
+            assertQuery("SELECT l FROM l_as_u")
+                    .noLeakCheck()
+                    .columnType(0, ColumnType.UUID)
+                    .expectSize()
+                    .returns("""
+                            l
+                            00000000-0000-0002-0000-000000000001
+                            
+                            """);
+            assertQuery("SELECT u FROM u_back")
+                    .noLeakCheck()
+                    .columnType(0, ColumnType.UUID)
+                    .expectSize()
+                    .returns("""
+                            u
+                            11111111-2222-3333-4444-555555555555
+                            
+                            """);
+        });
+    }
+
+    @Test
     public void testCtasCastToCharWithoutCopierArmFails() throws Exception {
         // the copiers have no arm from these types into CHAR (bug y), so the cast clause refuses
         // them at its position, before the table exists

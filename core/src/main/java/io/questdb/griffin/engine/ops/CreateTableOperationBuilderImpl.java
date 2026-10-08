@@ -440,6 +440,13 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         return (from == ColumnType.STRING && to == ColumnType.IPv4) || (from == ColumnType.VARCHAR && to == ColumnType.IPv4);
     }
 
+    // the copier moves the 16 bytes unchanged between UUID and LONG128
+    private static boolean isUuidLong128Cast(int from, int to) {
+        final short fromTag = ColumnType.tagOf(from);
+        final short toTag = ColumnType.tagOf(to);
+        return (fromTag == ColumnType.UUID && toTag == ColumnType.LONG128) || (fromTag == ColumnType.LONG128 && toTag == ColumnType.UUID);
+    }
+
     private static void parquetClauseToSink(@NotNull CharSink<?> sink, CreateTableColumnModel model) {
         int encoding = model.getParquetEncoding();
         int compression = model.getParquetCompression();
@@ -496,8 +503,9 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             // No group covers LONG256, the geohashes, UUID, LONG128, IPv4, the decimals, the arrays,
             // INTERVAL, NULL or the pseudo types: no single group could express a geohash's bits, a
             // decimal's precision and scale or an array's dimensionality. Their casts follow
-            // isConvertibleFrom, as INSERT ... SELECT into the very same record copier does.
-            return ColumnType.isConvertibleFrom(from, to);
+            // isConvertibleFrom, as INSERT ... SELECT into the very same record copier does, except
+            // UUID and LONG128, which CTAS has always converted into each other
+            return ColumnType.isConvertibleFrom(from, to) || isUuidLong128Cast(from, to);
         }
         // the record copier performs the cast, so a pair of one group it has no arm for (a number
         // into CHAR) would fail only once the table exists; INSERT ... SELECT refuses it the same way
