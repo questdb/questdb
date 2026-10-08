@@ -207,6 +207,16 @@ public class AsyncWindowSplitPlan implements Plannable {
     }
 
     /**
+     * Whether a key that continues in a task may be rebuilt from {@code warmupRows} rows before
+     * the task's first own row: they come from the previous task, which holds about
+     * {@code taskRows} rows, and must stay under half of them. Overflow-safe for any count.
+     */
+    public static boolean isWarmupWithinTask(long warmupRows, long taskRows) {
+        // warmupRows * 2 < taskRows, for taskRows >= 1
+        return warmupRows <= (taskRows - 1) / 2;
+    }
+
+    /**
      * Whether a column is folded or replayed, see {@link #OP_FOLD} and {@link #OP_REPLAY}: every
      * task's rows need the query thread's pass, also of a key the task starts, and the workers'
      * copies of the column output its stand-in, which no step may read.
@@ -214,6 +224,18 @@ public class AsyncWindowSplitPlan implements Plannable {
     public boolean hasFold() {
         for (int i = 0, n = prefixOps.size(); i < n; i++) {
             if (isFold(prefixOps.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether the column is folded or replayed, see {@link #isFold}.
+     */
+    public boolean isFolded(int column) {
+        for (int i = 0, n = prefixOps.size(); i < n; i++) {
+            if (prefixColumns.getQuick(i) == column && isFold(prefixOps.getQuick(i))) {
                 return true;
             }
         }

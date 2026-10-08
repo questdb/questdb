@@ -48,6 +48,7 @@ import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SelectedRecord;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -77,7 +78,9 @@ import org.jetbrains.annotations.TestOnly;
  * dispatched only once the round before it was computed.
  * <p>
  * A table with a frame other threads cannot read at a stable address (Parquet, or a covering
- * index) is computed by the query's own thread, frame by frame, as the serial window would.
+ * index) is computed by the query's own thread, frame by frame, as the serial window would; so
+ * is a scan whose frames, once an interval pruned them, hold fewer rows than
+ * {@code cairo.sql.parallel.window.min.rows}, which the planner can only check for the table.
  */
 public class AsyncWindowShardCursor implements RecordCursor {
     static final UnorderedPageFrameReducer REDUCER = AsyncWindowShardCursor::reduce;
@@ -87,6 +90,9 @@ public class AsyncWindowShardCursor implements RecordCursor {
     private final AsyncWindowAtom atom;
     private final long chainMaxPages;
     private final long chainPageSize;
+    // fewer rows than this in the scan's frames, after its interval and partition pruning, are
+    // computed by the query's own thread, see chooseMode()
+    private final long minRows;
     private final ColumnTypes columnTypes;
 
     private final int keyColumnIndex;
@@ -150,6 +156,7 @@ public class AsyncWindowShardCursor implements RecordCursor {
         this.keyColumnIndex = keyColumnIndex;
         this.shardCount = atom.getWorkerSlotCount();
         this.roundRows = Math.max(configuration.getSqlParallelWindowTaskRows(), configuration.getSqlParallelWindowRoundRows());
+        this.minRows = configuration.getSqlParallelWindowMinRows();
         this.chainPageSize = configuration.getSqlWindowStorePageSize();
         this.chainMaxPages = Math.max(1L, configuration.getSqlSortValueMaxBytes() / Numbers.ceilPow2(chainPageSize));
         final int columnCount = columnTypes.getColumnCount();
@@ -303,6 +310,9 @@ public class AsyncWindowShardCursor implements RecordCursor {
         resetWalk();
         atom.resetTaskCounts();
         atom.getSlot(-1).open(frameCursor, executionContext);
+        if (slices) {
+            atom.initCompiledPrefilter(frameCursor, executionContext);
+        }
     }
 
     @Override
@@ -372,7 +382,10 @@ public class AsyncWindowShardCursor implements RecordCursor {
             try {
                 final AsyncWindowAtom.Slot slot = atom.getSlot(slotId);
                 slot.toTop();
-                task.lastOffset = slot.computeSlice(task.frameIndex, task.rowLo, task.rowHi, task.chain, circuitBreaker, sequence);
+                final CompiledFilter compiledPrefilter = atom.getCompiledPrefilter();
+                task.lastOffset = compiledPrefilter != null
+                        ? slot.computeSlice(task.frameIndex, task.rowLo, task.rowHi, task.chain, circuitBreaker, sequence, compiledPrefilter, atom.getCompiledPrefilterBindVarAddress(), atom.getCompiledPrefilterBindVarCount())
+                        : slot.computeSlice(task.frameIndex, task.rowLo, task.rowHi, task.chain, circuitBreaker, sequence, null, 0, 0);
                 task.rowCount = slot.getSliceRowCount();
                 slot.countTask();
                 atom.countTask(workerId);
@@ -399,8 +412,10 @@ public class AsyncWindowShardCursor implements RecordCursor {
         frameCount = 0;
         PageFrame frame;
         boolean plain = true;
+        long rows = 0;
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            rows += frame.getPartitionHi() - frame.getPartitionLo();
             frameAddressCache.add(frameCount++, frame);
         }
         for (int i = 0; i < frameCount; i++) {
@@ -411,7 +426,9 @@ public class AsyncWindowShardCursor implements RecordCursor {
         }
         atom.getSlot(-1).ofFrames(frameAddressCache);
         record.of(atom.getSlot(-1).getOutputRecord());
-        mode = plain && shardCount > 0 ? MODE_PARALLEL : MODE_SERIAL;
+        // The planner sized the table, not the frames an interval leaves of it: a walk too small
+        // for the parallel window, as the planner gates it, is the serial window's.
+        mode = plain && shardCount > 0 && (minRows <= 0 || rows >= minRows) ? MODE_PARALLEL : MODE_SERIAL;
     }
 
     // Collects the next frames into a free round and dispatches it. Returns false when no frame is

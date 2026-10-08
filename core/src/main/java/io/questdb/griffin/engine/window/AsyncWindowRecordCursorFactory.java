@@ -40,10 +40,12 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -341,6 +343,14 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
      * Gives the slice mode's scan its WHERE: this factory takes {@code ownerFilter}, and the atom
      * the worker copies, also when it throws.
      */
+    /**
+     * See {@link AsyncWindowAtom#setCompiledPrefilter}: the atom owns the three once the method
+     * returns.
+     */
+    public void setCompiledPrefilter(@NotNull CompiledFilter compiledFilter, @NotNull MemoryCARW bindVarMemory, @NotNull ObjList<Function> bindVarFunctions) {
+        atom.setCompiledPrefilter(compiledFilter, bindVarMemory, bindVarFunctions);
+    }
+
     public void setPrefilters(@NotNull Function ownerFilter, @NotNull ObjList<Function> workerFilters) {
         this.prefilter = ownerFilter;
         atom.setPrefilters(ownerFilter, workerFilters);
@@ -528,6 +538,18 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
             if (this.splitPlan.hasFold()) {
                 throw CairoException.critical(0).put("internal error: a step over a folded window");
             }
+            // Conversely, a stand-in in the step's worker copies is the column only once the
+            // plan the cursor follows folds it, at this step: else the workers' output would be
+            // the column's argument.
+            final int stage = ownerStages.size();
+            for (int i = 0, n = workerStages.size(); i < n; i++) {
+                final ObjList<Function> stageFunctions = workerStages.getQuick(i).getFunctions();
+                for (int c = 0, m = stageFunctions.size(); c < m; c++) {
+                    if (stageFunctions.getQuick(c) instanceof AsyncWindowFoldEcho && (carryStage != stage || !splitPlan.isFolded(c))) {
+                        throw CairoException.critical(0).put("internal error: a fold stand-in without its fold [column=").put(c).put(']');
+                    }
+                }
+            }
             next = new AsyncWindowRecordCursorFactory(this, metadata, recordSink, splitPlan);
         } catch (Throwable th) {
             Misc.free(ownerStage);
@@ -566,6 +588,9 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
             sink.attr("rowSlices").val(true);
             if (prefilter != null) {
                 sink.optAttr("filter", prefilter, true);
+                if (atom.hasCompiledPrefilter()) {
+                    sink.attr("jit").val(true);
+                }
             }
         } else if (shardKeyColumnIndex > -1) {
             sink.attr("hashShards").putBaseColumnName(shardKeyColumnIndex);

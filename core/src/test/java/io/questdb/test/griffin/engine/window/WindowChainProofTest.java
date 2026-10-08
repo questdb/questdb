@@ -390,7 +390,7 @@ public class WindowChainProofTest extends AbstractCairoTest {
     }
 
     // Serial, then parallel twice (toTop() between) and once more with a second cursor: all equal, bit for bit.
-    private static void assertMatchesSerial(CairoEngine engine, SqlExecutionContext ctx, String query) throws Exception {
+    static void assertMatchesSerial(CairoEngine engine, SqlExecutionContext ctx, String query) throws Exception {
         ctx.setParallelWindowEnabled(false);
         final String expected;
         try (RecordCursorFactory factory = engine.select(query, ctx)) {
@@ -439,7 +439,7 @@ public class WindowChainProofTest extends AbstractCairoTest {
         );
     }
 
-    private static AsyncWindowRecordCursorFactory findAsyncFactory(RecordCursorFactory factory) {
+    static AsyncWindowRecordCursorFactory findAsyncFactory(RecordCursorFactory factory) {
         for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
             if (f instanceof AsyncWindowRecordCursorFactory async) {
                 return async;
@@ -504,7 +504,7 @@ public class WindowChainProofTest extends AbstractCairoTest {
     }
 
     // Every value of every row as raw bits: doubles by their bits, symbols by value.
-    private static String rawRows(RecordCursor cursor, RecordMetadata metadata) {
+    static String rawRows(RecordCursor cursor, RecordMetadata metadata) {
         final StringSink sink = new StringSink();
         final Record record = cursor.getRecord();
         final int n = metadata.getColumnCount();
