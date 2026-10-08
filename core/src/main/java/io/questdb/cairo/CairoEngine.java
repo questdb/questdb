@@ -2248,14 +2248,15 @@ public class CairoEngine implements Closeable, WriterSource {
      * Returns a pooled table reader that is pointed at the same transaction number
      * as the source reader.
      * <p>
-     * If the source reader is detached and not in use, returns the source reader.
+     * If the source reader is detached, not in use, and has no Delta rows, returns it.
      * The source reader must be used only through calling this method.
      */
     public TableReader getReaderAtTxn(TableReader srcReader, SqlExecutionContext executionContext) {
         assert srcReader.isOpen() && srcReader.isActive();
         // Fast path: go with the base reader if it's not in-use. It was borrowed before the
         // current query, so it is intentionally not attributed to the query's supervisor.
-        if (readerPool.isDetached(srcReader) && readerPool.getDetachedRefCount(srcReader) == 0) {
+        // Delta readers need pooled copies so cursor close frees checkpoints before tracker recycling.
+        if (readerPool.isDetached(srcReader) && readerPool.getDetachedRefCount(srcReader) == 0 && !srcReader.hasAnyDelta()) {
             readerPool.incDetachedRefCount(srcReader);
             return srcReader;
         }
