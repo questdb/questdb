@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
@@ -101,6 +102,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
 
     @Override
     public boolean hasNext() {
+        // on the first call, initTimestamps() may leave the NULL bucket in the map, see aggregateNullTimestampRows()
         initTimestamps();
 
         if (mapCursor.hasNext()) {
@@ -191,6 +193,21 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
         // reset map iterator
         map.getCursor();
         isMapBuildPending = true;
+    }
+
+    @Override
+    protected boolean aggregateNullTimestampRows() {
+        // of() and toTop() left the map empty, so it holds the NULL bucket alone, one entry per key. hasNext() streams
+        // the entries before it builds the first bucket of the grid, and isMapBuildPending makes buildMap() clear them.
+        boolean hasNext;
+        do {
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            aggregateBaseRecord();
+            hasNext = baseCursor.hasNext();
+        } while (hasNext && baseRecord.getTimestamp(timestampIndex) == Numbers.LONG_NULL);
+        // reset map iterator
+        map.getCursor();
+        return hasNext;
     }
 
     @Override

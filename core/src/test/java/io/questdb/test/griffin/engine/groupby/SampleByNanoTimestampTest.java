@@ -6135,20 +6135,48 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByNullDesignatedTimestampCursor() throws Exception {
-        // A designated timestamp that holds NULL anchored the grid of the SAMPLE BY cursor at Long.MIN_VALUE, and the
-        // fill cursors emitted fill rows from year 1677 one stride at a time. See
-        // SampleByTest.testSampleByNullDesignatedTimestampCursor().
+        // The SAMPLE BY cursor over a nanosecond designated timestamp that holds NULL, which the sort puts first. The
+        // cursor now fails with FILL(NULL), FILL(PREV) and FILL(value), and gives the row with the NULL a bucket of
+        // its own with FILL(NONE). See SampleByTest.testSampleByNullDesignatedTimestampCursor().
         assertMemoryLeak(() -> {
             createNullTimestampTable();
             final String source = " FROM ((SELECT * FROM n ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY ";
             for (String select : new String[]{"SELECT ts, count() c, sum(v) s", "SELECT ts, sym, count() c, sum(v) s"}) {
-                for (String fill : new String[]{"FILL(NULL)", "FILL(PREV)", "FILL(0, 0)", "FILL(NONE)"}) {
+                for (String fill : new String[]{"FILL(NULL)", "FILL(PREV)", "FILL(0, 0)"}) {
                     assertSampleByNullTimestampFails(select + source + "1h " + fill + " ALIGN TO FIRST OBSERVATION", "Sample By\n");
                     assertSampleByNullTimestampFails(select + source + "1h " + fill, "Sample By\n");
                     assertSampleByNullTimestampFails(select + source + "1h " + fill + " ALIGN TO CALENDAR WITH OFFSET '00:10'", "Sample By\n");
                     assertSampleByNullTimestampFails(select + source + "1h " + fill + " ALIGN TO CALENDAR TIME ZONE 'Europe/London'", "Sample By\n");
                     assertSampleByNullTimestampFails(select + source + "1M " + fill + " ALIGN TO CALENDAR TIME ZONE 'America/New_York'", "Sample By\n");
                 }
+            }
+            // FILL(NONE) emits the bucket of the NULL first, and the grid starts at the first row that has a timestamp
+            final String[] noFillSampleBy = {
+                    "1h FILL(NONE) ALIGN TO FIRST OBSERVATION",
+                    "1h FILL(NONE)",
+                    "1h FILL(NONE) ALIGN TO CALENDAR WITH OFFSET '00:10'",
+                    "1h FILL(NONE) ALIGN TO CALENDAR TIME ZONE 'Europe/London'",
+                    "1M FILL(NONE) ALIGN TO CALENDAR TIME ZONE 'America/New_York'"
+            };
+            final String[] noFillBuckets = {
+                    "2024-01-01T00:00:00.000000000Z#1\t1.0\n2024-01-01T02:00:00.000000000Z#1\t4.0\n",
+                    "2024-01-01T00:00:00.000000000Z#1\t1.0\n2024-01-01T02:00:00.000000000Z#1\t4.0\n",
+                    "2023-12-31T23:10:00.000000000Z#1\t1.0\n2024-01-01T02:10:00.000000000Z#1\t4.0\n",
+                    "2024-01-01T00:00:00.000000000Z#1\t1.0\n2024-01-01T02:00:00.000000000Z#1\t4.0\n",
+                    "2023-12-01T05:00:00.000000000Z#2\t5.0\n"
+            };
+            for (int i = 0; i < noFillSampleBy.length; i++) {
+                // '#' stands for the tab before the count, and for the key of the bucket in the keyed statement
+                assertSampleByCursorFrom(
+                        "SELECT ts, count() c, sum(v) s" + source + noFillSampleBy[i],
+                        "fill: none\n",
+                        "ts\tc\ts\n\t1\t2.0\n" + noFillBuckets[i].replace("#", "\t")
+                );
+                assertSampleByCursorFrom(
+                        "SELECT ts, sym, count() c, sum(v) s" + source + noFillSampleBy[i],
+                        "keys: [ts,sym]\n",
+                        "ts\tsym\tc\ts\n\tb\t1\t2.0\n" + noFillBuckets[i].replace("#", "\ta\t")
+                );
             }
             // a filter that drops the NULL gives the rows
             assertSampleByCursorFrom(
@@ -6241,6 +6269,122 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .withPlanContaining("Sample By Fill\n")
                     .returns(expected);
+        });
+    }
+
+    @Test
+    public void testSampleByNullDesignatedTimestampNoFillAlignments() throws Exception {
+        // Without FILL, the SAMPLE BY cursor gives the rows with a NULL designated timestamp a bucket of their own,
+        // as the GROUP BY path does. See SampleByTest.testSampleByNullDesignatedTimestampNoFillAlignments().
+        assertMemoryLeak(() -> {
+            createNullBucketTable();
+            final String[] alignments = {
+                    " ALIGN TO FIRST OBSERVATION",
+                    "",
+                    " ALIGN TO CALENDAR WITH OFFSET '00:10'",
+                    " ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    " ALIGN TO CALENDAR TIME ZONE 'Europe/London'",
+                    " ALIGN TO CALENDAR TIME ZONE 'America/New_York' WITH OFFSET '00:10'"
+            };
+            for (String stride : new String[]{"1T", "1h", "1d", "3w", "1M", "1y"}) {
+                for (String alignment : alignments) {
+                    final String sampleBy = stride + alignment;
+                    assertSampleByNullBucket("SELECT ts, count() c, sum(v) s", "ts", sampleBy, "\t3\t146.0\n");
+                    assertSampleByNullBucket("SELECT ts, sym, count() c, sum(v) s", "ts, sym", sampleBy, "\tb\t2\t130.0\n\ta\t1\t16.0\n");
+                    assertSampleByNullBucket("SELECT count() c, sum(v) s", "c, s", sampleBy, "3\t146.0\n");
+                    assertSampleByNullBucket("SELECT sym, count() c, sum(v) s", "sym, c, s", sampleBy, "b\t2\t130.0\na\t1\t16.0\n");
+                }
+            }
+            // two of the statements above in full
+            assertSampleByCursorFrom(
+                    "SELECT ts, count() c, sum(v) s FROM ((SELECT * FROM nb ORDER BY ts) TIMESTAMP(ts))"
+                            + " SAMPLE BY 1h ALIGN TO FIRST OBSERVATION",
+                    "fill: none\n",
+                    """
+                            ts\tc\ts
+                            \t3\t146.0
+                            2024-01-01T00:15:00.000000000Z\t1\t1.0
+                            2024-01-01T02:15:00.000000000Z\t1\t4.0
+                            2024-01-03T09:15:00.000000000Z\t1\t8.0
+                            2024-02-10T09:15:00.000000000Z\t1\t32.0
+                            2024-03-20T09:15:00.000000000Z\t1\t64.0
+                            2024-04-05T09:15:00.000000000Z\t1\t256.0
+                            2025-01-15T11:15:00.000000000Z\t1\t512.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    "SELECT ts, sym, count() c, sum(v) s FROM ((SELECT * FROM nb ORDER BY ts) TIMESTAMP(ts))"
+                            + " SAMPLE BY 1M ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "keys: [ts,sym]\n",
+                    """
+                            ts\tsym\tc\ts
+                            \tb\t2\t130.0
+                            \ta\t1\t16.0
+                            2023-12-01T05:00:00.000000000Z\ta\t2\t5.0
+                            2024-01-01T05:00:00.000000000Z\tb\t1\t8.0
+                            2024-02-01T05:00:00.000000000Z\ta\t1\t32.0
+                            2024-03-01T05:00:00.000000000Z\tb\t1\t64.0
+                            2024-04-01T04:00:00.000000000Z\ta\t1\t256.0
+                            2025-01-01T05:00:00.000000000Z\tb\t1\t512.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByNullDesignatedTimestampNoFillAllNull() throws Exception {
+        // Every row has a NULL designated timestamp, so the NULL bucket is the only bucket. See
+        // SampleByTest.testSampleByNullDesignatedTimestampNoFillAllNull().
+        assertMemoryLeak(() -> {
+            createAllNullTimestampTable();
+            // the table alone stays on the SAMPLE BY cursor path when the statement aligns to the first observation
+            assertQuery("SELECT count() c, sum(v) s FROM an TIMESTAMP(ts) SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n", "fill: none\n")
+                    .returns("""
+                            c\ts
+                            2\t3.0
+                            """);
+            final String source = " FROM ((SELECT * FROM an ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY ";
+            final String[] sampleBys = {
+                    "1h ALIGN TO FIRST OBSERVATION",
+                    "1h",
+                    "1M",
+                    "1y ALIGN TO CALENDAR WITH OFFSET '00:10'",
+                    "1M ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "1h ALIGN TO CALENDAR TIME ZONE 'Europe/London' WITH OFFSET '00:10'",
+                    "1y ALIGN TO CALENDAR TIME ZONE '+03:00'"
+            };
+            for (String sampleBy : sampleBys) {
+                assertSampleByCursorFrom(
+                        "SELECT ts, count() c, sum(v) s" + source + sampleBy,
+                        "fill: none\n",
+                        """
+                                ts\tc\ts
+                                \t2\t3.0
+                                """
+                );
+                assertSampleByCursorFrom(
+                        "SELECT ts, sym, count() c, sum(v) s" + source + sampleBy,
+                        "keys: [ts,sym]\n",
+                        """
+                                ts\tsym\tc\ts
+                                \ta\t1\t1.0
+                                \tb\t1\t2.0
+                                """
+                );
+            }
+            // the GROUP BY path returns the same bucket
+            assertQuery("SELECT ts, count() c, sum(v) s FROM an TIMESTAMP(ts) SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("keyFunctions: [timestamp_floor_utc('1h',ts)]")
+                    .returns("""
+                            ts\tc\ts
+                            \t2\t3.0
+                            """);
         });
     }
 
@@ -16515,6 +16659,16 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
         });
     }
 
+    private static void createAllNullTimestampTable() throws SqlException {
+        // the table has no designated timestamp, so a statement can designate ts, which holds NULL in every row
+        execute("CREATE TABLE an (ts TIMESTAMP_NS, sym SYMBOL, v DOUBLE)");
+        execute("""
+                INSERT INTO an VALUES
+                    (NULL, 'a', 1.0),
+                    (NULL, 'b', 2.0)
+                """);
+    }
+
     @NotNull
     private static CairoConfiguration createMmapFailingConfiguration(int x) {
         FilesFacade ff = new TestFilesFacadeImpl() {
@@ -16535,6 +16689,24 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 return ff;
             }
         };
+    }
+
+    private static void createNullBucketTable() throws SqlException {
+        // see SampleByTest.createNullBucketTable()
+        execute("CREATE TABLE nb (ts TIMESTAMP_NS, sym SYMBOL, v DOUBLE)");
+        execute("""
+                INSERT INTO nb VALUES
+                    ('2024-01-01T00:15:00.000000000Z', 'a', 1.0),
+                    (NULL, 'b', 2.0),
+                    ('2024-01-01T02:30:00.000000000Z', 'a', 4.0),
+                    ('2024-01-03T09:30:00.000000000Z', 'b', 8.0),
+                    (NULL, 'a', 16.0),
+                    ('2024-02-10T09:30:00.000000000Z', 'a', 32.0),
+                    ('2024-03-20T09:30:00.000000000Z', 'b', 64.0),
+                    (NULL, 'b', 128.0),
+                    ('2024-04-05T10:00:00.000000000Z', 'a', 256.0),
+                    ('2025-01-15T12:00:00.000000000Z', 'b', 512.0)
+                """);
     }
 
     private static void createNullTimestampTable() throws SqlException {
@@ -16647,6 +16819,39 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 .sizeMayVary()
                 .withPlanContaining("Sample By\n")
                 .returns(expectedCursor);
+    }
+
+    // Asserts a statement without FILL on the SAMPLE BY cursor path over table nb: the NULL bucket, then the rows of
+    // the same statement over the source without the NULL rows, and the same rows as the GROUP BY path where it has
+    // a spelling of the statement. See SampleByTest.assertSampleByNullBucket().
+    private void assertSampleByNullBucket(String select, String orderBy, String sampleBy, String expectedNullBucket) throws Exception {
+        final String statement = select + " FROM ((SELECT * FROM nb ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY " + sampleBy;
+        printSql(select + " FROM ((SELECT * FROM nb WHERE ts IS NOT NULL ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY " + sampleBy);
+        final String withoutNulls = sink.toString();
+        final int headerLength = withoutNulls.indexOf('\n') + 1;
+        Assert.assertTrue("the source without the NULL rows has buckets", withoutNulls.length() > headerLength);
+        final String expected = withoutNulls.substring(0, headerLength) + expectedNullBucket + withoutNulls.substring(headerLength);
+        assertQuery(statement)
+                .noLeakCheck()
+                .timestamp(select.startsWith("SELECT ts") ? "ts" : null)
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n")
+                .returns(expected);
+
+        if (!sampleBy.contains("FIRST OBSERVATION")) {
+            final String groupByStatement = "SELECT * FROM (" + select + " FROM nb TIMESTAMP(ts) SAMPLE BY " + sampleBy + ") ORDER BY " + orderBy;
+            assertQuery(groupByStatement)
+                    .noLeakCheck()
+                    .assertsPlanContaining("keyFunctions: [timestamp_floor_utc(");
+            printSql(groupByStatement);
+            final String expectedOrdered = sink.toString();
+            final String orderedStatement = "SELECT * FROM (" + statement + ") ORDER BY " + orderBy;
+            assertQuery(orderedStatement)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Sample By\n");
+            printSql(orderedStatement);
+            TestUtils.assertEquals(expectedOrdered, sink);
+        }
     }
 
     // Asserts that a statement over a designated timestamp that holds NULL fails with an error that names the NULL,

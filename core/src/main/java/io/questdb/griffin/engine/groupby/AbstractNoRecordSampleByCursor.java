@@ -189,6 +189,13 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         tzOffset = newTzOffset;
     }
 
+    // Makes TimestampFunc return NULL for the bucket that goes out next. The function subtracts tzOffset from
+    // sampleLocalEpoch, and long arithmetic wraps, so the difference is Long.MIN_VALUE whatever the offset. The
+    // bucket after it assigns sampleLocalEpoch from localEpoch before it emits a row.
+    private void setNullBucketLabel() {
+        sampleLocalEpoch = Numbers.LONG_NULL + tzOffset;
+    }
+
     protected long adjustDst(long timestamp, @Nullable MapValue mapValue, long nextSampleTimestamp) {
         final long utcTimestamp = timestamp - tzOffset;
         if (utcTimestamp < nextDstUtc) {
@@ -224,6 +231,14 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         kludge(daylightSavings);
     }
 
+    // Aggregates the rows at the head of the base cursor that have a NULL designated timestamp into a bucket of their
+    // own, starting with the current row. Returns true when it stopped at the first row that has a timestamp, which
+    // is then the current row of the base cursor, and false when the base cursor ran out. Only the cursors without
+    // FILL override it: a grid that a cursor fills has no place for these rows, so the cursors with FILL fail.
+    protected boolean aggregateNullTimestampRows() {
+        throw CairoException.nonCritical().put("SAMPLE BY designated timestamp cannot be NULL");
+    }
+
     protected long getBaseRecordTimestamp() {
         return baseRecord.getTimestamp(timestampIndex) + tzOffset;
     }
@@ -239,23 +254,42 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         return localEpoch - localEpochShift;
     }
 
-    protected void initTimestamps() {
+    // Reads the first row of the base cursor and starts the sampler grid, the time zone offset and the first bucket
+    // from its timestamp. Returns true when the call also aggregated the NULL bucket, which the caller emits before
+    // it reads on, see aggregateNullTimestampRows(). Returns false in every other case, and always for the cursors
+    // with FILL.
+    protected boolean initTimestamps() {
         if (areTimestampsInitialized) {
-            return;
+            return false;
         }
 
         if (!baseCursor.hasNext()) {
             baseRecord = null;
-            return;
+            return false;
         }
 
-        final long timestamp = baseRecord.getTimestamp(timestampIndex);
-        // TIMESTAMP(col) can designate a column that holds NULL, and an ascending base puts the NULL first. No bucket
-        // can hold it. With ALIGN TO FIRST OBSERVATION, the grid would start at Long.MIN_VALUE, and the fill cursors
-        // would walk it one stride at a time towards the next row. On a calendar grid, round() would put the NULL in
-        // a bucket near Long.MAX_VALUE, which takes in every row.
-        if (timestamp == Numbers.LONG_NULL) {
-            throw CairoException.nonCritical().put("SAMPLE BY designated timestamp cannot be NULL");
+        long timestamp = baseRecord.getTimestamp(timestampIndex);
+        // TIMESTAMP(col) can designate a column that holds NULL, and an ascending base puts the rows with the NULL
+        // first. No bucket of the grid can hold them. With ALIGN TO FIRST OBSERVATION, the grid would start at
+        // Long.MIN_VALUE, and the fill cursors would walk it one stride at a time towards the next row. On a calendar
+        // grid that starts at 0 with no time zone offset, the week samplers, and SimpleTimestampSampler unless the
+        // stride is a power of two in the unit of the timestamp (microseconds or nanoseconds), would round
+        // Long.MIN_VALUE down past the range of a long and wrap around into a bucket near Long.MAX_VALUE, which takes
+        // in every row. So these rows never reach the sampler or the time zone rules. The cursors with FILL fail. The
+        // cursors without FILL aggregate the rows into a bucket of their own and emit it first under a NULL label, as
+        // the GROUP BY path does. The grid, the time zone offset and the DST state then start from the first row that
+        // has a timestamp, exactly as they would without the NULL rows.
+        final boolean hasNullBucket = timestamp == Numbers.LONG_NULL;
+        if (hasNullBucket) {
+            if (!aggregateNullTimestampRows()) {
+                // Every row is in the NULL bucket, so there is no grid to start. A rewind or the next execution
+                // clears the flag, as for any other source.
+                baseRecord = null;
+                setNullBucketLabel();
+                areTimestampsInitialized = true;
+                return true;
+            }
+            timestamp = baseRecord.getTimestamp(timestampIndex);
         }
 
         if (rules != null) {
@@ -296,7 +330,14 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         }
         localEpochShift = 0;
         sampleLocalEpoch = nextSampleLocalEpoch = topLocalEpoch;
+        if (hasNullBucket) {
+            // The NULL bucket ends as nextSamplePeriod() ends a bucket of the grid. The label goes in last, after
+            // the offset of the first row with a timestamp replaced the offset that of() left.
+            GroupByUtils.toTop(groupByFunctions);
+            setNullBucketLabel();
+        }
         areTimestampsInitialized = true;
+        return hasNullBucket;
     }
 
     protected void nextSamplePeriod(long timestamp) {
@@ -364,6 +405,20 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         baseRecord = null;
         isNotKeyedLoopInitialized = false;
         return true;
+    }
+
+    // The not-keyed form of aggregateNullTimestampRows(): aggregates the rows into mapValue, as notKeyedLoop()
+    // aggregates the rows of a bucket of the grid.
+    protected boolean notKeyedNullLoop(MapValue mapValue) {
+        groupByFunctionsUpdater.updateNew(mapValue, baseRecord, rowId++);
+        while (baseCursor.hasNext()) {
+            if (baseRecord.getTimestamp(timestampIndex) != Numbers.LONG_NULL) {
+                return true;
+            }
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            groupByFunctionsUpdater.updateExisting(mapValue, baseRecord, rowId++);
+        }
+        return false;
     }
 
     protected void updateValueWhenClockMovesBack(MapValue value) {
