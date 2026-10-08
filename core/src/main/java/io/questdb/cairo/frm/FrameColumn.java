@@ -105,9 +105,10 @@ public interface FrameColumn extends Closeable {
      * @param rowLo     the partition row the first write starts at, i.e. the extent the column holds now
      * @param rowHi     the partition row the last write ends at, exclusive
      * @param dataBytes the data bytes the writes bring, for a var-size column; ignored by a fixed-size one
-     * @param isMerging whether any write of the plan is a merge
+     * @param isDedup   whether the table deduplicates: a dedup merge can write more var-size data than the sources
+     *                  the reservation was sized from, so a var-size column grows past it instead of failing
      */
-    default void reserve(long rowLo, long rowHi, long dataBytes, boolean isMerging) {
+    default void reserve(long rowLo, long rowHi, long dataBytes, boolean isDedup) {
     }
 
     /**

@@ -10465,9 +10465,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 path.trimTo(pathSize), index, lo, hi, sortedTimestampsAddr, this, geometry,
                                 compactionForecastClusterer, compactionForecastBounds, compactionForecastCuts,
                                 compactionForecastPlan, Long.MIN_VALUE, Long.MAX_VALUE);
-                        O3PartitionJob.forecastCompositePlan(path.trimTo(pathSize), index, geometry,
-                                compactionForecastBounds, plan, sortedTimestampsAddr, o3Columns, this, dedupSink);
-                        final int cut = moveTailCut(compactionForecastBounds, plan, Math.min(incomingLo, futureFloor));
+                        final int cut;
+                        try {
+                            O3PartitionJob.forecastCompositePlan(path.trimTo(pathSize), index, geometry,
+                                    compactionForecastBounds, plan, sortedTimestampsAddr, o3Columns, this, dedupSink);
+                            cut = moveTailCut(compactionForecastBounds, plan, Math.min(incomingLo, futureFloor));
+                        } finally {
+                            // The partition task plans this commit again, so nothing executes this plan's merges.
+                            plan.freeMergeIndexes();
+                        }
                         if (cut > 0 && moveTailToFreshPartition(index, compactionForecastBounds, cut, false) == COMPACTION_MOVED_TAIL) {
                             if (isMakePlainEligible(index)) {
                                 makePartitionPlain(index);

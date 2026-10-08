@@ -25,7 +25,9 @@
 package io.questdb.test.cairo.composite;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableToken;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -64,6 +66,62 @@ public class CompositeDedupVarColumnMergeTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 1, '" + longString() + "')");
             drainWalQueue();
             assertQuery("SELECT ts, k, length(v) len FROM x").timestamp("ts").expectSize().returns(expectedLengths());
+        });
+    }
+
+    /**
+     * A plan whose dedup MERGE grows the var data past the source bytes, followed in the same plan by a
+     * NEW_PIECE that appends with a positioned (mixed I/O) write. {@code executeCompositePlan} reserves each var
+     * column's data as the sum of the source-range bytes, but the MERGE writes the long incoming value once per
+     * pre-existing duplicate. The merge grows the file only to its own end, so the NEW_PIECE's positioned append
+     * then lands past the reservation and the WAL apply suspends the table.
+     */
+    @Test
+    public void testMergeAppendOnDedupMergeGrowsVarDataThenNewPieceMixedIO() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, true);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "8K");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 64);
+        // Keep the composite day off the fresh-partition-version path, so executeCompositePlan runs the plan.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 100_000);
+        assertMemoryLeak(() -> {
+            engine.resetFrameFactory();
+            execute("CREATE TABLE x (ts TIMESTAMP, k INT, v STRING) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Three rows share (ts, k), which only a table without DEDUP can accumulate.
+            execute("INSERT INTO x SELECT '2024-01-01T00:00:00.000000Z'::TIMESTAMP, 1, 'a' FROM long_sequence(3)");
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-01T00:00:10', 10_000_000L), (x + 10)::INT, 'v' || x" +
+                    " FROM long_sequence(8000)");
+            // A later day makes every following 2024-01-01 commit O3.
+            execute("INSERT INTO x VALUES ('2024-01-02T00:00:00.000000Z', 0, 'next')");
+            drainWalQueue();
+            // ALTER does not rewrite the three rows already on disk, so they stay duplicates.
+            execute("ALTER TABLE x DEDUP ENABLE UPSERT KEYS(ts, k)");
+            drainWalQueue();
+            // Split the day into several pieces.
+            for (int b = 0; b < 4; b++) {
+                execute("INSERT INTO x SELECT timestamp_sequence('2024-01-01T0" + (b * 2 + 2) + ":03:03', 2_000_000L)," +
+                        " (100000 + x)::INT, 'b' FROM long_sequence(20)");
+                drainWalQueue();
+            }
+            final TableToken tableToken = engine.verifyTableName("x");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            // One commit: a MERGE into the duplicate-key piece with a long value, plus a NEW_PIECE further up the day.
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 1, '" + longString() + "')");
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-01T15:03:03', 2_000_000L), (200000 + x)::INT, '"
+                    + "Y".repeat(5_000) + "' FROM long_sequence(20)");
+            drainWalQueue();
+
+            Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SELECT count() c, sum(length(v)) len FROM x WHERE k = 1").expectSize().noRandomAccess().returns(
+                    "c\tlen\n3\t" + (3L * LONG_VALUE_LEN) + "\n"
+            );
+            assertQuery("SELECT count() c, sum(length(v)) len FROM x WHERE k > 200000").expectSize().noRandomAccess().returns(
+                    "c\tlen\n20\t" + (20L * 5_000) + "\n"
+            );
+            assertQuery("SELECT count() FROM x").expectSize().noRandomAccess().returns(
+                    "count\n" + (3 + 8000 + 1 + 4 * 20 + 20) + "\n"
+            );
         });
     }
 

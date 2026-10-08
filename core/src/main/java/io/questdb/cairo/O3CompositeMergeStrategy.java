@@ -25,8 +25,10 @@
 package io.questdb.cairo;
 
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 
 /**
  * Plans what a commit does to ONE partition, as a list of actions over its pieces - the analogue of {@link
@@ -495,6 +497,8 @@ public class O3CompositeMergeStrategy {
             }
         }
         final Action action = actions.getQuick(index);
+        // The plan that last used this slot freed its merge index - see Plan#freeMergeIndexes.
+        assert action.mergeIndexAddr == 0;
         action.isProjectedNoop = false;
         action.projectedRows = -1;
         return action;
@@ -514,6 +518,12 @@ public class O3CompositeMergeStrategy {
 
     public static class Action {
         public boolean isProjectedNoop;
+        /**
+         * The dedup merge index the forecast built for this MERGE, or 0. Execution merges with it rather than
+         * building it again; owned by the action until {@link #freeMergeIndex()}.
+         */
+        public long mergeIndexAddr;
+        public long mergeIndexSize;
         public long o3Hi = -1;
         public long o3Lo = -1;
         public int pieceIndex = -1;
@@ -522,6 +532,13 @@ public class O3CompositeMergeStrategy {
 
         public long getO3RowCount() {
             return o3Hi >= 0 ? o3Hi - o3Lo + 1 : 0;
+        }
+
+        public void freeMergeIndex() {
+            if (mergeIndexAddr != 0) {
+                mergeIndexAddr = Unsafe.free(mergeIndexAddr, mergeIndexSize, MemoryTag.NATIVE_O3);
+                mergeIndexSize = 0;
+            }
         }
 
         public void setAppend(int pieceIndex, long o3Lo, long o3Hi) {
@@ -585,5 +602,15 @@ public class O3CompositeMergeStrategy {
         public long projectedDeadRows;
         public long projectedLiveRows;
         public int projectedPieceCount;
+
+        /**
+         * Frees every merge index the forecast left on the actions. The plan's owner calls it once execution no
+         * longer needs them, on every path, before the plan is computed again.
+         */
+        public void freeMergeIndexes() {
+            for (int i = 0, n = actions.size(); i < n; i++) {
+                actions.getQuick(i).freeMergeIndex();
+            }
+        }
     }
 }

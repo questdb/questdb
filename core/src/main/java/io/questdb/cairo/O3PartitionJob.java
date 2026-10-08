@@ -297,7 +297,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * Resolves dedup output sizes without writing or publishing the plan.
+     * Resolves dedup output sizes without writing or publishing the plan. Each MERGE keeps the dedup merge index it
+     * was sized from, so the plan's execution merges with it instead of building it again; the caller frees what is
+     * left with {@link O3CompositeMergeStrategy.Plan#freeMergeIndexes()} on every path.
      */
     public static void forecastCompositePlan(
             Path pathToTable,
@@ -328,24 +330,24 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final long pieceRows = O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
                     final long pieceHi = pieceLo + pieceRows;
                     final long indexSize = (pieceRows + action.getO3RowCount()) * TIMESTAMP_MERGE_ENTRY_BYTES;
-                    final long indexAddr = Unsafe.malloc(indexSize, MemoryTag.NATIVE_O3);
+                    assert action.mergeIndexAddr == 0;
+                    // Owned by the action from here on, so a throw below leaves it for the caller to free.
+                    action.mergeIndexAddr = Unsafe.malloc(indexSize, MemoryTag.NATIVE_O3);
+                    action.mergeIndexSize = indexSize;
+                    final long indexAddr = action.mergeIndexAddr;
+                    source.shift(pieceLo, pieceHi);
+                    final FrameColumn timestampColumn = source.openColumn(tableWriter.getMetadata().getTimestampIndex());
                     try {
-                        source.shift(pieceLo, pieceHi);
-                        final FrameColumn timestampColumn = source.openColumn(tableWriter.getMetadata().getTimestampIndex());
-                        try {
-                            action.projectedRows = getDedupRows(partitionTs, nameTxn,
-                                    tableWriter.getColumnVersionWriter(), timestampColumn.getContiguousDataAddr(pieceHi),
-                                    pieceLo, pieceHi - 1, sortedTimestampsAddr, action.o3Lo, action.o3Hi,
-                                    oooColumns, tableWriter.getDedupCommitAddresses(), dedupColSinkAddr,
-                                    tableWriter, Path.getThreadLocal2(pathToTable), indexAddr);
-                            action.isProjectedNoop = action.projectedRows == pieceRows
-                                    && tableWriter.checkDedupCommitIdenticalToPartition(partitionTs, nameTxn,
-                                    pieceHi, pieceLo, pieceHi - 1, action.o3Lo, action.o3Hi, indexAddr, action.projectedRows);
-                        } finally {
-                            source.releaseColumn(timestampColumn);
-                        }
+                        action.projectedRows = getDedupRows(partitionTs, nameTxn,
+                                tableWriter.getColumnVersionWriter(), timestampColumn.getContiguousDataAddr(pieceHi),
+                                pieceLo, pieceHi - 1, sortedTimestampsAddr, action.o3Lo, action.o3Hi,
+                                oooColumns, tableWriter.getDedupCommitAddresses(), dedupColSinkAddr,
+                                tableWriter, Path.getThreadLocal2(pathToTable), indexAddr);
+                        action.isProjectedNoop = action.projectedRows == pieceRows
+                                && tableWriter.checkDedupCommitIdenticalToPartition(partitionTs, nameTxn,
+                                pieceHi, pieceLo, pieceHi - 1, action.o3Lo, action.o3Hi, indexAddr, action.projectedRows);
                     } finally {
-                        Unsafe.free(indexAddr, indexSize, MemoryTag.NATIVE_O3);
+                        source.releaseColumn(timestampColumn);
                     }
                 }
             }
@@ -459,36 +461,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             return;
         }
 
-        // The chain has nowhere left to grow, or the debug force-rewrite flag is on: assemble a fresh,
-        // ordinary directory instead of letting the normal path write bytes for a plan nothing publishes.
-        // Plain folders and sources already due for squash cannot take a discretionary fresh version.
-        // Do not build a second dedup index just to forecast a decision these paths cannot make.
-        final boolean isPendingSquashSource = tableWriter.isPendingSquashSource(partitionIndex);
-        if (txReader.isPartitionComposite(partitionIndex) && !isPendingSquashSource) {
-            forecastCompositePlan(pathToTable, partitionIndex, geometry, ctx.bounds, plan,
-                    sortedTimestampsAddr, oooColumns, tableWriter, dedupColSinkAddr);
-        }
-        if (shouldAssembleFreshPartitionVersion(geometry, txReader, tableWriter, partitionIndex, ctx.bounds, plan, isPendingSquashSource)) {
-            assembleFreshPartitionVersion(
-                    pathToTable,
-                    partitionTimestamp,
-                    srcNameTxn,
-                    oooColumns,
-                    srcOooMax,
-                    sortedTimestampsAddr,
-                    tableWriter,
-                    dedupColSinkAddr,
-                    ctx.bounds,
-                    plan,
-                    ctx,
-                    false,
-                    partitionUpdateSinkAddr,
-                    oldPartitionSize,
-                    o3TimestampLo
-            );
-            return;
-        }
-
         final long piecesBefore = ctx.bounds.size() / O3CompositeMergeStrategy.LONGS_PER_BOUND;
         final long eBefore = geometry.getE(partitionIndex);
         // The committed, pre-cut piece count, read before beginUpdate/commitUpdate replaces it.
@@ -506,31 +478,68 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
 
         final int columnCount = tableWriter.getMetadata().getColumnCount();
-        ctx.ofColumnCount(columnCount);
-        ctx.sinkPartitionTimestamp = partitionTimestamp;
-        // readFrom() clears ctx.transientVersions itself, so no separate reset is needed - see
-        // TransientColumnVersions and executeCompositePlan's own comment.
-        ctx.transientVersions.readFrom(tableWriter.getColumnVersionWriter());
+        final long e;
+        try {
+            // The chain has nowhere left to grow, or the debug force-rewrite flag is on: assemble a fresh,
+            // ordinary directory instead of letting the normal path write bytes for a plan nothing publishes.
+            // Plain folders and sources already due for squash cannot take a discretionary fresh version.
+            // Do not build a dedup index just to forecast a decision these paths cannot make.
+            final boolean isPendingSquashSource = tableWriter.isPendingSquashSource(partitionIndex);
+            if (txReader.isPartitionComposite(partitionIndex) && !isPendingSquashSource) {
+                forecastCompositePlan(pathToTable, partitionIndex, geometry, ctx.bounds, plan,
+                        sortedTimestampsAddr, oooColumns, tableWriter, dedupColSinkAddr);
+            }
+            if (shouldAssembleFreshPartitionVersion(geometry, txReader, tableWriter, partitionIndex, ctx.bounds, plan, isPendingSquashSource)) {
+                assembleFreshPartitionVersion(
+                        pathToTable,
+                        partitionTimestamp,
+                        srcNameTxn,
+                        oooColumns,
+                        srcOooMax,
+                        sortedTimestampsAddr,
+                        tableWriter,
+                        dedupColSinkAddr,
+                        ctx.bounds,
+                        plan,
+                        ctx,
+                        false,
+                        partitionUpdateSinkAddr,
+                        oldPartitionSize,
+                        o3TimestampLo
+                );
+                return;
+            }
 
-        final long e = executeCompositePlan(
-                pathToTable,
-                partitionTimestamp,
-                srcNameTxn,
-                eBefore,
-                oooColumns,
-                srcOooMax,
-                sortedTimestampsAddr,
-                tableWriter,
-                dedupColSinkAddr,
-                ctx.bounds,
-                plan,
-                ctx.pieces,
-                ctx.transientVersions,
-                ctx,
-                ctx.srcPath,
-                ctx.o3Ranges,
-                ctx.pieceRanges
-        );
+            ctx.ofColumnCount(columnCount);
+            ctx.sinkPartitionTimestamp = partitionTimestamp;
+            // readFrom() clears ctx.transientVersions itself, so no separate reset is needed - see
+            // TransientColumnVersions and executeCompositePlan's own comment.
+            ctx.transientVersions.readFrom(tableWriter.getColumnVersionWriter());
+
+            e = executeCompositePlan(
+                    pathToTable,
+                    partitionTimestamp,
+                    srcNameTxn,
+                    eBefore,
+                    oooColumns,
+                    srcOooMax,
+                    sortedTimestampsAddr,
+                    tableWriter,
+                    dedupColSinkAddr,
+                    ctx.bounds,
+                    plan,
+                    ctx.pieces,
+                    ctx.transientVersions,
+                    ctx,
+                    ctx.srcPath,
+                    ctx.o3Ranges,
+                    ctx.pieceRanges
+            );
+        } finally {
+            // The forecast's merge indexes: execution frees each one once its MERGE ran, this frees whatever a
+            // throw or the fresh-version path left.
+            plan.freeMergeIndexes();
+        }
         // JOIN, automatically: fold whatever this plan left list-and-file-adjacent before publishing,
         // rather than leaving it for a later housekeeping commit.
         foldAdjacentPieces(ctx.pieces);
@@ -1014,8 +1023,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // Both sides added together: the merge's output when nothing dedups, its ceiling otherwise.
                         final long maxMergeRows = pieceRows + o3Rows;
                         long mergeRows = maxMergeRows;
-                        final long indexSize = maxMergeRows * TIMESTAMP_MERGE_ENTRY_BYTES;
-                        final long mergeIndexAddr = Unsafe.malloc(indexSize, MemoryTag.NATIVE_O3);
+                        // The forecast's dedup index, when it built one, is the index this merge would build.
+                        final boolean isForecastIndex = action.mergeIndexAddr != 0;
+                        final long indexSize = isForecastIndex ? 0 : maxMergeRows * TIMESTAMP_MERGE_ENTRY_BYTES;
+                        final long mergeIndexAddr = isForecastIndex
+                                ? action.mergeIndexAddr
+                                : Unsafe.malloc(indexSize, MemoryTag.NATIVE_O3);
                         boolean isNoop = false;
                         try {
                             // Reads exactly what a frame opened at pieceHi read: no column top reaches past it.
@@ -1025,7 +1038,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             final FrameColumn timestampColumn = source.openColumn(metadata.getTimestampIndex());
                             try {
                                 final long pieceTimestampAddr = timestampColumn.getContiguousDataAddr(pieceHi);
-                                if (tableWriter.isCommitDedupMode()) {
+                                if (isForecastIndex) {
+                                    mergeRows = action.projectedRows;
+                                    final long duplicates = maxMergeRows - mergeRows;
+                                    if (duplicates > 0) {
+                                        tableWriter.addDedupRowsRemoved(duplicates);
+                                    }
+                                    isNoop = action.isProjectedNoop;
+                                } else if (tableWriter.isCommitDedupMode()) {
                                     // The piece's rows are addressed by FILE row, the frame the key
                                     // columns and their tops are already in.
                                     mergeRows = getDedupRows(
@@ -1093,7 +1113,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 source.releaseColumn(timestampColumn);
                             }
                         } finally {
-                            Unsafe.free(mergeIndexAddr, indexSize, MemoryTag.NATIVE_O3);
+                            if (isForecastIndex) {
+                                action.freeMergeIndex();
+                            } else {
+                                Unsafe.free(mergeIndexAddr, indexSize, MemoryTag.NATIVE_O3);
+                            }
                         }
                         if (isNoop) {
                             // Degrades to KEEP: the piece stays at its file rows, the files do not grow,
@@ -1475,14 +1499,26 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             }
                             final long maxMergeRows = pieceRows + o3Rows;
                             long mergeRows = maxMergeRows;
-                            final long indexSize = maxMergeRows * TIMESTAMP_MERGE_ENTRY_BYTES;
-                            final long mergeIndexAddr = Unsafe.malloc(indexSize, MemoryTag.NATIVE_O3);
+                            // The forecast's dedup index, when it built one, is the index this merge would build:
+                            // both read the same source directory under the same column versions.
+                            final boolean isForecastIndex = action.mergeIndexAddr != 0;
+                            final long indexSize = isForecastIndex ? 0 : maxMergeRows * TIMESTAMP_MERGE_ENTRY_BYTES;
+                            final long mergeIndexAddr = isForecastIndex
+                                    ? action.mergeIndexAddr
+                                    : Unsafe.malloc(indexSize, MemoryTag.NATIVE_O3);
                             try {
                                 source.shift(pieceLo, pieceHi);
                                 final FrameColumn timestampColumn = source.openColumn(metadata.getTimestampIndex());
                                 try {
                                     final long pieceTimestampAddr = timestampColumn.getContiguousDataAddr(pieceHi);
-                                    if (tableWriter.isCommitDedupMode()) {
+                                    if (isForecastIndex) {
+                                        mergeRows = action.projectedRows;
+                                        final long duplicates = maxMergeRows - mergeRows;
+                                        if (duplicates > 0) {
+                                            tableWriter.addDedupRowsRemoved(duplicates);
+                                        }
+                                        // As below, a fully-duplicate merge still lands in the fresh directory.
+                                    } else if (tableWriter.isCommitDedupMode()) {
                                         mergeRows = getDedupRows(
                                                 partitionTimestamp,
                                                 srcNameTxn,
@@ -1533,7 +1569,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     source.releaseColumn(timestampColumn);
                                 }
                             } finally {
-                                Unsafe.free(mergeIndexAddr, indexSize, MemoryTag.NATIVE_O3);
+                                if (isForecastIndex) {
+                                    action.freeMergeIndex();
+                                } else {
+                                    Unsafe.free(mergeIndexAddr, indexSize, MemoryTag.NATIVE_O3);
+                                }
                             }
                             tableWriter.addPhysicallyWrittenRows(mergeRows);
                             e += mergeRows;

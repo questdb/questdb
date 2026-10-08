@@ -71,6 +71,8 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     // See ContiguousFileFixFrameColumn#isAllocatedBytesKnown.
     private boolean isAllocatedAuxBytesKnown;
     private boolean isAllocatedDataBytesKnown;
+    // Set by reserve(): a dedup merge can write more data than the reservation was sized for, see appendData.
+    private boolean isDedup;
     private boolean isReadOnly;
     // See setReadWindow: the top getColumnTop() reports is capped here, while columnTop stays the file's own.
     private long logicalRowHi = Long.MAX_VALUE;
@@ -173,8 +175,11 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         if (mixedIOFlag) {
             // reserve() allocated the plan's full extent before this positioned write; mixed I/O needs no target
             // mapping. Only a file source has an fd to copy from, so only it takes the kernel's fd-to-fd path.
-            if (!isAllocatedDataBytesKnown) {
+            if (!isAllocatedDataBytesKnown || isDedup) {
                 // See ContiguousFileFixFrameColumn#append: reserve() ran through an earlier open of this file.
+                // On a dedup table, reserve() sizes the data as the sources' bytes, but a dedup merge earlier in the
+                // plan writes one incoming value once per pre-existing duplicate key and can outgrow that, so grow
+                // the file here rather than fail. A single compare when the reservation does cover the write.
                 ensureDataAllocated(targetDataOffset + srcDataSize);
             }
             assertDataWriteReserved(targetDataOffset + srcDataSize);
@@ -478,6 +483,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         allocatedDataBytes = 0;
         isAllocatedAuxBytesKnown = false;
         isAllocatedDataBytesKnown = false;
+        isDedup = false;
 
         try {
             // Negative col top means column does not exist in the partition.
@@ -506,7 +512,8 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     }
 
     @Override
-    public void reserve(long rowLo, long rowHi, long dataBytes, boolean isMerging) {
+    public void reserve(long rowLo, long rowHi, long dataBytes, boolean isDedup) {
+        this.isDedup = isDedup;
         final long rows = rowHi - columnTop;
         if (rows > 0) {
             final long auxSize = columnTypeDriver.getAuxVectorSize(rows);

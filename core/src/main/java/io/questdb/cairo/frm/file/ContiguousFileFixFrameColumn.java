@@ -406,7 +406,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     }
 
     @Override
-    public void reserve(long rowLo, long rowHi, long dataBytes, boolean isMerging) {
+    public void reserve(long rowLo, long rowHi, long dataBytes, boolean isDedup) {
         // Fixed width: the rows alone say how long the file gets, whatever is written into them.
         final long rows = rowHi - columnTop;
         if (rows > 0) {

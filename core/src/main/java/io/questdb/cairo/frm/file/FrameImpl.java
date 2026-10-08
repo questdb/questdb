@@ -696,11 +696,12 @@ public class FrameImpl implements Frame {
                 source2Columns.getQuick(columnIndex).getContiguousDataAddr(hi);
             }
             // One allocation and one (re)map per file of the target column, for every write of the plan.
+            final int timestampIndex = metadata.getTimestampIndex();
             targetColumns.getQuick(columnIndex).reserve(
                     rowCount,
                     rowHi,
                     dataBytes,
-                    reserveSource2Ranges != null && reserveSource2Ranges.size() > 0
+                    timestampIndex > -1 && metadata.isDedupKey(timestampIndex)
             );
         } catch (Throwable th) {
             onError(columnIndex, th);
