@@ -98,6 +98,11 @@ public class LogCapture {
     }
 
     public void stop() {
+        // Records are delivered by the logging worker after the caller's log call
+        // returns. Without this drain a record logged just before stop() can still
+        // be in the ring when the interceptor is removed, and it then reaches the
+        // console instead of the capture.
+        drain();
         consoleWriter.setInterceptor(null);
     }
 

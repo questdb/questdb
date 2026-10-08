@@ -39,6 +39,7 @@ import java.util.concurrent.TimeUnit;
 
 public class LogCaptureTest {
     private static final Log LOG = LogFactory.getLog(LogCaptureTest.class);
+    private static final String MARKER = "log-capture-test-stop-marker";
     private static final String POISON = "log-capture-test-poison-marker";
     private static final long RELEASE_DELAY_MS = 100;
 
@@ -89,6 +90,62 @@ public class LogCaptureTest {
             } finally {
                 capture.stop();
             }
+        } finally {
+            release.countDown();
+            if (releaser != null) {
+                releaser.join();
+            }
+            consoleWriter.setInterceptor(null);
+        }
+    }
+
+    /**
+     * A record logged before stop() must be in the capture after stop() returns,
+     * even when the logging worker has not delivered it yet. The worker is parked
+     * inside an interceptor installed before the capture starts; start() then
+     * swaps in the capture's interceptor and its own drain times out against the
+     * parked worker. MARKER is logged after that and the worker is released only
+     * once stop() is already waiting, so without the drain in stop() MARKER
+     * reaches the console after the interceptor is gone.
+     */
+    @Test
+    public void testStopDrainsRecordsEnqueuedBeforeIt() throws Exception {
+        final LogConsoleWriter consoleWriter = getFirstConsoleWriter();
+        final CountDownLatch parked = new CountDownLatch(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        final LogCapture capture = new LogCapture();
+        Thread releaser = null;
+        try {
+            consoleWriter.setInterceptor(_ -> {
+                parked.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException ignore) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+
+            LOG.advisory().$("log-capture-test-park-trigger").$();
+            Assert.assertTrue(
+                    "test setup: the logging worker must be parked inside the interceptor",
+                    parked.await(30, TimeUnit.SECONDS)
+            );
+
+            // start() drains against the parked worker and gives up after its
+            // 2-second deadline; the release below lands after that.
+            final long startedAt = System.currentTimeMillis();
+            capture.start();
+            LOG.advisory().$(MARKER).$();
+
+            final long releaseAt = startedAt + 2_500;
+            releaser = new Thread(() -> {
+                Os.sleep(Math.max(0, releaseAt - System.currentTimeMillis()));
+                release.countDown();
+            }, "log-capture-test-releaser");
+            releaser.start();
+
+            capture.stop();
+            capture.assertLogged(MARKER);
         } finally {
             release.countDown();
             if (releaser != null) {
