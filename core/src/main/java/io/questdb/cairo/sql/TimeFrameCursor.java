@@ -110,26 +110,6 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
     int getTimestampIndex();
 
     /**
-     * Tells whether the rows of the given frame come from a Parquet partition, which a read
-     * decodes into a bounded cache of row groups, rather than from memory-mapped native columns.
-     * The answer comes from the list of frames that {@link #next()}, {@link #prev()},
-     * {@link #jumpTo(int)} and {@link #seekEstimate(long)} walk, so the call opens no frame and
-     * decodes nothing. Callers use it only to weigh the cost of reading a frame again; it never
-     * changes what a read returns.
-     * <p>
-     * The default returns true: an implementation that can't tell lets its callers assume that
-     * a frame read again may be decoded again. Since the answer only steers costs, the default is
-     * safe for any implementation; an implementation whose frames are native overrides it so that
-     * its callers don't trade rows read for decodes that never happen.
-     *
-     * @param frameIndex index of a frame that the cursor has iterated, as {@link #jumpTo(int)} takes it
-     * @return true if the frame holds Parquet data or the implementation can't tell
-     */
-    default boolean isParquetFrame(int frameIndex) {
-        return true;
-    }
-
-    /**
      * Rewinds cursor to the beginning of the given frame. The frame must have been previously iterated.
      * An {@link #open()} call is expected after this one.
      *

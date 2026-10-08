@@ -362,11 +362,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
-        public boolean isParquetFrame(int frameIndex) {
-            return delegate.isParquetFrame(frameIndex);
-        }
-
-        @Override
         public void jumpTo(int frameIndex) {
             delegate.jumpTo(frameIndex);
         }
@@ -770,11 +765,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public int getTimestampIndex() {
             return selectedTimestampIndex;
-        }
-
-        @Override
-        public boolean isParquetFrame(int frameIndex) {
-            return baseCursor.isParquetFrame(frameIndex);
         }
 
         @Override

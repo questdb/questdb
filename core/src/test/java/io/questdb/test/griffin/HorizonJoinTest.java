@@ -723,15 +723,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testHorizonJoinKeyedAdaptiveScanModesMatchAsOfJoin() throws Exception {
         // The keyed ASOF lookup scans backward for a key at every ASOF position until the scans
-        // cost more than the gaps between the positions. It then keeps the key cache across
-        // positions and leaves the rows of the gaps unread until a lookup needs them: a lookup
-        // reads the unread rows above the cached row of its key, newest first, down to the key.
-        // The trades below drive one walk through all of these: a dense burst (backward, then
-        // with the kept cache), a sparse stretch (gaps left unread), a second burst and a second
-        // sparse stretch. The scan mode is not observable from SQL, so the test runs every query
-        // shape with thresholds that keep the lookup in backward-only mode, that switch in the
-        // bursts and that switch at the second position, and compares each run with ASOF JOINs
-        // of the shifted trades, which share no code with the lookup.
+        // cost more than the gaps between the positions. It then scans every later gap forward
+        // into the key cache. The row-preserving factories also sum runs of gaps below the min
+        // gap for that check; the aggregating ones don't. The trades below drive one walk through
+        // a dense burst, a sparse stretch, a second burst and a second sparse stretch. The scan
+        // mode is not observable from SQL, so the test runs every query shape with thresholds
+        // that keep the lookup in backward-only mode, that check most gaps and that switch at the
+        // second position, and compares each run with ASOF JOINs of the shifted trades, which
+        // share no code with the lookup.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "CREATE TABLE quotes (ts #TIMESTAMP, sym SYMBOL, bid LONG) TIMESTAMP(ts) PARTITION BY HOUR",
@@ -818,12 +817,11 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
     @Test
     public void testHorizonJoinKeyedAdaptiveScanSwitch() throws Exception {
-        // Tests that the adaptive switch from backward-only scans to the kept key cache produces
-        // correct results.
+        // Tests that the adaptive backward-to-forward scan switch produces correct results.
         // Slave has a rare key ("RARE") that appears only once at the beginning.
         // Master alternates between common ("A") and rare keys with gaps > MIN_GAP (1,024).
         // After several expensive backward scans for the rare key, the algorithm
-        // keeps the key cache for the rest of the frame.
+        // switches to forward scan mode for the rest of the frame.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
@@ -850,7 +848,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
             // 13 trades alternating A/RARE, spaced 1,500us apart.
             // Gap between ASOF positions ~ 1,500 rows (above MIN_GAP=1,024).
             // RARE key triggers deep backward scans that eventually cause
-            // the adaptive switch to the kept key cache.
+            // the adaptive switch to forward scan mode.
             execute(
                     """
                             INSERT INTO trades VALUES
@@ -891,12 +889,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testHorizonJoinKeyedAdaptiveScanSwitchAcrossSmallGaps() throws Exception {
         // Runs the keyed lookup over ASOF positions that sit closer than MIN_GAP (1,024). No single
-        // gap qualifies for the relative check, so the helper sums the gaps and the backward scan
-        // cost of the run and checks the totals once they cover more than MIN_GAP. The rare key
-        // makes every other lookup scan back to row 0, which makes the helper keep the key cache
-        // from the second window on. Both scan modes return the same rows, so this test pins the
-        // results across the switch but passes without it as well; the scan cost assertions of
-        // HorizonJoinTimeFrameHelperTest, such as testDenseRunScansForward(), observe the switch.
+        // gap qualifies for the relative check. The row-preserving factories sum the gaps and the
+        // backward scan cost of the run and check the totals once they cover more than MIN_GAP:
+        // the rare key makes every other lookup scan back to row 0, which switches them to forward
+        // scan mode at the second window. The aggregating factories don't sum the gaps and stay
+        // in backward-only mode. Both scan modes return the same rows, so this test pins the
+        // results with and without the switch; HorizonJoinTimeFrameHelperTest observes the modes,
+        // e.g. testWindowSwitchOverSmallGapsOnlyWhenEnabled().
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
@@ -1037,7 +1036,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testHorizonJoinKeyedAllMasterSymbolsMissing() throws Exception {
         // All master symbols have no match in the slave table.
-        // Exercises the hasNonExistentKey() fast path in findKeyedAsOfMatch.
+        // Exercises the hasNonExistentKey() fast path in backwardScanForKeyMatch.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
@@ -6006,7 +6005,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testMultiHorizonJoinKeyedAdaptiveScanSwitch() throws Exception {
         // Multi-slave counterpart of testHorizonJoinKeyedAdaptiveScanSwitch.
-        // Tests that the per-slave adaptive switch from backward-only scans to the kept key cache
+        // Tests that the per-slave adaptive backward-to-forward scan switch
         // produces correct results with two slaves sharing the same key pattern.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -7671,7 +7670,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
         final long[][] thresholds = {
                 // backward-only: neither check can pass
                 {Long.MAX_VALUE, Long.MAX_VALUE, 2},
-                // the bursts switch through the summed gaps, the sparse stretches leave their gaps unread
+                // most gaps get the relative check; the row-preserving factories also sum the bursts' gaps
                 {Long.MAX_VALUE, 16, 2},
                 // every backward scan switches at the next position
                 {0, 0, 1},

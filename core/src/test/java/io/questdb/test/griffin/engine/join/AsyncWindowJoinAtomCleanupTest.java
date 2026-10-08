@@ -266,11 +266,6 @@ public class AsyncWindowJoinAtomCleanupTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean isParquetFrame(int frameIndex) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
             public void jumpTo(int frameIndex) {
                 throw new UnsupportedOperationException();
             }

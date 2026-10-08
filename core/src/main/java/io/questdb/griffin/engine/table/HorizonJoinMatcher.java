@@ -57,7 +57,10 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  * <p>
  * The caller owns the slave time frame cursors. It binds them with {@link #of} before matching and
  * calls {@link #toTop()} before each batch of horizon timestamps: the helpers keep sequential scan
- * state that is only valid for a monotonic walk.
+ * state that is only valid for a monotonic walk. The helpers enable the window switch of
+ * {@link HorizonJoinTimeFrameHelper}: many offsets put the horizon timestamps of a batch closely
+ * together, and without it a keyed lookup would scan backward at every one of them. The toTop()
+ * before each batch ends the forward scans that the switch starts.
  */
 public class HorizonJoinMatcher implements QuietCloseable, Mutable {
     private final ObjList<Map> asOfJoinMaps;
@@ -93,7 +96,8 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
                         state.getSlaveTsScale(),
                         configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold(),
                         configuration.getSqlHorizonJoinBwdScanMinGap(),
-                        configuration.getSqlHorizonJoinBwdScanSwitchFactor()
+                        configuration.getSqlHorizonJoinBwdScanSwitchFactor(),
+                        true
                 ));
                 if (state.isKeyed()) {
                     assert masterAsOfJoinMapSinkClasses[s] != null && slaveAsOfJoinMapSinkClasses[s] != null;
