@@ -59,6 +59,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.SyncAttributingFilesFacade;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -1102,70 +1103,19 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     /**
-     * The replay ends with a flush of the table and its sequencer log. A failed flush must stop the engine, as
-     * on every other flush of the log: the kernel reports a writeback error once, so no later flush proves the
-     * replayed rows.
+     * The replay's save point flushes an index file first. That flush reports its failure wrapped in a CairoError.
      */
     @Test
-    public void testConversionToNonWalReplayFlushFailureStopsTheEngine() throws Exception {
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
-        final AtomicBoolean armed = new AtomicBoolean();
-        final AtomicLong seqLogFd = new AtomicLong(-1);
-        final FilesFacade failingFf = new TestFilesFacadeImpl() {
-            @Override
-            public void fdatasync(long fd) {
-                if (fd == seqLogFd.get() && armed.compareAndSet(true, false)) {
-                    throw CairoException.dataSyncFailure(5, "fdatasync").put("injected sequencer log flush failure");
-                }
-                super.fdatasync(fd);
-            }
+    public void testConversionToNonWalReplayIndexFlushFailureStopsTheEngine() throws Exception {
+        assertReplayFlushFailureKeepsEveryRow("s.k");
+    }
 
-            // Where syncfs does not cover the whole filesystem, the replay's flush flushes the sequencer log itself.
-            @Override
-            public boolean isSyncfsFileSystemWide() {
-                return false;
-            }
-
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                final long fd = super.openRW(name, opts);
-                if (fd > -1 && Utf8s.endsWithAscii(name, WalUtils.TXNLOG_FILE_NAME)) {
-                    seqLogFd.set(fd);
-                }
-                return fd;
-            }
-        };
-        try {
-            assertMemoryLeak(failingFf, () -> {
-                buildAdaptiveLazyGapTable("conv");
-                final TableToken tt = engine.verifyTableName("conv");
-                execute("ALTER TABLE conv SET TYPE BYPASS WAL");
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-                final AtomicInteger fatalCalls = new AtomicInteger();
-                engine.setDurabilityFailureHandler(failure -> fatalCalls.incrementAndGet());
-                engine.getTableSequencerAPI().resetForReboot(tt);
-                new RecoveryCoordinator(engine).recover();
-                armed.set(true);
-                try {
-                    engine.load();
-                    Assert.fail("a failed flush of the replayed WAL must stop the startup");
-                } catch (CairoError e) {
-                    Assert.assertTrue(e.toString(), CairoException.isDataSyncFailure(e));
-                }
-                Assert.assertFalse("test setup: the replay's flush of the sequencer log must have failed", armed.get());
-                Assert.assertTrue(engine.isDurabilityFailed());
-                Assert.assertEquals(1, fatalCalls.get());
-                Assert.assertTrue("the table must stay a WAL table", engine.verifyTableName("conv").isWal());
-            });
-        } finally {
-            engine.resetDurabilityFailure();
-            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
-        }
+    /**
+     * The replay's save point ends with a flush of the sequencer log, which reports its failure as it is.
+     */
+    @Test
+    public void testConversionToNonWalReplayLogFlushFailureStopsTheEngine() throws Exception {
+        assertReplayFlushFailureKeepsEveryRow(WalUtils.TXNLOG_FILE_NAME);
     }
 
     /**
@@ -1850,6 +1800,111 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 assertQuery("SELECT count() FROM conv").noRandomAccess().expectSize().returns("count\n" + expectedRowCount + "\n");
             });
         } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        }
+    }
+
+    /**
+     * A failed flush in the replay's save point must stop the engine: the kernel reports a writeback error once, so
+     * no later flush proves the replayed rows. The production callback halts the process inside that call, so the
+     * files at that moment are what the next start sees. The replay marker must be gone by then, or the next start
+     * converts without the replay and loses the rows after the save point, which exist only in the WAL.
+     */
+    private void assertReplayFlushFailureKeepsEveryRow(String failingFile) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        final AtomicBoolean armed = new AtomicBoolean();
+        final FilesFacade failingFf = new SyncAttributingFilesFacade() {
+            @Override
+            public void fdatasync(long fd) {
+                failIfArmed(pathOfFd(fd), "fdatasync");
+                super.fdatasync(fd);
+            }
+
+            // Where syncfs does not cover the whole filesystem, the replay's flush flushes the sequencer log itself.
+            @Override
+            public boolean isSyncfsFileSystemWide() {
+                return false;
+            }
+
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                if (!async) {
+                    failIfArmed(pathOfAddress(addr), "msync");
+                }
+                super.msync(addr, len, async);
+            }
+
+            private void failIfArmed(String path, String operation) {
+                if (path.endsWith(failingFile) && armed.compareAndSet(true, false)) {
+                    throw CairoException.dataSyncFailure(5, operation).put("injected flush failure [path=").put(path).put(']');
+                }
+            }
+        };
+        try {
+            assertMemoryLeak(failingFf, () -> {
+                execute("create table conv (ts timestamp, v long, s symbol index) timestamp(ts) partition by day wal");
+                for (int i = 0; i < 7; i++) {
+                    execute("insert into conv values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ", 'a')");
+                    if (i == 2) {
+                        drainWalQueue();
+                        try (TableWriter w = getWriter("conv")) {
+                            w.advanceDurableEpoch(1L);
+                        }
+                    }
+                }
+                drainWalQueue();
+                final TableToken tt = engine.verifyTableName("conv");
+                execute("ALTER TABLE conv SET TYPE BYPASS WAL");
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+
+                final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                try (Path marker = new Path()) {
+                    marker.of(engine.getConfiguration().getDbRoot()).concat(tt).concat("_convert.replay");
+                    final AtomicInteger callbacks = new AtomicInteger();
+                    final AtomicReference<Boolean> markerAtHalt = new AtomicReference<>();
+                    engine.setDurabilityFailureHandler(failure -> {
+                        callbacks.incrementAndGet();
+                        markerAtHalt.set(ff.exists(marker.$()));
+                    });
+                    engine.getTableSequencerAPI().resetForReboot(tt);
+                    new RecoveryCoordinator(engine).recover();
+                    armed.set(true);
+                    try {
+                        engine.load();
+                        Assert.fail("a failed flush of the replayed WAL must stop the startup");
+                    } catch (CairoError ignore) {
+                    }
+                    Assert.assertFalse("test setup: the replay's flush must have failed", armed.get());
+                    Assert.assertTrue("the table must stay a WAL table", engine.verifyTableName("conv").isWal());
+                    final String firstStart = "engine stopped: " + engine.isDurabilityFailed() + ", callbacks: " + callbacks.get();
+                    // A halt runs no clean-up, so put back a marker that a clean-up after the callback removed.
+                    if (Boolean.TRUE.equals(markerAtHalt.get()) && !ff.exists(marker.$())) {
+                        Assert.assertTrue(ff.touch(marker.$()));
+                    }
+                    engine.resetDurabilityFailure();
+                    engine.releaseInactive();
+
+                    // The next start, with a healthy disk: a fresh engine runs recovery and the conversion.
+                    final long rows;
+                    try (CairoEngine rebooted = new CairoEngine(configuration)) {
+                        rebooted.load();
+                        try (TableReader reader = rebooted.getReader(rebooted.verifyTableName("conv"))) {
+                            rows = reader.size();
+                        }
+                    }
+                    Assert.assertEquals(
+                            "engine stopped: true, callbacks: 1, replay marker on disk at the halt: false, rows after the next start: 7",
+                            firstStart + ", replay marker on disk at the halt: " + markerAtHalt.get() + ", rows after the next start: " + rows
+                    );
+                }
+            });
+        } finally {
+            engine.resetDurabilityFailure();
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");

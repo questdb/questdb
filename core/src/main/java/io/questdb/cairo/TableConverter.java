@@ -279,10 +279,9 @@ public class TableConverter {
                         try {
                             writer.advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
                         } catch (CairoException e) {
-                            // A failed flush stops the engine, as on every other save point; the startup must not go on.
+                            // No further save point on close; the caller stops the engine.
                             if (e.isDataSyncFailure()) {
                                 writer.markDistressed();
-                                engine.handleDataSyncFailure(e);
                             }
                             throw e;
                         }
@@ -419,15 +418,22 @@ public class TableConverter {
                         .put(']');
             }
             DurableEpochManifest.fsyncDirectory(configuration, markerPath, tableRootLen);
+            Throwable failure = null;
             try {
                 applyOutstandingWal(engine, token, lastSeqTxn);
-            } finally {
-                // Remove the marker on every outcome that returns here, an exception included. The table then
-                // stays a WAL table, and the next startup retries both the replay and the conversion. Only a
-                // crash leaves the marker behind.
-                markerPath.trimTo(tableRootLen).concat(REPLAY_FILE_NAME);
-                ff.removeQuiet(markerPath.$());
+            } catch (Throwable th) {
+                failure = th;
             }
+            // Remove the marker on every outcome that returns here, an exception included. The table then
+            // stays a WAL table, and the next startup retries both the replay and the conversion. Only a
+            // crash leaves the marker behind. A failed flush then stops the engine, and the production
+            // callback halts the process inside that call, so the marker must be gone first.
+            markerPath.trimTo(tableRootLen).concat(REPLAY_FILE_NAME);
+            ff.removeQuiet(markerPath.$());
+            if (CairoException.isDataSyncFailure(failure)) {
+                engine.handleDataSyncFailure(failure);
+            }
+            CairoException.rethrowCleanupFailure(failure);
         }
     }
 
