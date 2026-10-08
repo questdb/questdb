@@ -694,6 +694,10 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
         final int spareSlot = atom.getJoinableCount();
         final long slaveSlotsAddress = atom.getSlaveSlotsAddress();
         final int slaveSlotCount = atom.getSlaveSlotCount();
+        // the span slots are dense: unless there are too many of them, the state is an array this
+        // loop writes directly, the tag and the last row, without reading it back
+        final long denseAddress = keys.ensureDense(atom.getSpanSlotCount());
+        final long tag0 = keys.tagOf(0);
 
         boolean exhausted = r == Long.MIN_VALUE;
         int frameIndex = -1;
@@ -717,10 +721,6 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
             record.setRowIndex(isMasterFiltered ? rows.get(i) : i);
             final long masterTs = scaleTimestamp(record.getTimestamp(masterTimestampIndex), masterTsScale);
             while (!exhausted) {
-                if ((r & (CIRCUIT_BREAKER_CHECK_ROWS - 1)) == 0) {
-                    // a long span between two master rows
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                }
                 final long slaveTs;
                 if (tsAddress != 0) {
                     slaveTs = Unsafe.getLong(tsAddress + (r << 3));
@@ -742,8 +742,16 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
                 // into the spare slot, so that there is no branch on the key
                 final int index = Math.max(slaveKey + 1, 0);
                 final int slot = index < slaveSlotCount ? Unsafe.getInt(slaveSlotsAddress + ((long) index << 2)) : spareSlot;
-                Unsafe.putLong(keys.entry(slot) + 8, Rows.toRowID(frameIndex, r));
+                if (denseAddress != 0) {
+                    final long e = denseAddress + slot * 24L;
+                    Unsafe.putLong(e, tag0 | slot);
+                    Unsafe.putLong(e + 8, Rows.toRowID(frameIndex, r));
+                } else {
+                    Unsafe.putLong(keys.entry(slot) + 8, Rows.toRowID(frameIndex, r));
+                }
                 if (++r >= frameRowHi) {
+                    // a long span between two master rows: once per slave frame, not in the row loop
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     if (!helper.nextFrame(masterTsHi)) {
                         exhausted = true;
                     } else {
@@ -762,6 +770,9 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
             final long rowId;
             if (slot < 0) {
                 rowId = NO_ROW;
+            } else if (denseAddress != 0) {
+                final long e = denseAddress + slot * 24L;
+                rowId = Unsafe.getLong(e) == (tag0 | slot) ? Unsafe.getLong(e + 8) : PREVAILING;
             } else {
                 final long e = keys.find(slot);
                 rowId = e != 0 ? Unsafe.getLong(e + 8) : PREVAILING;

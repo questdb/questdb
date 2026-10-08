@@ -47,6 +47,36 @@ public class AsyncAsOfJoinKeyTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEnsureDense() throws Exception {
+        // the span scan writes the array directly: what it writes, find() and entry() read back
+        assertMemoryLeak(() -> {
+            try (AsyncAsOfJoinKeyTable table = new AsyncAsOfJoinKeyTable()) {
+                table.of(null, 3001);
+                for (int epoch = 0; epoch < 3; epoch++) {
+                    table.nextEpoch();
+                    final long address = table.ensureDense(3001);
+                    Assert.assertNotEquals(0, address);
+                    Assert.assertTrue(table.getCapacity() >= 3001);
+                    for (int key = epoch; key < 3001; key += 3) {
+                        Unsafe.putLong(address + 24L * key, table.tagOf(key));
+                        Unsafe.putLong(address + 24L * key + 8, key * 10L + epoch);
+                    }
+                    for (int key = 0; key < 3001; key++) {
+                        final long e = table.find(key);
+                        if (key % 3 == epoch) {
+                            Assert.assertEquals(key * 10L + epoch, Unsafe.getLong(e + 8));
+                        } else {
+                            Assert.assertEquals(0, e);
+                        }
+                    }
+                }
+                // too many keys for the array
+                Assert.assertEquals(0, table.ensureDense(1 << 20));
+            }
+        });
+    }
+
+    @Test
     public void testEpochWrap() throws Exception {
         assertMemoryLeak(() -> {
             try (AsyncAsOfJoinKeyTable table = new AsyncAsOfJoinKeyTable()) {

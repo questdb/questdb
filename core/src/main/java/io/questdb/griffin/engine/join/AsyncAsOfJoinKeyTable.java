@@ -90,6 +90,23 @@ public final class AsyncAsOfJoinKeyTable implements QuietCloseable {
     }
 
     /**
+     * For a caller that writes entries itself in a hot loop: makes the array cover the keys below
+     * {@code keyCount} and returns its address, the entry of key k at {@code address + 24 * k};
+     * 0 when the table is hashed or the keys do not fit {@link #DIRECT_LIMIT}. An entry is current
+     * when its first long equals {@link #tagOf(int)}. A caller that writes the tag itself must
+     * also write the fields it reads back: the walked-to row is not reset for it.
+     */
+    public long ensureDense(int keyCount) {
+        if (!direct || keyCount > DIRECT_LIMIT) {
+            return 0;
+        }
+        if (keyCount > capacity) {
+            growDirect(keyCount - 1);
+        }
+        return address;
+    }
+
+    /**
      * The entry of a key in the current epoch, 0 when it has none.
      */
     public long find(int key) {
@@ -176,21 +193,25 @@ public final class AsyncAsOfJoinKeyTable implements QuietCloseable {
         // an array covering the key must not be mostly empty: the key is one of the dense ones, or
         // within a small multiple of the keys met so far
         if (key < DIRECT_LIMIT && (key < denseKeyCount || key < 16L * (liveCount + 16))) {
-            // grow the array to cover the key; the new entries read as absent
-            final int newCapacity = Math.max(Math.max(DIRECT_INITIAL_CAPACITY, capacity << 1), Numbers.ceilPow2(key + 1));
-            final long oldBytes = (long) capacity * ENTRY_BYTES;
-            final long newBytes = (long) newCapacity * ENTRY_BYTES;
-            address = address == 0
-                    ? Unsafe.malloc(newBytes, MEMORY_TAG, memoryTracker)
-                    : Unsafe.realloc(address, oldBytes, newBytes, MEMORY_TAG, memoryTracker);
-            Vect.memset(address + oldBytes, newBytes - oldBytes, 0);
-            capacity = newCapacity;
-            mask = newCapacity - 1;
+            growDirect(key);
             return entry(key);
         }
         // a key past the array's limit: hash the live entries
         rehash(Math.max(HASH_INITIAL_CAPACITY, Numbers.ceilPow2(4 * (liveCount + 1))));
         return hashEntry(key, true);
+    }
+
+    // grows the array to cover the key; the new entries read as absent
+    private void growDirect(int key) {
+        final int newCapacity = Math.min(DIRECT_LIMIT, Math.max(Math.max(DIRECT_INITIAL_CAPACITY, capacity << 1), Numbers.ceilPow2(key + 1)));
+        final long oldBytes = (long) capacity * ENTRY_BYTES;
+        final long newBytes = (long) newCapacity * ENTRY_BYTES;
+        address = address == 0
+                ? Unsafe.malloc(newBytes, MEMORY_TAG, memoryTracker)
+                : Unsafe.realloc(address, oldBytes, newBytes, MEMORY_TAG, memoryTracker);
+        Vect.memset(address + oldBytes, newBytes - oldBytes, 0);
+        capacity = newCapacity;
+        mask = newCapacity - 1;
     }
 
     private long hashEntry(int key, boolean insert) {
@@ -249,7 +270,10 @@ public final class AsyncAsOfJoinKeyTable implements QuietCloseable {
         liveCount = live;
     }
 
-    private long tagOf(int key) {
+    /**
+     * The first long of a key's entry in the current epoch.
+     */
+    public long tagOf(int key) {
         return ((long) epoch << 32) | (key & 0xffffffffL);
     }
 }
