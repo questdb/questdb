@@ -131,10 +131,10 @@ public class ConcurrentViewCycleTest extends AbstractViewTest {
                             """;
                     StringSink sink = new StringSink();
                     while (!done.get() && error.get() == null) {
-                        printExplain(VIEW1, sink, ctx);
+                        printExplain(VIEW1, sink, ctx, done);
                         TestUtils.assertEquals(expected, sink);
 
-                        printExplain(VIEW2, sink, ctx);
+                        printExplain(VIEW2, sink, ctx, done);
                         TestUtils.assertEquals(expected, sink);
 
                         queryCount.incrementAndGet();
@@ -186,16 +186,28 @@ public class ConcurrentViewCycleTest extends AbstractViewTest {
 
     // EXPLAIN opens the cursor of the plan it prints, and like a SELECT it refuses a plan compiled
     // before a concurrent ALTER VIEW changed a view the plan reads. PGWire and HTTP recompile on
-    // that signal up to the configured recompile attempt limit, then fail the query, and so does
-    // this reader, so a plan that keeps going stale fails the test instead of hanging it.
-    private static void printExplain(String viewName, StringSink sink, SqlExecutionContext ctx) throws SqlException {
+    // that signal up to the configured recompile attempt limit, then fail the query. The writer
+    // threads commit their ALTER VIEWs in a burst, and a run of them can outlast that limit, so
+    // this reader retries without a limit while the writers run. It applies the limit only to the
+    // attempts that start after the writers stop, so a plan that stays stale once the views stop
+    // changing fails the test instead of hanging it.
+    private static void printExplain(
+            String viewName,
+            StringSink sink,
+            SqlExecutionContext ctx,
+            AtomicBoolean writersDone
+    ) throws SqlException {
         final int maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
-        for (int attempt = 1; ; attempt++) {
+        int boundedAttempts = 0;
+        while (true) {
+            // The main thread sets the flag after it joins both writers, so an attempt that sees
+            // it set compiles after the last ALTER VIEW committed.
+            final boolean isBounded = writersDone.get();
             try {
                 engine.print("EXPLAIN SELECT * FROM " + viewName, sink, ctx);
                 return;
             } catch (TableReferenceOutOfDateException e) {
-                if (attempt == maxRecompileAttempts) {
+                if (isBounded && ++boundedAttempts == maxRecompileAttempts) {
                     throw e;
                 }
             }

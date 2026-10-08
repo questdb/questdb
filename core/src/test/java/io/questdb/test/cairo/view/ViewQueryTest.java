@@ -27,9 +27,7 @@ package io.questdb.test.cairo.view;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.view.ViewState;
 import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.SqlException;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -1074,6 +1072,44 @@ public class ViewQueryTest extends AbstractViewTest {
             assertQuery("DECLARE @high := 8 SELECT * FROM " + VIEW2)
                     .noLeakCheck()
                     .fails(14, "variable is not overridable: @high");
+        });
+    }
+
+    @Test
+    public void testDeclareViewListCannotOverrideByDefault() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query1 = "DECLARE @s := (5, 6) SELECT ts, v FROM " + TABLE1 + " WHERE v IN @s";
+            execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ")");
+            drainWalAndViewQueues();
+
+            assertQuery(VIEW1)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:50.000000Z\t5
+                            1970-01-01T00:01:00.000000Z\t6
+                            """);
+
+            // A list override reports its `:=` token, as a scalar override does, rather than the
+            // whitespace or the comment in front of the variable.
+            assertQuery("DECLARE @s := (3, 4) SELECT * FROM " + VIEW1)
+                    .noLeakCheck()
+                    .fails(11, "variable is not overridable: @s");
+            assertQuery("DECLARE @a := 1,   @s := (3, 4) SELECT * FROM " + VIEW1)
+                    .noLeakCheck()
+                    .fails(22, "variable is not overridable: @s");
+            assertQuery("DECLARE @a := 1, /* c */ @s := (3, 4) SELECT * FROM " + VIEW1)
+                    .noLeakCheck()
+                    .fails(28, "variable is not overridable: @s");
+            assertQuery("DECLARE OVERRIDABLE @s := (3, 4) SELECT * FROM " + VIEW1)
+                    .noLeakCheck()
+                    .fails(23, "variable is not overridable: @s");
+            assertQuery("DECLARE @a := 1,   @s := 3 SELECT * FROM " + VIEW1)
+                    .noLeakCheck()
+                    .fails(22, "variable is not overridable: @s");
         });
     }
 
@@ -2805,24 +2841,6 @@ public class ViewQueryTest extends AbstractViewTest {
                     VIEW1
             );
         });
-    }
-
-    // Asserts that the parse budget refuses the statement at the position.
-    private static void assertTooComplexToParse(CharSequence sql, int position, String spentPart, long max) throws Exception {
-        try {
-            assertExceptionNoLeakCheck(sql);
-        } catch (SqlException e) {
-            Assert.assertEquals(position, e.getPosition());
-            assertTooComplexToParseMessage(e.getFlyweightMessage(), spentPart, max);
-        }
-    }
-
-    // The error reports how much of the spent part the parse had taken, a count that moves with any
-    // change to how the parser allocates, so the assertion pins the spent part and its maximum,
-    // which follows from the length of the text, but not the count.
-    private static void assertTooComplexToParseMessage(CharSequence message, String spentPart, long max) {
-        TestUtils.assertContains(message, "statement is too complex to parse [" + spentPart + '=');
-        TestUtils.assertContains(message, ", max=" + max + ']');
     }
 
     // Asserts what assertViewState() does for a view the parse budget made invalid, with the

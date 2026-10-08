@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -793,20 +792,6 @@ public class WithClauseTest extends AbstractCairoTest {
         assertQuery("with example as (select * from long_sequence(1))\n" +
                 "select * from example where true where false;")
                 .fails(82, "unexpected token [where]");
-    }
-
-    // Asserts that the parse budget refuses the statement at the position. The error reports how
-    // much of the spent part the parse had taken, a count that moves with any change to how the
-    // parser allocates, so the assertion pins the spent part and its maximum, which follows from
-    // the length of the text, but not the count.
-    private static void assertTooComplexToParse(CharSequence sql, int position, String spentPart, long max) throws Exception {
-        try {
-            assertExceptionNoLeakCheck(sql);
-        } catch (SqlException e) {
-            Assert.assertEquals(position, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), "statement is too complex to parse [" + spentPart + '=');
-            TestUtils.assertContains(e.getFlyweightMessage(), ", max=" + max + ']');
-        }
     }
 
     // DECLARE @s := '<800 characters>' WITH c0 AS(SELECT @s,@s,...,@s FROM long_sequence(1)), with

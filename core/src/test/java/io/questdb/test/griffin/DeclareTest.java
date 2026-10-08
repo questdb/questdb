@@ -29,7 +29,6 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
@@ -41,7 +40,6 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TableFunctionTestUtils;
 import io.questdb.test.tools.TableFunctionTestUtils.CloseCountingRecordCursorFactory;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -5749,20 +5747,6 @@ public class DeclareTest extends AbstractSqlParserTest {
         Assert.assertTrue("instantiated factories: " + factories.size(), factories.size() >= minFactoryCount);
         for (int i = 0, n = factories.size(); i < n; i++) {
             Assert.assertEquals("factory " + i + " of " + n, 1, factories.getQuick(i).getCloseCount());
-        }
-    }
-
-    // Asserts that the parse budget refuses the statement at the position. The error reports how
-    // much of the spent part the parse had taken, a count that moves with any change to how the
-    // parser allocates, so the assertion pins the spent part and its maximum, which follows from
-    // the length of the text, but not the count.
-    private static void assertTooComplexToParse(CharSequence sql, int position, String spentPart, long max) throws Exception {
-        try {
-            assertExceptionNoLeakCheck(sql);
-        } catch (SqlException e) {
-            Assert.assertEquals(position, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), "statement is too complex to parse [" + spentPart + '=');
-            TestUtils.assertContains(e.getFlyweightMessage(), ", max=" + max + ']');
         }
     }
 

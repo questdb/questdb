@@ -603,8 +603,8 @@ public class ViewAuditTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Enterprise records nothing for a read made under a context that says it belongs to a
             // job, so the flag has to be set on the refresh and view compiler contexts and on
-            // nothing a principal runs queries under. The WAL apply context is package-private;
-            // the Enterprise tests cover it through the rows it does not record.
+            // nothing a principal runs queries under. The WAL apply context is package-private, so
+            // testWalApplyReadsAuditedViewsAsABackgroundJob reaches it through the UPDATE it applies.
             assertFalse(sqlExecutionContext.isBackgroundJob());
             try (
                     MatViewRefreshSqlExecutionContext matViewContext = new MatViewRefreshSqlExecutionContext(engine, 1);
@@ -1440,6 +1440,45 @@ public class ViewAuditTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWalApplyReadsAuditedViewsAsABackgroundJob() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                        ('b', 5, '2024-01-01T00:00:01.000000Z')""");
+            drainWalQueue();
+            // A WAL table's UPDATE reads no table but the one it writes, so the view reads t.
+            createAuditedView("v", "SELECT s, l FROM t");
+
+            // The principal's UPDATE of a WAL table only sequences the statement: its plan closes
+            // unopened. ApplyWal2TableJob compiles the statement again and runs it under the root
+            // context, once on every node that applies the WAL. The statement was the principal's,
+            // but the re-execution is not, so the context has to say it belongs to a job, or
+            // Enterprise records the read on every node.
+            auditedPlanCursorOpens = new ObjList<>();
+            try {
+                execute("UPDATE t SET l = 42 WHERE l < (SELECT count() FROM v)");
+                assertAuditedPlanCursorOpens();
+                drainWalQueue();
+                assertAuditedPlanCursorOpens("WalApplySqlExecutionContext isBackgroundJob=true isMetadataProbe=false");
+            } finally {
+                auditedPlanCursorOpens = null;
+            }
+
+            // The apply wrote the row the sub-query picked.
+            assertQuery("SELECT s, l FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tl
+                            a\t42
+                            b\t5
+                            """);
+        });
+    }
+
     /**
      * Asserts the cursor opens of plans with audits since the test armed the list, one entry per
      * open, in open order, then empties the list for the next assertion.
@@ -1802,6 +1841,13 @@ public class ViewAuditTest extends AbstractCairoTest {
         @Override
         public boolean recordCursorSupportsRandomAccess() {
             return base.recordCursorSupportsRandomAccess();
+        }
+
+        @Override
+        public boolean supportsUpdateRowId(TableToken tableToken) {
+            // The compiler refuses an UPDATE whose plan cannot hand back the row ids it writes,
+            // and the plan of an UPDATE that reads an audited view is this wrapper.
+            return base.supportsUpdateRowId(tableToken);
         }
 
         @Override

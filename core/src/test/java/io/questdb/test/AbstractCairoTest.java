@@ -767,6 +767,24 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    // Asserts that the parse budget refuses the statement at the position.
+    protected static void assertTooComplexToParse(CharSequence sql, int position, String spentPart, long max) throws Exception {
+        try {
+            assertExceptionNoLeakCheck(sql);
+        } catch (SqlException e) {
+            Assert.assertEquals(position, e.getPosition());
+            assertTooComplexToParseMessage(e.getFlyweightMessage(), spentPart, max);
+        }
+    }
+
+    // The error reports how much of the spent part the parse had taken, a count that moves with any
+    // change to how the parser allocates, so the assertion pins the spent part and its maximum,
+    // which follows from the length of the text, but not the count.
+    protected static void assertTooComplexToParseMessage(CharSequence message, String spentPart, long max) {
+        TestUtils.assertContains(message, "statement is too complex to parse [" + spentPart + '=');
+        TestUtils.assertContains(message, ", max=" + max + ']');
+    }
+
     protected static void configOverrideRostiAllocFacade(RostiAllocFacade rostiAllocFacade) {
         node1.getConfigurationOverrides().setRostiAllocFacade(rostiAllocFacade);
     }

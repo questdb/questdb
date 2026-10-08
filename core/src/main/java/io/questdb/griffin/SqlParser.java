@@ -4255,9 +4255,14 @@ public class SqlParser {
             declaredValueDepth++;
             try {
                 if (isValueListRhs) {
-                    expr = expressionNodePool.next().of(ExpressionNode.OPERATION, ":=", 0, pos);
+                    // The nodes take the positions expr() gives a scalar declaration's nodes: the
+                    // `:=` token, which a refused override reports, and the variable. `pos` is the
+                    // raw offset the previous token left behind, which may lie on whitespace, in a
+                    // comment or on the variable. isValueListAhead() only scans the text, so the
+                    // last token is still `:=`.
+                    expr = expressionNodePool.next().of(ExpressionNode.OPERATION, ":=", 0, lexer.lastTokenPosition());
                     expr.paramCount = 2;
-                    expr.lhs = expressionNodePool.next().of(ExpressionNode.LITERAL, tok, 0, pos);
+                    expr.lhs = expressionNodePool.next().of(ExpressionNode.LITERAL, tok, 0, variablePosition);
                     expr.rhs = parseValueList(lexer, model, sqlParserCallback);
                 } else {
                     // expr() parses the declaration again, from the variable on. A comment glued to

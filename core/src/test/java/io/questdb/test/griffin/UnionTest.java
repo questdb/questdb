@@ -733,6 +733,68 @@ public class UnionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetOperationNestedInLaterBranchWithOrderByAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // The trailing ORDER BY and LIMIT of a set operation in a later branch of another one
+            // apply to the whole inner set operation, whichever set operations the two are.
+            final String top1 = "SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY 1 DESC LIMIT 1";
+            assertQuery("SELECT -1L v UNION SELECT -2L UNION SELECT * FROM (" + top1 + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v
+                            -1
+                            -2
+                            3
+                            """);
+            assertQuery("SELECT 3L v UNION ALL SELECT 2L EXCEPT SELECT * FROM (" + top1 + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v
+                            2
+                            """);
+            assertQuery("SELECT 1L v UNION ALL SELECT 3L INTERSECT SELECT * FROM (" + top1 + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v
+                            3
+                            """);
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (SELECT v FROM t UNION SELECT v FROM t ORDER BY 1 DESC LIMIT 1)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v
+                            -1
+                            -2
+                            3
+                            """);
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (SELECT v FROM t EXCEPT SELECT v FROM t WHERE v = 1 ORDER BY 1 DESC LIMIT 1)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            -1
+                            -2
+                            3
+                            """);
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (SELECT v FROM t WHERE v > 1 INTERSECT SELECT v FROM t ORDER BY 1 LIMIT 1)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            -1
+                            -2
+                            2
+                            """);
+        });
+    }
+
+    @Test
     public void testSetOperationsAllowsOrderByAndLimitInAllSubqueries() throws Exception {
         String template = "select * from (select x from t #CLAUSE0# ) " +
                 "#SET# " +
@@ -1681,6 +1743,69 @@ public class UnionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionNestedInJoinWithOrderByAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // The trailing ORDER BY and LIMIT of a set operation that a join reads apply to the
+            // whole set operation, in a positional and in a named spelling alike, and whichever
+            // branch of an outer set operation the join sits in.
+            final String top1 = "SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY 1 DESC LIMIT 1";
+            final String joinRow = """
+                    v\tv1
+                    3\t3
+                    """;
+            assertQuery("SELECT * FROM t t1 JOIN (" + top1 + ") t2 ON t1.v = t2.v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(joinRow);
+            assertQuery("SELECT * FROM t t1 JOIN (SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY v DESC LIMIT 1) t2 ON t1.v = t2.v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(joinRow);
+            assertQuery("WITH c AS (" + top1 + ") SELECT * FROM t t1 JOIN c t2 ON t1.v = t2.v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(joinRow);
+            assertQuery("SELECT * FROM t t1 LEFT JOIN (" + top1 + ") t2 ON t1.v = t2.v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v\tv1
+                            1\tnull
+                            2\tnull
+                            3\t3
+                            """);
+            assertQuery("SELECT * FROM t t1 CROSS JOIN (" + top1 + ") t2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v\tv1
+                            1\t3
+                            2\t3
+                            3\t3
+                            """);
+            assertQuery("SELECT 0L v, 0L v1 UNION ALL SELECT * FROM t t1 JOIN (" + top1 + ") t2 ON t1.v = t2.v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v\tv1
+                            0\t0
+                            3\t3
+                            """);
+            assertQuery("SELECT 0L v, 0L v1 UNION ALL SELECT -1L, -1L UNION ALL SELECT * FROM t t1 JOIN (SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY v DESC LIMIT 1) t2 ON t1.v = t2.v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v\tv1
+                            0\t0
+                            -1\t-1
+                            3\t3
+                            """);
+        });
+    }
+
+    @Test
     public void testUnionNestedInLaterBranchWithDifferentColumnCount() throws Exception {
         assertMemoryLeak(() -> {
             // A set operation inside the second or a later branch of another one, reached through
@@ -1706,12 +1831,171 @@ public class UnionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionNestedInLaterBranchWithOrderByAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            execute("CREATE VIEW top1_view AS (SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY v DESC LIMIT 1)");
+            drainWalAndViewQueues();
+            // The trailing ORDER BY and LIMIT of a set operation apply to the whole set operation,
+            // not to its last branch, whichever branch of an outer set operation reads it, and
+            // however that branch reads it: through a sub-query, brackets, a CTE, a declared
+            // sub-query or a view.
+            final String top1 = "SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY 1 DESC LIMIT 1";
+            final String expected = """
+                    v
+                    -1
+                    -2
+                    3
+                    """;
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (" + top1 + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Union All
+                                Union All
+                                    VirtualRecord
+                                      functions: [-1L]
+                                        long_sequence count: 1
+                                    VirtualRecord
+                                      functions: [-2L]
+                                        long_sequence count: 1
+                                Limit value: 1 skip-rows: 0 take-rows: 1
+                                    Encode sort
+                                      keys: [v desc]
+                                        Union All
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                            """)
+                    .returns(expected);
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL (" + top1 + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("WITH top1 AS (" + top1 + ") SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM top1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("WITH top1 AS (" + top1 + ") SELECT -1L v UNION ALL SELECT * FROM top1 UNION ALL SELECT * FROM top1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            -1
+                            3
+                            3
+                            """);
+            assertQuery("DECLARE @top1 := (" + top1 + ") SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM @top1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM top1_view")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY v DESC LIMIT 1)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            // a fourth branch
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT -3L UNION ALL SELECT * FROM (" + top1 + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            -1
+                            -2
+                            -3
+                            3
+                            """);
+            // a later branch of a set operation that sits in a later branch itself
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (SELECT -3L v UNION ALL SELECT -4L UNION ALL SELECT * FROM (" + top1 + "))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            -1
+                            -2
+                            -3
+                            -4
+                            3
+                            """);
+            // LIMIT alone
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (SELECT v FROM t UNION ALL SELECT v + 10 FROM t LIMIT 2)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            -1
+                            -2
+                            1
+                            2
+                            """);
+            // ORDER BY alone
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (SELECT v FROM t UNION ALL SELECT v + 10 FROM t ORDER BY 1 DESC)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            -1
+                            -2
+                            13
+                            12
+                            11
+                            3
+                            2
+                            1
+                            """);
+            // the outer set operation keeps its own trailing ORDER BY and LIMIT
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (" + top1 + ") ORDER BY 1 DESC LIMIT 2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            3
+                            -1
+                            """);
+            // A bracketed last branch scopes its ORDER BY and LIMIT to itself, in a later branch
+            // of an outer set operation as well.
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (SELECT v FROM t UNION ALL (SELECT v FROM t ORDER BY 1 DESC LIMIT 1))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            -1
+                            -2
+                            1
+                            2
+                            3
+                            3
+                            """);
+        });
+    }
+
+    @Test
     public void testUnionNestedInLaterBranchWithPositionalOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE k (s SYMBOL, l LONG)");
             execute("INSERT INTO k VALUES ('a', 1), ('b', 2), ('a', 3)");
-            // A positional ORDER BY inside a set operation resolves the same way whether that
-            // set operation sits in the first branch of another one or in a later branch.
+            // A positional ORDER BY in a bracketed branch of a set operation resolves against
+            // that branch and applies to it alone, whether that set operation sits in the first
+            // branch of another one or in a later branch. A trailing ORDER BY of a whole set
+            // operation that a later branch reads is in testUnionNestedInLaterBranchWithOrderByAndLimit.
             assertQuery("SELECT * FROM (SELECT s, l FROM k UNION ALL (SELECT s, l FROM k ORDER BY 2 DESC LIMIT 1)) UNION ALL SELECT 'x' s, 0L l")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -1754,6 +2038,186 @@ public class UnionTest extends AbstractCairoTest {
             assertQuery("SELECT 'x' s, 0L l UNION ALL (SELECT s, l FROM k UNION ALL (SELECT s, l FROM k ORDER BY 3))")
                     .noLeakCheck()
                     .fails(88, "order column position is out of range [max=2]");
+        });
+    }
+
+    @Test
+    public void testUnionNestedInMiddleBranchWithOrderByAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // The trailing ORDER BY and LIMIT of a set operation apply to the whole set operation
+            // also when a middle branch of an outer one reads it: a branch that comes after the
+            // second one and has more branches after it.
+            final String top1 = "SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY 1 DESC LIMIT 1";
+            final String thirdOfFour = """
+                    v
+                    -1
+                    -2
+                    3
+                    -3
+                    """;
+            final String fourthOfFive = """
+                    v
+                    -1
+                    -2
+                    -3
+                    3
+                    -4
+                    """;
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (" + top1 + ") UNION ALL SELECT -3L")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Union All
+                                Union All
+                                    Union All
+                                        VirtualRecord
+                                          functions: [-1L]
+                                            long_sequence count: 1
+                                        VirtualRecord
+                                          functions: [-2L]
+                                            long_sequence count: 1
+                                    Limit value: 1 skip-rows: 0 take-rows: 1
+                                        Encode sort
+                                          keys: [v desc]
+                                            Union All
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t
+                                VirtualRecord
+                                  functions: [-3L]
+                                    long_sequence count: 1
+                            """)
+                    .returns(thirdOfFour);
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT -3L UNION ALL SELECT * FROM (" + top1 + ") UNION ALL SELECT -4L")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(fourthOfFive);
+            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL (" + top1 + ") UNION ALL SELECT -3L")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(thirdOfFour);
+            assertQuery("WITH top1 AS (" + top1 + ") SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM top1 UNION ALL SELECT -3L")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(thirdOfFour);
+            assertQuery("WITH top1 AS (" + top1 + ") SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT -3L UNION ALL SELECT * FROM top1 UNION ALL SELECT -4L")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(fourthOfFive);
+            // an outer UNION
+            assertQuery("SELECT -1L v UNION SELECT -2L UNION SELECT * FROM (" + top1 + ") UNION SELECT -3L")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(thirdOfFour);
+            // a join in the middle branch reads the set operation
+            assertQuery("SELECT 0L v, 0L v1 UNION ALL SELECT -1L, -1L UNION ALL SELECT * FROM t t1 JOIN (" + top1 + ") t2 ON t1.v = t2.v UNION ALL SELECT -2L, -2L")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v\tv1
+                            0\t0
+                            -1\t-1
+                            3\t3
+                            -2\t-2
+                            """);
+        });
+    }
+
+    @Test
+    public void testUnionNestedInSecondJoinWithOrderByAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // The trailing ORDER BY and LIMIT of a set operation that the second join of a query
+            // reads apply to the whole set operation, the same as when the first join reads it.
+            final String top1 = "SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY 1 DESC LIMIT 1";
+            final String joinRow = """
+                    v\tv1\tv2
+                    3\t3\t3
+                    """;
+            assertQuery("SELECT * FROM t t1 JOIN t t2 ON t1.v = t2.v JOIN (" + top1 + ") t3 ON t1.v = t3.v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: t3.v=t1.v
+                                    Hash Join Light
+                                      condition: t2.v=t1.v
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                    Hash
+                                        Limit value: 1 skip-rows: 0 take-rows: 1
+                                            Encode sort
+                                              keys: [v desc]
+                                                Union All
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t
+                            """)
+                    .returns(joinRow);
+            assertQuery("WITH c AS (" + top1 + ") SELECT * FROM t t1 JOIN t t2 ON t1.v = t2.v JOIN c t3 ON t1.v = t3.v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(joinRow);
+            assertQuery("SELECT * FROM t t1 LEFT JOIN t t2 ON t1.v = t2.v LEFT JOIN (" + top1 + ") t3 ON t1.v = t3.v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v\tv1\tv2
+                            1\t1\tnull
+                            2\t2\tnull
+                            3\t3\t3
+                            """);
+            assertQuery("SELECT * FROM t t1 CROSS JOIN t t2 CROSS JOIN (" + top1 + ") t3")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v\tv1\tv2
+                            1\t1\t3
+                            1\t2\t3
+                            1\t3\t3
+                            2\t1\t3
+                            2\t2\t3
+                            2\t3\t3
+                            3\t1\t3
+                            3\t2\t3
+                            3\t3\t3
+                            """);
+            // the first join and the second join read a set operation each
+            assertQuery("SELECT * FROM t t1 JOIN (" + top1 + ") t2 ON t1.v = t2.v JOIN (SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY 1 LIMIT 1) t3 ON t1.v = t3.v + 2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v\tv1\tv2
+                            3\t3\t1
+                            """);
+            // the second join of a later branch of an outer set operation
+            assertQuery("SELECT 0L v, 0L v1, 0L v2 UNION ALL SELECT * FROM t t1 JOIN t t2 ON t1.v = t2.v JOIN (" + top1 + ") t3 ON t1.v = t3.v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v\tv1\tv2
+                            0\t0\t0
+                            3\t3\t3
+                            """);
         });
     }
 

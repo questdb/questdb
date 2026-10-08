@@ -2288,25 +2288,31 @@ public class SqlOptimiser implements Mutable {
         if (!model.isOptimisable()) {
             return model;
         }
-        IQueryModel m = model.getUnionModel();
-        IQueryModel nested = model.getNestedModel();
-        if (nested != null) {
-            IQueryModel _n = bubbleUpOrderByAndLimitFromUnion(nested);
-            if (_n != nested) {
-                model.setNestedModel(_n);
-            }
-        }
-
-        if (m != null) {
-            // find order by clauses
-            if (m.getNestedModel() != null) {
-                IQueryModel mNested = m.getNestedModel();
-                final IQueryModel m1 = bubbleUpOrderByAndLimitFromUnion(mNested);
-                if (m1 != mNested) {
-                    m.setNestedModel(m1);
+        // Every branch, not only the first two, can read a set operation of its own through its
+        // nested or join models, and that set operation's trailing ORDER BY and LIMIT apply to
+        // all of it, not to its last branch.
+        for (IQueryModel branch = model; branch != null; branch = branch.getUnionModel()) {
+            final IQueryModel nested = branch.getNestedModel();
+            if (nested != null) {
+                final IQueryModel bubbled = bubbleUpOrderByAndLimitFromUnion(nested);
+                if (bubbled != nested) {
+                    branch.setNestedModel(bubbled);
                 }
             }
 
+            final ObjList<IQueryModel> joinModels = branch.getJoinModels();
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+                final IQueryModel joinModel = joinModels.getQuick(i);
+                final IQueryModel bubbled = bubbleUpOrderByAndLimitFromUnion(joinModel);
+                // A join model reads a set operation through its nested model and never heads
+                // one, so the call rewrites the models below it and returns it.
+                assert bubbled == joinModel;
+            }
+        }
+
+        IQueryModel m = model.getUnionModel();
+        if (m != null) {
+            // find order by clauses
             do {
                 if (m.getUnionModel() == null) {
                     // last model in the linked list
