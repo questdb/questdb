@@ -2410,6 +2410,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // partition, as dropPartitionByExactTimestamp() does. Left stale, it fails
                         // processWalCommit's partition-timestamp consistency assert on the next commit.
                         partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(maxTimestamp);
+                        // the parquet partition cannot take in-order appends, see isLastPartitionParquetRow()
+                        rowAction = ROW_ACTION_OPEN_PARTITION;
                     } else {
                         openLastPartition();
                     }
@@ -2995,6 +2997,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 o3TimestampSetter(timestamp);
                 return row;
             case ROW_ACTION_OPEN_PARTITION:
+                if (isLastPartitionParquetRow(timestamp)) {
+                    bumpMasterRef();
+                    return newRowO3(timestamp);
+                }
                 if (txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
                     txWriter.setMinTimestamp(timestamp);
                     initLastPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
@@ -5442,7 +5448,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void clearO3() {
         this.o3MasterRef = -1; // clears o3 flag, hasO3() will be returning false
-        rowAction = ROW_ACTION_SWITCH_PARTITION;
+        // A parquet last partition cannot take in-order appends, so the next row goes through
+        // ROW_ACTION_OPEN_PARTITION, which re-checks it (see isLastPartitionParquetRow())
+        rowAction = isLastPartitionParquet() ? ROW_ACTION_OPEN_PARTITION : ROW_ACTION_SWITCH_PARTITION;
         // transaction log is either not required or pending
         activeColumns = columns;
         activeNullSetters = nullSetters;
@@ -7252,6 +7260,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     setAppendPosition(newTransientRowCount, false);
                 } else {
                     partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(nextMaxTimestamp);
+                    // the parquet partition cannot take in-order appends, see isLastPartitionParquetRow()
+                    rowAction = ROW_ACTION_OPEN_PARTITION;
                 }
             } else {
                 rowAction = ROW_ACTION_OPEN_PARTITION;
@@ -7959,8 +7969,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // reads column data through the Parquet decoder and wires up the covering
         // sidecars. The native path below assumes native column files; for a
         // Parquet partition the covering seal would dereference a null FilesFacade.
-        // Non-WAL tables cannot have a Parquet active partition (see
-        // convertPartitionNativeToParquet), so this only fires for WAL tables.
+        // Non-WAL tables get one too, e.g. after SET TYPE BYPASS WAL or after
+        // dropping the native partition in front of a Parquet one.
         final int lastPartitionIndex = txWriter.getPartitionCount() - 1;
         if (lastPartitionIndex >= 0 && txWriter.isPartitionParquet(lastPartitionIndex)) {
             try {
@@ -8310,6 +8320,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean isLastPartitionParquet() {
         int partitionCount = txWriter.getPartitionCount();
         return partitionCount > 0 && txWriter.isPartitionParquet(partitionCount - 1);
+    }
+
+    /**
+     * Returns true when the last partition is parquet and the row falls at or before its end.
+     * The writer keeps no native partition open behind a parquet one, so newRow() merges such
+     * a row in through O3, the path WAL apply uses for parquet partitions. Rows past the end
+     * still switch to a new native partition. Kept out of newRow() so that its bytecode stays
+     * under the JIT inlining threshold (FreqInlineSize).
+     */
+    private boolean isLastPartitionParquetRow(long timestamp) {
+        return timestamp <= partitionTimestampHi && isLastPartitionParquet();
     }
 
     /**
