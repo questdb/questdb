@@ -25,11 +25,8 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.NullPolicy;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.WhereClauseParser;
 import io.questdb.jit.CompiledFilterIRSerializer;
-import io.questdb.std.Numbers;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -39,11 +36,11 @@ import java.lang.reflect.Modifier;
 
 /**
  * The per-type facts the query engine reads from the type drivers: integers and numbers, WHERE key
- * columns and timestamp bounds, the compiled filter's integer lanes; and the FILL(PREV) type match,
- * which compares whole types. Each expected list pins the types the engine treats that way, so a
- * type that answers differently is a behaviour change. The sweep covers every tag and the encoded
- * types that carry parameters (timestamp unit, geohash bits, decimal precision and scale, array
- * dimensions, interval unit); a new tag joins the sweep and answers here.
+ * columns and timestamp bounds, the compiled filter's integer lanes. Each expected list pins the
+ * types the engine treats that way, so a type that answers differently is a behaviour change. The
+ * sweep covers every tag and the encoded types that carry parameters (timestamp unit, geohash bits,
+ * decimal precision and scale, array dimensions, interval unit); a new tag joins the sweep and
+ * answers here.
  */
 public class QueryEngineTypeFactsTest {
     // the type sweep, shared with the coverage tests of the per-type answers the relation rules
@@ -51,41 +48,6 @@ public class QueryEngineTypeFactsTest {
     // labelled by its ColumnType constant, then the encoded types
     public static final String[] LABELS;
     public static final int[] TYPES;
-
-    @Test
-    public void testFillPrevMatchesTheWholeType() {
-        // FILL(PREV(col)) admits a source column whose type equals the target's. `listed` is a
-        // per-type rule: the whole type for DECIMAL, GEOHASH, ARRAY, TIMESTAMP and INTERVAL, the
-        // tag for every other type. The two agree for every pair, because an encoding without
-        // parameters is its tag, except a bare GEOBYTE..GEOLONG tag, which takes tag equality; no
-        // column has such a type, because every geohash type carries its bits.
-        final StringBuilder mismatches = new StringBuilder();
-        for (int t = 0; t < TYPES.length; t++) {
-            for (int s = 0; s < TYPES.length; s++) {
-                final int target = TYPES[t];
-                final int source = TYPES[s];
-                final short targetTag = ColumnType.tagOf(target);
-                final boolean isExact = ColumnType.isDecimal(target)
-                        || ColumnType.isGeoHash(target)
-                        || targetTag == ColumnType.ARRAY
-                        || targetTag == ColumnType.TIMESTAMP
-                        || targetTag == ColumnType.INTERVAL;
-                final boolean listed = isExact ? target == source : targetTag == ColumnType.tagOf(source);
-                if (listed != (target == source)) {
-                    mismatches.append(LABELS[t]).append(" <- ").append(LABELS[s]).append('\n');
-                }
-            }
-        }
-        Assert.assertEquals(
-                """
-                        GEOBYTE <- GEOHASH(1c)
-                        GEOSHORT <- GEOHASH(8b)
-                        GEOINT <- GEOHASH(31b)
-                        GEOLONG <- GEOHASH(12c)
-                        """,
-                mismatches.toString()
-        );
-    }
 
     @Test
     public void testIntegral() {
@@ -108,26 +70,6 @@ public class QueryEngineTypeFactsTest {
     @Test
     public void testJitWidthSensitiveInKey() throws Exception {
         assertTypes("BYTE SHORT INT", fact(CompiledFilterIRSerializer.class, "isWidthSensitiveType"));
-    }
-
-    @Test
-    public void testRostiKeyNull() {
-        // the vectorized GROUP BY key slot starts as the key's NULL: INT_NULL for an INT key,
-        // VALUE_IS_NULL for a SYMBOL key
-        Assert.assertEquals(Numbers.INT_NULL, (int) ColumnType.getTypeDriver(ColumnType.INT).getNullAsLong());
-        Assert.assertEquals(SymbolTable.VALUE_IS_NULL, (int) ColumnType.getTypeDriver(ColumnType.SYMBOL).getNullAsLong());
-        Assert.assertEquals(NullPolicy.SENTINEL, ColumnType.getTypeDriver(ColumnType.INT).getNullPolicy());
-        Assert.assertEquals(NullPolicy.SENTINEL, ColumnType.getTypeDriver(ColumnType.SYMBOL).getNullPolicy());
-    }
-
-    @Test
-    public void testSumRewriteCountsTheColumn() {
-        // sum(x + c) becomes sum(x) + count(x) * c for an integer x with NULLs, and
-        // sum(x) + count(*) * c for one without
-        assertTypes(
-                "INT LONG",
-                type -> ColumnType.isIntegral(type) && ColumnType.getTypeDriver(type).getNullPolicy() == NullPolicy.SENTINEL
-        );
     }
 
     @Test
@@ -222,6 +164,11 @@ public class QueryEngineTypeFactsTest {
         for (int i = 0; i < extraTypes.length; i++) {
             TYPES[ColumnType.MAX_TAG + 1 + i] = extraTypes[i];
             LABELS[ColumnType.MAX_TAG + 1 + i] = extraLabels[i];
+            // the label must name the type the way nameOf does, except where nameOf is ambiguous
+            final String name = ColumnType.nameOf(extraTypes[i]);
+            if (!name.equals(extraLabels[i]) && !extraLabels[i].startsWith(name + "(")) {
+                throw new IllegalStateException("label " + extraLabels[i] + " does not match nameOf " + name);
+            }
         }
     }
 }

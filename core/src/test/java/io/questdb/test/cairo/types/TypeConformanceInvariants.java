@@ -64,9 +64,9 @@ import java.util.regex.Pattern;
  * that for a float tier every NaN is the same value;</li>
  * <li>the NULL row and the sentinel-pattern row behave as the NULL policy says
  * ({@link #assertNullPolicy}): SENTINEL, both read the same; NONE, the NULL row reads as false or
- * 0; BITMAP, the two stay distinct; NOT_NULL, writing NULL fails with a clear error and the
- * sentinel-pattern row reads back as a value; another type's sentinel pattern of the same width
- * reads as a value except under SENTINEL ({@link #assertOtherSentinel});</li>
+ * 0; another type's sentinel pattern of the same width reads as a value except under SENTINEL
+ * ({@link #assertOtherSentinel}). The kit knows these two policies, the ones the existing types
+ * have; a type with a NULL policy of its own adds its rules here;</li>
  * <li>rows compare and sort by the order the type's arithmetic tier implies
  * ({@link #assertOrdered}, {@link #compare}), for an integer or float tier, and the rows that read
  * as NULL sort together where the existing types put NULL: lowest, and highest for a float tier;</li>
@@ -83,9 +83,7 @@ import java.util.regex.Pattern;
  * Every failure message names the type, the value row, the path and the mode.
  */
 public final class TypeConformanceInvariants {
-    public static final String POLICY_BITMAP = "BITMAP";
     public static final String POLICY_NONE = "NONE";
-    public static final String POLICY_NOT_NULL = "NOT_NULL";
     public static final String POLICY_SENTINEL = "SENTINEL";
     /**
      * The decisions the add-a-type tool keeps per place, relative to the repository root. A
@@ -134,20 +132,6 @@ public final class TypeConformanceInvariants {
                 assertNoError(type, "null", path, mode, nullError);
                 Assert.assertNotNull(context(type, "null", path, mode) + ": no stored bits", nullBits);
                 Assert.assertArrayEquals(context(type, "null", path, mode) + ": NONE, the NULL row must read as false or 0", new long[4], nullBits);
-            }
-            case POLICY_BITMAP -> {
-                assertNoError(type, "null", path, mode, nullError);
-                Assert.assertNotEquals(context(type, "null", path, mode) + ": BITMAP, the NULL row and the sentinel-pattern row must stay distinct", sentinelText, nullText);
-                Assert.assertArrayEquals(context(type, "sentinel", path, mode) + ": BITMAP, the sentinel pattern is a value", writtenBits, sentinelBits);
-            }
-            case POLICY_NOT_NULL -> {
-                if (nullError == null || nullError.isEmpty()) {
-                    Assert.fail(context(type, "null", path, mode) + ": NOT_NULL, writing NULL must fail with an error");
-                }
-                if (!nullError.toLowerCase().contains("null")) {
-                    Assert.fail(context(type, "null", path, mode) + ": NOT_NULL, the error must say NULL: " + nullError);
-                }
-                Assert.assertArrayEquals(context(type, "sentinel", path, mode) + ": NOT_NULL, the sentinel pattern is a value", writtenBits, sentinelBits);
             }
             default -> Assert.fail("type=" + type.label + ": unknown NULL policy " + policy);
         }
@@ -346,8 +330,9 @@ public final class TypeConformanceInvariants {
     /**
      * The NULL row's write error in the setup steps of a type registered later, or null when writing
      * it succeeded. A later type's value rows are raw bits except the NULL row, so the error of a
-     * literal INSERT ({@link TypeConformanceValues#writeRows}) is that row's. Only NOT_NULL may
-     * refuse it; any other {@code error: } line fails the path under every policy, naming the steps.
+     * literal INSERT ({@link TypeConformanceValues#writeRows}) is that row's. Only a NULL policy that
+     * refuses NULL could let it fail, and the kit knows none, so every {@code error: } line fails
+     * the path, naming the steps.
      */
     @Nullable
     public static String nullRowWriteError(TypeConformanceTypes.Entry type, String path, String mode, CharSequence steps) {
@@ -362,7 +347,7 @@ public final class TypeConformanceInvariants {
                 isOtherError = true;
             }
         }
-        if (isOtherError || (nullError != null && !POLICY_NOT_NULL.equals(policyOf(type)))) {
+        if (isOtherError || nullError != null) {
             Assert.fail(context(type, "-", path, mode) + ": " + steps);
         }
         return nullError;

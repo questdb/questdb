@@ -53,18 +53,9 @@ public class PGOidsTest extends AbstractTest {
     }
 
     @Test
-    public void testNoOidForTagsPgwireNeverDescribes() {
-        // these types have no OID (0): outRowDescription() substitutes STRING for NULL before
-        // asking, outRecord() rejects LONG128, and VARCHAR_SLICE and the pseudo tags never reach a
-        // result set. An array takes its element type's array OID, which the bare ARRAY tag and
-        // a DECIMAL256 element lack.
-        Assert.assertEquals(0, PGOids.getTypeOid(ColumnType.NULL));
-        Assert.assertEquals(0, PGOids.getTypeOid(ColumnType.VARCHAR_SLICE));
-        Assert.assertEquals(0, PGOids.getTypeOid(ColumnType.LONG128));
-        Assert.assertEquals(0, PGOids.getTypeOid(ColumnType.UNDEFINED));
-        Assert.assertEquals(0, PGOids.getTypeOid(ColumnType.CURSOR));
-        Assert.assertEquals(0, PGOids.getTypeOid(ColumnType.REGCLASS));
-        Assert.assertEquals(0, PGOids.getTypeOid(ColumnType.ARRAY));
+    public void testNoOidForDecimal256Array() {
+        // an array takes its element type's array OID, which a DECIMAL256 element lacks;
+        // TypeDriverTest.testProtocolAnswers pins the OID of every tag
         Assert.assertEquals(0, PGOids.getTypeOid(ColumnType.encodeArrayType(ColumnType.DECIMAL256, 1, false)));
     }
 

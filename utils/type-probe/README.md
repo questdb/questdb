@@ -118,7 +118,9 @@ and handle NULL as every existing type does:
   NULL, an integer unchanged within the target's range and refused with "inconvertible value"
   outside it, a float truncated first, text parsed, a CHAR as a digit).
 
-Under NONE the NULL row is the value 0; under NOT_NULL it is not written. A result column of a
+Under NONE the NULL row is the value 0. The kit knows the two NULL policies the existing types
+have, SENTINEL and NONE, and refuses a declaration line with any other; a type with a NULL policy
+of its own adds its rules to `TypeConformanceInvariants`. A result column of a
 wider type, from a function of that type the new type reaches through an implicit cast, holds the
 value widened by the tier.
 

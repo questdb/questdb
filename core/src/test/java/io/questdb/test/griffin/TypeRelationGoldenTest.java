@@ -59,7 +59,6 @@ import org.junit.Test;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
 
 /**
@@ -86,8 +85,9 @@ import java.lang.reflect.Proxy;
  * for every cell with a cast factory.
  */
 public class TypeRelationGoldenTest {
-    private static final String[] LABELS;
-    private static final int[] TYPES;
+    // the type sweep QueryEngineTypeFactsTest builds: every tag, then the encoded types
+    private static final String[] LABELS = QueryEngineTypeFactsTest.LABELS;
+    private static final int[] TYPES = QueryEngineTypeFactsTest.TYPES;
 
     @Test
     public void testColumnConversionSupport() throws Exception {
@@ -1650,62 +1650,5 @@ public class TypeRelationGoldenTest {
     @FunctionalInterface
     private interface Relation1<T> {
         T apply(int type) throws Exception;
-    }
-
-    static {
-        final int[] extraTypes = {
-                ColumnType.TIMESTAMP_NANO,
-                ColumnType.getGeoHashTypeWithBits(5),
-                ColumnType.getGeoHashTypeWithBits(8),
-                ColumnType.getGeoHashTypeWithBits(31),
-                ColumnType.getGeoHashTypeWithBits(60),
-                ColumnType.getDecimalType(5, 2),
-                ColumnType.getDecimalType(18, 3),
-                ColumnType.encodeArrayType(ColumnType.DOUBLE, 1),
-                ColumnType.encodeArrayType(ColumnType.DOUBLE, 2),
-                ColumnType.INTERVAL_TIMESTAMP_MICRO,
-                ColumnType.INTERVAL_TIMESTAMP_NANO,
-        };
-        final String[] extraLabels = {
-                "TIMESTAMP_NS",
-                "GEOHASH(1c)",
-                "GEOHASH(8b)",
-                "GEOHASH(31b)",
-                "GEOHASH(12c)",
-                "DECIMAL(5,2)",
-                "DECIMAL(18,3)",
-                "DOUBLE[]",
-                "DOUBLE[][]",
-                "INTERVAL(us)",
-                "INTERVAL(ns)",
-        };
-        TYPES = new int[ColumnType.MAX_TAG + 1 + extraTypes.length];
-        LABELS = new String[TYPES.length];
-        // tags are labelled by their ColumnType constant name: nameOf() says "unknown" for
-        // UNDEFINED, the four GEO* tags and the six DECIMAL<n> tags
-        for (Field field : ColumnType.class.getFields()) {
-            final int mods = field.getModifiers();
-            if (field.getType() != short.class || !Modifier.isStatic(mods) || !Modifier.isFinal(mods) || "MAX_TAG".equals(field.getName())) {
-                continue;
-            }
-            try {
-                final short tag = field.getShort(null);
-                if (tag >= 0 && tag <= ColumnType.MAX_TAG) {
-                    TYPES[tag] = tag;
-                    LABELS[tag] = field.getName();
-                }
-            } catch (IllegalAccessException e) {
-                throw new IllegalStateException(e);
-            }
-        }
-        for (int i = 0; i < extraTypes.length; i++) {
-            TYPES[ColumnType.MAX_TAG + 1 + i] = extraTypes[i];
-            LABELS[ColumnType.MAX_TAG + 1 + i] = extraLabels[i];
-            // the label must name the type the way nameOf does, except where nameOf is ambiguous
-            final String name = ColumnType.nameOf(extraTypes[i]);
-            if (!name.equals(extraLabels[i]) && !extraLabels[i].startsWith(name + "(")) {
-                throw new IllegalStateException("label " + extraLabels[i] + " does not match nameOf " + name);
-            }
-        }
     }
 }

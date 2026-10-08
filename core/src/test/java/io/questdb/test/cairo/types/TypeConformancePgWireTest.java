@@ -68,8 +68,8 @@ import java.util.Map;
  * or {@code pg.binary}; {@link TypeConformanceInvariants} checks them: on {@code pg.binary} every
  * value must travel as its stored bits (big-endian, the type's width) or, for a var-size type, as
  * its accessor family's bytes, and the NULL row and the sentinel-pattern row must behave as the
- * NULL policy says; on {@code pg.text} only the SENTINEL and BITMAP comparisons of those two rows
- * are checked, because the kit does not derive such a type's text form. On both paths another
+ * NULL policy says; on {@code pg.text} only the SENTINEL comparison of those two rows is checked,
+ * because the kit does not derive such a type's text form. On both paths another
  * type's sentinel pattern must not read as the NULL row, except under SENTINEL.
  * <p>
  * Masks: none. The server that {@code createPGServer(configuration, true)} starts sends a fixed
@@ -341,9 +341,6 @@ public class TypeConformancePgWireTest extends BasePGTest {
         } else if (TypeConformanceInvariants.POLICY_SENTINEL.equals(policy)) {
             Assert.assertEquals(TypeConformanceInvariants.context(type, "null", path, MODE)
                     + ": SENTINEL, the NULL row must read as the sentinel-pattern row", sentinelText, nullText);
-        } else if (TypeConformanceInvariants.POLICY_BITMAP.equals(policy)) {
-            Assert.assertNotEquals(TypeConformanceInvariants.context(type, "null", path, MODE)
-                    + ": BITMAP, the NULL row and the sentinel-pattern row must stay distinct", sentinelText, nullText);
         }
     }
 

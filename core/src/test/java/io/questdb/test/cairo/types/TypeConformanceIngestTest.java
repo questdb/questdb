@@ -110,12 +110,8 @@ import java.util.stream.Stream;
  * the protocol form of its accessor family ({@code TypeDriver.getAccessor()}): a type in INT's
  * family sends INT's form, and a family the kit has no form for fails, naming it. {@link
  * #checkLater} judges what the table stores, or what QWP egress sends, by invariants 1 and 2
- * ({@link TypeConformanceInvariants}). Under the NOT_NULL policy the NULL row must be refused: by
- * the protocol's answer where it answers per row (ILP over HTTP, QWP), by the missing row over ILP
- * TCP and UDP, and by the SQL write on the paths that read from a table the kit writes. The ILP
- * fence rows of a NOT_NULL type carry a value, so the type does not refuse them. A type the
- * resource declares refused at a guarded site the path reaches must have none of its value rows
- * stored ({@link #checkDeclaredRefusal}).
+ * ({@link TypeConformanceInvariants}). A type the resource declares refused at a guarded site the
+ * path reaches must have none of its value rows stored ({@link #checkDeclaredRefusal}).
  * <p>
  * ILP over HTTP and QWP refuse non-WAL tables by design, so their non-WAL runs have sections of
  * their own ({@code ilp-http-nonwal}, {@code qwp-nonwal}); there a later type's rows must all be
@@ -287,7 +283,7 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
             final StringSink errors = new StringSink();
             TypeConformanceValues.writeRows(server.getEngine(), server.getSqlExecutionContext(), "src", rows, "", TypeConformanceValues.SECOND * 86_400L, 0, rows.size(), 1, true, errors);
             if (type.isLater()) {
-                // a NOT_NULL type refuses the NULL row: invariant 2 judges that, the path goes on
+                // invariant 2 judges the NULL row's write error; the path goes on
                 section.put(errors);
                 errors.clear();
             }
@@ -692,9 +688,8 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
 
     /**
      * Every value row arrives and reads back as written (invariant 1). The NULL row, which leaves
-     * the column out, is refused under NOT_NULL and arrives under every other policy; it and the
-     * sentinel-pattern row then behave as the policy says (invariant 2). A var-size type has no
-     * sentinel-pattern row.
+     * the column out, arrives; it and the sentinel-pattern row then behave as the policy says
+     * (invariant 2). A var-size type has no sentinel-pattern row.
      *
      * @param bits  the value of each row that arrived, by label: the bits, or null for a NULL
      * @param texts how each row that arrived prints, by label
@@ -744,17 +739,11 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                 TypeConformanceInvariants.assertOtherSentinel(type, label, path, mode, nullText, texts.get(label));
             }
         }
-        final boolean isNotNull = TypeConformanceInvariants.POLICY_NOT_NULL.equals(policy);
-        if (isNotNull && bits.containsKey("null")) {
-            Assert.fail(TypeConformanceInvariants.context(type, "null", path, mode)
-                    + ": NOT_NULL, the row that leaves the column out must be refused, but it arrived as " + nullText);
-        }
-        if (!isNotNull && !bits.containsKey("null")) {
+        if (!bits.containsKey("null")) {
             Assert.fail(TypeConformanceInvariants.context(type, "null", path, mode) + ": " + policy
                     + ", the row that leaves the column out did not arrive");
         }
-        if (sentinel == null || (isNotNull && ("ingest.ilp-tcp".equals(path) || "ingest.ilp-udp".equals(path)))) {
-            // ILP over TCP and UDP answer nothing: under NOT_NULL the refusal is the missing row
+        if (sentinel == null) {
             return;
         }
         TypeConformanceInvariants.assertNullPolicy(
@@ -803,7 +792,7 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                     Assert.fail(TypeConformanceInvariants.context(type, "-", path, mode) + ": a row sent after a refused row was lost: " + line);
                 }
             }
-            if (!TypeConformanceInvariants.POLICY_NOT_NULL.equals(TypeConformanceInvariants.policyOf(type)) && !bits.containsKey("null")) {
+            if (!bits.containsKey("null")) {
                 Assert.fail(TypeConformanceInvariants.context(type, "null", path, mode)
                         + ": the row that leaves the column out, sent among refused rows, was not stored");
             }
@@ -943,24 +932,10 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
 
     /**
      * Starts a fence row in {@code table}; the caller ends it. The fence has only k, as the
-     * recordings hold it, except for a NOT_NULL type registered later: its fence also carries a
-     * value (the zero row's, else the first value row's), so the type does not refuse it.
+     * recordings hold it.
      */
-    private void putFence(Sender sender, String table, String fence, ObjList<Value> values) {
+    private void putFence(Sender sender, String table, String fence) {
         sender.table(table).stringColumn("k", fence);
-        if (!type.isLater() || !TypeConformanceInvariants.POLICY_NOT_NULL.equals(TypeConformanceInvariants.policyOf(type))) {
-            return;
-        }
-        Value fenceValue = null;
-        for (int i = 0, n = values.size(); i < n; i++) {
-            final Value value = values.getQuick(i);
-            if (!value.isNull && (fenceValue == null || "zero".equals(value.label))) {
-                fenceValue = value;
-            }
-        }
-        if (fenceValue != null) {
-            ilpValue(sender, fenceValue, formTag());
-        }
     }
 
     /**
@@ -1173,7 +1148,7 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                 }
                 if (isFencePerRow) {
                     final String fence = FENCE + i;
-                    putFence(sender, table, fence, values);
+                    putFence(sender, table, fence);
                     sender.at(FENCE_TS + i, ChronoUnit.MICROS);
                     sender.flush();
                     if (!awaitFence(server, table, fence, section)) {
@@ -1185,7 +1160,7 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                 }
             }
             if (!isFencePerRow) {
-                putFence(sender, table, FENCE, values);
+                putFence(sender, table, FENCE);
                 sender.at(FENCE_TS, ChronoUnit.MICROS);
                 sender.flush();
             }
@@ -1215,7 +1190,7 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
             section.put(errors);
         }
         if (type.isLater()) {
-            // every row, the NULL row too, whether or not src took it (a NOT_NULL type refuses it)
+            // every row, the NULL row too, whether or not src took it
             return laterValues();
         }
         final ObjList<Value> values = new ObjList<>();

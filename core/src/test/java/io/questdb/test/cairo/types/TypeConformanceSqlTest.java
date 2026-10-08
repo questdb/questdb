@@ -539,7 +539,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 return;
             }
             if (type.isLater()) {
-                // every value row is written; under NOT_NULL the NULL rows are refused
+                // every value row is written
                 TypeConformanceInvariants.nullRowWriteError(type, "sql.setup", mode, steps);
             }
             // every path runs, so a failing path hides none after it; the mode reports them together
@@ -936,9 +936,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         // only under SENTINEL, where it is NULL
         if ("filter_null".equals(name) || "filter_not_null".equals(name)) {
             final boolean isNullQuery = "filter_null".equals(name);
-            final boolean isNullStored = TypeConformanceInvariants.POLICY_SENTINEL.equals(policy) || TypeConformanceInvariants.POLICY_BITMAP.equals(policy);
             final boolean isSentinelNull = TypeConformanceInvariants.POLICY_SENTINEL.equals(policy);
-            if (bits.containsKey("null") != (isNullQuery == isNullStored) && !TypeConformanceInvariants.POLICY_NOT_NULL.equals(policy)) {
+            if (bits.containsKey("null") != (isNullQuery == isSentinelNull)) {
                 throw new AssertionError(TypeConformanceInvariants.context(type, "null", path, mode) + ": " + policy + " row presence is wrong");
             }
             // a var-size type has no sentinel-pattern row: its NULL lives in the length
@@ -1056,8 +1055,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
     /**
      * {@code sql.case_no_else} for a type registered later: {@code CASE WHEN ... THEN v END} has
      * the type itself, gives the selected row as written, and every other row as the NULL row
-     * reads. A NOT_NULL type is excepted from the NULL rows, because CASE without ELSE introduces
-     * NULL.
+     * reads.
      */
     private void checkLaterCaseNoElse(CairoEngine eng, SqlExecutionContext ctx, String mode) throws Exception {
         final String path = "sql.case_no_else";
@@ -1078,9 +1076,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         }
         final Map<String, long[]> values = readLaterValues(eng, ctx, sql);
         TypeConformanceInvariants.assertReadsBackAsWritten(type, selected.label, path, mode, selected.bits, values.get(selected.label));
-        if (TypeConformanceInvariants.POLICY_NOT_NULL.equals(TypeConformanceInvariants.policyOf(type))) {
-            return;
-        }
         final Map<String, String> texts = readTexts(eng, ctx, sql);
         final String nullText = readTexts(eng, ctx, "SELECT k, v c FROM t").get("null");
         for (int i = 0, n = rows.size(); i < n; i++) {
@@ -1116,7 +1111,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         TypeConformanceInvariants.nullRowWriteError(type, path, mode, steps);
         // a type that stores no NULL keeps its NULL row as a value, which converts as a value
         final String policy = TypeConformanceInvariants.policyOf(type);
-        final boolean isNullStored = TypeConformanceInvariants.POLICY_SENTINEL.equals(policy) || TypeConformanceInvariants.POLICY_BITMAP.equals(policy);
+        final boolean isNullStored = TypeConformanceInvariants.POLICY_SENTINEL.equals(policy);
         final ObjList<String> gaps = new ObjList<>();
         try {
             final String identityPair = type.label + " -> " + type.label + " (identity)";
@@ -1203,7 +1198,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         final ObjList<String> gaps = new ObjList<>();
         for (int i = 0, n = rows.size(); i < n; i++) {
             final TypeConformanceValues.Row value = rows.getQuick(i);
-            final String constant = isWritten(value) && !isNullReading(value) ? valueConstantOf(value, texts) : null;
+            final String constant = !isNullReading(value) ? valueConstantOf(value, texts) : null;
             if (constant == null || !constants.add(constant)) {
                 continue;
             }
@@ -1219,9 +1214,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
             final Set<String> expected = new TreeSet<>();
             for (int j = 0; j < n; j++) {
                 final TypeConformanceValues.Row row = rows.getQuick(j);
-                if (!isWritten(row)) {
-                    continue;
-                }
                 if (isNullReading(row)) {
                     if ("!=".equals(operator)) {
                         expected.add(row.label);
@@ -1262,8 +1254,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
      * {@code n} (groups A: NULL then the value, B: the value then NULL, C: NULL only), as every
      * existing type answers: {@code first} and {@code last} give the group's first and last row,
      * NULL included; {@code first_not_null} and {@code last_not_null} skip the rows that read as
-     * NULL and give NULL for a group of NULLs only. Under NONE the NULL rows are the value 0; under
-     * NOT_NULL they are not written, so group C does not exist. A column of a wider type (the
+     * NULL and give NULL for a group of NULLs only. Under NONE the NULL rows are the value 0. A
+     * column of a wider type (the
      * function of a wider type, reached through an implicit cast) holds the value widened by the
      * tier.
      */
@@ -1275,16 +1267,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         }
         final boolean isNotNull = "first_not_null".equals(name);
         final String policy = TypeConformanceInvariants.policyOf(type);
-        final boolean isNullWritten = !TypeConformanceInvariants.POLICY_NOT_NULL.equals(policy);
         // a NULL row of n holds NULL, or 0 under NONE
         final long[] nullValue = TypeConformanceInvariants.POLICY_NONE.equals(policy) ? new long[4] : null;
         final Map<String, Cell[]> cells = readCells(eng, ctx, path, mode, sql, 1, 2);
         final ObjList<String> gaps = new ObjList<>();
         final Set<String> groups = new TreeSet<>();
         for (int i = 0; i < GROUPS_N.length; i++) {
-            if (isNullWritten || !GROUPS_N_NULL[i]) {
-                groups.add(GROUPS_N[i]);
-            }
+            groups.add(GROUPS_N[i]);
         }
         if (!groups.equals(cells.keySet())) {
             gaps.add("groups " + cells.keySet() + ", expected " + groups);
@@ -1298,7 +1287,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
             long[] last = null;
             boolean hasFirst = false;
             for (int i = 0; i < GROUPS_N.length; i++) {
-                if (!group.equals(GROUPS_N[i]) || (GROUPS_N_NULL[i] && !isNullWritten)) {
+                if (!group.equals(GROUPS_N[i])) {
                     continue;
                 }
                 final long[] value = GROUPS_N_NULL[i] ? nullValue : valueRow.bits;
@@ -1331,9 +1320,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         // the distinct values as written: per value, its first row, its last row and its row count
         final ObjList<int[]> values = new ObjList<>();
         for (int i = 0, n = rows.size(); i < n; i++) {
-            if (!isWritten(rows.getQuick(i))) {
-                continue;
-            }
             int[] value = null;
             for (int c = 0, m = values.size(); c < m && value == null; c++) {
                 if (isSameKey(writtenValue(rows.getQuick(values.getQuick(c)[0])), writtenValue(rows.getQuick(i)))) {
@@ -1425,9 +1411,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         final Map<String, Integer> expected = new TreeMap<>();
         for (int i = 0, n = rows.size(); i < n; i++) {
             final TypeConformanceValues.Row left = rows.getQuick(i);
-            if (!isWritten(left)) {
-                continue;
-            }
             if (isOnLabel) {
                 expected.put(left.label, isInU(i) ? i : -1);
                 continue;
@@ -1498,9 +1481,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
             int previous = -1;
             for (int i = 0, n = rows.size(); i < n; i++) {
                 final TypeConformanceValues.Row row = rows.getQuick(i);
-                if (!isWritten(row)) {
-                    continue;
-                }
                 final Cell[] cell = cells.get(row.label);
                 if (cell == null) {
                     gaps.add(row.label + ": missing from the result");
@@ -1516,12 +1496,10 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         // the buckets: per bucket start in seconds, its first and last written row and its row count
         final Map<Long, int[]> buckets = new TreeMap<>();
         for (int i = 0, n = rows.size(); i < n; i++) {
-            if (isWritten(rows.getQuick(i))) {
-                final int[] bucket = buckets.computeIfAbsent((long) (i / 2 * 2), k -> new int[]{-1, -1, 0});
-                bucket[0] = bucket[0] < 0 ? i : bucket[0];
-                bucket[1] = i;
-                bucket[2]++;
-            }
+            final int[] bucket = buckets.computeIfAbsent((long) (i / 2 * 2), k -> new int[]{-1, -1, 0});
+            bucket[0] = bucket[0] < 0 ? i : bucket[0];
+            bucket[1] = i;
+            bucket[2]++;
         }
         final Map<Long, Cell[]> cells = new TreeMap<>();
         final Map<Long, Long> counts = new TreeMap<>();
@@ -1684,16 +1662,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         if (error != null) {
             throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": " + error);
         }
-        // the NULL row at 4s is refused under NOT_NULL, which leaves three seconds to sample
-        if (bits.size() < 3) {
-            throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": " + bits.size() + " sampled rows, expected 3 or 5");
+        if (bits.size() < 5) {
+            throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": " + bits.size() + " sampled rows, expected 5");
         }
         TypeConformanceInvariants.assertReadsBackAsWritten(type, low.label, path, mode, lowBits, bits.getQuick(0));
         TypeConformanceInvariants.assertReadsBackAsWritten(type, high.label, path, mode, highBits, bits.getQuick(2));
-        final boolean hasNullRow = bits.size() > 4;
         switch (name) {
             case "fill_null" -> {
-                for (int gap = 1; gap < bits.size() && hasNullRow; gap += 2) {
+                for (int gap = 1; gap < bits.size(); gap += 2) {
                     if (!texts.getQuick(4).equals(texts.getQuick(gap))) {
                         throw new AssertionError(TypeConformanceInvariants.context(type, "gap" + gap, path, mode)
                                 + ": the gap reads " + texts.getQuick(gap) + ", the NULL row " + texts.getQuick(4));
@@ -1702,19 +1678,15 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
             }
             case "fill_prev" -> {
                 TypeConformanceInvariants.assertReadsBackAsWritten(type, "gap1", path, mode, lowBits, bits.getQuick(1));
-                if (hasNullRow) {
-                    TypeConformanceInvariants.assertReadsBackAsWritten(type, "gap3", path, mode, highBits, bits.getQuick(3));
-                }
+                TypeConformanceInvariants.assertReadsBackAsWritten(type, "gap3", path, mode, highBits, bits.getQuick(3));
             }
             case "fill_value" -> {
                 TypeConformanceInvariants.assertReadsBackAsWritten(type, "gap1", path, mode, highBits, bits.getQuick(1));
-                if (hasNullRow) {
-                    TypeConformanceInvariants.assertReadsBackAsWritten(type, "gap3", path, mode, highBits, bits.getQuick(3));
-                }
+                TypeConformanceInvariants.assertReadsBackAsWritten(type, "gap3", path, mode, highBits, bits.getQuick(3));
             }
             default -> {
                 TypeConformanceInvariants.assertBetween(type, "gap1", path, mode, lowBits, bits.getQuick(1), highBits);
-                if (hasNullRow && TypeConformanceInvariants.POLICY_SENTINEL.equals(TypeConformanceInvariants.policyOf(type))
+                if (TypeConformanceInvariants.POLICY_SENTINEL.equals(TypeConformanceInvariants.policyOf(type))
                         && !texts.getQuick(4).equals(texts.getQuick(3))) {
                     throw new AssertionError(TypeConformanceInvariants.context(type, "gap3", path, mode)
                             + ": next to a NULL the gap must read as NULL, " + texts.getQuick(4) + ", but reads " + texts.getQuick(3));
@@ -1858,8 +1830,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         final String policy = TypeConformanceInvariants.policyOf(type);
         if (isSubsample) {
             final String refusal = switch (policy) {
-                case TypeConformanceInvariants.POLICY_SENTINEL, TypeConformanceInvariants.POLICY_BITMAP ->
-                        "must be set";
+                case TypeConformanceInvariants.POLICY_SENTINEL -> "must be set";
                 case TypeConformanceInvariants.POLICY_NONE -> "must be at least";
                 default -> "";
             };
@@ -1871,7 +1842,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         }
         final String expectedNull = switch (policy) {
             case TypeConformanceInvariants.POLICY_NONE -> selection(eng, ctx, sql.replace("<value>", "0"));
-            case TypeConformanceInvariants.POLICY_NOT_NULL -> nullValue;
             default -> "";
         };
         if (!expectedNull.equals(nullValue)) {
@@ -1903,11 +1873,11 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
     /**
      * Adds a gap when a cell does not hold what a row implies. {@code expected} is the value as
      * written, null for a row that reads as NULL: a column of the type holds the type's NULL as
-     * declared (the sentinel pattern under SENTINEL, as the NULL row reads under BITMAP), a column
+     * declared (the sentinel pattern under SENTINEL), a column
      * of another type that type's NULL. A missing value ({@code isMissing}: the missing side of an outer join, a NULL branch,
      * lag's first row, a NULL source) is the type's NULL: 0 under NONE in a column of the type
      * itself, as an existing type without NULL gives it, and the NULL of the column's type
-     * otherwise; under NOT_NULL it is not checked. A column of another type holds the value
+     * otherwise. A column of another type holds the value
      * widened by the tier.
      */
     private void addCellGap(
@@ -1923,9 +1893,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         long[] value = expected;
         if (isMissing) {
             final String policy = TypeConformanceInvariants.policyOf(type);
-            if (TypeConformanceInvariants.POLICY_NOT_NULL.equals(policy)) {
-                return;
-            }
             value = isOwnType && TypeConformanceInvariants.POLICY_NONE.equals(policy) ? new long[4] : null;
         }
         if (value == null) {
@@ -2095,9 +2062,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         final String pair = type.label + " -> " + other.label;
         final ObjList<String> labels = new ObjList<>();
         for (int i = 0, n = rows.size(); i < n; i++) {
-            if (isWritten(rows.getQuick(i))) {
-                labels.add(rows.getQuick(i).label);
-            }
+            labels.add(rows.getQuick(i).label);
         }
         final ObjList<Map<String, Outcome>> byCopier = insertEachRow(other.ddl, "t", labels, path, mode);
         final RelationKind kind = TypeConformanceInvariants.kindOf(other.columnType);
@@ -2198,7 +2163,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
 
     // whether a row of t is also in u, which holds the even rows
     private boolean isInU(int index) {
-        return index % 2 == 0 && isWritten(rows.getQuick(index));
+        return index % 2 == 0;
     }
 
     // whether a LONG lies in the range of the type's integer tier
@@ -2208,13 +2173,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
 
     /**
      * Whether a row reads as NULL, by the row as written and the declared NULL policy: the NULL row
-     * when the policy stores NULL (under NONE it is the value 0, under NOT_NULL it is not written),
-     * and under SENTINEL every row that holds the sentinel pattern, for a float tier every NaN.
+     * under SENTINEL (under NONE it is the value 0), and under SENTINEL every row that holds the
+     * sentinel pattern, for a float tier every NaN.
      */
     private boolean isNullReading(TypeConformanceValues.Row row) {
         final String policy = TypeConformanceInvariants.policyOf(type);
         if (row.isNull()) {
-            return TypeConformanceInvariants.POLICY_SENTINEL.equals(policy) || TypeConformanceInvariants.POLICY_BITMAP.equals(policy);
+            return TypeConformanceInvariants.POLICY_SENTINEL.equals(policy);
         }
         final long[] sentinel = sentinelBits();
         return TypeConformanceInvariants.POLICY_SENTINEL.equals(policy) && sentinel != null && row.bits != null
@@ -2227,11 +2192,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
             return a == b;
         }
         return TypeConformanceInvariants.isSameValue(TypeConformanceInvariants.kindOf(type.columnType), TypeConformanceInvariants.widthOf(type.columnType), a, b);
-    }
-
-    // whether t holds a row: every value row, and the NULL row unless the policy refuses NULL
-    private boolean isWritten(TypeConformanceValues.Row row) {
-        return !row.isNull() || !TypeConformanceInvariants.POLICY_NOT_NULL.equals(TypeConformanceInvariants.policyOf(type));
     }
 
     // how a NULL of an existing column type prints: a NULL literal cast to it

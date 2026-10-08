@@ -744,7 +744,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
     private void checkLaterAlter(String mode) throws Exception {
         final String path = "storage.alter";
         final String policy = TypeConformanceInvariants.policyOf(type);
-        final boolean isNullStored = TypeConformanceInvariants.POLICY_SENTINEL.equals(policy) || TypeConformanceInvariants.POLICY_BITMAP.equals(policy);
+        final boolean isNullStored = TypeConformanceInvariants.POLICY_SENTINEL.equals(policy);
         final ObjList<String> gaps = new ObjList<>();
         for (int t = 0, n = TypeConformanceTypes.ALL.size(); t < n; t++) {
             final TypeConformanceTypes.Entry target = TypeConformanceTypes.ALL.getQuick(t);
@@ -816,9 +816,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
      * type except an array can be one. Writing the rows again replaces k; rows at the same
      * timestamps with the next row's value replace k where the two values are one key, and add a
      * row where they are not. Two values are one key when their bits are equal; the NULL row is the
-     * sentinel-pattern row's key under SENTINEL, the zero row's under NONE, and a key of its own
-     * under BITMAP. Under NOT_NULL the NULL row is left out: writing it must fail, which invariant
-     * 2 checks on the other paths.
+     * sentinel-pattern row's key under SENTINEL and the zero row's under NONE.
      */
     private void checkLaterDedup(String mode) throws Exception {
         final String path = "storage.dedup";
@@ -830,14 +828,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                     + ": a persisted type that is no array is a dedup key, but CREATE refused it: " + oneLine(steps));
         }
         try {
-            final boolean isNotNull = TypeConformanceInvariants.POLICY_NOT_NULL.equals(TypeConformanceInvariants.policyOf(type));
-            final ObjList<TypeConformanceValues.Row> keyRows = new ObjList<>();
-            for (int i = 0, m = rows.size(); i < m; i++) {
-                if (!isNotNull || !rows.getQuick(i).isNull()) {
-                    keyRows.add(rows.getQuick(i));
-                }
-            }
-            // every key row writes: under NOT_NULL the NULL row is left out above
+            final ObjList<TypeConformanceValues.Row> keyRows = rows;
             final StringSink writeErrors = new StringSink();
             final int n = keyRows.size();
             TypeConformanceValues.writeRows(engine, sqlExecutionContext, table, keyRows, "", 0, 0, n, 1, true, writeErrors);
@@ -929,7 +920,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
         int expected = 0;
         for (int i = 0, n = rows.size(); i < n; i++) {
             final TypeConformanceValues.Row row = rows.getQuick(i);
-            boolean isLastOfKey = !(row.isNull() && TypeConformanceInvariants.POLICY_NOT_NULL.equals(TypeConformanceInvariants.policyOf(type)));
+            boolean isLastOfKey = true;
             for (int j = i + 1; j < n && isLastOfKey; j++) {
                 isLastOfKey = !isOneKey(row, rows.getQuick(j));
             }

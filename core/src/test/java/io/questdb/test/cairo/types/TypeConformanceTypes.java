@@ -135,8 +135,8 @@ public final class TypeConformanceTypes {
     /**
      * Parses one declaration line of {@link #LATER_TYPES_RESOURCE},
      * {@code tag | DDL | NULL policy | paths [| arithmetic tier [| refused sites]]}, into its six
-     * fields, trimmed; a field the line leaves out is empty. Every refused site must be one of
-     * {@code declarableSites}.
+     * fields, trimmed; a field the line leaves out is empty. The NULL policy must be one the kit
+     * knows, SENTINEL or NONE, and every refused site one of {@code declarableSites}.
      */
     static String[] parseLaterTypeLine(String line, Set<String> declarableSites) {
         final String[] parts = line.split("\\|", -1);
@@ -146,6 +146,10 @@ public final class TypeConformanceTypes {
         final String[] fields = new String[6];
         for (int i = 0; i < fields.length; i++) {
             fields[i] = i < parts.length ? parts[i].trim() : "";
+        }
+        if (!TypeConformanceInvariants.POLICY_SENTINEL.equals(fields[2]) && !TypeConformanceInvariants.POLICY_NONE.equals(fields[2])) {
+            throw new IllegalStateException("bad line in " + LATER_TYPES_RESOURCE + ": the kit knows the NULL policies SENTINEL and NONE, not "
+                    + fields[2] + "; a type with a NULL policy of its own adds its rules to TypeConformanceInvariants: " + line);
         }
         final ObjList<String> sites = splitSites(fields[5]);
         for (int i = 0, n = sites.size(); i < n; i++) {
@@ -266,8 +270,8 @@ public final class TypeConformanceTypes {
         @Nullable
         public final String laterPaths;
         /**
-         * For a type registered later: its NULL policy (SENTINEL, NONE, BITMAP or NOT_NULL), as
-         * the resource declares it; null for an existing type.
+         * For a type registered later: its NULL policy (SENTINEL or NONE), as the resource declares
+         * it; null for an existing type.
          */
         @Nullable
         public final String laterPolicy;

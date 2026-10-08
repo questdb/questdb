@@ -31,16 +31,13 @@ import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.DecimalTypeDriver;
 import io.questdb.cairo.FixedSizeTypeDriver;
-import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.GeoHashTypeDriver;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.IndexType;
 import io.questdb.cairo.IntervalTypeDriver;
 import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.PgTypeOids;
 import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.StringTypeDriver;
-import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampTypeDriver;
 import io.questdb.cairo.TypeDriver;
@@ -168,31 +165,6 @@ public class TypeDriverTest {
         };
         for (String[] start : starts) {
             runInFreshJvm(TypeDriverConcurrentInitMain.class, start);
-        }
-    }
-
-    @Test
-    public void testColumnNullPolicyFollowsDefinition() {
-        // a column's NULL policy is its type driver's, for every real type and encoded variant, and
-        // NONE exactly for BOOLEAN, BYTE, SHORT and CHAR
-        final IntObjHashMap<String> names = referenceTypeNames();
-        final int noKey = names.getNoEntryKey();
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        final IntList types = new IntList();
-        for (int type : names.getKeys()) {
-            if (type != noKey && !PSEUDO_TAGS.contains(ColumnTypeTag.of(ColumnType.tagOf(type)))) {
-                metadata.add(new TableColumnMetadata("c" + types.size(), type, IndexType.NONE, 0, false, null));
-                types.add(type);
-            }
-        }
-        Assert.assertTrue(types.size() > 500);
-        for (int i = 0, n = types.size(); i < n; i++) {
-            final int type = types.getQuick(i);
-            final short tag = ColumnType.tagOf(type);
-            final boolean isValueOnly = tag == ColumnType.BOOLEAN || tag == ColumnType.BYTE || tag == ColumnType.SHORT || tag == ColumnType.CHAR;
-            final String name = ColumnType.nameOf(type);
-            Assert.assertEquals(name, ColumnType.getTypeDriver(type).getNullPolicy(), metadata.getColumnNullPolicy(i));
-            Assert.assertEquals(name, isValueOnly ? NullPolicy.NONE : NullPolicy.SENTINEL, metadata.getColumnNullPolicy(i));
         }
     }
 

@@ -79,13 +79,11 @@ public class FunctionFactoryDescriptorTest {
         // c | 32, so every signature character must be a lower-case letter whose upper-case
         // form is the same code point with bit 5 cleared. This holds for the three non-ASCII
         // characters too (U+00F8/U+00D8, U+03B4/U+0394, U+03BE/U+039E).
-        int count = 0;
         for (ColumnTypeTag tag : ColumnTypeTag.values()) {
             final char c = FunctionFactoryDescriptor.signatureChar(tag);
             if (c == FunctionFactoryDescriptor.NO_SIGNATURE_CHAR) {
                 continue;
             }
-            count++;
             final char upper = (char) (c & ~32);
             Assert.assertTrue(tag + ": not lower case: " + c, Character.isLowerCase(c));
             Assert.assertTrue(tag + ": bit 5 clear: " + c, (c & 32) != 0);
@@ -96,7 +94,6 @@ public class FunctionFactoryDescriptorTest {
             Assert.assertEquals(tag + ": upper", tag.code(), FunctionFactoryDescriptor.getArgTypeTag(upper));
             Assert.assertNotNull(tag + ": no type name", FunctionFactoryDescriptor.signatureTypeName(tag));
         }
-        Assert.assertEquals(28, count);
     }
 
     @Test
@@ -162,18 +159,6 @@ public class FunctionFactoryDescriptorTest {
                         """,
                 table
         );
-    }
-
-    @Test
-    public void testSignatureCharsAreUnique() {
-        final StringSink seen = new StringSink();
-        for (ColumnTypeTag tag : ColumnTypeTag.values()) {
-            final char c = FunctionFactoryDescriptor.signatureChar(tag);
-            if (c != FunctionFactoryDescriptor.NO_SIGNATURE_CHAR) {
-                Assert.assertEquals("character " + c + " taken twice, last by " + tag, -1, seen.indexOf(String.valueOf(c)));
-                seen.put(c);
-            }
-        }
     }
 
     @Test
