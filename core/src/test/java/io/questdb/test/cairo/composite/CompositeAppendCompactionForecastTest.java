@@ -67,7 +67,10 @@ import org.junit.Test;
  *     thresholds independent of MOVE-TAIL's fragmentation trigger.</li>
  * </ul>
  * Focused MOVE-TAIL cases cover projected waste, the dead-space minimum, fragmented prefixes, loaded
- * backfill, single/block apply, dedup, pinned readers, indexed/variable columns and column tops.
+ * backfill, single/block apply, dedup, pinned readers, indexed/variable columns and column tops. The move runs
+ * inside the partition task ({@code O3PartitionJob.moveTailToFreshPartition}), off the same plan and dedup
+ * forecast the commit executes, so the tail pieces and the incoming rows are written ONCE into the sibling:
+ * the written-row expectations are the tail's live rows plus the rows this commit adds.
  */
 public class CompositeAppendCompactionForecastTest extends AbstractCairoTest {
 
@@ -180,7 +183,7 @@ public class CompositeAppendCompactionForecastTest extends AbstractCairoTest {
 
     @Test
     public void testMoveTailCrossesProjectedDeadSpaceMinimum() throws Exception {
-        assertMemoryLeak(() -> checkProjectedDeadSpaceMinimum(1_919, 170, 3));
+        assertMemoryLeak(() -> checkProjectedDeadSpaceMinimum(1_919, 90, 3));
     }
 
     @Test
@@ -201,7 +204,8 @@ public class CompositeAppendCompactionForecastTest extends AbstractCairoTest {
             final long writtenBefore = physicallyWrittenRows();
             execute("INSERT INTO x SELECT x + 480, timestamp_sequence('2024-01-01T00:06:50', 1_000_000L) FROM long_sequence(10)");
             drainWalQueue();
-            Assert.assertEquals(250, physicallyWrittenRows() - writtenBefore);
+            // The 120-row tail and the ten incoming rows, written once into the sibling.
+            Assert.assertEquals(130, physicallyWrittenRows() - writtenBefore);
             Assert.assertEquals(nameTxnBefore, nameTxnOfDay());
             assertQuery("SELECT count() c FROM x WHERE ts IN '2024-01-01'")
                     .noRandomAccess().expectSize().returns("c\n530\n");
@@ -228,7 +232,7 @@ public class CompositeAppendCompactionForecastTest extends AbstractCairoTest {
             Assert.assertEquals("an identical dedup merge must not trigger a tail copy", 0, physicallyWrittenRows() - writtenBefore);
             execute("INSERT INTO x SELECT x + 500, timestamp_sequence('2024-01-01T00:06:50', 1_000_000L) FROM long_sequence(10)");
             drainWalQueue();
-            Assert.assertEquals("only 40 copied and 40 surviving merged rows should be written", 80,
+            Assert.assertEquals("only the 40 surviving merged rows should be written, once", 40,
                     physicallyWrittenRows() - writtenBefore);
             assertQuery("SELECT count() c, sum(v) s FROM x WHERE ts IN '2024-01-01'")
                     .noRandomAccess().expectSize().returns("c\ts\n440\t99120\n");
@@ -236,7 +240,7 @@ public class CompositeAppendCompactionForecastTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testProjectedMergeBreachMovesFreshUntouchedPrefixBeforeWriting() throws Exception {
+    public void testProjectedMergeBreachMovesTailAndMergesIntoItInOnePass() throws Exception {
         assertMemoryLeak(() -> {
             configureTightWasteThresholds();
             letPreSplitCut();
@@ -252,7 +256,7 @@ public class CompositeAppendCompactionForecastTest extends AbstractCairoTest {
             final long writtenBefore = physicallyWrittenRows();
             execute("INSERT INTO x SELECT x + 480, timestamp_sequence('2024-01-01T00:06:50', 1_000_000L) FROM long_sequence(10)");
             drainWalQueue();
-            Assert.assertEquals("only the existing tail and its new merged image should be copied", 170,
+            Assert.assertEquals("only the merged image of the existing tail and the incoming rows should be written", 90,
                     physicallyWrittenRows() - writtenBefore);
             Assert.assertEquals("untouched prefix must keep its directory", nameTxnBefore, nameTxnOfDay());
             assertQuery("SELECT count() c, sum(v) s FROM x WHERE ts IN '2024-01-01'")
@@ -271,7 +275,7 @@ public class CompositeAppendCompactionForecastTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBlockMovesMultiplePartitionTailsBeforePublishingWorkers() throws Exception {
+    public void testBlockMovesMultiplePartitionTailsInOneCommit() throws Exception {
         assertMemoryLeak(() -> {
             configureTightWasteThresholds();
             letPreSplitCut();
@@ -301,7 +305,8 @@ public class CompositeAppendCompactionForecastTest extends AbstractCairoTest {
                         + "T00:06:50', 1_000_000L) FROM long_sequence(10)");
             }
             drainWalQueue();
-            Assert.assertEquals(340, physicallyWrittenRows() - writtenBefore);
+            // Two partitions, each writing its 80-row tail merged with its ten incoming rows once.
+            Assert.assertEquals(180, physicallyWrittenRows() - writtenBefore);
             try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
                 Assert.assertEquals(5, reader.getPartitionCount());
                 Assert.assertEquals(2, reader.getGeometry().getPieceCount(0));
@@ -619,7 +624,7 @@ public class CompositeAppendCompactionForecastTest extends AbstractCairoTest {
                         + "), 'new', timestamp_sequence('2024-01-01T00:06:50', 1_000_000L), 'new-column' FROM long_sequence(" + (10 / transactionCount) + ")");
             }
             drainWalQueue();
-            Assert.assertEquals(170, physicallyWrittenRows() - writtenBefore);
+            Assert.assertEquals(90, physicallyWrittenRows() - writtenBefore);
             try (TableReader reader = engine.getReader(token)) {
                 final int parent = dayPartitionIndex(reader);
                 final PartitionGeometry after = reader.getGeometry();

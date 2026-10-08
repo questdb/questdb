@@ -485,11 +485,39 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // Plain folders and sources already due for squash cannot take a discretionary fresh version.
             // Do not build a dedup index just to forecast a decision these paths cannot make.
             final boolean isPendingSquashSource = tableWriter.isPendingSquashSource(partitionIndex);
-            if (txReader.isPartitionComposite(partitionIndex) && !isPendingSquashSource) {
+            final boolean isCompositeSource = txReader.isPartitionComposite(partitionIndex) && !isPendingSquashSource;
+            if (isCompositeSource) {
                 forecastCompositePlan(pathToTable, partitionIndex, geometry, ctx.bounds, plan,
                         sortedTimestampsAddr, oooColumns, tableWriter, dedupColSinkAddr);
             }
-            if (shouldAssembleFreshPartitionVersion(geometry, txReader, tableWriter, partitionIndex, ctx.bounds, plan, isPendingSquashSource)) {
+            // MOVE-TAIL, decided here off the plan this task already built: when the plan leaves the folder past
+            // the compaction thresholds and an untouched cold prefix is worth keeping, the prefix stays in this
+            // directory under a shorter geometry and the tail plus this commit's rows are written ONCE into a
+            // fresh sibling partition. A valid move wins over a discretionary fresh-version rewrite; only the
+            // prefix's republish needing a geometry generation stands in its way, in which case the fresh
+            // version below is the reclaim.
+            final int moveTailCut = isCompositeSource ? tableWriter.moveTailCut(partitionIndex, ctx.bounds, plan) : 0;
+            if (moveTailCut > 0 && geometry.hasGenerationForNextPublish(partitionIndex, moveTailCut)) {
+                moveTailToFreshPartition(
+                        pathToTable,
+                        partitionIndex,
+                        partitionTimestamp,
+                        srcNameTxn,
+                        oooColumns,
+                        srcOooMax,
+                        sortedTimestampsAddr,
+                        tableWriter,
+                        dedupColSinkAddr,
+                        ctx.bounds,
+                        plan,
+                        moveTailCut,
+                        ctx,
+                        partitionUpdateSinkAddr,
+                        oldPartitionSize
+                );
+                return;
+            }
+            if (shouldAssembleFreshPartitionVersion(geometry, txReader, tableWriter, partitionIndex, plan, isPendingSquashSource)) {
                 assembleFreshPartitionVersion(
                         pathToTable,
                         partitionTimestamp,
@@ -1323,11 +1351,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * every existing piece plus this commit's rows into ONE fresh directory in timestamp order - merging and compacting
      * in the one pass, off the same plan {@link O3CompositeMergeStrategy} already produced.
      *
-     * @param hasPreloadedSrcColumnVersions true when the caller has already loaded {@code ctx.srcColumnVersions} with
-     *                                      the view that describes {@code srcNameTxn}'s directory. The live {@code
-     *                                      ColumnVersionWriter} describes the partition's COMMITTED directory, so a
-     *                                      caller reading anything else - a task-local staging image, whose tops are
-     *                                      its own - has to load that view itself and pass true here.
+     * @param hasPreloadedSrcColumnVersions see {@link #writeFreshPartitionDirectory}
      */
     private static void assembleFreshPartitionVersion(
             Path pathToTable,
@@ -1347,13 +1371,269 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long o3TimestampLo
     ) {
         final TableWriterMetadata metadata = (TableWriterMetadata) tableWriter.getMetadata();
-        final FrameFactory frameFactory = tableWriter.getFrameFactory();
-        final int commitMode = tableWriter.getConfiguration().getCommitMode();
-        final long upcomingTableTxn = tableWriter.getTxn() + 1;
-        final long nowMicros = tableWriter.getConfiguration().getMicrosecondClock().getTicks();
         // The CURRENT (pre-increment) txn names both the fresh directory and, once the sink is consumed,
         // the attachedPartitions entry pointing at it.
         final long newNameTxn = tableWriter.getTxn();
+        final long firstTsLo = getFirstActionTimestamp(bounds, plan, 0, sortedTimestampsAddr);
+        final long e = writeFreshPartitionDirectory(
+                pathToTable,
+                partitionTimestamp,
+                srcNameTxn,
+                partitionTimestamp,
+                newNameTxn,
+                oooColumns,
+                srcOooMax,
+                sortedTimestampsAddr,
+                tableWriter,
+                dedupColSinkAddr,
+                bounds,
+                plan,
+                0,
+                ctx,
+                hasPreloadedSrcColumnVersions
+        );
+
+        LOG.info().$("assembled fresh composite partition version [table=").$(tableWriter.getTableToken())
+                .$(", ts=").$ts(ColumnType.getTimestampDriver(metadata.getTimestampType()), partitionTimestamp)
+                .$(", srcNameTxn=").$(srcNameTxn)
+                .$(", newNameTxn=").$(newNameTxn)
+                .$(", rows=").$(e)
+                .I$();
+
+        Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
+        Unsafe.putLong(partitionUpdateSinkAddr + Long.BYTES, e > 0 ? firstTsLo : o3TimestampLo);
+        Unsafe.putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, e);
+        Unsafe.putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
+        // partitionMutates=1: the same signal a classic O3 rewrite publishes, so
+        // o3ConsumePartitionUpdateSink bumps the name txn, queues srcNameTxn for purge and reseals.
+        Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, Numbers.encodeLowHighInts(1, 0));
+        Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0);
+        Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1);
+        Unsafe.putLong(partitionUpdateSinkAddr + 8 * Long.BYTES, TableWriter.NO_GEOMETRY_REF);
+        // Publishes ctx.columnTopAfter; -1 means no change.
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            Unsafe.putLong(partitionUpdateSinkAddr + TableWriter.PARTITION_SINK_COL_TOP_OFFSET + (long) i * Long.BYTES, ctx.columnTopAfter[i]);
+        }
+    }
+
+    /**
+     * The timestamp the first row of actions {@code [actionLo, n)} lands on, or {@link Numbers#LONG_NULL} when they
+     * write nothing. Actions run in timestamp order, so it is the first non-DROP action's floor: its piece's {@code
+     * tsLo}, its O3 slice's first timestamp, or for a MERGE - whose image spans both sides - the lower of the two.
+     */
+    private static long getFirstActionTimestamp(LongList bounds, O3CompositeMergeStrategy.Plan plan, int actionLo, long sortedTimestampsAddr) {
+        for (int i = actionLo, n = plan.actions.size(); i < n; i++) {
+            final O3CompositeMergeStrategy.Action action = plan.actions.getQuick(i);
+            switch (action.type) {
+                case APPEND, KEEP -> {
+                    return O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex);
+                }
+                case NEW_PIECE -> {
+                    return getTimestampIndexValue(sortedTimestampsAddr, action.o3Lo);
+                }
+                case MERGE -> {
+                    return Math.min(
+                            O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex),
+                            getTimestampIndexValue(sortedTimestampsAddr, action.o3Lo)
+                    );
+                }
+                case DROP -> {
+                    // Writes nothing.
+                }
+            }
+        }
+        return Numbers.LONG_NULL;
+    }
+
+    /**
+     * MOVE-TAIL (PARTITION_COMPACTION.md Sec.5), inside the partition task: leaves the clean front of the directory
+     * untouched and writes the tail pieces {@code [cut, n)} together with this commit's rows ONCE into a fresh sibling
+     * partition, in timestamp order. The prefix keeps its directory, name txn and E under a geometry holding pieces
+     * {@code [0, cut)} alone; the sink reports the result as a split, which {@code o3ConsumePartitionUpdateSink}
+     * inserts the sibling for and applies the prefix's new size and geometry reference to.
+     * <p>
+     * {@code cut} comes from {@link O3CompositeMergeStrategy#moveTailCut}, which guarantees the prefix is the plan's
+     * leading KEEP actions, every prefix piece ends below everything this commit writes, and the last prefix piece
+     * ends strictly below the first tail piece - so the two partitions never share a timestamp.
+     * <p>
+     * Nothing is published until the writer consumes the sink, so a failure part-way removes the sibling's directory
+     * and leaves the prefix exactly as it was.
+     */
+    private static void moveTailToFreshPartition(
+            Path pathToTable,
+            int partitionIndex,
+            long partitionTimestamp,
+            long srcNameTxn,
+            ReadOnlyObjList<? extends MemoryCR> oooColumns,
+            long srcOooMax,
+            long sortedTimestampsAddr,
+            TableWriter tableWriter,
+            long dedupColSinkAddr,
+            LongList bounds,
+            O3CompositeMergeStrategy.Plan plan,
+            int cut,
+            O3CompositeContext ctx,
+            long partitionUpdateSinkAddr,
+            long oldPartitionSize
+    ) {
+        final TableWriterMetadata metadata = (TableWriterMetadata) tableWriter.getMetadata();
+        final PartitionGeometry geometry = ctx.geometry;
+        final FilesFacade ff = tableWriter.getFilesFacade();
+        // The sibling's floor: the first timestamp the tail actions write. Above the last prefix piece by
+        // moveTailCut's construction, and the sink consumer names the sibling's directory with the current txn.
+        final long tailPartitionTimestamp = getFirstActionTimestamp(bounds, plan, cut, sortedTimestampsAddr);
+        final long tailNameTxn = tableWriter.getTxn();
+        assert tailPartitionTimestamp > partitionTimestamp
+                && tailPartitionTimestamp > O3CompositeMergeStrategy.getTsHi(bounds, cut - 1);
+        final long e = geometry.getE(partitionIndex);
+        long prefixRows = 0;
+        for (int p = 0; p < cut; p++) {
+            prefixRows += O3CompositeMergeStrategy.getRowCount(bounds, p);
+        }
+
+        final long tailRows;
+        final long geometryRef;
+        boolean published = false;
+        try {
+            tailRows = writeFreshPartitionDirectory(
+                    pathToTable,
+                    partitionTimestamp,
+                    srcNameTxn,
+                    tailPartitionTimestamp,
+                    tailNameTxn,
+                    oooColumns,
+                    srcOooMax,
+                    sortedTimestampsAddr,
+                    tableWriter,
+                    dedupColSinkAddr,
+                    bounds,
+                    plan,
+                    cut,
+                    ctx,
+                    false
+            );
+
+            // The prefix keeps its name txn, E and actual file ranges, holes and nonzero offsets included.
+            ctx.pieces.clear();
+            for (int p = 0; p < cut; p++) {
+                addNewPiece(
+                        ctx.pieces,
+                        O3CompositeMergeStrategy.getTsLo(bounds, p),
+                        O3CompositeMergeStrategy.getTsHi(bounds, p),
+                        O3CompositeMergeStrategy.getRowOffset(bounds, p),
+                        O3CompositeMergeStrategy.getRowCount(bounds, p),
+                        O3CompositeMergeStrategy.getWriterTxn(bounds, p),
+                        O3CompositeMergeStrategy.getLastWriteMicros(bounds, p)
+                );
+            }
+            foldAdjacentPieces(ctx.pieces);
+            geometry.beginUpdate(partitionIndex);
+            for (int i = 0, n = ctx.pieces.size(); i < n; i += PIECES_STRIDE) {
+                geometry.addPiece(
+                        ctx.pieces.getQuick(i),
+                        ctx.pieces.getQuick(i + 1),
+                        ctx.pieces.getQuick(i + 2),
+                        ctx.pieces.getQuick(i + 3),
+                        ctx.pieces.getQuick(i + 4),
+                        ctx.pieces.getQuick(i + 5)
+                );
+            }
+            geometry.commitUpdate(partitionIndex, e);
+            // E must not move: assert what commitUpdate's own max() already enforces, defensively.
+            assert geometry.getE(partitionIndex) == e;
+            geometryRef = geometry.publish(
+                    partitionIndex,
+                    tableWriter.getTxn() + 1,
+                    tableWriter.getCompositePartitionSeqTxn(),
+                    tableWriter.getConfiguration().getMicrosecondClock().getTicks(),
+                    tableWriter.getConfiguration().getCommitMode()
+            );
+            published = true;
+        } finally {
+            if (!published) {
+                final Path tailPath = Path.getThreadLocal(pathToTable);
+                setPathForNativePartition(
+                        tailPath,
+                        metadata.getTimestampType(),
+                        tableWriter.getPartitionBy(),
+                        tailPartitionTimestamp,
+                        tailNameTxn
+                );
+                // Critical: the retry of this commit names its sibling the same way, and would adopt the leftover.
+                if (ff.exists(tailPath.slash().$()) && !ff.rmdir(tailPath, false)) {
+                    LOG.critical().$("could not remove the moved tail's directory [path=").$(tailPath).$(", errno=").$(ff.errno()).I$();
+                }
+            }
+        }
+
+        final Path prefixDir = Path.getThreadLocal(pathToTable);
+        setPathForNativePartition(prefixDir, metadata.getTimestampType(), tableWriter.getPartitionBy(), partitionTimestamp, srcNameTxn);
+        LOG.info().$("moved composite tail to a fresh partition [table=").$(tableWriter.getTableToken())
+                .$(", dir=").$substr(tableWriter.getPathRootSize(), prefixDir)
+                .$(", tailTs=").$ts(ColumnType.getTimestampDriver(metadata.getTimestampType()), tailPartitionTimestamp)
+                .$(", tailNameTxn=").$(tailNameTxn)
+                .$(", tailRows=").$(tailRows)
+                .$(", prefixRows=").$(prefixRows)
+                .$(", deadRows=").$(e - prefixRows)
+                .$(", cutPiece=").$(cut).$('/').$(bounds.size() / O3CompositeMergeStrategy.LONGS_PER_BOUND)
+                .I$();
+
+        // A split, the way the classic O3 split reports one: slot 0 names the sibling, slot 2 is the prefix's new
+        // size and slot 5 the sibling's. The prefix's own files are untouched, so slot 6 - the partition whose
+        // posting indexes are resealed and whose column versions seed the sibling's - names the sibling too: it
+        // was written with the table's default column name txns, like every fresh directory, and the prefix's
+        // index covers physical rows that have not moved.
+        Unsafe.putLong(partitionUpdateSinkAddr, tailPartitionTimestamp);
+        Unsafe.putLong(partitionUpdateSinkAddr + Long.BYTES, O3CompositeMergeStrategy.getTsLo(bounds, 0));
+        Unsafe.putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, prefixRows);
+        Unsafe.putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
+        Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, Numbers.encodeLowHighInts(0, COVERING_INDEX_REBUILD));
+        Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, tailRows);
+        Unsafe.putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, tailPartitionTimestamp);
+        Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1);
+        Unsafe.putLong(partitionUpdateSinkAddr + 8 * Long.BYTES, geometryRef);
+        // The sibling's column tops, from ctx's sink; -1 means the column was not written, which the writer
+        // records as a top of 0 on a split.
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            Unsafe.putLong(partitionUpdateSinkAddr + TableWriter.PARTITION_SINK_COL_TOP_OFFSET + (long) i * Long.BYTES, ctx.columnTopAfter[i]);
+        }
+    }
+
+    /**
+     * Writes actions {@code [actionLo, n)} of the plan into ONE fresh directory at {@code dstPartitionTimestamp} under
+     * {@code dstNameTxn}, in timestamp order: pieces copied in, this commit's rows merged or appended, off the same
+     * plan {@link O3CompositeMergeStrategy} produced. The result is a plain directory holding exactly the rows written,
+     * with no dead rows and no {@code _geometry} file. Its column tops are reported through {@code ctx}, whose {@code
+     * columnTopAfter} the caller publishes through the partition-update sink.
+     *
+     * @param hasPreloadedSrcColumnVersions true when the caller has already loaded {@code ctx.srcColumnVersions} with
+     *                                      the view that describes {@code srcNameTxn}'s directory. The live {@code
+     *                                      ColumnVersionWriter} describes the partition's COMMITTED directory, so a
+     *                                      caller reading anything else - a task-local staging image, whose tops are
+     *                                      its own - has to load that view itself and pass true here.
+     * @return the rows the directory holds
+     */
+    private static long writeFreshPartitionDirectory(
+            Path pathToTable,
+            long partitionTimestamp,
+            long srcNameTxn,
+            long dstPartitionTimestamp,
+            long dstNameTxn,
+            ReadOnlyObjList<? extends MemoryCR> oooColumns,
+            long srcOooMax,
+            long sortedTimestampsAddr,
+            TableWriter tableWriter,
+            long dedupColSinkAddr,
+            LongList bounds,
+            O3CompositeMergeStrategy.Plan plan,
+            int actionLo,
+            O3CompositeContext ctx,
+            boolean hasPreloadedSrcColumnVersions
+    ) {
+        final TableWriterMetadata metadata = (TableWriterMetadata) tableWriter.getMetadata();
+        final FrameFactory frameFactory = tableWriter.getFrameFactory();
+        final int commitMode = tableWriter.getConfiguration().getCommitMode();
+        final long upcomingTableTxn = tableWriter.getTxn() + 1;
 
         // Owned by ctx rather than Path.getThreadLocal(), because this reference has to survive every
         // FrameAlgebra call below - see O3CompositeContext#srcPath.
@@ -1363,18 +1643,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         );
 
         long e = 0;
-        long firstTsLo = Numbers.LONG_NULL;
         // -1 until some action reports a column-top change through target's sink; read by
         // TableWriter.updateO3ColumnTops via the partition-update sink once every action below has run.
-        final int columnCount = metadata.getColumnCount();
-        ctx.ofColumnCount(columnCount);
-        ctx.sinkPartitionTimestamp = partitionTimestamp;
+        ctx.ofColumnCount(metadata.getColumnCount());
+        ctx.sinkPartitionTimestamp = dstPartitionTimestamp;
         // Scoped, not resource-managed: dstPath belongs to ctx and outlives this call - see
         // O3CompositeContext#dstPath - so the block only keeps the name from leaking past its use.
         {
             final Path dstPath = ctx.dstPath.of(pathToTable);
             TableUtils.setPathForNativePartition(
-                    dstPath, metadata.getTimestampType(), tableWriter.getPartitionBy(), partitionTimestamp, newNameTxn
+                    dstPath, metadata.getTimestampType(), tableWriter.getPartitionBy(), dstPartitionTimestamp, dstNameTxn
             );
             createDirsOrFail(tableWriter.getFilesFacade(), dstPath, tableWriter.getConfiguration().getMkDirMode());
 
@@ -1392,7 +1670,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 );
             }
             try (
-                    Frame target = frameFactory.openRW(dstPath, partitionTimestamp, metadata, ctx.transientVersions, ctx, 0);
+                    Frame target = frameFactory.openRW(dstPath, dstPartitionTimestamp, metadata, ctx.transientVersions, ctx, 0);
                     Frame o3 = frameFactory.openROFromMemoryColumns(oooColumns, metadata, srcOooMax, sortedTimestampsAddr);
                     Frame source = frameFactory.openRO(srcPath, partitionTimestamp, metadata, ctx.srcColumnVersions, srcExtent)
             ) {
@@ -1405,7 +1683,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 long eMax = 0;
                 ctx.o3Ranges.clear();
                 ctx.pieceRanges.clear();
-                for (int i = 0, actionCount = actions.size(); i < actionCount; i++) {
+                for (int i = actionLo, actionCount = actions.size(); i < actionCount; i++) {
                     final O3CompositeMergeStrategy.Action action = actions.getQuick(i);
                     switch (action.type) {
                         case APPEND -> {
@@ -1438,7 +1716,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
                 target.reserve(eMax, o3, ctx.o3Ranges, source, ctx.pieceRanges);
-                for (int i = 0, actionCount = actions.size(); i < actionCount; i++) {
+                for (int i = actionLo, actionCount = actions.size(); i < actionCount; i++) {
                     final O3CompositeMergeStrategy.Action action = actions.getQuick(i);
                     final long o3Rows = action.getO3RowCount();
                     switch (action.type) {
@@ -1448,9 +1726,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             final long pieceRows = O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
                             final long pieceLo = O3CompositeMergeStrategy.getRowOffset(bounds, action.pieceIndex);
                             final long pieceHi = pieceLo + pieceRows;
-                            if (firstTsLo == Numbers.LONG_NULL) {
-                                firstTsLo = O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex);
-                            }
                             source.shift(pieceLo, pieceHi);
                             FrameAlgebra.append(target, source, pieceLo, pieceHi, upcomingTableTxn, commitMode);
                             tableWriter.addPhysicallyWrittenRows(pieceRows);
@@ -1468,9 +1743,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             final long pieceRows = O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
                             final long pieceLo = O3CompositeMergeStrategy.getRowOffset(bounds, action.pieceIndex);
                             final long pieceHi = pieceLo + pieceRows;
-                            if (firstTsLo == Numbers.LONG_NULL) {
-                                firstTsLo = O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex);
-                            }
                             // Unlike executeCompositePlan's KEEP, every piece has to be copied in, not
                             // just the ones this commit's rows touch.
                             source.shift(pieceLo, pieceHi);
@@ -1479,9 +1751,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             e += pieceRows;
                         }
                         case NEW_PIECE -> {
-                            if (firstTsLo == Numbers.LONG_NULL) {
-                                firstTsLo = getTimestampIndexValue(sortedTimestampsAddr, action.o3Lo);
-                            }
                             FrameAlgebra.append(target, o3, action.o3Lo, action.o3Hi + 1, upcomingTableTxn, commitMode);
                             tableWriter.addPhysicallyWrittenRows(o3Rows);
                             e += o3Rows;
@@ -1490,13 +1759,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             final long pieceRows = O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
                             final long pieceLo = O3CompositeMergeStrategy.getRowOffset(bounds, action.pieceIndex);
                             final long pieceHi = pieceLo + pieceRows;
-                            if (firstTsLo == Numbers.LONG_NULL) {
-                                // The merged image spans both sides, so the o3 slice can start below the piece.
-                                firstTsLo = Math.min(
-                                        O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex),
-                                        getTimestampIndexValue(sortedTimestampsAddr, action.o3Lo)
-                                );
-                            }
                             final long maxMergeRows = pieceRows + o3Rows;
                             long mergeRows = maxMergeRows;
                             // The forecast's dedup index, when it built one, is the index this merge would build:
@@ -1583,27 +1845,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
         }
 
-        LOG.info().$("assembled fresh composite partition version [table=").$(tableWriter.getTableToken())
-                .$(", ts=").$ts(ColumnType.getTimestampDriver(metadata.getTimestampType()), partitionTimestamp)
-                .$(", srcNameTxn=").$(srcNameTxn)
-                .$(", newNameTxn=").$(newNameTxn)
-                .$(", rows=").$(e)
-                .I$();
-
-        Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
-        Unsafe.putLong(partitionUpdateSinkAddr + Long.BYTES, e > 0 ? firstTsLo : o3TimestampLo);
-        Unsafe.putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, e);
-        Unsafe.putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
-        // partitionMutates=1: the same signal a classic O3 rewrite publishes, so
-        // o3ConsumePartitionUpdateSink bumps the name txn, queues srcNameTxn for purge and reseals.
-        Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, Numbers.encodeLowHighInts(1, 0));
-        Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0);
-        Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1);
-        Unsafe.putLong(partitionUpdateSinkAddr + 8 * Long.BYTES, TableWriter.NO_GEOMETRY_REF);
-        // Publishes ctx.columnTopAfter; -1 means no change.
-        for (int i = 0; i < columnCount; i++) {
-            Unsafe.putLong(partitionUpdateSinkAddr + TableWriter.PARTITION_SINK_COL_TOP_OFFSET + (long) i * Long.BYTES, ctx.columnTopAfter[i]);
-        }
+        return e;
     }
 
     /**
@@ -1615,7 +1857,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             TxReader txReader,
             TableWriter tableWriter,
             int partitionIndex,
-            LongList bounds,
             O3CompositeMergeStrategy.Plan plan,
             boolean isPendingSquashSource
     ) {
@@ -1642,16 +1883,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         if (!txReader.isPartitionComposite(partitionIndex) || isPendingSquashSource) {
             return false;
         }
-        if (!tableWriter.wouldBreachCompactionThresholds(partitionIndex, plan)) {
-            return false;
-        }
-        if (tableWriter.wouldMoveTailSucceed(partitionIndex, bounds, plan)) {
-            LOG.info().$("leaving compaction breach for MOVE-TAIL [table=").$(tableWriter.getTableToken())
-                    .$(", partitionIndex=").$(partitionIndex)
-                    .I$();
-            return false;
-        }
-        return true;
+        return tableWriter.wouldBreachCompactionThresholds(partitionIndex, plan);
     }
 
     /**

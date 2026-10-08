@@ -45,9 +45,11 @@ performance benefit still needs a matched benchmark.
 5. Updates `minSplitPartitionTimestamp`, so ordinary split squash finds the sibling.
 6. Maintains column versions, indexes, counters and active-partition bookkeeping.
 
-Keep that mechanism and its writer-side execution/publication. Keep the existing
-split-count and squash policy. No new background job, physical-size cap, parking
-delay, or separate split executor is part of this change.
+Keep that mechanism for housekeeping. For the ingestion path, the partition task
+itself executes the move - see "Integrate with the current forecast and squash". Keep
+the existing squash policy; there is no split gate (`COMPACTION_PRESSURE_AND_SPLITS.md`).
+No new background job, physical-size cap, parking delay, or separate split executor is
+part of this change.
 
 ## Criteria changes
 
@@ -126,17 +128,34 @@ split algorithm.
 
 ## Integrate with the current forecast and squash
 
-Let the existing writer-side MOVE-TAIL path act on the forecast before applying the
-affected block, then rebuild routing/planning against the resulting sibling layout.
-Do not commit a split from an O3 worker while other partition tasks are in flight.
-The single-transaction apply path must get the same eligibility decision as the
-multi-transaction block path.
+The partition task decides and executes the move
+(`O3PartitionJob.processCompositePartition` -> `moveTailToFreshPartition`), off the
+one plan it already built for the commit: the ts-column map, clustering, pre-split cuts,
+actions and the dedup forecast are computed once per partition per commit, and each
+MERGE's dedup index is built once and reused by execution. The writer does no work
+before the block: `TableWriter.moveTailCut(partitionIndex, bounds, plan)` is the
+decision, read-only on the writer, with the lookahead floor
+(`o3MoveTailFutureFloor`) computed once per block before the tasks are dispatched.
 
-Align `wouldMoveTailSucceed` with the mover's new prefix and size tests; its current
-piece-0-at-offset-0 shortcut no longer describes eligibility. Do not promise a move
-that the writer cannot execute, and do not let a discretionary fresh-version
-forecast pre-empt a valid MOVE-TAIL. Preserve mandatory correctness fallbacks such
-as geometry-generation exhaustion.
+The task writes the tail pieces `[cut, n)` together with the commit's rows ONCE into
+a fresh sibling directory at the first tail timestamp, under the current txn - KEEP and
+APPEND copy, MERGE with the forecast's index, NEW_PIECE append, in timestamp order, so
+the sibling is a plain directory with no dead rows. The prefix pieces `[0, cut)` are
+folded and republished on the original directory under its own name txn and `E`. The
+sink reports a split exactly as the classic O3 split does (the sibling's timestamp and
+size, the prefix's new size and geometry reference), and `o3ConsumePartitionUpdateSink`
+inserts the sibling, applies the prefix's size and reference, retires the prefix's old
+geometry generation and lowers `minSplitPartitionTimestamp`. The sibling's posting
+indexes are sealed from its data; the prefix's files are untouched, so its indexes are
+not resealed. Nothing is published until the writer consumes the sink: a failure
+part-way removes the sibling's directory and leaves the prefix as it was. Several
+partitions of one block may each move their tail; each inserts its own sibling.
+
+A valid MOVE-TAIL wins over a discretionary fresh-version rewrite. The one mandatory
+fallback ahead of it is geometry-generation exhaustion: the prefix's republish needs a
+generation (`hasGenerationForNextPublish(partitionIndex, cut)`), and without one the
+commit assembles a fresh version instead. Touching-dedup partitions take the staging
+path before either decision.
 
 After the move, incoming data goes into the small tail. Later threshold breaches
 repeat the same operation. Existing squash folds eligible older siblings while

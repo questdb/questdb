@@ -67,7 +67,6 @@ import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffCursor;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
 import io.questdb.cairo.wal.TableWriterPressureControl;
-import io.questdb.cairo.wal.WalTxnClusterer;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WriterRowUtils;
@@ -250,9 +249,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final RingQueue<TableWriterTask> commandQueue;
     private final SCSequence commandSubSeq;
     private final LongList compactionForecastBounds = new LongList();
-    private final WalTxnClusterer compactionForecastClusterer = new WalTxnClusterer();
-    private final LongList compactionForecastCuts = new LongList();
-    private final O3CompositeMergeStrategy.Plan compactionForecastPlan = new O3CompositeMergeStrategy.Plan();
     // Scratch for foldContiguousPieces: 4 longs per piece (tsLo, tsHi, rowOffset, rowCount), snapshotted
     // once per fold so the plan and the rebuild below it cannot observe each other's half-finished state.
     private final LongList compactionPieceScratch = new LongList();
@@ -469,6 +465,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // The last partition's in-place append sink block when that append left its covering posting columns
     // for the seal sweep to publish; 0 otherwise. Writer thread only, within one processO3Block call.
     private long deferredCoveringSinkAddr;
+    // The lowest timestamp the transactions queued behind the block being applied will write, or Long.MAX_VALUE;
+    // a MOVE-TAIL's prefix has to end below it. Set once per block, before its partition tasks run.
+    private long o3MoveTailFutureFloor = Long.MAX_VALUE;
     // Max timestamp of committed data left on disk by o3MoveUncommitted() that is NOT part of the
     // sorted O3 batch (set only when uncommitted rows span more than the active partition).
     private long o3MoveUncommittedMaxTimestamp = Long.MIN_VALUE;
@@ -9898,33 +9897,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return PartitionCompactionPolicy.isMakePlainShape(txWriter, getGeometry(), partitionIndex);
     }
 
-    private boolean isMoveTailForecastRequired(PartitionGeometry geometry, int index, long incomingLo, long incomingRows) {
-        final long extent = geometry.getE(index);
-        final long threshold = getPartitionO3SplitThreshold();
-        // A normal plan cannot retire more than the entire existing extent. Avoid mapping even the
-        // timestamp column for folders which cannot reach the dead-space minimum.
-        if (extent <= threshold) {
-            return false;
-        }
-        final int pieceCount = geometry.getPieceCount(index);
-        final int last = pieceCount - 1;
-        final boolean isTailOwner = last >= 0
-                && geometry.getPieceRowOffset(index, last) + geometry.getPieceRowCount(index, last) == extent;
-        final long lastHi = last >= 0 ? geometry.getPieceTimestampHi(index, last) : Numbers.LONG_NULL;
-        if (!isCommitDedupMode() && lastHi != Numbers.LONG_NULL
-                && (incomingLo > lastHi || (incomingLo == lastHi
-                && (isTailOwner || geometry.getPieceTimestampLo(index, last) < lastHi)))) {
-            // APPEND or a NEW_PIECE above the last piece retires no rows. Coalescing can only lower
-            // this piece-count upper bound.
-            final long liveRows = txWriter.getPartitionSize(index);
-            return O3CompositeMergeStrategy.isMoveTailTriggered(liveRows + incomingRows,
-                    extent - liveRows, pieceCount + (isTailOwner ? 0 : 1), threshold,
-                    configuration.getPartitionCompactionMoveTailDeadRowsPercent(),
-                    configuration.getPartitionCompactionMoveTailPieceThreshold());
-        }
-        return true;
-    }
-
     /**
      * Checks whether a partition already has a sealed posting index for the
      * given column. The v2 .pk chain has at least one published entry
@@ -10432,59 +10404,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ff.close(auxFd);
                 }
             }
-        }
-    }
-
-    /**
-     * Forecasts and moves tails on the writer before any partition task starts.
-     */
-    private void compactAheadOfO3(long sortedTimestampsAddr, long rowLo, long rowHi) {
-        if (!isMergeAppendTable() || !PartitionBy.isPartitioned(partitionBy)
-                || compositePartitionCount == 0 || txWriter.getLagRowCount() > 0 || isCommitReplaceMode()) {
-            return;
-        }
-        final long futureFloor = getMoveTailFutureFloor();
-        final long savedWalApplySeqTxn = walApplySeqTxn;
-        final long dedupSink = dedupColumnCommitAddresses != null ? dedupColumnCommitAddresses.allocateBlock() : 0;
-        walApplySeqTxn = -1;
-        try {
-            long lo = rowLo;
-            while (lo < rowHi) {
-                final long incomingLo = getTimestampIndexValue(sortedTimestampsAddr, lo);
-                final long ceil = txWriter.getCurrentPartitionMaxTimestamp(incomingLo);
-                final long hi = O3CompositeMergeStrategy.lastAtOrBelow(sortedTimestampsAddr, lo, rowHi - 1, ceil);
-                final int index = txWriter.getPartitionIndex(incomingLo);
-                if (index >= 0 && txWriter.isPartitionComposite(index) && !txWriter.isPartitionReadOnly(index)) {
-                    final PartitionGeometry geometry = getGeometry();
-                    if (isMoveTailForecastRequired(geometry, index, incomingLo, hi - lo + 1)
-                            && (!isCommitDedupMode() || !O3PartitionJob.hasTouchingPieces(geometry, index))) {
-                        final O3CompositeMergeStrategy.Plan plan = O3PartitionJob.processCompositePartition(
-                                path.trimTo(pathSize), index, lo, hi, sortedTimestampsAddr, this, geometry,
-                                compactionForecastClusterer, compactionForecastBounds, compactionForecastCuts,
-                                compactionForecastPlan, Long.MIN_VALUE, Long.MAX_VALUE);
-                        final int cut;
-                        try {
-                            O3PartitionJob.forecastCompositePlan(path.trimTo(pathSize), index, geometry,
-                                    compactionForecastBounds, plan, sortedTimestampsAddr, o3Columns, this, dedupSink);
-                            cut = moveTailCut(compactionForecastBounds, plan, Math.min(incomingLo, futureFloor));
-                        } finally {
-                            // The partition task plans this commit again, so nothing executes this plan's merges.
-                            plan.freeMergeIndexes();
-                        }
-                        if (cut > 0 && moveTailToFreshPartition(index, compactionForecastBounds, cut, false) == COMPACTION_MOVED_TAIL) {
-                            if (isMakePlainEligible(index)) {
-                                makePartitionPlain(index);
-                            }
-                            closeActivePartition(false);
-                            openLastPartition();
-                            lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
-                        }
-                    }
-                }
-                lo = hi + 1;
-            }
-        } finally {
-            walApplySeqTxn = savedWalApplySeqTxn;
         }
     }
 
@@ -12234,13 +12153,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         releaseBitmapIndexWritersOfClosedActivePartition();
 
-        if (o3LagRowCount == 0 && isMergeAppendTable()) {
-            if (flattenTimestamp && o3RowCount > 0) {
-                Vect.flattenIndex(sortedTimestampsAddr, o3RowCount);
-                flattenTimestamp = false;
-            }
-            compactAheadOfO3(sortedTimestampsAddr, rowLo, srcOooMax);
-        }
+        // Read by every partition task of this block that decides a MOVE-TAIL, so it is computed once here,
+        // on the writer thread, before any task runs.
+        o3MoveTailFutureFloor = isMergeAppendTable() ? getMoveTailFutureFloor() : Long.MAX_VALUE;
 
         // move uncommitted is liable to change max timestamp,
         // however, we need to identify the last partition before max timestamp skips to NULL, for example
@@ -18694,9 +18609,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return breaches;
     }
 
-    boolean wouldMoveTailSucceed(int partitionIndex, LongList bounds, O3CompositeMergeStrategy.Plan plan) {
-        return !isCommitReplaceMode() && txWriter.getLagRowCount() == 0
-                && moveTailCut(bounds, plan, getMoveTailFutureFloor()) > 0;
+    /**
+     * The MOVE-TAIL cut for the plan a partition task is about to execute against {@code partitionIndex}: the number
+     * of leading pieces that stay behind, or 0 when the task should not move the tail. Decided off the task's own
+     * forecast, so every partition of a block decides once. Read-only on the writer: {@code o3MoveTailFutureFloor} was
+     * computed before the block's tasks were dispatched.
+     */
+    int moveTailCut(int partitionIndex, LongList bounds, O3CompositeMergeStrategy.Plan plan) {
+        if (isCommitReplaceMode() || txWriter.getLagRowCount() > 0 || txWriter.isPartitionReadOnly(partitionIndex)) {
+            return 0;
+        }
+        return moveTailCut(bounds, plan, o3MoveTailFutureFloor);
     }
 
     @FunctionalInterface
