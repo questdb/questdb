@@ -3889,6 +3889,57 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstTableWithoutEqualitySubQueryInGroupBy() throws Exception {
+        // A scalar sub-query and an IN set with a LIMIT read their join's order, so they keep ta first:
+        // Hash Join Light over Cross Join(ta, tb2). In a GROUP BY key or an aggregate argument, that
+        // hash join must not leave its key and value types in the outer GROUP BY's map layout. The
+        // first row of the join has l.ts = 00:10 in both join orders.
+        assertMemoryLeak(() -> {
+            createFirstTableWithoutEqualityTables();
+            execute("CREATE TABLE tsym (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tsym VALUES ('10', '2020-01-01T00:00'), ('20', '2020-01-01T01:00'), ('7', '2020-01-01T02:00')");
+            final String from = " FROM ta l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts";
+            final String scalar = "(SELECT l.ts" + from + " LIMIT 1)";
+            final String limitedSet = "(SELECT r.c1::SYMBOL" + from + " LIMIT 100)";
+            for (boolean isParallel : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelGroupByEnabled(isParallel);
+                assertQuery("SELECT sum(CASE WHEN ts > " + scalar + " THEN 1 ELSE 0 END) c FROM tsym")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                c
+                                2
+                                """);
+                assertQuery("SELECT ts > " + scalar + " k, count() c FROM tsym GROUP BY k ORDER BY k")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\tc
+                                false\t1
+                                true\t2
+                                """);
+                assertQuery("SELECT count() c FROM tsym GROUP BY s IN " + limitedSet + " ORDER BY c")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                c
+                                1
+                                2
+                                """);
+                assertQuery("SELECT sum(CASE WHEN s IN " + limitedSet + " THEN 1 ELSE 0 END) c FROM tsym")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                c
+                                2
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testFirstTableWithoutEqualityWindowFunctionFollowsItsOrder() throws Exception {
         assertMemoryLeak(() -> {
             createFirstTableWithoutEqualityTables();

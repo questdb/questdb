@@ -525,6 +525,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final RecordComparatorCompiler recordComparatorCompiler;
     private final IntList recordFunctionPositions = new IntList();
     private final PageFrameReduceTaskFactory reduceTaskFactory;
+    // Per generation depth: the caller's scratch state that a nested generate() call saves on entry
+    // and restores on exit, see generateAttempt().
+    private final ObjList<GenerationScratch> scratchSnapshots = new ObjList<>();
     // Cache of factories generated for shared models (models with shared refs).
     // Key: the delegate QueryModel; Value: the primary factory.
     // When a QueryModelWrapper is encountered, we look up its delegate here.
@@ -735,6 +738,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (whereClauseParsers.size() > MAX_RETAINED_WHERE_CLAUSE_PARSERS) {
             whereClauseParsers.remove(MAX_RETAINED_WHERE_CLAUSE_PARSERS, whereClauseParsers.size() - 1);
         }
+        // The per-depth scratch snapshots follow the same retention bound.
+        if (scratchSnapshots.size() > MAX_RETAINED_WHERE_CLAUSE_PARSERS) {
+            scratchSnapshots.remove(MAX_RETAINED_WHERE_CLAUSE_PARSERS, scratchSnapshots.size() - 1);
+        }
         whereClauseParserDepth = 0;
         symbolEstimator.clear();
         intListPool.clear();
@@ -934,6 +941,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // Each generation depth uses its own parser instance, so the budget that bounds the
         // doubling compile in WhereClauseParser only survives if it is seeded from the parent.
         parser.setScalarBoundDepth(parserIndex == 0 ? 0 : whereClauseParsers.getQuick(parserIndex - 1).childScalarBoundDepth());
+        // A nested call generates a sub-query, such as a cursor function's, while the caller is in the
+        // middle of a generation step: GROUP BY, for example, clears its key and value types, parses
+        // its functions, fills the types and only then builds its map from them. The sub-query's own
+        // joins, sorts and GROUP BYs reuse the same scratch fields, so this call saves the caller's
+        // contents and restores them on exit.
+        final GenerationScratch callerScratch = parserIndex > 0 ? saveScratch(parserIndex - 1) : null;
         whereClauseParserDepth++;
         Throwable failure = null;
         boolean hasEntered = false;
@@ -951,38 +964,47 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } finally {
             generationState.exitRegion(hasEntered);
             whereClauseParserDepth--;
-            // The borrowed models own scalar sub-query factories until buildIntervalModel() hands
-            // them downstream; free them here so a throw before that handoff does not leak the
-            // open factory. On the success path ownership was already transferred, so this is a
-            // no-op free. Preserve the in-flight failure by suppressing any cleanup failure onto it.
-            if (failure != null) {
-                try {
-                    freeTableNameFunctions(model, failure);
-                } catch (Throwable cleanupFailure) {
-                    if (cleanupFailure != failure) {
-                        failure.addSuppressed(cleanupFailure);
+            try {
+                // The borrowed models own scalar sub-query factories until buildIntervalModel() hands
+                // them downstream; free them here so a throw before that handoff does not leak the
+                // open factory. On the success path ownership was already transferred, so this is a
+                // no-op free. Preserve the in-flight failure by suppressing any cleanup failure onto it.
+                if (failure != null) {
+                    try {
+                        freeTableNameFunctions(model, failure);
+                    } catch (Throwable cleanupFailure) {
+                        if (cleanupFailure != failure) {
+                            failure.addSuppressed(cleanupFailure);
+                        }
                     }
-                }
-                try {
+                    try {
+                        parser.freeBorrowedModels();
+                    } catch (Throwable cleanupFailure) {
+                        if (cleanupFailure != failure) {
+                            failure.addSuppressed(cleanupFailure);
+                        }
+                    }
+                    try {
+                        parser.freeScalarBoundCompileCaches();
+                    } catch (Throwable cleanupFailure) {
+                        if (cleanupFailure != failure) {
+                            failure.addSuppressed(cleanupFailure);
+                        }
+                    }
+                } else {
                     parser.freeBorrowedModels();
-                } catch (Throwable cleanupFailure) {
-                    if (cleanupFailure != failure) {
-                        failure.addSuppressed(cleanupFailure);
-                    }
-                }
-                try {
+                    // A speculative sub-query compile parked for a declined bound is claimed by the
+                    // residual filter, which is generated inside the call above. Anything still parked
+                    // here was never claimed, so release it rather than hold an open factory.
                     parser.freeScalarBoundCompileCaches();
-                } catch (Throwable cleanupFailure) {
-                    if (cleanupFailure != failure) {
-                        failure.addSuppressed(cleanupFailure);
-                    }
                 }
-            } else {
-                parser.freeBorrowedModels();
-                // A speculative sub-query compile parked for a declined bound is claimed by the
-                // residual filter, which is generated inside the call above. Anything still parked
-                // here was never claimed, so release it rather than hold an open factory.
-                parser.freeScalarBoundCompileCaches();
+            } finally {
+                // The caller gets its scratch state back after the cleanup above, also when that
+                // cleanup throws, so a failure in one never skips the other. restoreScratch() copies
+                // into the capacity each field already had, so it does not allocate.
+                if (callerScratch != null) {
+                    restoreScratch(callerScratch);
+                }
             }
         }
     }
@@ -14506,8 +14528,67 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    private void restoreScratch(GenerationScratch scratch) {
+        // Each field held the saved contents before the nested call, so its capacity fits them and
+        // the copies below do not allocate.
+        keyTypes.clear();
+        keyTypes.addAll(scratch.keyTypes);
+        valueTypes.clear();
+        valueTypes.addAll(scratch.valueTypes);
+        listColumnFilterA.clear();
+        listColumnFilterA.addAll(scratch.listColumnFilterA);
+        recordFunctionPositions.clear();
+        recordFunctionPositions.addAll(scratch.recordFunctionPositions);
+        groupByFunctionPositions.clear();
+        groupByFunctionPositions.addAll(scratch.groupByFunctionPositions);
+        tempExpressionNodeList.clear();
+        tempExpressionNodeList.addAll(scratch.tempExpressionNodeList);
+        arrayColumnTypes.clear();
+        arrayColumnTypes.addAll(scratch.arrayColumnTypes);
+        tempKeyIndex.clear();
+        tempKeyIndex.addAll(scratch.tempKeyIndex);
+        tempKeyIndexesInBase.clear();
+        tempKeyIndexesInBase.addAll(scratch.tempKeyIndexesInBase);
+        tempKeyKinds.clear();
+        tempKeyKinds.addAll(scratch.tempKeyKinds);
+        prefixes.clear();
+        prefixes.addAll(scratch.prefixes);
+        // Drop the references to pooled expression nodes.
+        scratch.tempExpressionNodeList.clear();
+    }
+
     private void restoreWhereClause(ExpressionNode node) {
         processNodeQueryModels(node, RESTORE_WHERE_CLAUSE);
+    }
+
+    private GenerationScratch saveScratch(int depth) {
+        while (scratchSnapshots.size() <= depth) {
+            scratchSnapshots.add(new GenerationScratch());
+        }
+        final GenerationScratch scratch = scratchSnapshots.getQuick(depth);
+        scratch.keyTypes.clear();
+        scratch.keyTypes.addAll(keyTypes);
+        scratch.valueTypes.clear();
+        scratch.valueTypes.addAll(valueTypes);
+        scratch.listColumnFilterA.clear();
+        scratch.listColumnFilterA.addAll(listColumnFilterA);
+        scratch.recordFunctionPositions.clear();
+        scratch.recordFunctionPositions.addAll(recordFunctionPositions);
+        scratch.groupByFunctionPositions.clear();
+        scratch.groupByFunctionPositions.addAll(groupByFunctionPositions);
+        scratch.tempExpressionNodeList.clear();
+        scratch.tempExpressionNodeList.addAll(tempExpressionNodeList);
+        scratch.arrayColumnTypes.clear();
+        scratch.arrayColumnTypes.addAll(arrayColumnTypes);
+        scratch.tempKeyIndex.clear();
+        scratch.tempKeyIndex.addAll(tempKeyIndex);
+        scratch.tempKeyIndexesInBase.clear();
+        scratch.tempKeyIndexesInBase.addAll(tempKeyIndexesInBase);
+        scratch.tempKeyKinds.clear();
+        scratch.tempKeyKinds.addAll(tempKeyKinds);
+        scratch.prefixes.clear();
+        scratch.prefixes.addAll(prefixes);
+        return scratch;
     }
 
     private void snapshotHashJoinFilters(IQueryModel model, ObjList<IQueryModel> models,
@@ -14965,6 +15046,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     @FunctionalInterface
     interface ModelOperator {
         void operate(ObjectPool<ExpressionNode> pool, IQueryModel model);
+    }
+
+    /**
+     * The scratch fields a generation step may still read after a nested generate() call in the
+     * middle of it: the map key and value types, key column filter and function positions that
+     * GroupByUtils.assembleGroupByFunctions() fills for GROUP BY, SAMPLE BY, HORIZON JOIN and WINDOW
+     * JOIN around parsing their functions, the fill values that legacy SAMPLE BY reorders before
+     * that, the vectorized GROUP BY key lists that generateSelectGroupBy() clears before it
+     * generates its base query, and the WITHIN prefixes that generateTableQuery0() extracts before
+     * WhereClauseParser compiles the scalar sub-query bounds of a LATEST ON query.
+     */
+    private static class GenerationScratch {
+        final ArrayColumnTypes arrayColumnTypes = new ArrayColumnTypes();
+        final IntList groupByFunctionPositions = new IntList();
+        final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+        final IntList listColumnFilterA = new IntList();
+        final LongList prefixes = new LongList();
+        final IntList recordFunctionPositions = new IntList();
+        final ObjList<ExpressionNode> tempExpressionNodeList = new ObjList<>();
+        final IntList tempKeyIndex = new IntList();
+        final IntList tempKeyIndexesInBase = new IntList();
+        final IntList tempKeyKinds = new IntList();
+        final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     }
 
     /**
