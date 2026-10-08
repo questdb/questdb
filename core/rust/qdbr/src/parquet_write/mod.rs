@@ -6,7 +6,7 @@ pub(crate) mod decimal;
 pub(crate) mod encode;
 pub(crate) mod encoders;
 pub(crate) mod file;
-pub use file::ParquetWriter;
+pub use file::{ParquetWriter, WriteOptions, DEFAULT_ROW_GROUP_SIZE};
 #[cfg(feature = "jni-exports")]
 mod jni;
 pub mod schema;
