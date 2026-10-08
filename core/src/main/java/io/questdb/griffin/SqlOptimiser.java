@@ -302,6 +302,9 @@ public class SqlOptimiser implements Mutable {
     // Hash map for O(1) window function deduplication lookup: hash -> list of QueryColumns with that hash
     private final IntObjHashMap<ObjList<QueryColumn>> windowFunctionHashMap = new IntObjHashMap<>();
     private int defaultAliasCount = 0;
+    // set by propagateTopDownColumns0 for the nested model it recurses into: the rows of that model reach a
+    // consumer that only needs their distinct values (see isDistinctKeysConsumer)
+    private boolean distinctKeysOnlyForNested;
     private ObjList<JoinContext> emittedJoinClauses;
     // Index of the SUBSAMPLE mirror scope currently reserving names; 0 outside a wrapper walk.
     private int subsampleNameScopeDepth;
@@ -538,6 +541,7 @@ public class SqlOptimiser implements Mutable {
         pivotFuseAliasMap.clear();
         pivotFuseRefCounts.clear();
         pivotFuseProjection = null;
+        distinctKeysOnlyForNested = false;
         subsampleNameScopeDepth = 0;
         for (int i = 0, n = subsampleNameScopes.size(); i < n; i++) {
             subsampleNameScopes.getQuick(i).clear();
@@ -8405,6 +8409,8 @@ public class SqlOptimiser implements Mutable {
      * It is not for columns used in distinct, except, intersect, union (even transitively for the latter three!).
      */
     private void propagateTopDownColumns0(IQueryModel model, boolean topLevel, @Nullable IQueryModel papaModel, boolean allowColumnsChange) {
+        final boolean distinctKeysOnly = distinctKeysOnlyForNested;
+        distinctKeysOnlyForNested = false;
         if (!model.isOptimisable()) {
             return;
         }
@@ -8530,7 +8536,7 @@ public class SqlOptimiser implements Mutable {
         // model's own WHERE/HAVING and ORDER BY literals have been emitted, to also cover a HAVING-style
         // filter that references only an aggregate alias (its literals are the sole top-down contributor,
         // so an empty list here would skip retention). For top level models the list is empty -> no-op.
-        retainGroupByKeysAsTopDownColumns(model);
+        retainGroupByKeysAsTopDownColumns(model, distinctKeysOnly);
 
         // latest on
         if (model.getLatestBy().size() > 0) {
@@ -8577,7 +8583,7 @@ public class SqlOptimiser implements Mutable {
         // early pass above would have observed an empty list and skipped, letting pruning collapse the
         // keyed group by into a scalar aggregate. addTopDownColumn() dedupes by alias, so re-running is
         // idempotent and leaves the key ordering from the early pass untouched in the common case.
-        retainGroupByKeysAsTopDownColumns(model);
+        retainGroupByKeysAsTopDownColumns(model, distinctKeysOnly);
 
         if (nestedIsFlex && nestedAllowsColumnChange) {
             emitColumnLiteralsTopDown(model.getColumns(), nested);
@@ -8640,7 +8646,10 @@ public class SqlOptimiser implements Mutable {
 
         // go down the nested path
         if (nested != null) {
+            distinctKeysOnlyForNested = configuration.isSqlDistinctGroupByKeyPruningEnabled()
+                    && (isDistinctKeysConsumer(model) || (distinctKeysOnly && isDistinctPreservingPassThrough(model)));
             propagateTopDownColumns0(nested, false, null, nestedAllowsColumnChange);
+            distinctKeysOnlyForNested = false;
         }
 
         final IQueryModel unionModel = model.getUnionModel();
@@ -9930,6 +9939,101 @@ public class SqlOptimiser implements Mutable {
             }
             node = sqlNodeStack.poll();
         }
+    }
+
+    /**
+     * True when the model's output depends only on the set of distinct rows it reads: a GROUP BY or
+     * DISTINCT whose columns are all keys (no aggregates), with no LIMIT. Duplicates and row order in its
+     * input change nothing in its output.
+     */
+    private boolean isDistinctKeysConsumer(IQueryModel model) {
+        final int type = model.getSelectModelType();
+        if ((type != IQueryModel.SELECT_MODEL_GROUP_BY && type != IQueryModel.SELECT_MODEL_DISTINCT)
+                || model.getLimitLo() != null
+                || model.getLimitHi() != null
+                || model.getSampleBy() != null
+                || model.getSampleByFill().size() > 0
+                || model.getUnionModel() != null) {
+            return false;
+        }
+        final ObjList<QueryColumn> columns = model.getColumns();
+        if (columns.size() == 0) {
+            return false;
+        }
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn qc = columns.getQuick(i);
+            if (qc.isWindowExpression() || hasGroupByFunc(sqlNodeStack, functionParser.getFunctionFactoryCache(), qc.getAst())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * True when the set of distinct rows the model returns depends only on the set of distinct rows it
+     * reads: a row-wise projection or filter over one model, no window function, LIMIT, join, union,
+     * LATEST ON or SAMPLE BY.
+     */
+    private boolean isDistinctPreservingPassThrough(IQueryModel model) {
+        final int type = model.getSelectModelType();
+        if ((type != IQueryModel.SELECT_MODEL_NONE && type != IQueryModel.SELECT_MODEL_CHOOSE && type != IQueryModel.SELECT_MODEL_VIRTUAL)
+                || model.getJoinModels().size() > 1
+                || model.getUnionModel() != null
+                || model.getLimitLo() != null
+                || model.getLimitHi() != null
+                || model.getLatestBy().size() > 0
+                || model.getSampleBy() != null
+                || model.getTableNameExpr() != null) {
+            return false;
+        }
+        final ObjList<QueryColumn> columns = model.getColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (columns.getQuick(i).isWindowExpression()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Keeps every grouping key of a group by sub-query in its projection, so pruning cannot collapse the
+     * keyed group by into a scalar aggregate or merge groups an aggregate or a duplicate-sensitive consumer
+     * would tell apart. The exception: the rows reach a consumer that only needs their distinct values
+     * (a DISTINCT, or a GROUP BY without aggregates, through row-wise models), and the parent selects
+     * only keys of this group by. Then the distinct values of the selected keys over the groups are the
+     * distinct values of the selected keys over the rows, so the keys nothing reads are dropped and the
+     * group by runs on the selected keys alone (TAQ idx 29: {@code SELECT DISTINCT sym FROM a} over a
+     * {@code GROUP BY minute, sym} groups by sym only).
+     */
+    private void retainGroupByKeysAsTopDownColumns(IQueryModel model, boolean distinctKeysOnly) {
+        if (distinctKeysOnly && canDropUnreadGroupByKeys(model)) {
+            return;
+        }
+        retainGroupByKeysAsTopDownColumns(model);
+    }
+
+    private boolean canDropUnreadGroupByKeys(IQueryModel model) {
+        if (model.getSelectModelType() != IQueryModel.SELECT_MODEL_GROUP_BY
+                || model.getLimitLo() != null
+                || model.getLimitHi() != null
+                || model.getSampleBy() != null
+                || model.getSampleByFill().size() > 0
+                || model.getUnionModel() != null
+                || model.getWhereClause() != null
+                || model.getGroupBy().size() > 0) {
+            return false;
+        }
+        final ObjList<QueryColumn> topDown = model.getTopDownColumns();
+        if (topDown.size() == 0) {
+            return false;
+        }
+        for (int i = 0, n = topDown.size(); i < n; i++) {
+            final QueryColumn qc = topDown.getQuick(i);
+            if (qc.isWindowExpression() || hasGroupByFunc(sqlNodeStack, functionParser.getFunctionFactoryCache(), qc.getAst())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // Adds every non-aggregate grouping key of a GROUP BY model to its top-down column list, so that
