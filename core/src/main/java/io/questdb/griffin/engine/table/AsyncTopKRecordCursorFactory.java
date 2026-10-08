@@ -248,7 +248,6 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
                         addressCache,
                         filterCtx.getDataAddresses(slotId),
                         filterCtx.getAuxAddresses(slotId),
-                        filterCtx.getValidityLists(slotId),
                         rows,
                         frameRowCount
                 );

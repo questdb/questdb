@@ -234,17 +234,17 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                 // the aux vector (see FwdTableReaderPageFrameCursor for the producer contract);
                 // use the aux address as the column-top detector to avoid materialising live
                 // rows as NULL.
-                final long pageAddress = frame.getDataAddress(baseColIdx);
+                final long pageAddress = frame.getPageAddress(baseColIdx);
                 final long localColTop;
                 if (ColumnType.isVarSize(adjustedType)) {
-                    localColTop = frame.getAuxAddress(baseColIdx) > 0 ? 0 : frameRowCount;
+                    localColTop = frame.getAuxPageAddress(baseColIdx) > 0 ? 0 : frameRowCount;
                 } else {
                     localColTop = pageAddress > 0 ? 0 : frameRowCount;
                 }
 
                 columnData.add(localColTop);
                 columnData.add(pageAddress);
-                columnData.add(frame.getDataSize(baseColIdx));
+                columnData.add(frame.getPageSize(baseColIdx));
                 if (ColumnType.isSymbol(adjustedType)) {
                     SymbolMapReader symbolMapReader = (SymbolMapReader) cursor.getSymbolTable(baseColIdx);
                     final MemoryR symbolValuesMem = symbolMapReader.getSymbolValuesColumn();
@@ -254,8 +254,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                     columnData.add(symbolOffsetsMem.addressOf(HEADER_SIZE));
                     columnData.add(symbolMapReader.getSymbolCount());
                 } else {
-                    columnData.add(frame.getAuxAddress(baseColIdx));
-                    columnData.add(frame.getAuxSize(baseColIdx));
+                    columnData.add(frame.getAuxPageAddress(baseColIdx));
+                    columnData.add(frame.getAuxPageSize(baseColIdx));
                     columnData.add(0L);
                     columnData.add(0L);
                 }
@@ -514,7 +514,6 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         int virtualColumnReservedSlots = priorityMetadata.getVirtualColumnReservedSlots();
         functionRecord = new VirtualFunctionRecord(functions, virtualColumnReservedSlots);
         hybridSymbolTableSource.of(pfc, virtualColumnReservedSlots);
-        pageFrameMemory.ofMetadata(baseMeta);
         pageFrameRecord.of(hybridSymbolTableSource);
 
         // Init functions with symbol table source

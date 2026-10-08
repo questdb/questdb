@@ -64,15 +64,12 @@ public class AsyncFilterContext implements Closeable {
     private final PageFrameMemoryPool ownerMemoryPool;
     private final PageFrameFilteredMemoryRecord ownerPageFrameFilteredMemoryRecord;
     private final SelectivityStats ownerSelectivityStats = new SelectivityStats();
-    // The descriptor's validity fields for the compiled filter (see PageFrameReduceTask)
-    private final DirectLongList ownerValidityLists;
     private final ObjList<DirectLongList> perWorkerAuxAddresses;
     private final ObjList<DirectLongList> perWorkerDataAddresses;
     private final ObjList<DirectLongList> perWorkerFilteredRows;
     private final ObjList<Function> perWorkerFilters;
     private final ObjList<PageFrameMemoryPool> perWorkerMemoryPools;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
-    private final ObjList<DirectLongList> perWorkerValidityLists;
 
     AsyncFilterContext(
             CairoConfiguration configuration,
@@ -123,18 +120,15 @@ public class AsyncFilterContext implements Closeable {
             if (compiledFilter != null) {
                 ownerDataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
                 ownerAuxAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
-                ownerValidityLists = new DirectLongList(3L * configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
             } else {
                 ownerDataAddresses = null;
                 ownerAuxAddresses = null;
-                ownerValidityLists = null;
             }
 
             perWorkerMemoryPools = new ObjList<>(slotCount);
             perWorkerFilteredRows = new ObjList<>(slotCount);
             perWorkerDataAddresses = new ObjList<>(slotCount);
             perWorkerAuxAddresses = new ObjList<>(slotCount);
-            perWorkerValidityLists = new ObjList<>(slotCount);
             perWorkerSelectivityStats = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
                 perWorkerMemoryPools.extendAndSet(i, new PageFrameMemoryPool(configuration, perWorkerMemoryPoolMaxBytes));
@@ -142,7 +136,6 @@ public class AsyncFilterContext implements Closeable {
                 if (compiledFilter != null) {
                     perWorkerDataAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD));
                     perWorkerAuxAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD));
-                    perWorkerValidityLists.extendAndSet(i, new DirectLongList(3L * configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD));
                 }
                 perWorkerSelectivityStats.extendAndSet(i, new SelectivityStats());
             }
@@ -177,11 +170,9 @@ public class AsyncFilterContext implements Closeable {
         resetCapacity(ownerFilteredRows);
         resetCapacity(ownerDataAddresses);
         resetCapacity(ownerAuxAddresses);
-        resetCapacity(ownerValidityLists);
         resetCapacity(perWorkerFilteredRows);
         resetCapacity(perWorkerDataAddresses);
         resetCapacity(perWorkerAuxAddresses);
-        resetCapacity(perWorkerValidityLists);
     }
 
     @Override
@@ -200,8 +191,6 @@ public class AsyncFilterContext implements Closeable {
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerDataAddresses);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerAuxAddresses);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerAuxAddresses);
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerValidityLists);
-        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerValidityLists);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, frameFilteredMemoryRecords);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerPageFrameFilteredMemoryRecord);
         CairoException.rethrowCleanupFailure(cleanupFailure);
@@ -271,13 +260,6 @@ public class AsyncFilterContext implements Closeable {
 
     public ObjList<PageFrameMemoryPool> getPerWorkerMemoryPools() {
         return perWorkerMemoryPools;
-    }
-
-    public DirectLongList getValidityLists(int slotId) {
-        if (slotId == -1) {
-            return ownerValidityLists;
-        }
-        return perWorkerValidityLists.getQuick(slotId);
     }
 
     public SelectivityStats getSelectivityStats(int slotId) {

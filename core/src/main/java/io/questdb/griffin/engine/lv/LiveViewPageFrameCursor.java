@@ -786,13 +786,13 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         private long rows;
 
         @Override
-        public long getAuxAddress(int columnIndex) {
-            return base.getAuxAddress(columnIndex);
+        public long getAuxPageAddress(int columnIndex) {
+            return base.getAuxPageAddress(columnIndex);
         }
 
         @Override
-        public long getAuxSize(int columnIndex) {
-            return base.getAuxSize(columnIndex);
+        public long getAuxPageSize(int columnIndex) {
+            return base.getAuxPageSize(columnIndex);
         }
 
         @Override
@@ -841,18 +841,13 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
-        public long getDataAddress(int columnIndex) {
-            return base.getDataAddress(columnIndex);
+        public long getPageAddress(int columnIndex) {
+            return base.getPageAddress(columnIndex);
         }
 
         @Override
-        public long getDataSize(int columnIndex) {
-            return base.getDataSize(columnIndex);
-        }
-
-        @Override
-        public long getNullCount(int columnIndex) {
-            return base.getNullCount(columnIndex);
+        public long getPageSize(int columnIndex) {
+            return base.getPageSize(columnIndex);
         }
 
         @Override
@@ -893,16 +888,6 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         @Override
         public long getPartitionLo() {
             return base.getPartitionLo();
-        }
-
-        @Override
-        public long getValidityAddress(int columnIndex) {
-            return base.getValidityAddress(columnIndex);
-        }
-
-        @Override
-        public long getValidityBitOffset(int columnIndex) {
-            return base.getValidityBitOffset(columnIndex);
         }
 
         PageFrame of(PageFrame base, long rows) {
@@ -950,7 +935,7 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         private long lo;
 
         @Override
-        public long getAuxAddress(int columnIndex) {
+        public long getAuxPageAddress(int columnIndex) {
             final int tierColumn = tierColumns.getQuick(columnIndex);
             final int columnType = slot.columnType(tierColumn);
             if (!ColumnType.isVarSize(columnType)) {
@@ -961,7 +946,7 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
-        public long getAuxSize(int columnIndex) {
+        public long getAuxPageSize(int columnIndex) {
             final int columnType = slot.columnType(tierColumns.getQuick(columnIndex));
             if (!ColumnType.isVarSize(columnType)) {
                 return 0;
@@ -986,7 +971,7 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
-        public long getDataAddress(int columnIndex) {
+        public long getPageAddress(int columnIndex) {
             final int tierColumn = tierColumns.getQuick(columnIndex);
             final int columnType = slot.columnType(tierColumn);
             final long dataAddress = slot.dataAddress(tierColumn);
@@ -995,7 +980,7 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
-        public long getDataSize(int columnIndex) {
+        public long getPageSize(int columnIndex) {
             final int tierColumn = tierColumns.getQuick(columnIndex);
             final int columnType = slot.columnType(tierColumn);
             if (!ColumnType.isVarSize(columnType)) {
@@ -1005,11 +990,6 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
             // row's payload ends. hi > lo >= 0 holds for every frame next() builds, so the
             // driver never reads a negative row.
             return ColumnType.getDriver(columnType).getDataVectorSizeAt(slot.auxAddress(tierColumn), hi - 1);
-        }
-
-        @Override
-        public long getNullCount(int columnIndex) {
-            return -1;
         }
 
         @Override
@@ -1040,16 +1020,6 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         @Override
         public long getPartitionLo() {
             return lo;
-        }
-
-        @Override
-        public long getValidityAddress(int columnIndex) {
-            return 0;
-        }
-
-        @Override
-        public long getValidityBitOffset(int columnIndex) {
-            return 0;
         }
 
         PageFrame of(long lo, long hi) {

@@ -790,14 +790,14 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
                 for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                     final int columnType = metadata.getColumnType(i);
-                    final long pageAddress = frame.getDataAddress(i);
+                    final long pageAddress = frame.getPageAddress(i);
                     // Var-size columns may have an empty .d file when all values are inlined
                     // into the aux vector (see FwdTableReaderPageFrameCursor for the producer
                     // contract); use the aux address as the column-top detector to avoid
                     // materialising live rows as NULL.
                     final long localColTop;
                     if (ColumnType.isVarSize(columnType)) {
-                        localColTop = frame.getAuxAddress(i) > 0 ? 0 : frameRowCount;
+                        localColTop = frame.getAuxPageAddress(i) > 0 ? 0 : frameRowCount;
                     } else {
                         localColTop = pageAddress > 0 ? 0 : frameRowCount;
                     }
@@ -813,7 +813,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
                         columnData.add(localColTop);
                         columnData.add(pageAddress);
-                        columnData.add(frame.getDataSize(i));
+                        columnData.add(frame.getPageSize(i));
                         columnData.add(symbolValuesMem.addressOf(0));
                         columnData.add(symbolValuesMem.size());
                         columnData.add(symbolOffsetsMem.addressOf(HEADER_SIZE));
@@ -821,9 +821,9 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     } else {
                         columnData.add(localColTop);
                         columnData.add(pageAddress);
-                        columnData.add(frame.getDataSize(i));
-                        columnData.add(frame.getAuxAddress(i));
-                        columnData.add(frame.getAuxSize(i));
+                        columnData.add(frame.getPageSize(i));
+                        columnData.add(frame.getAuxPageAddress(i));
+                        columnData.add(frame.getAuxPageSize(i));
                         columnData.add(0L);
                         columnData.add(0L);
                     }

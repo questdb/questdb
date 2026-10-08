@@ -31,7 +31,6 @@ import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.VarcharTypeDriver;
-import io.questdb.cairo.sql.ColumnVectorDescriptor;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -1266,7 +1265,7 @@ public class SortKeyEncoder implements QuietCloseable {
             // which materializes the converted value through the record accessors.
             return false;
         }
-        final long colAddr = frameMemory.getColumnVectorDescriptor().getDataAddress(columnIndices[0]);
+        final long colAddr = frameMemory.getPageAddress(columnIndices[0]);
         if (colAddr == 0) {
             return false;
         }
@@ -1352,7 +1351,7 @@ public class SortKeyEncoder implements QuietCloseable {
             // not this column's current wide-fixed type. Fall back to the per-row path.
             return false;
         }
-        final long colAddr = frameMemory.getColumnVectorDescriptor().getDataAddress(columnIndices[0]);
+        final long colAddr = frameMemory.getPageAddress(columnIndices[0]);
         if (colAddr == 0) {
             // Column top: every frame row is NULL for this column.
             return false;
@@ -1395,13 +1394,12 @@ public class SortKeyEncoder implements QuietCloseable {
         if (frameMemory.getSourceColumnType(columnIndices[0]) != -1) {
             return false;
         }
-        final ColumnVectorDescriptor columnVectors = frameMemory.getColumnVectorDescriptor();
-        final long dataAddr = columnVectors.getDataAddress(columnIndices[0]);
+        final long dataAddr = frameMemory.getPageAddress(columnIndices[0]);
         if (dataAddr == 0) {
             // Column top: every frame row is NULL for this column.
             return false;
         }
-        final long auxAddr = columnVectors.getAuxAddress(columnIndices[0]);
+        final long auxAddr = frameMemory.getAuxPageAddress(columnIndices[0]);
         final long rowIdBase = Rows.toRowID(frameIndex, 0);
         if (rows == null) {
             for (long r = 0; r < rowCount; r++) {
@@ -1430,13 +1428,12 @@ public class SortKeyEncoder implements QuietCloseable {
     }
 
     private boolean encodeVarcharBatch(PageFrameMemory frameMemory, int frameIndex, DirectLongList rows, long rowCount, EncodedTopKBuffer topK, PageFrameMemoryRecord record) {
-        final ColumnVectorDescriptor columnVectors = frameMemory.getColumnVectorDescriptor();
-        final long auxAddr = columnVectors.getAuxAddress(columnIndices[0]);
+        final long auxAddr = frameMemory.getAuxPageAddress(columnIndices[0]);
         if (auxAddr == 0) {
             return false;
         }
         final boolean isParquet = frameMemory.getFrameFormat() == PartitionFormat.PARQUET;
-        final long dataAddr = isParquet ? 0 : columnVectors.getDataAddress(columnIndices[0]);
+        final long dataAddr = isParquet ? 0 : frameMemory.getPageAddress(columnIndices[0]);
         final long rowIdBase = Rows.toRowID(frameIndex, 0);
         if (rows == null) {
             for (long r = 0; r < rowCount; r++) {

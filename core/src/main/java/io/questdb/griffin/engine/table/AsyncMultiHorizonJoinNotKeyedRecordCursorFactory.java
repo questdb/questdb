@@ -271,7 +271,6 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                         addressCache,
                         filterCtx.getDataAddresses(slotId),
                         filterCtx.getAuxAddresses(slotId),
-                        filterCtx.getValidityLists(slotId),
                         rows,
                         frameRowCount
                 );
@@ -295,7 +294,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             // Get horizon timestamp iterator and initialize for filtered rows
             final AsyncHorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
             long baseRowId = Rows.toRowID(frameIndex, 0);
-            horizonIterator.ofFiltered(frameMemory.getColumnVectorDescriptor().getDataAddress(masterTimestampColumnIndex), rows);
+            horizonIterator.ofFiltered(frameMemory.getPageAddress(masterTimestampColumnIndex), rows);
 
             processHorizonTimestamps(
                     atom,
@@ -451,7 +450,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
 
             final AsyncHorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
             long baseRowId = Rows.toRowID(frameIndex, 0);
-            horizonIterator.of(frameMemory.getColumnVectorDescriptor().getDataAddress(masterTimestampColumnIndex), 0, frameRowCount);
+            horizonIterator.of(frameMemory.getPageAddress(masterTimestampColumnIndex), 0, frameRowCount);
 
             processHorizonTimestamps(
                     atom,

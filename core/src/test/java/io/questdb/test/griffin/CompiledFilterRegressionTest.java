@@ -8836,7 +8836,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             auxAddress = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             varsAddress = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             writeProbeColumn(columnAddress, dataAddress, auxAddress, varsAddress);
-            return filter.call(dataAddress, 1, auxAddress, 0, varsAddress, 0, rowCount);
+            return filter.call(dataAddress, 1, auxAddress, varsAddress, 0, rowCount);
         } finally {
             if (varsAddress != 0) {
                 Unsafe.free(varsAddress, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -8876,7 +8876,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             varsAddress = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             rowsAddress = Unsafe.malloc(rowsSize, MemoryTag.NATIVE_DEFAULT);
             writeProbeColumn(columnAddress, dataAddress, auxAddress, varsAddress);
-            final long selected = filter.call(dataAddress, 1, auxAddress, 0, varsAddress, 0, rowsAddress, rowCount);
+            final long selected = filter.call(dataAddress, 1, auxAddress, varsAddress, 0, rowsAddress, rowCount);
             final StringSink sink = new StringSink();
             for (long i = 0; i < selected; i++) {
                 if (i > 0) {

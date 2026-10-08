@@ -238,12 +238,12 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         }
 
         @Override
-        public long getAuxAddress(int columnIndex) {
+        public long getAuxPageAddress(int columnIndex) {
             return 0;
         }
 
         @Override
-        public long getAuxSize(int columnIndex) {
+        public long getAuxPageSize(int columnIndex) {
             return 0;
         }
 
@@ -263,18 +263,13 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         }
 
         @Override
-        public long getDataAddress(int columnIndex) {
+        public long getPageAddress(int columnIndex) {
             return 0;
         }
 
         @Override
-        public long getDataSize(int columnIndex) {
+        public long getPageSize(int columnIndex) {
             return 0;
-        }
-
-        @Override
-        public long getNullCount(int columnIndex) {
-            return -1;
         }
 
         @Override
@@ -310,16 +305,6 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         @Override
         public long getPartitionLo() {
             return partitionLo;
-        }
-
-        @Override
-        public long getValidityAddress(int columnIndex) {
-            return 0;
-        }
-
-        @Override
-        public long getValidityBitOffset(int columnIndex) {
-            return 0;
         }
     }
 }

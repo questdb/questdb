@@ -54,7 +54,7 @@ public class GeoHashNative {
         // hashColumnIndex can be -1 for latest by part only (no prefixes to match)
         if (geoHashColumnIndex > -1) {
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-            geoHashColumnAddress = frameMemory.getColumnVectorDescriptor().getDataAddress(geoHashColumnIndex);
+            geoHashColumnAddress = frameMemory.getPageAddress(geoHashColumnIndex);
         }
 
         final int geoHashColumnSize = ColumnType.isGeoHash(geoHashColumnType) ? getPow2SizeOfGeoHashType(geoHashColumnType) : -1;

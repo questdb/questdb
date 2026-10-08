@@ -38,15 +38,14 @@ import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 public interface PageFrame {
 
     /**
-     * Auxiliary index vector address for variable-length column types, such as Varchar, String,
-     * and Binary: the column-vector descriptor's aux address (see {@link ColumnVectorDescriptor}).
+     * Auxiliary index page for variable-length column types, such as Varchar, String, and Binary.
      * <p>
      * Can be called only for frames in native format.
      *
      * @param columnIndex index of variable length column
      * @return contiguous memory address containing offsets for variable value entries
      */
-    long getAuxAddress(int columnIndex);
+    long getAuxPageAddress(int columnIndex);
 
     /**
      * Return the size of the page frame aux vector in bytes.
@@ -56,7 +55,7 @@ public interface PageFrame {
      * @param columnIndex index of column
      * @return size of column in bytes
      */
-    long getAuxSize(int columnIndex);
+    long getAuxPageSize(int columnIndex);
 
     /**
      * The count of columns in the page frame. In some cases it is possible to have
@@ -147,15 +146,14 @@ public interface PageFrame {
     /**
      * Return the address of the start of the page frame or if this page represents
      * a column top (a column that was added to the table when other columns already
-     * had data) then return 0: the column-vector descriptor's data address (see
-     * {@link ColumnVectorDescriptor}).
+     * had data) then return 0.
      * <p>
      * Can be called only for frames in native format.
      *
      * @param columnIndex index of column
      * @return address of column or 0 if column is empty
      */
-    long getDataAddress(int columnIndex);
+    long getPageAddress(int columnIndex);
 
     /**
      * Return the size of the page frame data vector in bytes.
@@ -165,14 +163,7 @@ public interface PageFrame {
      * @param columnIndex index of column
      * @return size of column in bytes
      */
-    long getDataSize(int columnIndex);
-
-    /**
-     * The column's NULL count in this frame, -1 when unknown. No column has a validity bitmap
-     * yet, so every frame answers -1; a frame that wraps another answers the wrapped frame's
-     * value (see {@link ColumnVectorDescriptor}).
-     */
-    long getNullCount(int columnIndex);
+    long getPageSize(int columnIndex);
 
     default ParquetDecoder getParquetDecoder() {
         return null;
@@ -209,17 +200,4 @@ public interface PageFrame {
      * Return low row index within the frame's partition, inclusive.
      */
     long getPartitionLo();
-
-    /**
-     * The address of the validity word that holds the frame's first row, 0 when the frame has no
-     * validity bitmap for the column. No column has one yet, so every frame answers 0; a frame
-     * that wraps another answers the wrapped frame's value (see {@link ColumnVectorDescriptor}).
-     */
-    long getValidityAddress(int columnIndex);
-
-    /**
-     * The position of the frame's first row within the word at {@link #getValidityAddress(int)};
-     * 0 while no column has a validity bitmap.
-     */
-    long getValidityBitOffset(int columnIndex);
 }

@@ -147,7 +147,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      * Bulk-appends {@code (hi - lo)} rows of the given {@code frame}, driving the
      * column emit in column-major order when the frame is in NATIVE format. Each
      * supported column type reads its page memory directly from
-     * {@link PageFrame#getDataAddress} and hands a bulk-append call to the
+     * {@link PageFrame#getPageAddress} and hands a bulk-append call to the
      * corresponding column scratch; types without a columnar fast path fall
      * back to per-row iteration over {@code record}, touching only the columns
      * that need it.
@@ -178,7 +178,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         for (int ci = 0; ci < n; ci++) {
             final QwpColumnScratch scratch = scs[ci];
             // Column-top check moved INSIDE each fixed-width case. For VARCHAR /
-            // STRING / BINARY, {@code getDataAddress} returning 0 does NOT mean
+            // STRING / BINARY, {@code getPageAddress} returning 0 does NOT mean
             // column top -- it can also mean all values in this frame are
             // inline-stored in the aux vector with no overflow to the data
             // vector. Those types take the per-row fallback which uses
@@ -188,7 +188,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case ColumnType.DATE:
                 case ColumnType.TIMESTAMP:
                 case ColumnType.DECIMAL64: {
-                    long base = frame.getDataAddress(ci);
+                    long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
@@ -197,7 +197,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 case ColumnType.DOUBLE: {
-                    long base = frame.getDataAddress(ci);
+                    long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
@@ -206,7 +206,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 case ColumnType.INT: {
-                    long base = frame.getDataAddress(ci);
+                    long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
@@ -216,7 +216,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 }
                 case ColumnType.IPv4: {
                     // QuestDB stores IPv4 NULL as the bit pattern 0 (Numbers.IPv4_NULL).
-                    long base = frame.getDataAddress(ci);
+                    long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
@@ -225,7 +225,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 case ColumnType.FLOAT: {
-                    long base = frame.getDataAddress(ci);
+                    long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
@@ -235,7 +235,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 }
                 case ColumnType.SHORT:
                 case ColumnType.CHAR: {
-                    long base = frame.getDataAddress(ci);
+                    long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         // Wire spec sec 11.5: SHORT / CHAR cannot carry NULL.
                         // INSERT NULL stores 0 and the wire row keeps the null
@@ -249,7 +249,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 case ColumnType.BYTE: {
-                    long base = frame.getDataAddress(ci);
+                    long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         // Wire spec sec 11.5: BYTE cannot carry NULL. See the
                         // SHORT / CHAR case above for the column-top rationale.
@@ -260,7 +260,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 case ColumnType.BOOLEAN: {
-                    long base = frame.getDataAddress(ci);
+                    long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         // Wire spec sec 11.5: BOOLEAN cannot carry NULL. The
                         // column-top fill is n bit-packed false values; the
@@ -273,7 +273,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 }
                 case ColumnType.SYMBOL: {
                     SymbolTable st = sts[ci];
-                    long base = frame.getDataAddress(ci);
+                    long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else if (st != null) {

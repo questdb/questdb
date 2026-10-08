@@ -113,11 +113,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     private long uuidCacheHi;
     private long uuidCacheLo;
     private long uuidCacheRowIndex = -1;
-    // The current frame's column-vector descriptor: this record's own copy of the frame
-    // memory's, taken whole, so a record copy carries every field.
-    protected final ColumnVectorDescriptor columnVectors = new ColumnVectorDescriptor();
-    // The descriptor's lists and column offset, for the per-row getters to read without one more
-    // indirection through columnVectors. Only bindColumnVectors() sets them, from columnVectors.
     protected DirectLongList auxPageAddresses;
     protected DirectLongList auxPageSizes;
     // Pool bind generation captured when boundPool was stamped. The pool bumps its
@@ -179,8 +174,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.frameIndex = other.frameIndex;
         this.frameFormat = other.frameFormat;
         this.rowIdOffset = other.rowIdOffset;
-        this.columnVectors.copyFrom(other.columnVectors);
-        bindColumnVectors();
+        this.pageAddresses = other.pageAddresses;
+        this.auxPageAddresses = other.auxPageAddresses;
+        this.pageSizes = other.pageSizes;
+        this.auxPageSizes = other.auxPageSizes;
+        this.columnOffset = other.columnOffset;
         this.columnCount = other.columnCount;
         this.columnTops = other.columnTops;
         this.stableStrings = other.stableStrings;
@@ -203,8 +201,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         rowIndex = 0;
         frameIndex = -1;
         rowIdOffset = -1;
-        columnVectors.clear();
-        bindColumnVectors();
+        columnOffset = 0;
+        pageAddresses = null;
+        auxPageAddresses = null;
+        pageSizes = null;
+        auxPageSizes = null;
         boundPool = null;
         boundGeneration = 0;
         columnTops = null;
@@ -841,8 +842,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.stableStrings = (frameFormat == PartitionFormat.NATIVE);
         this.hasTypeCasts = frameMemory.hasColumnTypeCasts();
         this.rowIdOffset = frameMemory.getRowIdOffset();
-        this.columnVectors.copyFrom(frameMemory.getColumnVectorDescriptor());
-        bindColumnVectors();
+        this.pageAddresses = frameMemory.getPageAddresses();
+        this.auxPageAddresses = frameMemory.getAuxPageAddresses();
+        this.pageSizes = frameMemory.getPageSizes();
+        this.auxPageSizes = frameMemory.getAuxPageSizes();
+        this.columnOffset = frameMemory.getColumnOffset();
         this.columnCount = frameMemory.getColumnCount();
         this.columnTops = frameMemory.getColumnTops();
         if (this.hasTypeCasts) {
@@ -917,14 +921,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             return 0;
         }
         return shapeAddr(columnIndex, auxEntryAddr);
-    }
-
-    private void bindColumnVectors() {
-        pageAddresses = columnVectors.getDataAddresses();
-        pageSizes = columnVectors.getDataSizes();
-        auxPageAddresses = columnVectors.getAuxAddresses();
-        auxPageSizes = columnVectors.getAuxSizes();
-        columnOffset = columnVectors.getColumnOffset();
     }
 
     private ColumnTypeConverter.Fixed2VarConverter cacheTypeCastConverter(int columnIndex, int srcType, int dstType) {
@@ -1628,7 +1624,12 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             int frameIndex,
             byte frameFormat,
             long rowIdOffset,
-            ColumnVectorDescriptor columnVectors,
+            DirectLongList pageAddresses,
+            DirectLongList auxPageAddresses,
+            DirectLongList pageLimits,
+            DirectLongList auxPageLimits,
+            int columnOffset,
+            int columnCount,
             boolean hasTypeCasts,
             IntList sourceColumnTypes,
             ObjList<NullPolicy> sourceColumnNullPolicies,
@@ -1658,9 +1659,12 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             }
         }
         this.rowIdOffset = rowIdOffset;
-        this.columnVectors.copyFrom(columnVectors);
-        bindColumnVectors();
-        this.columnCount = columnVectors.getColumnCount();
+        this.pageAddresses = pageAddresses;
+        this.auxPageAddresses = auxPageAddresses;
+        this.pageSizes = pageLimits;
+        this.auxPageSizes = auxPageLimits;
+        this.columnOffset = columnOffset;
+        this.columnCount = columnCount;
         invalidateTypeCastConverterCache();
     }
 }

@@ -170,8 +170,8 @@ public class TouchTableFunctionFactory implements FunctionFactory {
                 while ((frame = pageFrameCursor.next()) != null) {
                     for (int columnIndex = 0, sz = metadata.getColumnCount(); columnIndex < sz; columnIndex++) {
 
-                        final long columnMemorySize = frame.getDataSize(columnIndex);
-                        final long columnBaseAddress = frame.getDataAddress(columnIndex);
+                        final long columnMemorySize = frame.getPageSize(columnIndex);
+                        final long columnBaseAddress = frame.getPageAddress(columnIndex);
                         dataPages += touchMemory(pageSize, columnBaseAddress, columnMemorySize);
 
                         if (metadata.isColumnIndexed(columnIndex)) {

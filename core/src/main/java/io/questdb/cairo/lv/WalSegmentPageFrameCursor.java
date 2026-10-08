@@ -660,12 +660,12 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
     private final class SingleFrame implements PageFrame {
 
         @Override
-        public long getAuxAddress(int columnIndex) {
+        public long getAuxPageAddress(int columnIndex) {
             return pageAddresses.getQuick(2 * columnIndex + 1);
         }
 
         @Override
-        public long getAuxSize(int columnIndex) {
+        public long getAuxPageSize(int columnIndex) {
             return pageSizes.getQuick(2 * columnIndex + 1);
         }
 
@@ -685,18 +685,13 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         }
 
         @Override
-        public long getDataAddress(int columnIndex) {
+        public long getPageAddress(int columnIndex) {
             return pageAddresses.getQuick(2 * columnIndex);
         }
 
         @Override
-        public long getDataSize(int columnIndex) {
+        public long getPageSize(int columnIndex) {
             return pageSizes.getQuick(2 * columnIndex);
-        }
-
-        @Override
-        public long getNullCount(int columnIndex) {
-            return -1;
         }
 
         @Override
@@ -726,16 +721,6 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
 
         @Override
         public long getPartitionLo() {
-            return 0;
-        }
-
-        @Override
-        public long getValidityAddress(int columnIndex) {
-            return 0;
-        }
-
-        @Override
-        public long getValidityBitOffset(int columnIndex) {
             return 0;
         }
     }

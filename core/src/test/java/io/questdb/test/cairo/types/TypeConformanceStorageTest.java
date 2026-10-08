@@ -1090,8 +1090,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                     final long rowCount = frame.getPartitionHi() - frame.getPartitionLo();
                     sink.put("frame ").put(frameIndex).put(" rows=").put(rowCount)
                             .put(memory.getFrameFormat() == PartitionFormat.PARQUET ? " parquet" : " native").put('\n');
-                    final long dataAddress = memory.getColumnVectorDescriptor().getDataAddress(vIndex);
-                    final long auxAddress = memory.getColumnVectorDescriptor().getAuxAddress(vIndex);
+                    final long dataAddress = memory.getPageAddress(vIndex);
+                    final long auxAddress = memory.getAuxPageAddress(vIndex);
                     for (long r = 0; r < rowCount; r++) {
                         record.setRowIndex(r);
                         sink.put(record.getVarcharA(kIndex)).put('\t');
@@ -1110,7 +1110,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                             final long dataLo = varDriver.getDataVectorOffset(auxAddress, r);
                             final long dataHi = varDriver.getDataVectorSizeAt(auxAddress, r);
                             sink.put(" data=");
-                            if (dataHi > memory.getColumnVectorDescriptor().getDataSize(vIndex) || dataLo > dataHi) {
+                            if (dataHi > memory.getPageSize(vIndex) || dataLo > dataHi) {
                                 sink.put("out of page: ").put(dataLo).put("..").put(dataHi);
                             } else {
                                 appendHex(sink, dataAddress + dataLo, dataHi - dataLo);

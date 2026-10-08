@@ -509,12 +509,12 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         private int rowGroupLo;
 
         @Override
-        public long getAuxAddress(int columnIndex) {
+        public long getAuxPageAddress(int columnIndex) {
             return columnPageAddresses.getQuick(2 * columnIndex + 1);
         }
 
         @Override
-        public long getAuxSize(int columnIndex) {
+        public long getAuxPageSize(int columnIndex) {
             return pageSizes.getQuick(2 * columnIndex + 1);
         }
 
@@ -534,18 +534,13 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
-        public long getDataAddress(int columnIndex) {
+        public long getPageAddress(int columnIndex) {
             return columnPageAddresses.getQuick(2 * columnIndex);
         }
 
         @Override
-        public long getDataSize(int columnIndex) {
+        public long getPageSize(int columnIndex) {
             return pageSizes.getQuick(2 * columnIndex);
-        }
-
-        @Override
-        public long getNullCount(int columnIndex) {
-            return -1;
         }
 
         @Override
@@ -582,16 +577,6 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         @Override
         public long getPartitionLo() {
             return partitionLo;
-        }
-
-        @Override
-        public long getValidityAddress(int columnIndex) {
-            return 0;
-        }
-
-        @Override
-        public long getValidityBitOffset(int columnIndex) {
-            return 0;
         }
     }
 }

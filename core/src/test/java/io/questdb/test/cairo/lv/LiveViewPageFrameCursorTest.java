@@ -827,33 +827,33 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                     // A fixed-width column's page starts at this frame's first row and
                     // covers only its rows. SYMBOL's 4-byte stride is not the timestamp's
                     // 8, so a stride hard-coded to either lands off the rows for the other.
-                    Assert.assertEquals(slot.dataAddress(COL_TS) + 4 * 8L, frame.getDataAddress(COL_TS));
-                    Assert.assertEquals(4 * 8L, frame.getDataSize(COL_TS));
-                    Assert.assertEquals(slot.dataAddress(COL_G) + 4 * 4L, frame.getDataAddress(COL_G));
-                    Assert.assertEquals(4 * 4L, frame.getDataSize(COL_G));
+                    Assert.assertEquals(slot.dataAddress(COL_TS) + 4 * 8L, frame.getPageAddress(COL_TS));
+                    Assert.assertEquals(4 * 8L, frame.getPageSize(COL_TS));
+                    Assert.assertEquals(slot.dataAddress(COL_G) + 4 * 4L, frame.getPageAddress(COL_G));
+                    Assert.assertEquals(4 * 4L, frame.getPageSize(COL_G));
                     // ...and it has no aux vector at all.
-                    Assert.assertEquals(0, frame.getAuxAddress(COL_TS));
-                    Assert.assertEquals(0, frame.getAuxSize(COL_TS));
+                    Assert.assertEquals(0, frame.getAuxPageAddress(COL_TS));
+                    Assert.assertEquals(0, frame.getAuxPageSize(COL_TS));
 
                     // A var-size column's aux vector rebases onto this frame's first entry,
                     // and its extent is relative to that base - not the slot's own auxSize,
                     // which counts from entry 0 and carries the trailing terminator on top.
                     final ColumnTypeDriver driver = ColumnType.getDriver(ColumnType.STRING);
-                    Assert.assertEquals(slot.auxAddress(COL_S) + driver.getAuxVectorOffset(4), frame.getAuxAddress(COL_S));
-                    Assert.assertEquals(driver.getAuxVectorOffset(8) - driver.getAuxVectorOffset(4), frame.getAuxSize(COL_S));
+                    Assert.assertEquals(slot.auxAddress(COL_S) + driver.getAuxVectorOffset(4), frame.getAuxPageAddress(COL_S));
+                    Assert.assertEquals(driver.getAuxVectorOffset(8) - driver.getAuxVectorOffset(4), frame.getAuxPageSize(COL_S));
                     Assert.assertTrue(
                             "a rebased frame must not publish the whole slot's aux extent",
-                            frame.getAuxSize(COL_S) < slot.auxSize(COL_S)
+                            frame.getAuxPageSize(COL_S) < slot.auxSize(COL_S)
                     );
                     // Its data page does NOT rebase: an aux entry carries the payload's
                     // offset from the vector's BASE, so the address stays row 0's and the
                     // extent stays absolute - where this frame's LAST row's payload ends,
                     // rather than how many bytes its own rows occupy.
-                    Assert.assertEquals(slot.dataAddress(COL_S), frame.getDataAddress(COL_S));
-                    Assert.assertEquals(driver.getDataVectorSizeAt(slot.auxAddress(COL_S), 7), frame.getDataSize(COL_S));
+                    Assert.assertEquals(slot.dataAddress(COL_S), frame.getPageAddress(COL_S));
+                    Assert.assertEquals(driver.getDataVectorSizeAt(slot.auxAddress(COL_S), 7), frame.getPageSize(COL_S));
                     Assert.assertTrue(
                             "a frame that is not the slot's last must stop at its own last row",
-                            frame.getDataSize(COL_S) < slot.dataSize(COL_S)
+                            frame.getPageSize(COL_S) < slot.dataSize(COL_S)
                     );
                 }
             } finally {
@@ -1475,12 +1475,12 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
             private long partitionLo;
 
             @Override
-            public long getAuxAddress(int columnIndex) {
+            public long getAuxPageAddress(int columnIndex) {
                 return pageAddresses.getQuick(2 * columnIndex + 1);
             }
 
             @Override
-            public long getAuxSize(int columnIndex) {
+            public long getAuxPageSize(int columnIndex) {
                 return pageSizes.getQuick(2 * columnIndex + 1);
             }
 
@@ -1500,18 +1500,13 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
             }
 
             @Override
-            public long getDataAddress(int columnIndex) {
+            public long getPageAddress(int columnIndex) {
                 return pageAddresses.getQuick(2 * columnIndex);
             }
 
             @Override
-            public long getDataSize(int columnIndex) {
+            public long getPageSize(int columnIndex) {
                 return pageSizes.getQuick(2 * columnIndex);
-            }
-
-            @Override
-            public long getNullCount(int columnIndex) {
-                return -1;
             }
 
             @Override
@@ -1542,16 +1537,6 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
             @Override
             public long getPartitionLo() {
                 return partitionLo;
-            }
-
-            @Override
-            public long getValidityAddress(int columnIndex) {
-                return 0;
-            }
-
-            @Override
-            public long getValidityBitOffset(int columnIndex) {
-                return 0;
             }
         }
     }

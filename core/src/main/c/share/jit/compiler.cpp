@@ -1080,15 +1080,11 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv 
                                                                          jlong colsAddress,
                                                                          jlong colsSize,
                                                                          jlong varSizeIndexesAddress,
-                                                                         jlong validityListsAddress,
                                                                          jlong varsAddress,
                                                                          jlong varsSize,
                                                                          jlong filteredRowsAddress,
                                                                          jlong rowsCount)
 {
-    // validityListsAddress holds the columns' validity fields as three parallel blocks
-    // (validity addresses, bit offsets, NULL counts); the compiled filter does not read them yet
-    (void) validityListsAddress;
     auto fn = reinterpret_cast<CompiledFn>(fnAddress);
     return fn(reinterpret_cast<int64_t *>(colsAddress),
               colsSize,
@@ -1105,14 +1101,10 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callCountOnlyFunctio
                                                                                   jlong colsAddress,
                                                                                   jlong colsSize,
                                                                                   jlong varSizeIndexesAddress,
-                                                                                  jlong validityListsAddress,
                                                                                   jlong varsAddress,
                                                                                   jlong varsSize,
                                                                                   jlong rowsCount)
 {
-    // validityListsAddress holds the columns' validity fields as three parallel blocks
-    // (validity addresses, bit offsets, NULL counts); the compiled filter does not read them yet
-    (void) validityListsAddress;
     auto fn = reinterpret_cast<CompiledCountOnlyFn>(fnAddress);
     return fn(reinterpret_cast<int64_t *>(colsAddress),
               colsSize,

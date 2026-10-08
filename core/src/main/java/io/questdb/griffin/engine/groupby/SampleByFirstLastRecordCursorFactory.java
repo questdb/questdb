@@ -34,7 +34,6 @@ import io.questdb.cairo.IndexFrameCursor;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.idx.IndexFrame;
 import io.questdb.cairo.idx.IndexReader;
-import io.questdb.cairo.sql.ColumnVectorDescriptor;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -608,7 +607,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
                     if (samplePeriodStart == Numbers.LONG_NULL) {
                         long rowId = indexFrameAddress > 0 ? Unsafe.getLong(indexFrameAddress) : frameLo;
-                        long offsetTimestampColumnAddress = frameMemory.getColumnVectorDescriptor().getDataAddress(timestampIndex) - frameLo * Long.BYTES;
+                        long offsetTimestampColumnAddress = frameMemory.getPageAddress(timestampIndex) - frameLo * Long.BYTES;
                         samplePeriodStart = Unsafe.getLong(offsetTimestampColumnAddress + rowId * Long.BYTES);
                         startFrom(samplePeriodStart);
                     }
@@ -617,7 +616,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 case STATE_OUT_BUFFER_FULL:
                 case STATE_SEARCH:
                     int outPosition = crossRowState == NONE ? 0 : 1;
-                    long offsetTimestampColumnAddress = frameMemory.getColumnVectorDescriptor().getDataAddress(timestampIndex) - frameLo * Long.BYTES;
+                    long offsetTimestampColumnAddress = frameMemory.getPageAddress(timestampIndex) - frameLo * Long.BYTES;
                     long iFrameAddress = indexFrame.getAddress();
                     long iFrameSize = findSafeIndexFrameSize(indexFrame, frameHi);
                     long lastIndexRowId = iFrameAddress > 0
@@ -765,7 +764,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private void saveRowIdValueToCrossRow(long rowId, int columnIndex) {
             int columnType = getMetadata().getColumnType(columnIndex);
             int frameColIndex = queryToFrameColumnMapping[columnIndex];
-            long pageAddress = frameMemory.getColumnVectorDescriptor().getDataAddress(frameColIndex);
+            long pageAddress = frameMemory.getPageAddress(frameColIndex);
             if (pageAddress > 0) {
                 saveFixedColToBufferWithLongAlignment(columnIndex, crossFrameRow, columnType, pageAddress, rowId);
             } else {
@@ -1176,9 +1175,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 }
 
                 public void switchFrame() {
-                    final ColumnVectorDescriptor columnVectors = frameMemory.getColumnVectorDescriptor();
                     for (int i = 0, length = pageAddresses.length; i < length; i++) {
-                        pageAddresses[i] = columnVectors.getDataAddress(queryToFrameColumnMapping[i]);
+                        pageAddresses[i] = frameMemory.getPageAddress(queryToFrameColumnMapping[i]);
                     }
                 }
 
