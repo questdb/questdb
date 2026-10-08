@@ -138,10 +138,6 @@ public final class SqlHints {
         return queryModel.getHints().keyIndex(NO_SYMBOL_PATTERN_INDEX_HINT) < 0;
     }
 
-    public static boolean isNamedByMarkoutHorizonHint(@NotNull IQueryModel queryModel, @Nullable CharSequence tableName) {
-        return hasHintWithParams(queryModel, MARKOUT_HORIZON_HINT, tableName, tableName);
-    }
-
     private static boolean hasHintWithParams(
             @NotNull IQueryModel queryModel,
             @NotNull CharSequence hintName,

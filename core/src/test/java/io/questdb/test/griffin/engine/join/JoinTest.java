@@ -2421,45 +2421,48 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testCrossJoinBeforeRightJoinRunsAfterKeyedJoinUnderMarkoutHint() throws Exception {
-        // A markout_horizon hint that names other tables, whether written on the query or on an outer query
-        // that passes it down, does not keep the CROSS JOIN ahead of the keyed join. prepareDeferredModels()
-        // used to defer no model on a level with the hint, and the keyed join probed the cross product.
+        // A markout_horizon hint does not keep the CROSS JOIN ahead of the keyed join, whether it names other
+        // tables or the CROSS-joined tables themselves, and whether it is written on the query or on an outer
+        // query that passes it down. c is a table, so no markout join can form, and keeping it in place made
+        // the keyed join probe the cross product.
         assertMemoryLeak(() -> {
             createTablesForCrossJoinBeforeRightJoin();
-            assertQuery("SELECT /*+ markout_horizon(zz yy) */ a.k, a.x, c.y, b.k bk, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .withPlan("""
-                            SelectedRecord
-                                Nested Loop Right Join
-                                  filter: a.x>=d.k
-                                    Cross Join
-                                        Hash Join Light
-                                          condition: b.k=a.k
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
-                                            Hash
+            for (String hint : new String[]{"zz yy", "a c"}) {
+                assertQuery("SELECT /*+ markout_horizon(" + hint + ") */ a.k, a.x, c.y, b.k bk, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlan("""
+                                SelectedRecord
+                                    Nested Loop Right Join
+                                      filter: a.x>=d.k
+                                        Cross Join
+                                            Hash Join Light
+                                              condition: b.k=a.k
                                                 PageFrame
                                                     Row forward scan
-                                                    Frame forward scan on: b
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
                                         PageFrame
                                             Row forward scan
-                                            Frame forward scan on: c
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: d
-                            """)
-                    .returns("""
-                            k\tx\ty\tbk\tdk
-                            4\t12\t1\t4\t7
-                            4\t12\t2\t4\t7
-                            4\t12\t3\t4\t7
-                            6\t18\t1\t6\t7
-                            6\t18\t2\t6\t7
-                            6\t18\t3\t6\t7
-                            null\tnull\tnull\tnull\t100
-                            """);
+                                            Frame forward scan on: d
+                                """)
+                        .returns("""
+                                k\tx\ty\tbk\tdk
+                                4\t12\t1\t4\t7
+                                4\t12\t2\t4\t7
+                                4\t12\t3\t4\t7
+                                6\t18\t1\t6\t7
+                                6\t18\t2\t6\t7
+                                6\t18\t3\t6\t7
+                                null\tnull\tnull\tnull\t100
+                                """);
+            }
             assertQuery("""
                     SELECT /*+ markout_horizon(t o) */ t.k, t.y, t.dk, o.k ok
                     FROM (SELECT a.k, c.y, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k FULL JOIN d ON a.x >= d.k) t
@@ -10790,26 +10793,83 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMarkoutCrossJoinKeepsMarkoutJoinBeforeRightJoin() throws Exception {
-        // The first table has no key, so the RIGHT/FULL join only pins it ahead of the outer join, and
-        // doReorderTables() could defer it behind the keyed join. The markout_horizon hint names it, so it
-        // stays first and SqlCodeGenerator still builds the markout join of the tables that the hint names.
+    public void testMarkoutHintBeforeRightJoinKeepsUnhintedJoinOrder() throws Exception {
+        // The markout_horizon hint does not change the join order of a level with a RIGHT/FULL join. The
+        // key-less first table waits behind the keyed join, as it does without the hint, so no markout join
+        // forms below the outer join. With no keyed join to wait behind, the tables keep their written order
+        // and SqlCodeGenerator still builds the markout join of the tables that the hint names.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, k INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 1, '1970-01-01T00:00:01.000000Z'),
-                    (2, 5, '1970-01-01T00:00:02.000000Z'),
-                    (3, 9, '1970-01-01T00:00:03.000000Z')
+                    (2, 5, '1970-01-01T00:00:10.000000Z'),
+                    (3, 9, '1970-01-01T00:00:20.000000Z')
                     """);
             execute("CREATE TABLE bb (k LONG)");
             execute("INSERT INTO bb VALUES (0), (2_000_000)");
             execute("CREATE TABLE dd (k INT)");
             execute("INSERT INTO dd VALUES (4), (100)");
-            final String query = """
+            final String keyedQuery = """
                     WITH offsets AS (SELECT 1_000_000 * (x - 1) usec_offs FROM long_sequence(3))
                     SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs ts, dd.k
                     FROM orders CROSS JOIN offsets JOIN bb ON bb.k = offsets.usec_offs #OUTER# JOIN dd ON orders.k >= dd.k
+                    ORDER BY order_ts + usec_offs
+                    """;
+            assertQuery(keyedQuery.replace("#OUTER#", "RIGHT"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
+                            Encode sort
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [id,order_ts+usec_offs,k]
+                                    SelectedRecord
+                                        Nested Loop Right Join
+                                          filter: orders.k>=dd.k
+                                            Cross Join
+                                                Hash Join Light
+                                                  condition: bb.k=offsets.usec_offs
+                                                    VirtualRecord
+                                                      functions: [1000000*x-1]
+                                                        long_sequence count: 3
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: bb
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: orders
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: dd
+                            """)
+                    .returns("""
+                            id\tts\tk
+                            null\t\t100
+                            2\t1970-01-01T00:00:10.000000Z\t4
+                            2\t1970-01-01T00:00:12.000000Z\t4
+                            3\t1970-01-01T00:00:20.000000Z\t4
+                            3\t1970-01-01T00:00:22.000000Z\t4
+                            """);
+            assertQuery(keyedQuery.replace("#OUTER#", "FULL"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanNotContaining("Markout Horizon Join")
+                    .returns("""
+                            id\tts\tk
+                            null\t\t100
+                            1\t1970-01-01T00:00:01.000000Z\tnull
+                            1\t1970-01-01T00:00:03.000000Z\tnull
+                            2\t1970-01-01T00:00:10.000000Z\t4
+                            2\t1970-01-01T00:00:12.000000Z\t4
+                            3\t1970-01-01T00:00:20.000000Z\t4
+                            3\t1970-01-01T00:00:22.000000Z\t4
+                            """);
+            final String query = """
+                    WITH offsets AS (SELECT 1_000_000 * (x - 1) usec_offs FROM long_sequence(3))
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs ts, dd.k
+                    FROM orders CROSS JOIN offsets #OUTER# JOIN dd ON orders.k >= dd.k
                     ORDER BY order_ts + usec_offs
                     """;
             assertQuery(query.replace("#OUTER#", "RIGHT"))
@@ -10819,10 +10879,12 @@ public class JoinTest extends AbstractCairoTest {
                     .returns("""
                             id\tts\tk
                             null\t\t100
-                            2\t1970-01-01T00:00:02.000000Z\t4
-                            3\t1970-01-01T00:00:03.000000Z\t4
-                            2\t1970-01-01T00:00:04.000000Z\t4
-                            3\t1970-01-01T00:00:05.000000Z\t4
+                            2\t1970-01-01T00:00:10.000000Z\t4
+                            2\t1970-01-01T00:00:11.000000Z\t4
+                            2\t1970-01-01T00:00:12.000000Z\t4
+                            3\t1970-01-01T00:00:20.000000Z\t4
+                            3\t1970-01-01T00:00:21.000000Z\t4
+                            3\t1970-01-01T00:00:22.000000Z\t4
                             """);
             assertQuery(query.replace("#OUTER#", "FULL"))
                     .noLeakCheck()
@@ -10832,11 +10894,81 @@ public class JoinTest extends AbstractCairoTest {
                             id\tts\tk
                             null\t\t100
                             1\t1970-01-01T00:00:01.000000Z\tnull
-                            2\t1970-01-01T00:00:02.000000Z\t4
+                            1\t1970-01-01T00:00:02.000000Z\tnull
                             1\t1970-01-01T00:00:03.000000Z\tnull
-                            3\t1970-01-01T00:00:03.000000Z\t4
-                            2\t1970-01-01T00:00:04.000000Z\t4
-                            3\t1970-01-01T00:00:05.000000Z\t4
+                            2\t1970-01-01T00:00:10.000000Z\t4
+                            2\t1970-01-01T00:00:11.000000Z\t4
+                            2\t1970-01-01T00:00:12.000000Z\t4
+                            3\t1970-01-01T00:00:20.000000Z\t4
+                            3\t1970-01-01T00:00:21.000000Z\t4
+                            3\t1970-01-01T00:00:22.000000Z\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testMarkoutHintBeforeRightJoinWithTimeSeriesJoin() throws Exception {
+        // A markout_horizon hint kept the CROSS JOIN that it names ahead of the ASOF or LT join written after
+        // it. SqlCodeGenerator then built a markout join as the master of the time-series join, and the query
+        // failed with "left side of time series join has no timestamp". The hint no longer changes the join
+        // order, so the time-series join runs first, as it does without the hint.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, k INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 1, '1970-01-01T00:00:00.000000Z'),
+                    (2, 5, '1970-01-01T00:00:10.000000Z'),
+                    (3, 9, '1970-01-01T00:00:20.000000Z')
+                    """);
+            execute("CREATE TABLE prices (k INT, p DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO prices VALUES
+                    (1, 1.5, '1970-01-01T00:00:00.000000Z'),
+                    (5, 2.5, '1970-01-01T00:00:05.000000Z'),
+                    (5, 3.5, '1970-01-01T00:00:15.000000Z')
+                    """);
+            execute("CREATE TABLE dd (k INT)");
+            execute("INSERT INTO dd VALUES (4), (100)");
+            execute("CREATE TABLE ee (k INT)");
+            execute("INSERT INTO ee VALUES (5), (100)");
+            assertQuery("""
+                    WITH offsets AS (SELECT 1_000_000 * (x - 1) usec_offs FROM long_sequence(3))
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs ts, p, dd.k
+                    FROM orders CROSS JOIN offsets ASOF JOIN prices ON orders.k = prices.k RIGHT JOIN dd ON orders.k >= dd.k
+                    ORDER BY order_ts + usec_offs
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts\tp\tk
+                            null\t\tnull\t100
+                            2\t1970-01-01T00:00:10.000000Z\t2.5\t4
+                            2\t1970-01-01T00:00:11.000000Z\t2.5\t4
+                            2\t1970-01-01T00:00:12.000000Z\t2.5\t4
+                            3\t1970-01-01T00:00:20.000000Z\tnull\t4
+                            3\t1970-01-01T00:00:21.000000Z\tnull\t4
+                            3\t1970-01-01T00:00:22.000000Z\tnull\t4
+                            """);
+            assertQuery("""
+                    WITH offsets AS (SELECT 1_000_000 * (x - 1) usec_offs FROM long_sequence(3))
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs ts, p, ee.k
+                    FROM orders CROSS JOIN offsets LT JOIN prices ON orders.k = prices.k FULL JOIN ee ON orders.k = ee.k
+                    ORDER BY order_ts + usec_offs
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts\tp\tk
+                            null\t\tnull\t100
+                            1\t1970-01-01T00:00:00.000000Z\tnull\tnull
+                            1\t1970-01-01T00:00:01.000000Z\tnull\tnull
+                            1\t1970-01-01T00:00:02.000000Z\tnull\tnull
+                            2\t1970-01-01T00:00:10.000000Z\t2.5\t5
+                            2\t1970-01-01T00:00:11.000000Z\t2.5\t5
+                            2\t1970-01-01T00:00:12.000000Z\t2.5\t5
+                            3\t1970-01-01T00:00:20.000000Z\tnull\tnull
+                            3\t1970-01-01T00:00:21.000000Z\tnull\tnull
+                            3\t1970-01-01T00:00:22.000000Z\tnull\tnull
                             """);
         });
     }

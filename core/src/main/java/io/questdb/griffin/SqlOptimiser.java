@@ -9278,9 +9278,11 @@ public class SqlOptimiser implements Mutable {
     }
 
     // Marks the deferred models of the level for doReorderTables when isDeferring, see isDeferredJoinModel,
-    // and counts for each model the deferred models that its ON clause reads. SqlCodeGenerator turns a CROSS
-    // join that the markout_horizon hint names into a markout join that needs the master it is written
-    // after, so this method defers no model that the hint names.
+    // and counts for each model the deferred models that its ON clause reads. The markout_horizon hint does
+    // not keep a model in place: the RIGHT/FULL join that pins it returns rows out of timestamp order, so a
+    // markout join below that join spares the query no sort, and a time-series join written after the
+    // markout pair cannot read its timestamp. SqlCodeGenerator still builds the markout join when the order
+    // runs the CROSS join right after its master.
     private void prepareDeferredModels(IQueryModel parent, boolean isDeferring) {
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
         final int n = joinModels.size();
@@ -9301,8 +9303,7 @@ public class SqlOptimiser implements Mutable {
         }
         boolean hasDeferredModel = false;
         for (int i = 0; i < n; i++) {
-            if (isDeferredJoinModel(joinModels, i, isFromModelDeferrable)
-                    && !SqlHints.isNamedByMarkoutHorizonHint(parent, joinModels.getQuick(i).getName())) {
+            if (isDeferredJoinModel(joinModels, i, isFromModelDeferrable)) {
                 deferralStates.setQuick(i, DEFERRAL_PENDING);
                 hasDeferredModel = true;
             }
