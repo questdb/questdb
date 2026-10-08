@@ -44,7 +44,6 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.BinarySequence;
-import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
@@ -706,6 +705,28 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolAnchorOnAFreshCacheStartsTheInStepCheckAtTheCommittedCount() throws Exception {
+        // After a restart the cache is empty while the view's table already holds three
+        // committed symbols. The first drain's anchor raises the next id to three, and it has
+        // to record three as the id the in-step check compares from as well: the cache holds
+        // no string below it, so a check that started at id 0 would report out of step at
+        // every flush, and the view would read disk-only until the next restart.
+        assertMemoryLeak(() -> {
+            final int col = 1;
+            final int committedCount = 3;
+            IntList types = new IntList(2);
+            types.add(ColumnType.TIMESTAMP);
+            types.add(ColumnType.SYMBOL);
+            try (LiveViewSymbolCache cache = new LiveViewSymbolCache(types)) {
+                cache.anchor(col, committedCount);
+                Assert.assertEquals(committedCount, cache.intern(col, "acct-4", new UncommittedValuesReader(committedCount)));
+                // The flush's apply commits the new value at the id the drain assigned it.
+                Assert.assertTrue(cache.isInStepWith(col, new CommittedValuesReader("acct-1", "acct-2", "acct-3", "acct-4")));
+            }
+        });
+    }
+
+    @Test
     public void testSymbolRewindWaitsForEveryPinThenRebindsTheBandInANewOrder() throws Exception {
         // A recovery discarded a pass that interned acct-3 and acct-4 past the two committed
         // symbols, so the cache would hand the next new value an id the flush's apply gives to
@@ -811,7 +832,12 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
                 // check still refuses it: a WAL writer that kept acct-4 from the discarded pass
                 // through its rollback commits it ahead of acct-5.
                 Assert.assertFalse(cache.isInStepWith(col, new CommittedValuesReader("acct-1", "acct-2", "acct-4", "acct-5")));
-                // So does a commit of a value the drain never interned: that writer kept acct-3.
+                // The same count with a value the drain never interned, at the last id it
+                // assigned, falls to the value comparison too.
+                Assert.assertFalse(cache.isInStepWith(col, new CommittedValuesReader("acct-1", "acct-2", "acct-5", "acct-3")));
+                // A writer that kept acct-3 commits it ahead of the drain's two values, so the
+                // table holds one symbol more than the cache assigned: the count comparison
+                // refuses that commit before it reads a value.
                 Assert.assertFalse(cache.isInStepWith(col, new CommittedValuesReader("acct-1", "acct-2", "acct-3", "acct-5", "acct-4")));
                 // A second rewind with nothing stranded changes nothing.
                 committedCounts.setQuick(col, committedCount + 2);
@@ -896,6 +922,54 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
                 Assert.assertNull(cache.newSymbolValueOf(col, committedCount + 1));
                 Assert.assertEquals(committedCount + 1, cache.newSymbolMaxIdExclusive(col));
                 Assert.assertEquals(committedCount, cache.newSymbolKeyOf(col, "kept", committedCount, committedCount + 1));
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolRewindThatThrowsPartWayStillReleasesBothWriterSentinels() throws Exception {
+        // tryRewindSymbolCache holds the writer sentinel on both slots while it rewinds the
+        // columns. Nothing in production throws in there short of a JVM error, so a list of
+        // committed counts that stops short of the second SYMBOL column stands in for one:
+        // IntList.getQuick trips its bounds assertion on it (core tests run with -ea), after
+        // the first column rewound. Both sentinels have to drop all the same, or every reader
+        // of the view spins on them forever.
+        assertMemoryLeak(() -> {
+            final int firstCol = 1;
+            final IntList committedCounts = new IntList();
+            committedCounts.extendAndSet(firstCol, 0);
+            IntList types = new IntList(3);
+            types.add(ColumnType.TIMESTAMP);
+            types.add(ColumnType.SYMBOL);
+            types.add(ColumnType.SYMBOL);
+            try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE)) {
+                final LiveViewSymbolCache cache = tier.getSymbolCache();
+                Assert.assertEquals("the schema must carry both symbol columns", 2, cache.symbolColumnCount());
+                // A discarded pass left the first column an id to take back.
+                Assert.assertEquals(0, cache.intern(firstCol, "discarded", new UncommittedValuesReader(0)));
+
+                AssertionError thrown = null;
+                try {
+                    tier.tryRewindSymbolCache(committedCounts);
+                } catch (AssertionError e) {
+                    thrown = e;
+                }
+                Assert.assertNotNull("the second column's count read must trip the bounds assertion", thrown);
+                TestUtils.assertContains(thrown.getMessage(), "out of bounds for list size");
+                Assert.assertFalse("the first column must have rewound before the throw", cache.hasStrandedIds(firstCol, 0));
+
+                // Re-acquirable means the sentinel is gone. Asserting it this way before any
+                // acquireRead keeps a regression a failure instead of a hang.
+                for (int slotIdx = 0; slotIdx < 2; slotIdx++) {
+                    Assert.assertNotNull(
+                            "slot " + slotIdx + " must drop its sentinel even when the rewind throws",
+                            tier.tryAcquireWrite(slotIdx)
+                    );
+                    tier.releaseWriteWithoutPublish(slotIdx);
+                }
+                final int pin = tier.acquireRead();
+                Assert.assertEquals(tier.getPublishedIdx(), pin);
+                tier.releaseRead(pin);
             }
         });
     }
@@ -2190,7 +2264,9 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
     }
 
     // The committed symbol table an apply leaves behind, its values by id, so the in-step
-    // check can compare the ids a drain assigned against the ones the apply committed.
+    // check can compare the ids a drain assigned against the ones the apply committed. That
+    // check reads only the count and valueOf, so keyOf stays the base class's and finds no
+    // value: do not hand this reader to intern.
     private static final class CommittedValuesReader extends UncommittedValuesReader {
         private final ObjList<String> values = new ObjList<>();
 
@@ -2199,16 +2275,6 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
             for (String value : values) {
                 this.values.add(value);
             }
-        }
-
-        @Override
-        public int keyOf(CharSequence value) {
-            for (int i = 0, n = values.size(); i < n; i++) {
-                if (Chars.equals(values.getQuick(i), value)) {
-                    return i;
-                }
-            }
-            return SymbolTable.VALUE_NOT_FOUND;
         }
 
         @Override
@@ -2345,8 +2411,6 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         }
     }
 
-    // Minimal single-row Record stub feeding copyRowFromRecord a TIMESTAMP, a
-    // STRING, and a BINARY column (indexes 0, 1, 2). Rebind per row via of().
     // A committed symbol table of a fixed count that holds none of the values a test interns,
     // so every intern sees a value new to the lead. intern reads only keyOf and the count.
     private static class UncommittedValuesReader implements SymbolMapReader {
@@ -2417,6 +2481,8 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         }
     }
 
+    // Minimal single-row Record stub feeding copyRowFromRecord a TIMESTAMP, a
+    // STRING, and a BINARY column (indexes 0, 1, 2). Rebind per row via of().
     private static final class VarSizeRecord implements Record {
         private BinarySequence bin;
         private CharSequence str;

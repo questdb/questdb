@@ -26,6 +26,7 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Chars;
 import io.questdb.std.CharSequenceIntHashMap;
@@ -33,6 +34,7 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.DirectString;
 
 /**
  * Per-live-view eager-interning symbol cache for the in-memory tier's
@@ -135,6 +137,10 @@ public class LiveViewSymbolCache implements QuietCloseable {
     // pruneReverseIndex to at most one map walk per that many assignments, which
     // keeps pruning O(1) amortized per assignment. Writer-side only.
     private final IntList assignmentsSincePrune;
+    // isInStepWith binds each committed value it reads from a SymbolMapReaderImpl here,
+    // straight from the reader's mapped char file, and clears it before returning, so it
+    // never points into a mapping its reader may since have closed. Writer-side only.
+    private final DirectString committedValueView = new DirectString();
     // Per output column, null for non-SYMBOL columns. Read by cursor overlays;
     // append-only and sparse, indexed by absolute LV-table symbol id (null gaps for
     // ids that only ever existed as committed values, which resolve via disk).
@@ -252,25 +258,35 @@ public class LiveViewSymbolCache implements QuietCloseable {
      * as other values, and the caller must not stamp it as a subset of disk.
      * <p>
      * Costs one comparison per id assigned since the anchor - the values new to the table
-     * in this flush or publish - and allocates nothing beyond what
-     * {@link SymbolMapReader#valueOf} caches for a cached column.
+     * in this flush or publish - and allocates nothing: it reads a {@link SymbolMapReaderImpl}'s
+     * values from the mapped char file through a view this cache owns, never through
+     * {@link SymbolMapReader#valueOf}, which on a cached column retains a {@code String} per id
+     * it resolves on the reader's heap. Any other reader answers through
+     * {@link SymbolMapReader#valueOf}.
      */
     public boolean isInStepWith(int col, SymbolMapReader committedReader) {
         final int committedCount = committedReader.getSymbolCount();
         if (nextNewId.getQuick(col) != committedCount) {
             return false;
         }
+        final SymbolMapReaderImpl mappedReader = committedReader instanceof SymbolMapReaderImpl impl ? impl : null;
         // anchor and rewind both leave nextNewId at or above anchoredCount, and intern only
         // raises it, so the band below is never inverted.
         final ConcurrentCharSequenceList list = idToString.getQuick(col);
-        for (int id = Math.max(anchoredCount.getQuick(col), 0); id < committedCount; id++) {
-            final CharSequence assigned = list.valueOf(id);
-            final CharSequence committed = committedReader.valueOf(id);
-            if (assigned == null || committed == null || !Chars.equals(assigned, committed)) {
-                return false;
+        try {
+            for (int id = Math.max(anchoredCount.getQuick(col), 0); id < committedCount; id++) {
+                final CharSequence assigned = list.valueOf(id);
+                final CharSequence committed = mappedReader != null
+                        ? mappedReader.valueOf(id, committedValueView)
+                        : committedReader.valueOf(id);
+                if (assigned == null || committed == null || !Chars.equals(assigned, committed)) {
+                    return false;
+                }
             }
+            return true;
+        } finally {
+            committedValueView.clear();
         }
-        return true;
     }
 
     /**

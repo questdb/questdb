@@ -3189,19 +3189,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // lead-eligible LVs take the refresh/flush split instead.
             instance.setAppliedWatermark(advanceTo);
             boolean lvConsumedPersisted = false;
-            // LV-table applied seqTxn for the fence stamp; LONG_NULL until apply.
+            // LV-table applied seqTxn on either side of the apply; LONG_NULL until then.
+            long lvAppliedBefore = Numbers.LONG_NULL;
             long lvAppliedSeqTxn = Numbers.LONG_NULL;
             if (appendedRows > 0) {
                 // LV apply runs inline on this thread. The
                 // global ApplyWal2TableJob.doRun skips LV tokens, so without
                 // applyWalDirect here the LIVE_VIEW_DATA block would sit
                 // unapplied and the on-disk tier would not catch up.
+                final SeqTxnTracker lvTracker = engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken());
+                // The apply reports nothing, and it can land no block at all, or an older
+                // backlog with this cycle's block. The publish below tells those apart by
+                // how far the applied seqTxn moved (see publishSubsetToInMemoryTier).
+                lvAppliedBefore = lvTracker.getWriterTxn();
                 applyLiveViewWal(instance.getLiveViewToken());
                 // Capture the just-applied LV-table seqTxn (matches a query
                 // reader's getSeqTxn()) to stamp the slot below.
-                lvAppliedSeqTxn = engine.getTableSequencerAPI()
-                        .getTxnTracker(instance.getLiveViewToken())
-                        .getWriterTxn();
+                lvAppliedSeqTxn = lvTracker.getWriterTxn();
                 // Apply has committed the _txn (the durability cut for the rows).
                 // Now publish the new lvConsumedSeqTxn floor and persist _lv.s
                 // through the refresh worker's reusable BlockFileWriter + Path so
@@ -3251,13 +3255,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             if (lvConsumedPersisted && populateTier && appendedRows > 0) {
                 // Publish the just-applied rows into the tier as a subset of disk
-                // (leadRowCount = 0). Failure to acquire a write slot is a
-                // non-fatal stall: the on-disk tier still advanced, the in-mem
-                // tier just trails this cycle. Any tier-populating output schema
-                // (fixed-width, SYMBOL via eager interning, or var-length) is
-                // lead-eligible and takes the refresh/flush split instead, so this
-                // disk-subset publish is effectively unreachable; kept defensively.
-                publishSubsetToInMemoryTier(instance, stagingMaxTs, lvAppliedSeqTxn, appendedRows);
+                // (leadRowCount = 0), provided the apply landed them and the slot
+                // holds the rows under them; publishSubsetToInMemoryTier checks both.
+                // Failure to acquire a write slot is a non-fatal stall: the on-disk
+                // tier still advanced, the in-mem tier just trails this cycle, and
+                // the next publish finds the slot behind the table and rebuilds it.
+                // A view over a DEDUP base takes this publish on every clean cycle
+                // that appends rows: refreshInstance keeps a DEDUP base off the
+                // refresh/flush split and, off a read-only replica, sends each range
+                // isRangeProvablyClean admits through this drain. The publish feeds
+                // the tier there, as its twin does after drainAppliedBase's forward
+                // append. The other caller of this branch, a view with a
+                // tier-unstorable output type, has populateTier == false and never
+                // reaches it.
+                publishSubsetToInMemoryTier(instance, stagingMaxTs, lvAppliedBefore, lvAppliedSeqTxn, appendedRows);
             }
             if (lvConsumedPersisted && appendedRows > 0) {
                 // Head-checkpoint write hook. Ordered after the apply's _txn
@@ -3475,6 +3486,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long batchMaxTs = Numbers.LONG_NULL;
             long stagingMinTs = Numbers.LONG_NULL;
             long stagingMaxTs = Numbers.LONG_NULL;
+            long lvAppliedBefore = Numbers.LONG_NULL;
             long lvAppliedSeqTxn = Numbers.LONG_NULL;
             boolean readerAttached = false;
             try (TableReader committedSymbolReader = internSymbols ? engine.getReader(instance.getLiveViewToken()) : null) {
@@ -3608,10 +3620,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
             boolean lvConsumedPersisted = false;
             if (appendedRows > 0) {
+                // Read the applied seqTxn on either side of the apply, as incrementalRefresh
+                // does: the publish below must know whether the block above landed, and alone.
+                final SeqTxnTracker lvTracker = engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken());
+                lvAppliedBefore = lvTracker.getWriterTxn();
                 applyLiveViewWal(instance.getLiveViewToken());
-                lvAppliedSeqTxn = engine.getTableSequencerAPI()
-                        .getTxnTracker(instance.getLiveViewToken())
-                        .getWriterTxn();
+                lvAppliedSeqTxn = lvTracker.getWriterTxn();
             }
             try {
                 engine.advanceLiveViewConsumedSeqTxn(instance.getLiveViewToken(), effectiveSeqTxn, blockFileWriter, path);
@@ -3629,7 +3643,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // Publish the just-applied rows into the tier as a subset of disk
                 // (leadRowCount = 0). This disk-subset publish is the tier's only feed
                 // for a dedup base (it has no un-flushed lead), so it is load-bearing.
-                publishSubsetToInMemoryTier(instance, stagingMaxTs, lvAppliedSeqTxn, appendedRows);
+                // It keeps the rows out of the slot when the apply did not land them.
+                publishSubsetToInMemoryTier(instance, stagingMaxTs, lvAppliedBefore, lvAppliedSeqTxn, appendedRows);
             }
             if (lvConsumedPersisted && appendedRows > 0) {
                 maybeWriteHeadCheckpoint(instance, windowFactory, effectiveSeqTxn, batchMaxTs, appendedRows, false);
@@ -4345,6 +4360,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // future path that could leave a stale non-zero count while tierStale.
                     instance.setLeadRowCount(0);
                     flushLead(instance, windowFactory, advanceTo, appendedRows);
+                    // flushLead moved the refresh cursor over this turn's commits at its own
+                    // commit, so neither a throw behind that commit nor one from the rebuild
+                    // below leaves them for the next turn to drain a second time.
+                    // See LiveViewRuntimeRestoreTest.testALeadFlushOverAStaleTierWhoseRebuildFailsIsNotDrainedAgain.
                     rebuildInMemoryTier(instance);
                     instance.setRefreshedUpToSeqTxn(advanceTo);
                     return;
@@ -4397,6 +4416,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * tier publish stalled. When there are no output rows to flush (only non-data
      * or filtered base commits were drained) it still advances the watermarks so
      * base WAL retention releases.
+     * <p>
+     * The commit is the point of no return. Right behind it the flush moves the
+     * flushed point and the refresh cursor to {@code advanceTo} and zeroes the lead
+     * count, so whichever later step fails - the apply, a slot re-stamp, the
+     * watermark persist, the head checkpoint - no later turn drains those base
+     * commits or materialises those rows again. A caller may therefore pass an
+     * {@code advanceTo} above the cursor, as the stale-tier and the stalled-publish
+     * paths of {@link #finishLeadRefresh} do, and move the cursor itself only once
+     * the flush returns.
      */
     private void flushLead(
             LiveViewInstance instance,
@@ -4486,11 +4514,41 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         instance.setLastProcessedSeqTxn(advanceTo);
         instance.setAppliedWatermark(advanceTo);
+        // The block is committed: the view's WAL holds every row this flush materialised,
+        // whatever the rest of this method does. The apply, the slot decisions and the watermark
+        // persist below can each fail, and the persist commonly does: persistState writes the
+        // very _lv.s file whose failed write routes the flush to it. So settle here, ahead of
+        // all of them, the two in-RAM coordinates that would otherwise let a later turn emit
+        // those rows a second time.
+        // The refresh cursor first. finishLeadRefresh flushes a turn's rows from here before it
+        // has moved the cursor over the base commits they came from - the tier is stale, or the
+        // lead publish stalled or failed - and moves it once this method returns. A flush that
+        // threw behind its commit used to leave the cursor under the flushed point, and the next
+        // turn drained those commits again: a row on the frontier went into the LV table a
+        // second time, carrying window values that counted it twice, with no fault raised. The
+        // cadence flush passes the cursor itself as advanceTo, so nothing moves there, and a
+        // flush that throws ahead of its commit never gets here, so its retry still drains the
+        // commits, under the window-state recovery.
+        // See LiveViewRuntimeRestoreTest.testALeadFlushStalledByPinsOnBothSlotsThatCannotWriteItsStateIsNotDrainedAgain
+        // and testALeadFlushOverAStaleTierThatCannotWriteItsStateIsNotDrainedAgain.
+        if (instance.getRefreshedUpToSeqTxn() < advanceTo) {
+            instance.setRefreshedUpToSeqTxn(advanceTo);
+        }
+        // Then the lead count. The slot's lead rows are durable now, so stop counting them as
+        // un-flushed: a count that survived a throw below would have the next lead publish add
+        // to it, and the flush after that materialise those rows a second time. The LV table
+        // would then durably hold duplicate rows, which the record path's seam hid (seamTs sat
+        // at or below them, so disk served nothing) while count(*) and every page-frame read
+        // exposed it.
+        // See LiveViewSmokeTest.testFlushPersistFailureDoesNotReflushDurableLead for a persist
+        // that throws, and LiveViewRuntimeRestoreTest.testALeadFlushWhoseSlotUnstampFailsIsNotFlushedAgain
+        // for a slot decision that does.
+        instance.setLeadRowCount(0);
         // applyWalDirect never propagates: ApplyWal2TableJob.applyWal suspends the table via
         // handleWalApplyFailure and returns, and it can also no-op silently (the LV writer is
         // busy, or the table backed off under memory pressure). A failed inline apply thus
-        // leaves the block committed-but-unapplied yet still runs the trailing
-        // setLeadRowCount(0), so the next flush cannot re-materialise the slot rows; the view
+        // leaves the block committed-but-unapplied behind the setLeadRowCount(0)
+        // above, so the next flush cannot re-materialise the slot rows; the view
         // serves disk-only behind the seqTxn fence, under-reporting the committed rows, until
         // the block lands once. Nothing else applies it - ApplyWal2TableJob.doRun drops
         // live-view notifications while refresh is enabled - so scanForLaggingViews re-drives
@@ -4512,31 +4570,120 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // the slot/disk seam, falling back to stale disk-only content (see
         // LiveViewRecordCursor.isSlotNewerThanDisk).
         final long lvAppliedSeqTxn = lvTracker.getWriterTxn();
+        // Decide what the apply left of the published slot here, ahead of the watermark persist
+        // below, not behind it. Every decision reads only what the commit and the apply did, and
+        // a flush that cannot persist needs them all the same: its block is committed either
+        // way, the lead count is zero by now, and the next lead publish stamps
+        // whatever the slot then holds as the LV table's trailing rows. Behind the persist, one
+        // failed write of _lv.s skipped these decisions and a second left this method by
+        // exception before them, so the slot kept its stamp, its rows and its lead count in
+        // every shape below: rows the table lacks counted as overlap, or a gap under the band.
+        // See LiveViewRuntimeRestoreTest.testAReadTrailsALeadFlushThatLandedNothingAndPersistedNoWatermark,
+        // testALeadFlushThatLandsABacklogAndPersistsNoWatermarkLeavesNoGapInTheTier,
+        // testALeadFlushThatLandsABacklogAndCannotWriteItsStateLeavesNoGapInTheTier and
+        // testALeadFlushStalledByPinsOnBothSlotsThatPersistsNoWatermarkLeavesNoGapInTheTier.
+        // A branch that un-stamps marks the tier stale first. restampSlot releases the slot's
+        // writer sentinel, and that release can throw while it prunes the symbol cache's reverse
+        // index; a marking behind it would be skipped, and the next lead publish would append
+        // onto the very slot the branch meant to retire.
+        // See LiveViewRuntimeRestoreTest.testALeadFlushThatLandsABacklogAndWhoseSlotUnstampFailsLeavesNoGapInTheTier.
+        final boolean isSlotSubsetOfDisk;
+        if (stagingRowsToInclude > 0) {
+            // Emergency flush: the published slot never received the staging
+            // rows (the publish that would have added them failed), so it is an
+            // incomplete subset of disk. Leave it stale-stamped and mark it for
+            // rebuild - the fence routes reads disk-only (disk is now current)
+            // until the next refresh drops the slot and rebuilds a clean one.
+            instance.setTierStale(true);
+            isSlotSubsetOfDisk = false;
+        } else if (lvAppliedSeqTxn <= lvAppliedBefore) {
+            // The inline apply no-opped or suspended (writer txn did not advance): the flushed
+            // lead is in the LV WAL but never reached disk, so the slot still holds those rows
+            // while disk lacks them. Unlike an emergency flush, disk did NOT move ahead, so the
+            // fence (slot.lvSeqTxn == diskSeqTxn) stays engaged on the pre-flush stamp -
+            // re-stamping as a leadRowCount=0 subset would make size() report disk-only while
+            // the scan still serves the lead, so count() and a full scan disagree (the seam can
+            // even double-serve an overlap row). Un-stamp so the fence disengages and reads are
+            // disk-only and self-consistent until the block lands. Same appliedBefore/After
+            // guard retryPendingLiveViewApply uses.
+            instance.setTierStale(true);
+            restampSlot(instance, Numbers.LONG_NULL, 0);
+            isSlotSubsetOfDisk = false;
+        } else if (lvAppliedSeqTxn != lvAppliedBefore + 1 || lvTracker.getSeqTxn() != lvAppliedSeqTxn) {
+            // The apply landed something other than exactly this flush's own block, in one of
+            // two shapes. The first half catches an advance of more than one transaction: an
+            // earlier flush left a committed-but-unapplied backlog (its inline apply hit a busy
+            // LV writer) and this apply drained that backlog together with the block above. The
+            // second half catches an apply that stopped part-way - it spent its per-table time
+            // quota, or a shutdown terminated it - and left transactions outstanding. It drains
+            // the OLDEST block first, so the block still outstanding is the one committed above.
+            // Re-stamping asserts that the slot's overlap band IS the LV table's trailing rows
+            // at lvAppliedSeqTxn - the identity the read path's seam cuts on - and neither shape
+            // holds it: a drained backlog puts its rows UNDER that band on disk, and a part-way
+            // apply leaves the band's own rows off disk altogether. The seam would then serve
+            // diskSize - leadStart disk rows and the slot on top, re-emitting the slot's rows in
+            // place of rows the LV table really holds, at an unchanged row count and with no
+            // fault raised. Un-stamp so the fence disengages and reads run disk-only, and let
+            // the next cycle rebuild the slot from disk. Disk stays a correct prefix of the LV
+            // table in both shapes - fully current when the apply drained everything, trailing
+            // the still-outstanding blocks when it did not - so those reads are behind at worst,
+            // never wrong.
+            // See LiveViewSmokeTest.testFlushLeadOwnApplyDrainingBacklogDoesNotStrandStaleTierRows
+            // for the first half and
+            // LiveViewSmokeTest.testFlushLeadPartialApplyLeavingOwnBlockPendingDoesNotRestampSlot
+            // for the second.
+            // Both halves are load-bearing. A one-transaction advance alone does not prove the
+            // applied block is ours: an apply that backs off part-way lands the OLDEST
+            // outstanding block, so a backlog of two could advance by one and leave this flush's
+            // block pending. Requiring the LV WAL to be fully applied as well pins it - exactly
+            // one transaction was outstanding, and it is the one committed above.
+            instance.setTierStale(true);
+            restampSlot(instance, Numbers.LONG_NULL, 0);
+            isSlotSubsetOfDisk = false;
+        } else if (hasSymbols && !isSymbolCacheInStepWithDisk(instance, tier.getSymbolCache())) {
+            // The apply landed exactly this flush's block, but the lead's symbol ids are
+            // not the ones it committed: a recovery discarded a pass whose interned ids
+            // nothing has taken back yet (a reader pinned the tier at every rewind
+            // attempt), so this lead was interned above them; or the view's WAL writer,
+            // rolled back with a discarded pass and pooled, still held a value that pass
+            // appended, and this commit assigned it ahead of the lead's values. Re-stamping
+            // would make the disk symbol table resolve those ids, and they name other
+            // values there.
+            // Un-stamp so reads run disk-only, where every id is the committed one; the
+            // stale marking makes the next drain with rows rebuild the slot from disk,
+            // and that rebuild retries the rewind (rebuildInMemoryTier).
+            // See LiveViewRuntimeRestoreTest.testAReaderPinnedAcrossAMidDrainRestoreDefersTheSymbolRewind,
+            // and testALeadFlushThatCannotPersistItsWatermarkKeepsOutOfStepSymbolIdsOutOfTheTier
+            // for a flush that then cannot persist its watermark: with no re-stamp to keep away,
+            // the next lead publish would still stamp the slot at the current disk seqTxn and
+            // turn these flushed rows into overlap, which reads resolve against the disk symbol
+            // table.
+            LOG.info().$("live view symbol ids are out of step with the committed symbols, serving flushed rows from disk [view=")
+                    .$(instance.getDefinition().getViewName()).I$();
+            instance.setTierStale(true);
+            restampSlot(instance, Numbers.LONG_NULL, 0);
+            isSlotSubsetOfDisk = false;
+        } else {
+            // The apply landed exactly this flush's block under the ids the drain gave its
+            // values: the lead rows are now on disk and still in the slot, so it is a complete
+            // subset of disk.
+            isSlotSubsetOfDisk = true;
+        }
         boolean lvConsumedPersisted = false;
         try {
-            try {
-                engine.advanceLiveViewConsumedSeqTxn(token, advanceTo, blockFileWriter, path);
-                lvConsumedPersisted = true;
-            } catch (CairoException e) {
-                LOG.critical().$("could not advance live view consumed seqTxn after flush [view=")
-                        .$(instance.getDefinition().getViewName())
-                        .$(", advanceTo=").$(advanceTo)
-                        .$(", error=").$safe(e.getFlyweightMessage()).I$();
-            }
-            if (!lvConsumedPersisted) {
-                persistState(instance);
-            }
-        } finally {
-            // The lead is now on disk; reset the in-RAM lead count unconditionally. This
-            // sits in a finally because persistState writes the very _lv.s file whose
-            // failure routed us here, so it commonly throws too - and that throw used to
-            // skip the reset, leaving rows that are ALREADY durable still counted as
-            // un-flushed lead. The next flush then materialised them a second time and
-            // the LV table durably held duplicate rows, which the record path's seam hid
-            // (seamTs sat at or below them, so disk served nothing) while count(*) and
-            // every page-frame read exposed it.
-            // See LiveViewSmokeTest.testFlushPersistFailureDoesNotReflushDurableLead.
-            instance.setLeadRowCount(0);
+            engine.advanceLiveViewConsumedSeqTxn(token, advanceTo, blockFileWriter, path);
+            lvConsumedPersisted = true;
+        } catch (CairoException e) {
+            LOG.critical().$("could not advance live view consumed seqTxn after flush [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", advanceTo=").$(advanceTo)
+                    .$(", error=").$safe(e.getFlyweightMessage()).I$();
+        }
+        if (!lvConsumedPersisted) {
+            // Commonly throws as well: it writes the file the write above just failed on. The
+            // exception propagates to refreshInstance, which charges the turn to the flush-retry
+            // budget; the cursor and the lead count were settled at the commit.
+            persistState(instance);
         }
         if (lvConsumedPersisted) {
             // The just-flushed lead's new symbols are now committed at the ids the
@@ -4544,93 +4691,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // keyOf; drop the per-window intern maps. The id -> string lists stay
             // (a pinned pre-flush cursor still resolves its slot from them).
             tier.getSymbolCache().onFlush();
-            if (stagingRowsToInclude > 0) {
-                // Emergency flush: the published slot never received the staging
-                // rows (the publish that would have added them failed), so it is an
-                // incomplete subset of disk. Leave it stale-stamped and mark it for
-                // rebuild - the fence routes reads disk-only (disk is now current)
-                // until the next refresh drops the slot and rebuilds a clean one.
-                instance.setTierStale(true);
-            } else if (lvAppliedSeqTxn <= lvAppliedBefore) {
-                // The inline apply no-opped or suspended (writer txn did not advance): the flushed
-                // lead is in the LV WAL but never reached disk, so the slot still holds those rows
-                // while disk lacks them. Unlike an emergency flush, disk did NOT move ahead, so the
-                // fence (slot.lvSeqTxn == diskSeqTxn) stays engaged on the pre-flush stamp -
-                // re-stamping as a leadRowCount=0 subset would make size() report disk-only while
-                // the scan still serves the lead, so count() and a full scan disagree (the seam can
-                // even double-serve an overlap row). Un-stamp so the fence disengages and reads are
-                // disk-only and self-consistent until the block lands. Same appliedBefore/After
-                // guard retryPendingLiveViewApply uses.
-                restampSlot(instance, Numbers.LONG_NULL, 0);
-                instance.setTierStale(true);
-            } else if (lvAppliedSeqTxn != lvAppliedBefore + 1 || lvTracker.getSeqTxn() != lvAppliedSeqTxn) {
-                // The apply landed something other than exactly this flush's own block, in one of
-                // two shapes. The first half catches an advance of more than one transaction: an
-                // earlier flush left a committed-but-unapplied backlog (its inline apply hit a busy
-                // LV writer) and this apply drained that backlog together with the block above. The
-                // second half catches an apply that stopped part-way - it spent its per-table time
-                // quota, or a shutdown terminated it - and left transactions outstanding. It drains
-                // the OLDEST block first, so the block still outstanding is the one committed above.
-                // Re-stamping asserts that the slot's overlap band IS the LV table's trailing rows
-                // at lvAppliedSeqTxn - the identity the read path's seam cuts on - and neither shape
-                // holds it: a drained backlog puts its rows UNDER that band on disk, and a part-way
-                // apply leaves the band's own rows off disk altogether. The seam would then serve
-                // diskSize - leadStart disk rows and the slot on top, re-emitting the slot's rows in
-                // place of rows the LV table really holds, at an unchanged row count and with no
-                // fault raised. Un-stamp so the fence disengages and reads run disk-only, and let
-                // the next cycle rebuild the slot from disk. Disk stays a correct prefix of the LV
-                // table in both shapes - fully current when the apply drained everything, trailing
-                // the still-outstanding blocks when it did not - so those reads are behind at worst,
-                // never wrong.
-                // See LiveViewSmokeTest.testFlushLeadOwnApplyDrainingBacklogDoesNotStrandStaleTierRows
-                // for the first half and
-                // LiveViewSmokeTest.testFlushLeadPartialApplyLeavingOwnBlockPendingDoesNotRestampSlot
-                // for the second.
-                // Both halves are load-bearing. A one-transaction advance alone does not prove the
-                // applied block is ours: an apply that backs off part-way lands the OLDEST
-                // outstanding block, so a backlog of two could advance by one and leave this flush's
-                // block pending. Requiring the LV WAL to be fully applied as well pins it - exactly
-                // one transaction was outstanding, and it is the one committed above.
-                restampSlot(instance, Numbers.LONG_NULL, 0);
-                instance.setTierStale(true);
-            } else if (hasSymbols && !isSymbolCacheInStepWithDisk(instance, tier.getSymbolCache())) {
-                // The apply landed exactly this flush's block, but the lead's symbol ids are
-                // not the ones it committed: a recovery discarded a pass whose interned ids
-                // nothing has taken back yet (a reader pinned the tier at every rewind
-                // attempt), so this lead was interned above them; or the view's WAL writer,
-                // rolled back with a discarded pass and pooled, still held a value that pass
-                // appended, and this commit assigned it ahead of the lead's values. Re-stamping
-                // would make the disk symbol table resolve those ids, and they name other
-                // values there.
-                // Un-stamp so reads run disk-only, where every id is the committed one; the
-                // stale marking makes the next drain with rows rebuild the slot from disk,
-                // and that rebuild retries the rewind (rebuildInMemoryTier).
-                // See LiveViewRuntimeRestoreTest.testAReaderPinnedAcrossAMidDrainRestoreDefersTheSymbolRewind.
-                LOG.info().$("live view symbol ids are out of step with the committed symbols, serving flushed rows from disk [view=")
-                        .$(instance.getDefinition().getViewName()).I$();
-                restampSlot(instance, Numbers.LONG_NULL, 0);
-                instance.setTierStale(true);
-            } else {
-                // Normal flush: the lead rows are now on disk and still in the slot,
-                // so it is a complete subset of disk. Re-stamp it so reads regain
-                // seam routing immediately.
+            if (isSlotSubsetOfDisk) {
+                // Normal flush: re-stamp the slot so reads regain seam routing immediately.
+                // A flush that could not persist its watermark leaves the slot on its
+                // pre-flush stamp instead, one behind the table: reads run disk-only until
+                // the next lead publish stamps it, over rows the table now holds.
                 restampSlotAfterFlush(instance, lvAppliedSeqTxn);
             }
             maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, flushedMaxTs, flushRows, false);
-        } else if (hasSymbols
-                && lvAppliedSeqTxn == lvAppliedBefore + 1
-                && lvTracker.getSeqTxn() == lvAppliedSeqTxn
-                && !isSymbolCacheInStepWithDisk(instance, tier.getSymbolCache())) {
-            // The consumed watermark failed to persist, so the branches above never ran and the
-            // slot keeps its pre-flush stamp and lead count. The next lead publish re-stamps the
-            // slot at the current disk seqTxn and turns these flushed rows into overlap, which
-            // reads resolve against the disk symbol table - wrong for ids out of step with it.
-            // Un-stamp it and mark it stale, as the in-step check above does, so the next drain
-            // with rows rebuilds the slot from disk instead of publishing onto it.
-            LOG.info().$("live view symbol ids are out of step with the committed symbols, serving flushed rows from disk [view=")
-                    .$(instance.getDefinition().getViewName()).I$();
-            restampSlot(instance, Numbers.LONG_NULL, 0);
-            instance.setTierStale(true);
         }
     }
 
@@ -5328,8 +5396,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * may still hold rows interned at the ids the rewind would take back - the dropped lead
      * of a recovery whose restage both slots' pins skipped, or the rows of a flush the
      * in-step check un-stamped - and its fence can still pass, so a rewind must wait for the
-     * rebuild that replaces it. {@link #rewindStrandedSymbolIds(LiveViewInstance, TableReader)}
-     * checks the rest.
+     * rebuild that replaces it. A disk-subset publish whose apply left its block pending
+     * marks the tier stale too ({@link #publishSubsetToInMemoryTier}): that block owns the
+     * ids above the committed count until it lands.
+     * {@link #rewindStrandedSymbolIds(LiveViewInstance, TableReader)} checks the rest.
      */
     private boolean isSymbolRewindCandidate(LiveViewInstance instance) {
         final LiveViewInMemoryTier tier = instance.getInMemoryTier();
@@ -14624,27 +14694,94 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Publishes this cycle's already-applied staging rows into the tier as a subset of disk
-     * ({@link #publishToInMemoryTier} in subset mode), unless the symbol ids the drain
-     * interned them at are out of step with the ids the apply committed. That happens when
-     * a recovery discarded a pass whose interned ids no rewind has taken back yet, or whose
-     * appended values the view's WAL writer kept through its rollback and committed ahead of
-     * this pass's, and the slot would then serve these rows under ids the disk symbol table
-     * resolves as other values. In that case this rebuilds the tier from disk instead, which
-     * also retries the rewind - a disk-subset view has no lead flush and no stale-tier
-     * rebuild of its own to retry it from. The commit leaves the writer holding nothing, so
-     * the pass after it is in step again.
-     * See LiveViewRuntimeRestoreTest.testAnAppliedScanRestoreKeepsAccountsOnTheirIdsWhenALaterAccountSortsBelowTheDiscardedRow.
-     * <p>
-     * The check needs every LV WAL block applied; with one pending, the cache's ids sit
-     * above the applied count legitimately and this publishes as before.
+     * Publishes this cycle's staging rows into the tier as a subset of disk
+     * ({@link #publishToInMemoryTier} in subset mode), once it has established what that
+     * publish asserts: the slot, with these rows on top, is the LV table's trailing rows at
+     * {@code lvAppliedSeqTxn}. The read path's seam cuts the disk scan on that identity, and
+     * the fence passes on the stamp alone, so a slot stamped without it serves the wrong
+     * rows at an unchanged row count, or fails the read when it outgrows the table. The
+     * cycle's inline apply reports nothing, so this decides from the applied seqTxn on
+     * either side of it, and publishes only when all of the following hold.
+     * <ul>
+     *   <li>The table holds every block the view's WAL committed. Otherwise the apply did
+     *   nothing (a busy LV writer, a memory-pressure back-off, a failure that suspended the
+     *   table) or stopped part-way, and this cycle's block is still pending: disk lacks the
+     *   staged rows. This then un-stamps the slot and marks the tier stale, as
+     *   {@link #flushLead} does for a flush whose apply did not land, so reads run disk-only
+     *   and return the applied table until the block lands. The stale marking also keeps
+     *   the symbol-id rewind away ({@link #isSymbolRewindCandidate}): the pending block owns
+     *   the ids its values were interned at.</li>
+     *   <li>The apply landed one block, which is then this cycle's own. An advance of more
+     *   than one drained an older backlog with it, and those rows belong under the staged
+     *   ones, where the slot does not hold them. A tracker nothing has initialised yet
+     *   reads as such an advance too.</li>
+     *   <li>The published slot carries {@code lvAppliedBefore} as its stamp, the applied
+     *   seqTxn the apply started from, or the tier is stale, in which case the publish drops
+     *   the slot's rows first. A slot stamped behind that trails the table by rows an earlier
+     *   cycle applied and could not publish (a reader on each slot, or a consumed-watermark
+     *   persist failure), and the staged rows would land on top of the gap.</li>
+     *   <li>The symbol ids the drain interned the rows at are the ids the apply committed.
+     *   They are not when a recovery discarded a pass whose interned ids no rewind has taken
+     *   back yet, or whose appended values the view's WAL writer kept through its rollback
+     *   and committed ahead of this pass's; the slot would then serve these rows under ids
+     *   the disk symbol table resolves as other values. The commit leaves the writer
+     *   holding nothing, so the pass after it is in step again.
+     *   See LiveViewRuntimeRestoreTest.testAnAppliedScanRestoreKeepsAccountsOnTheirIdsWhenALaterAccountSortsBelowTheDiscardedRow.</li>
+     * </ul>
+     * When the table is current and one of the last three fails, this rebuilds the tier from
+     * disk instead, which re-establishes the identity by construction and retries the
+     * symbol-id rewind - a disk-subset view has no lead flush and no stale-tier rebuild of
+     * its own to do either from. The next cycle's apply lands a block this one left pending
+     * and takes that rebuild; on a quiet base {@link #retryPendingLiveViewApply} lands it,
+     * and rebuilds as well.
+     * See LiveViewRuntimeRestoreTest.testAReadOfADedupViewTrailsAnUnappliedBlockThatWouldOutgrowTheTable
+     * and the cases after it.
+     *
+     * @param lvAppliedBefore the LV table's applied seqTxn right before the cycle's inline apply
+     * @param lvAppliedSeqTxn the LV table's applied seqTxn right after it
      */
-    private void publishSubsetToInMemoryTier(LiveViewInstance instance, long stagingMaxTs, long lvAppliedSeqTxn, long appendedRows) {
+    private void publishSubsetToInMemoryTier(
+            LiveViewInstance instance,
+            long stagingMaxTs,
+            long lvAppliedBefore,
+            long lvAppliedSeqTxn,
+            long appendedRows
+    ) {
         final LiveViewInMemoryTier tier = instance.getInMemoryTier();
-        if (tier != null
-                && tier.getSymbolCache().hasSymbolColumns()
-                && isLiveViewWalFullyApplied(instance)
-                && !isSymbolCacheInStepWithDisk(instance, tier.getSymbolCache())) {
+        if (tier == null) {
+            return;
+        }
+        if (!isLiveViewWalFullyApplied(instance)) {
+            if (!instance.isTierStale()) {
+                // Only the cycle that takes the tier out of the read path logs: an apply
+                // that keeps failing (a suspended table, a long back-off) comes back here
+                // on every cycle that appends rows.
+                LOG.info().$("live view apply left its own WAL pending, serving the view from disk [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", appliedBefore=").$(lvAppliedBefore)
+                        .$(", appliedSeqTxn=").$(lvAppliedSeqTxn).I$();
+            }
+            // Best-effort, like every re-stamp: a reader on the published slot keeps the
+            // old stamp in place. That slot holds no row disk lacks, since this cycle
+            // added nothing to it, so a read it still fences returns the applied table too.
+            restampSlot(instance, Numbers.LONG_NULL, 0);
+            instance.setTierStale(true);
+            return;
+        }
+        // The worker is the slot's only writer, so its stamp reads without the sentinel.
+        final long slotSeqTxn = tier.getSlot(tier.getPublishedIdx()).lvSeqTxn();
+        final boolean isOwnBlockAlone = lvAppliedSeqTxn == lvAppliedBefore + 1;
+        final boolean isSlotCurrent = instance.isTierStale() || slotSeqTxn == lvAppliedBefore;
+        if (!isOwnBlockAlone || !isSlotCurrent) {
+            LOG.info().$("live view in-mem tier trails the view's table, rebuilding it from disk [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", appliedBefore=").$(lvAppliedBefore)
+                    .$(", appliedSeqTxn=").$(lvAppliedSeqTxn)
+                    .$(", slotSeqTxn=").$(slotSeqTxn).I$();
+            rebuildInMemoryTier(instance);
+            return;
+        }
+        if (tier.getSymbolCache().hasSymbolColumns() && !isSymbolCacheInStepWithDisk(instance, tier.getSymbolCache())) {
             LOG.info().$("live view symbol ids are out of step with the committed symbols, rebuilding the in-mem tier from disk [view=")
                     .$(instance.getDefinition().getViewName()).I$();
             rebuildInMemoryTier(instance);
@@ -14693,7 +14830,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * If both slow-path acquire attempts fail (both slots reader-pinned),
      * {@code writerStallStartUs} is set so {@code live_views().writer_stall_micros}
      * surfaces the stall. In subset mode the disk tier is current so the trail is
-     * harmless and the method returns {@code true}; in lead mode the lead has
+     * harmless and the method returns {@code true}: the slot's stamp stays behind
+     * the table, and {@link #publishSubsetToInMemoryTier} rebuilds the slot before
+     * a later cycle appends over the gap. In lead mode the lead has
      * nowhere durable to live, so it returns {@code false} and the caller flushes
      * the lead straight to disk.
      */
@@ -14758,8 +14897,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             LOG.info().$("live view in-mem tier stalled, both slots pinned [view=")
                     .$(instance.getDefinition().getViewName()).I$();
-            // Subset mode: disk is current, the tier just trails. Lead mode: the
-            // lead is not on disk, so the caller must flush it.
+            // Subset mode: disk is current, the tier just trails. The slot keeps its
+            // stamp, which now sits behind the table, so the fence routes reads
+            // disk-only and the next subset publish rebuilds the slot rather than
+            // append over the rows this one could not add (publishSubsetToInMemoryTier).
+            // Lead mode: the lead is not on disk, so the caller must flush it.
             return !leadMode;
         }
         try {

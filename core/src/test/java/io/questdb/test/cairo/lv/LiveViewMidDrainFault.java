@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.std.FilesFacade;
@@ -55,6 +56,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  * {@link #armBreach} arms the same WAL read as {@link #arm}, but has it breach the view's own
  * refresh memory limit instead of failing the open, so the turn fails mid-drain with the error the
  * view's tracker raises for any allocation over that limit.
+ * <p>
+ * {@link #armViewStateOpen} fails nothing mid-drain: it fails the next open for writing of a live
+ * view's state file, once. A lead flush opens that file first to persist the consumed watermark
+ * its apply earned, and again to persist the rest of its state when that fails, so the fault
+ * fails the first of the two and lets the second through.
  */
 final class LiveViewMidDrainFault {
     private final AtomicBoolean appliedScanArmed = new AtomicBoolean();
@@ -62,8 +68,10 @@ final class LiveViewMidDrainFault {
     // -1 disarmed; otherwise the number of reads still to skip before the one to fail.
     private final AtomicInteger countdown = new AtomicInteger(-1);
     private final AtomicBoolean fired = new AtomicBoolean();
+    private final AtomicBoolean hasViewStateOpenFired = new AtomicBoolean();
     // Set by a failed WAL read that reports readErrno, until the errno read that reports it.
     private final AtomicBoolean isReadErrnoPending = new AtomicBoolean();
+    private final AtomicBoolean isViewStateOpenArmed = new AtomicBoolean();
     private final AtomicBoolean timelineOpenArmed = new AtomicBoolean();
     private volatile String baseDir;
     // The tracker the armed WAL read breaches instead of failing its open; null fails the open.
@@ -96,6 +104,11 @@ final class LiveViewMidDrainFault {
 
     void armTimelineOpen() {
         timelineOpenArmed.set(true);
+    }
+
+    void armViewStateOpen() {
+        hasViewStateOpenFired.set(false);
+        isViewStateOpenArmed.set(true);
     }
 
     /**
@@ -152,6 +165,12 @@ final class LiveViewMidDrainFault {
                         && timelineOpenArmed.compareAndSet(true, false)) {
                     return -1;
                 }
+                if (isViewStateOpenArmed.get()
+                        && Utf8s.endsWithAscii(name, LiveViewState.LIVE_VIEW_STATE_FILE_NAME)
+                        && isViewStateOpenArmed.compareAndSet(true, false)) {
+                    hasViewStateOpenFired.set(true);
+                    return -1;
+                }
                 return super.openRW(name, opts);
             }
         };
@@ -163,6 +182,10 @@ final class LiveViewMidDrainFault {
 
     boolean hasFired() {
         return fired.get() && countdown.get() < 0;
+    }
+
+    boolean hasViewStateOpenFired() {
+        return hasViewStateOpenFired.get();
     }
 
     boolean isTimelineOpenArmed() {
