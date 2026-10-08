@@ -72,8 +72,8 @@ import java.util.stream.Stream;
  * <p>The facade applies an op's durability effect and only THEN fires the armed crash, so "armed at op k"
  * means ops {@code 1..k} took effect and nothing after them did.
  * <ol>
- *   <li>{@link #testEventRecordDurableAheadOfColumnsIsInertWithoutTheSequencerRecord()} — crash after op 1,
- *       so the first column barrier ran and no later one did; promote {@code _event*} only. That is the
+ *   <li>{@link #testEventRecordDurableAheadOfColumnsIsInertWithoutTheSequencerRecord()} — crash on the first
+ *       column barrier, so it ran and no later barrier did; promote {@code _event*} only. That is the
  *       interleaving a {@code syncfs} risks: {@code _event} durable while a column of the same txn is not,
  *       and no sequencer record naming either. The txn must be invisible, and the case asserts the last
  *       column really is still at its pre-commit durable content.</li>
@@ -104,24 +104,35 @@ public class AdaptiveWalEventOrderCrashTest extends AbstractAdaptiveCrashTest {
      */
     @Test
     public void testEventRecordDurableAheadOfColumnsIsInertWithoutTheSequencerRecord() throws Exception {
+        // The writeback drain puts every column's bytes in the device cache before the first barrier, whose
+        // device flush then makes them all durable. This case needs a column left behind, so the drain is off.
+        node1.setProperty(PropertyKey.CAIRO_WAL_COMMIT_WRITEBACK_DRAIN, false);
         withAdaptiveW0(() -> {
             final TableToken tt = seedBaseline();
             final Path segmentDir = latestWalSegmentDir(tt);
             final Path eventFile = segmentDir.resolve(WalUtils.EVENT_FILE_NAME);
             final List<String> phaseOps = countPassOps(tt);
-            // The LAST column barrier of the commit — the column this case must leave NON-durable.
+            // The FIRST column barrier of the commit, where the crash is armed, and the LAST one, the column
+            // this case must leave NON-durable.
+            final int firstColumnOp = firstColumnBarrierOp(phaseOps);
+            final Path firstColumn = segmentDir.resolve(fileName(phaseOps.get(firstColumnOp - 1)));
             final Path lastColumn = segmentDir.resolve(lastColumnFileName(phaseOps));
 
             markDurableBaseline();
             final byte[] eventBefore = crashFf.durableContentOf(eventFile.toString());
+            final byte[] firstColumnBefore = crashFf.durableContentOf(firstColumn.toString());
             final byte[] lastColumnBefore = crashFf.durableContentOf(lastColumn.toString());
 
-            // The facade applies an op's durability effect and THEN fires the armed crash, so arming at op 1
-            // means the FIRST column barrier completed and nothing after it did. The event record is already
+            // The facade applies an op's durability effect and THEN fires the armed crash, so arming at the
+            // first column barrier means it completed and nothing after it did. The event record is already
             // appended to the mapped _event file (events.appendData precedes syncIfRequired), so promoting
             // _event below yields exactly the interleaving a syncfs risks: _event durable while a column of
             // the same txn is not, and no sequencer record naming either.
-            armAndInsert(tt, 1, ROWS_BEFORE_ARMED_COMMIT);
+            armAndInsert(tt, firstColumnOp, ROWS_BEFORE_ARMED_COMMIT);
+            Assert.assertFalse(
+                    "the crash must follow the first column barrier: " + firstColumn.getFileName() + " must be durable",
+                    Arrays.equals(firstColumnBefore, crashFf.durableContentOf(firstColumn.toString()))
+            );
 
             // Hand the kernel's writeback to the _event files ONLY. This is the syncfs interleaving.
             promoteDurable(segmentDir, name -> name.startsWith(WalUtils.EVENT_FILE_NAME));
@@ -270,14 +281,17 @@ public class AdaptiveWalEventOrderCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * The file name of the LAST column barrier in the commit phase — the ops before the first {@code _event}
-     * op are the column barriers, in traversal order. Read from the op log rather than assumed from the
-     * schema, so it stays correct if the column set or the barrier order changes.
+     * The file name of the LAST column barrier in the commit phase — the {@code fdatasync} ops before the
+     * first {@code _event} one are the column barriers, in traversal order. Read from the op log rather than
+     * assumed from the schema, so it stays correct if the column set or the barrier order changes.
      */
     private String lastColumnFileName(List<String> phaseOps) {
         String last = null;
         for (String op : phaseOps) {
-            final String name = op.substring(op.lastIndexOf('/') + 1);
+            if (!isFdatasync(op)) {
+                continue;
+            }
+            final String name = fileName(op);
             if (name.startsWith(WalUtils.EVENT_FILE_NAME)) {
                 break;
             }
@@ -296,12 +310,6 @@ public class AdaptiveWalEventOrderCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * The 1-based index, within the commit phase, of its FIRST sequencer-log barrier. Everything before it
-     * is a column or {@code _event} barrier, so arming there yields "columns and events durable, sequencer
-     * record written but volatile". Located by scanning the op log rather than pinned to a number, so the
-     * case does not silently target the wrong op when the schema or the barrier set changes.
-     */
-    /**
      * True when the op's PATH ends with {@code marker}. The op log lines are "&lt;kind&gt; &lt;path&gt;", so the
      * path is the last whitespace-separated field.
      */
@@ -311,6 +319,40 @@ public class AdaptiveWalEventOrderCrashTest extends AbstractAdaptiveCrashTest {
         return path.endsWith(marker);
     }
 
+    private static String fileName(String op) {
+        return op.substring(op.lastIndexOf('/') + 1);
+    }
+
+    private static boolean isFdatasync(String op) {
+        return op.split(" ")[1].equals("fdatasync");
+    }
+
+    /**
+     * The 1-based index, within the commit phase, of its FIRST column barrier: the first {@code fdatasync},
+     * which runs before the {@code _event} and sequencer barriers. Located in the op log rather than pinned
+     * to a number, so the case still crashes right after a column barrier when the sync calls ahead of the
+     * barriers change.
+     */
+    private int firstColumnBarrierOp(List<String> phaseOps) {
+        for (int i = 0; i < phaseOps.size(); i++) {
+            final String op = phaseOps.get(i);
+            if (isFdatasync(op)) {
+                Assert.assertFalse(
+                        "the commit's first barrier must be a column barrier:\n" + String.join("\n", phaseOps),
+                        fileName(op).startsWith(WalUtils.EVENT_FILE_NAME) || op.contains(WalUtils.SEQ_DIR)
+                );
+                return i + 1; // ops are 1-based within the phase
+            }
+        }
+        throw new AssertionError("no fdatasync in the commit phase:\n" + String.join("\n", phaseOps));
+    }
+
+    /**
+     * The 1-based index, within the commit phase, of its FIRST sequencer-log barrier. Everything before it
+     * is a column or {@code _event} barrier, so arming there yields "columns and events durable, sequencer
+     * record written but volatile". Located by scanning the op log rather than pinned to a number, so the
+     * case does not silently target the wrong op when the schema or the barrier set changes.
+     */
     private int firstSequencerOp(List<String> phaseOps) {
         // The barrier this test is about is the header write that publishes the txn.
         final String marker = WalUtils.SEQ_DIR + "/" + WalUtils.TXNLOG_FILE_NAME;

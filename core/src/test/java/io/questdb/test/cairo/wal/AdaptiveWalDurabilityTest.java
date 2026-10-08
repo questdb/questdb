@@ -25,6 +25,8 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableToken;
@@ -49,10 +51,14 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static io.questdb.test.cairo.wal.GroupCommitTestUtils.commitRow;
 
@@ -802,6 +808,54 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
+     * The sync calls a 1-row WAL commit makes on each WAL segment file (the column files and the two
+     * {@code _event} files), per commit mode and group window. ADAPTIVE drains writeback at every window,
+     * W=0 included: each file gets {@code msync(MS_ASYNC)}, {@code sync_file_range} and its own barrier, and
+     * never a blocking {@code msync(MS_SYNC)}. NOSYNC, ASYNC and SYNC run neither the drain nor a barrier.
+     * The filesystem probe is pinned on, so the drain runs on every platform.
+     */
+    @Test
+    public void testWalCommitSegmentFileSyncsPerMode() throws Exception {
+        final String perFile = "_event: %1$s; _event.i: %1$s; ts.d: %1$s; v.d: %1$s";
+        final String drained = String.format(perFile, "barrierFsync=1 msyncAsync=1 syncFileRange=1");
+        // commit mode, group window in microseconds, the sync calls of one commit on the segment files.
+        // Setting a property to its current value cancels a pending configuration rebuild, so the mode is set
+        // last and differs from one case to the next.
+        final String[][] cases = {
+                {"adaptive", "50000", drained},
+                {"nosync", "0", ""},
+                {"async", "0", String.format(perFile, "msyncAsync=1")},
+                {"sync", "0", String.format(perFile, "msyncSync=1")},
+                {"adaptive", "0", drained}
+        };
+        final WritebackDrainFacade ff = new WritebackDrainFacade();
+        assertMemoryLeak(ff, () -> {
+            for (int c = 0; c < cases.length; c++) {
+                final String[] mode = cases[c];
+                node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, mode[1]);
+                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode[0]);
+                Assert.assertEquals(CommitMode.fromString(mode[0]), engine.getConfiguration().getCommitMode());
+                Assert.assertEquals(Long.parseLong(mode[1]), engine.getConfiguration().getAdaptiveCommitGroupWindowUs());
+                execute("CREATE TABLE x" + c + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                try (WalWriter writer = getWalWriter("x" + c)) {
+                    for (int i = 0; i < 4; i++) {
+                        final TableWriter.Row row = writer.newRow(i * 60_000_000L);
+                        row.putLong(1, i);
+                        row.append();
+                        ff.segmentSyncs.clear();
+                        writer.commit();
+                        Assert.assertEquals(
+                                "mode=" + mode[0] + ", window=" + mode[1] + "us, commit " + i,
+                                mode[2],
+                                ff.segmentSyncSummary()
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    /**
      * The writeback drain's filesystem probe allocates a native path and costs a statfs, so
      * {@code WalWriter} resolves it once, on its own WAL directory, when it opens. A commit must not
      * repeat it, yet the drain itself must still run on every ADAPTIVE commit under {@code W > 0}.
@@ -995,6 +1049,66 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A writeback error on any WAL segment file fails the ADAPTIVE commit and keeps the durable frontier
+     * where it was, at window 0 and above, with the writeback drain on and off. Linux reports a writeback
+     * error once per open file, to the first call that waits on that file's writeback, and the facade does
+     * the same: with the drain on, {@code sync_file_range} gets the error and the {@code fdatasync} after it
+     * succeeds.
+     */
+    @Test
+    public void testWritebackErrorFailsTheCommit() throws Exception {
+        final String[] files = {"_event", "_event.i", "s.d", "ts.d", "txt.d", "txt.i", "v.d"};
+        final WritebackDrainFacade ff = new WritebackDrainFacade();
+        assertMemoryLeak(ff, () -> {
+            final List<String> acknowledged = new ArrayList<>();
+            int t = 0;
+            for (long window : new long[]{0, 50_000}) {
+                // The window differs on every pass and is set last, so the configuration is rebuilt.
+                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+                node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, window);
+                Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
+                Assert.assertEquals(window, engine.getConfiguration().getAdaptiveCommitGroupWindowUs());
+                for (boolean drain : new boolean[]{true, false}) {
+                    ff.drain = drain;
+                    for (String file : files) {
+                        final String name = "x" + t++;
+                        execute("CREATE TABLE " + name + " (ts TIMESTAMP, v LONG, s SYMBOL, txt VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        try (WalWriter writer = getWalWriter(name)) {
+                            appendRow(writer, 0);
+                            ff.segmentSyncs.clear();
+                            writer.commit();
+                            Assert.assertEquals("the files a commit barriers", Arrays.toString(files), ff.barrieredFiles());
+                        }
+                        // Closing the writer flushes the pending sequencer record at W > 0.
+                        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName(name));
+                        Assert.assertEquals(1, tracker.getLocalDurableSeqTxn());
+                        final String row = "window=" + window + "us, drain " + (drain ? "on" : "off") + ", error on " + file;
+                        boolean failed = false;
+                        try (WalWriter writer = getWalWriter(name)) {
+                            appendRow(writer, 1);
+                            ff.failNextWait(file);
+                            try {
+                                writer.commit();
+                            } catch (CairoError e) {
+                                failed = CairoException.isDataSyncFailure(e);
+                            }
+                        } finally {
+                            engine.resetDurabilityFailure();
+                        }
+                        Assert.assertNotNull(row + ": no call waited on the file", ff.writebackErrorCall);
+                        final long durable = tracker.getLocalDurableSeqTxn();
+                        if (!failed || durable != 1) {
+                            acknowledged.add(row + ": the error went to " + ff.writebackErrorCall + ", the commit "
+                                    + (failed ? "failed" : "returned") + ", durable frontier 1 -> " + durable);
+                        }
+                    }
+                }
+            }
+            Assert.assertTrue("commits not failed by a writeback error:\n" + String.join("\n", acknowledged), acknowledged.isEmpty());
+        });
+    }
+
     private int readMarkerGeneration(TableToken token) {
         try (io.questdb.std.str.Path p = new io.questdb.std.str.Path();
              SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
@@ -1024,6 +1138,14 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     // ---------- helpers ----------
+
+    private static void appendRow(WalWriter writer, long v) {
+        final TableWriter.Row row = writer.newRow(v * 60_000_000L);
+        row.putLong(1, v);
+        row.putSym(2, "s" + v);
+        row.putVarchar(3, new Utf8String("a varchar longer than its inline prefix " + v));
+        row.append();
+    }
 
     /**
      * Returns true if the given path is a WAL segment column data file (.d file or fixed-size
@@ -1445,22 +1567,152 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Pins the writeback drain on and counts its calls. Also counts the sync calls on each WAL segment file,
+     * resolved from the fd, or for an msync from the mapping's address.
+     */
     static class WritebackDrainFacade extends TestFilesFacadeImpl {
+        private static final Pattern SEGMENT_FILE = Pattern.compile(".*[/\\\\]wal[0-9]+[/\\\\][0-9]+[/\\\\]([^/\\\\]+)");
+        final Map<String, Map<String, int[]>> segmentSyncs = new TreeMap<>();
+        private final Map<Long, String> addrToFile = new HashMap<>();
+        private final Map<Long, String> fdToFile = new HashMap<>();
+        boolean drain = true;
         int probeCount, syncFileRangeCount;
         String probedPath;
+        String writebackErrorCall;
+        private String writebackErrorFile;
+
+        @Override
+        public void barrierFsync(long fd) {
+            countSegmentSync(fdToFile.get(fd), "barrierFsync");
+            super.barrierFsync(fd);
+        }
+
+        @Override
+        public boolean close(long fd) {
+            fdToFile.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public void fdatasync(long fd) {
+            if (takeWritebackError(fdToFile.get(fd), "fdatasync")) {
+                throw CairoException.dataSyncFailure(5, "fdatasync").put("injected writeback error");
+            }
+            super.fdatasync(fd);
+        }
 
         @Override
         public boolean isSyncFileRangeEffective(Utf8Sequence root) {
             probeCount++;
             probedPath = root.toString();
-            // Pin the drain on, so the test runs where the real probe says no: off Linux, or on ZFS.
-            return true;
+            // Pinned, so the test runs where the real probe says no: off Linux, or on ZFS.
+            return drain;
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            final long addr = super.mmap(fd, len, offset, flags, memoryTag);
+            trackMapping(addr, fd);
+            return addr;
+        }
+
+        @Override
+        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            final long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+            addrToFile.remove(addr);
+            trackMapping(newAddr, fd);
+            return newAddr;
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            countSegmentSync(addrToFile.get(addr), async ? "msyncAsync" : "msyncSync");
+            if (!async && takeWritebackError(addrToFile.get(addr), "msync")) {
+                throw CairoException.dataSyncFailure(5, "msync").put("injected writeback error");
+            }
+            super.msync(addr, len, async);
+        }
+
+        @Override
+        public void munmap(long address, long size, int memoryTag) {
+            addrToFile.remove(address);
+            super.munmap(address, size, memoryTag);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final long fd = super.openRW(name, opts);
+            final Matcher segmentFile = SEGMENT_FILE.matcher(Utf8String.newInstance(name).toString());
+            if (fd > -1 && segmentFile.matches()) {
+                fdToFile.put(fd, segmentFile.group(1));
+            }
+            return fd;
         }
 
         @Override
         public int syncFileRange(long fd, long offset, long nbytes, int flags) {
             syncFileRangeCount++;
+            countSegmentSync(fdToFile.get(fd), "syncFileRange");
+            if (takeWritebackError(fdToFile.get(fd), "sync_file_range")) {
+                return -1;
+            }
             return super.syncFileRange(fd, offset, nbytes, flags);
+        }
+
+        private String barrieredFiles() {
+            final List<String> files = new ArrayList<>();
+            for (Map.Entry<String, Map<String, int[]>> file : segmentSyncs.entrySet()) {
+                if (file.getValue().containsKey("barrierFsync")) {
+                    files.add(file.getKey());
+                }
+            }
+            return files.toString();
+        }
+
+        private void countSegmentSync(String file, String call) {
+            if (file != null) {
+                segmentSyncs.computeIfAbsent(file, k -> new TreeMap<>()).computeIfAbsent(call, k -> new int[1])[0]++;
+            }
+        }
+
+        /**
+         * The next call that waits on the writeback of this segment file gets a writeback error, as Linux
+         * reports one to the first waiter on each open file.
+         */
+        private void failNextWait(String file) {
+            writebackErrorFile = file;
+            writebackErrorCall = null;
+        }
+
+        private String segmentSyncSummary() {
+            final StringBuilder sb = new StringBuilder();
+            for (Map.Entry<String, Map<String, int[]>> file : segmentSyncs.entrySet()) {
+                if (!sb.isEmpty()) {
+                    sb.append("; ");
+                }
+                sb.append(file.getKey()).append(':');
+                for (Map.Entry<String, int[]> call : file.getValue().entrySet()) {
+                    sb.append(' ').append(call.getKey()).append('=').append(call.getValue()[0]);
+                }
+            }
+            return sb.toString();
+        }
+
+        private boolean takeWritebackError(String file, String call) {
+            if (file != null && file.equals(writebackErrorFile)) {
+                writebackErrorFile = null;
+                writebackErrorCall = call;
+                return true;
+            }
+            return false;
+        }
+
+        private void trackMapping(long addr, long fd) {
+            final String file = fdToFile.get(fd);
+            if (file != null && addr != -1 && addr != 0) {
+                addrToFile.put(addr, file);
+            }
         }
     }
 

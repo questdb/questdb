@@ -519,15 +519,15 @@ class WalEventWriter implements Closeable {
     }
 
     /**
-     * Flush (and, under ADAPTIVE, fdatasync) the WAL events files using the given commit mode. Callers on
-     * the WAL commit path pass the mode that commit acted on, so the events file's durability matches the
-     * commit's own, preserving the data→events→seq ordering.
+     * Flush the WAL events files at the given commit mode's grade, with an fdatasync barrier for ADAPTIVE
+     * at W=0. The data commit path (WalWriter.syncIfRequired0) passes ASYNC under ADAPTIVE and issues the
+     * barrier itself through {@link #barrierFsync()}; the other callers pass the mode they act on.
      */
     void sync(int commitMode) {
         if (commitMode != CommitMode.NOSYNC) {
-            // W>0 pushes the event mappings with MS_ASYNC; WalWriter then fdatasyncs these private files
-            // before sequencing. Only the shared sequencer barrier is deferred/batched. Other modes (and
-            // ADAPTIVE W=0) keep their exact existing sync grade + per-commit fdatasync.
+            // W>0 pushes the event mappings with MS_ASYNC; the caller then fdatasyncs these private files
+            // before sequencing. Only the shared sequencer barrier is deferred/batched. ADAPTIVE W=0 gets
+            // MS_SYNC plus the barrier below; ASYNC and SYNC keep their exact existing sync grade.
             final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE
                     && configuration.getAdaptiveCommitGroupWindowUs() > 0;
             final boolean async = commitMode == CommitMode.ASYNC || deferDeviceFlush;
@@ -545,8 +545,9 @@ class WalEventWriter implements Closeable {
     }
 
     /**
-     * ORDERING barrier over the WAL-e event and index files. For adaptive W&gt;0, WalWriter calls
-     * this before sequencing, after private column data, preserving data→events→seq ordering.
+     * ORDERING barrier over the WAL-e event and index files. Under ADAPTIVE, WalWriter calls this before
+     * sequencing, after private column data, preserving data→events→seq ordering: at every window on the
+     * data commit path, and at W&gt;0 on the others ({@link #sync(int)} calls it at W=0).
      * <p>
      * Ordering is all this site needs, and it is deliberately NOT a durability barrier: what must hold is
      * that a sequencer record never reaches the medium ahead of the _event entry it names. Durability
