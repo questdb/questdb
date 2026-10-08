@@ -120,6 +120,11 @@ public class CountGeoHashGroupByFunctionByte extends AbstractCountGroupByFunctio
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
     public boolean isOrderSensitive() {
         return false;
     }

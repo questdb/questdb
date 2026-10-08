@@ -28,7 +28,7 @@ import io.questdb.griffin.engine.functions.conditional.NullCaseFunction;
 import org.junit.Test;
 
 public class NullCaseFunctionTest {
-    private static final NullCaseFunction function = new NullCaseFunction(null);
+    private static final NullCaseFunction function = new NullCaseFunction(null, null);
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetArray() {

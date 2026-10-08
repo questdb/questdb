@@ -1445,6 +1445,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlParallelWindowPrefixRows() {
+        return getDelegate().getSqlParallelWindowPrefixRows();
+    }
+
+    @Override
     public long getSqlParallelWindowRoundRows() {
         return getDelegate().getSqlParallelWindowRoundRows();
     }
@@ -1997,6 +2002,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelWindowKeyRunsEnabled() {
         return getDelegate().isSqlParallelWindowKeyRunsEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelWindowChainEnabled() {
+        return getDelegate().isSqlParallelWindowChainEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelWindowShardEnabled() {
+        return getDelegate().isSqlParallelWindowShardEnabled();
     }
 
     @Override

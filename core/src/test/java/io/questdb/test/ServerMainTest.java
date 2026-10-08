@@ -1062,10 +1062,13 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.parallel.window.join.enabled\tQDB_CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.enabled\tQDB_CAIRO_SQL_PARALLEL_WINDOW_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.key.runs.enabled\tQDB_CAIRO_SQL_PARALLEL_WINDOW_KEY_RUNS_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.window.chain.enabled\tQDB_CAIRO_SQL_PARALLEL_WINDOW_CHAIN_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.window.shard.enabled\tQDB_CAIRO_SQL_PARALLEL_WINDOW_SHARD_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.task.rows\tQDB_CAIRO_SQL_PARALLEL_WINDOW_TASK_ROWS\t131072\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.max.key.rows\tQDB_CAIRO_SQL_PARALLEL_WINDOW_MAX_KEY_ROWS\t4194304\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.max.rounds\tQDB_CAIRO_SQL_PARALLEL_WINDOW_MAX_ROUNDS\t3\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.min.rows\tQDB_CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS\t262144\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.window.prefix.rows\tQDB_CAIRO_SQL_PARALLEL_WINDOW_PREFIX_ROWS\t16384\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.round.rows\tQDB_CAIRO_SQL_PARALLEL_WINDOW_ROUND_ROWS\t2097152\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.minmax.rewrite.enabled\tQDB_CAIRO_SQL_PARALLEL_WINDOW_MINMAX_REWRITE_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.enabled\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +

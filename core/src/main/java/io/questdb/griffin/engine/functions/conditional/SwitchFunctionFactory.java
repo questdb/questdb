@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.constants.Constants;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -277,9 +278,10 @@ public class SwitchFunctionFactory implements FunctionFactory {
             };
             argsToPoke.add(nullFunc);
         }
+        final CaseBranches.Values branches = new CaseBranches.Values(new ObjList<>(argsToPoke), elseB);
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
-        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke, branches);
     }
 
     private Function getDoubleKeyedFunction(
@@ -312,10 +314,11 @@ public class SwitchFunctionFactory implements FunctionFactory {
             }
             return elseB;
         };
+        final CaseBranches.Values branches = new CaseBranches.Values(new ObjList<>(argsToPoke), elseB);
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
 
-        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke, branches);
     }
 
     private Function getElseFunction(int valueType, Function elseBranch) {
@@ -353,10 +356,11 @@ public class SwitchFunctionFactory implements FunctionFactory {
             return elseB;
         };
 
+        final CaseBranches.Values branches = new CaseBranches.Values(new ObjList<>(argsToPoke), elseB);
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
 
-        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke, branches);
     }
 
     private Function getIfElseFunction(
@@ -370,6 +374,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final CaseFunctionPicker picker;
         final ObjList<Function> argsToPoke;
+        final CaseBranches.Values branches;
         if (n == 3) {
             // only one conditional branch
             boolean value = args.getQuick(1).getBool(null);
@@ -387,6 +392,9 @@ public class SwitchFunctionFactory implements FunctionFactory {
             argsToPoke.add(keyFunction);
             argsToPoke.add(elseB);
             argsToPoke.add(branch);
+            final ObjList<Function> thenValues = new ObjList<>(1);
+            thenValues.add(branch);
+            branches = new CaseBranches.Values(thenValues, elseB);
 
         } else if (n == 5) {
             final boolean a = args.getQuick(1).getBool(null);
@@ -408,11 +416,17 @@ public class SwitchFunctionFactory implements FunctionFactory {
             argsToPoke.add(keyFunction);
             argsToPoke.add(branchA);
             argsToPoke.add(branchB);
+            final ObjList<Function> thenValues = new ObjList<>(2);
+            thenValues.add(branchA);
+            thenValues.add(branchB);
+            // a BOOLEAN key is either value, NULL reads as false: the ELSE is never taken, but
+            // named all the same
+            branches = new CaseBranches.Values(thenValues, getElseFunction(returnType, elseBranch));
         } else {
             throw SqlException.$(argPositions.getQuick(5), "too many branches");
         }
 
-        return CaseCommon.getCaseFunction(position, returnType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(position, returnType, picker, argsToPoke, branches);
     }
 
     private Function getIntKeyedFunction(
@@ -447,10 +461,11 @@ public class SwitchFunctionFactory implements FunctionFactory {
             return elseB;
         };
 
+        final CaseBranches.Values branches = new CaseBranches.Values(new ObjList<>(argsToPoke), elseB);
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
 
-        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke, branches);
     }
 
     private Function getLongKeyedFunction(
@@ -484,10 +499,11 @@ public class SwitchFunctionFactory implements FunctionFactory {
             }
             return elseB;
         };
+        final CaseBranches.Values branches = new CaseBranches.Values(new ObjList<>(argsToPoke), elseB);
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
 
-        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke, branches);
     }
 
     private Function getSymbolKeyedFunction(
@@ -558,11 +574,13 @@ public class SwitchFunctionFactory implements FunctionFactory {
         if (nullFunc != null) {
             argsToPoke.add(nullFunc);
         }
+        // the THEN values, the NULL key's last
+        final CaseBranches.Values branches = new CaseBranches.Values(new ObjList<>(argsToPoke), elseB);
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
         // picker must be last so its init() runs after keyFunction is initialized
         argsToPoke.add(picker);
-        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke, branches);
     }
 
     private Function getTimestampKeyedFunction(
@@ -599,10 +617,11 @@ public class SwitchFunctionFactory implements FunctionFactory {
             }
             return elseB;
         };
+        final CaseBranches.Values branches = new CaseBranches.Values(new ObjList<>(argsToPoke), elseB);
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
 
-        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke, branches);
     }
 
     @FunctionalInterface
@@ -662,7 +681,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
      * a valid resolved key (>= 0) or VALUE_NOT_FOUND (-2), so NULL naturally maps
      * to the else value without an explicit check.
      */
-    private static class SymbolSwitchConstIntFunction extends IntFunction {
+    private static class SymbolSwitchConstIntFunction extends IntFunction implements CaseBranches {
         // The wide getters serve the same two constants, so widen them once here rather than
         // per row. A no-ELSE branch yields elseValue == INT_NULL, and Numbers.intToLong /
         // intToDouble / intToFloat map that onto the matching wide NULL exactly as the base
@@ -674,6 +693,8 @@ public class SwitchFunctionFactory implements FunctionFactory {
         // of calling Numbers.intToLong per row.
         private final double doubleElseValue;
         private final double doubleThenValue;
+        // the two values as functions, see CaseBranches
+        private final Function elseFunction;
         private final int elseValue;
         private final float floatElseValue;
         private final float floatThenValue;
@@ -681,6 +702,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         private final long longElseValue;
         private final long longThenValue;
         private final String strKey;
+        private final ObjList<Function> thenFunctions = new ObjList<>(1);
         private final int thenValue;
         private int resolvedKey;
 
@@ -700,6 +722,18 @@ public class SwitchFunctionFactory implements FunctionFactory {
             this.doubleElseValue = Numbers.intToDouble(elseValue);
             this.floatThenValue = Numbers.intToFloat(thenValue);
             this.floatElseValue = Numbers.intToFloat(elseValue);
+            this.thenFunctions.add(IntConstant.newInstance(thenValue));
+            this.elseFunction = IntConstant.newInstance(elseValue);
+        }
+
+        @Override
+        public @NotNull Function getElseValue() {
+            return elseFunction;
+        }
+
+        @Override
+        public @NotNull ObjList<Function> getThenValues() {
+            return thenFunctions;
         }
 
         @Override

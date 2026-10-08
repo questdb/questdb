@@ -28,12 +28,10 @@ package io.questdb.test.griffin.engine.window;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlExecutionContext;
@@ -167,7 +165,7 @@ public class AsyncWindowTest extends AbstractCairoTest {
                 for (int b = 0; b < binds.length; b++) {
                     bind(binds[b]);
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        assertSameWithinUlps("", factory, expected[b], print(cursor, factory));
+                        assertSameAsSerial("", expected[b], print(cursor, factory));
                     }
                 }
             }
@@ -190,9 +188,9 @@ public class AsyncWindowTest extends AbstractCairoTest {
                             // skip
                         }
                         cursor.toTop();
-                        assertSameWithinUlps("", factory, expected, print(cursor, factory));
+                        assertSameAsSerial("", expected, print(cursor, factory));
                         cursor.toTop();
-                        assertSameWithinUlps("", factory, expected, print(cursor, factory));
+                        assertSameAsSerial("", expected, print(cursor, factory));
                     }
                 }
                 assertSlotsReleased(factory);
@@ -214,14 +212,14 @@ public class AsyncWindowTest extends AbstractCairoTest {
                 assertAsync(factory, true);
                 final AsyncWindowRecordCursor asyncCursor = findAsyncCursor(factory);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    assertSameWithinUlps("", factory, expected, print(cursor, factory));
+                    assertSameAsSerial("", expected, print(cursor, factory));
                 }
                 Assert.assertTrue(asyncCursor.getParallelTaskCount() > 0);
                 execute("alter table q convert partition to parquet list '1970-01-01'");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    assertSameWithinUlps("", factory, expected, print(cursor, factory));
+                    assertSameAsSerial("", expected, print(cursor, factory));
                     cursor.toTop();
-                    assertSameWithinUlps("", factory, expected, print(cursor, factory));
+                    assertSameAsSerial("", expected, print(cursor, factory));
                 }
                 Assert.assertEquals(0, asyncCursor.getParallelTaskCount());
                 Assert.assertEquals(0, asyncCursor.getPrefixRowCount() + asyncCursor.getLargeKeyRowCount());
@@ -272,11 +270,11 @@ public class AsyncWindowTest extends AbstractCairoTest {
                         circuitBreaker.clearCancelSentinel();
                         circuitBreaker.resetTimer();
                         cursor.toTop();
-                        assertSameWithinUlps("", factory, expected, print(cursor, factory));
+                        assertSameAsSerial("", expected, print(cursor, factory));
                     }
                     assertSlotsReleased(factory);
                     try (RecordCursor cursor = factory.getCursor(ctx)) {
-                        assertSameWithinUlps("", factory, expected, print(cursor, factory));
+                        assertSameAsSerial("", expected, print(cursor, factory));
                     }
                 }
             } finally {
@@ -321,7 +319,7 @@ public class AsyncWindowTest extends AbstractCairoTest {
                             "avg(asize+bsize) over (partition by [sym] rows between 4 preceding and current row)]\n" +
                             "  keyShards: sym\n" +
                             "  keyRuns: true\n" +
-                            "  keySplit: warmup 4 rows\n" +
+                            "  keySplit: warmup 4 rows, frame replayed\n" +
                             "    FilterOnValues symbolOrder: asc\n" +
                             "      keyMajor: true\n" +
                             "        Cursor-order scan\n"
@@ -501,7 +499,7 @@ public class AsyncWindowTest extends AbstractCairoTest {
                 final AsyncWindowRecordCursor asyncCursor = findAsyncCursor(factory);
                 for (int run = 0; run < 3; run++) {
                     try (RecordCursor cursor = factory.getCursor(ctx)) {
-                        assertSameWithinUlps("", factory, expected, print(cursor, factory));
+                        assertSameAsSerial("", expected, print(cursor, factory));
                     }
                     Assert.assertEquals(0, asyncCursor.getParallelRoundCount());
                     // only the first chunk of the walk was computed
@@ -595,8 +593,8 @@ public class AsyncWindowTest extends AbstractCairoTest {
     public void testNullKeyOnly() throws Exception {
         assertMemoryLeak(() -> {
             createQuote(engine, sqlExecutionContext, "DAY", 2_000);
-            // a single key is not an IN-list scan, so it stays serial
-            assertMatchesSerial(engine, sqlExecutionContext, "select " + IDX50_COLUMNS + " from q where sym in (null) order by sym", false);
+            // a single key walked key-major is table order: a window over it runs on the workers
+            assertMatchesSerial(engine, sqlExecutionContext, "select " + IDX50_COLUMNS + " from q where sym in (null) order by sym");
             assertMatchesSerial(engine, sqlExecutionContext, "select " + IDX50_COLUMNS + " from q where sym in (null, 'NOPE') order by sym");
             assertMatchesSerial(engine, sqlExecutionContext, "select " + IDX50_COLUMNS + " from q where sym in ('NOPE', 'NOPE2') order by sym");
         });
@@ -628,7 +626,7 @@ public class AsyncWindowTest extends AbstractCairoTest {
                     TestUtils.assertContains(plan, "Async Window workers: 4");
                     for (int run = 0; run < 3; run++) {
                         try (RecordCursor cursor = factory.getCursor(ctx)) {
-                            assertSameWithinUlps("", factory, expected, print(cursor, factory));
+                            assertSameAsSerial("", expected, print(cursor, factory));
                         }
                         final AsyncWindowRecordCursor asyncCursor = findAsyncCursor(factory);
                         Assert.assertTrue(asyncCursor.getParallelRoundCount() > 0);
@@ -736,7 +734,7 @@ public class AsyncWindowTest extends AbstractCairoTest {
                             tripAt.set(Long.MAX_VALUE);
                             circuitBreaker.resetTimer();
                             cursor.toTop();
-                            assertSameWithinUlps("", factory, expected, print(cursor, factory));
+                            assertSameAsSerial("", expected, print(cursor, factory));
                         }
                         assertSlotsReleased(factory);
                     }
@@ -945,7 +943,7 @@ public class AsyncWindowTest extends AbstractCairoTest {
                     // keys computed whole: the serial window's values, bit for bit
                     TestUtils.assertEquals(query, expected, actual);
                 } else {
-                    assertSameWithinUlps(query, factory, expected, actual);
+                    assertSameAsSerial(query, expected, actual);
                 }
                 cursor.toTop();
                 while (cursor.hasNext()) {
@@ -973,54 +971,12 @@ public class AsyncWindowTest extends AbstractCairoTest {
     }
 
     /**
-     * Split keys may add floating-point values in another order than the serial window: the
-     * {@code sum} and {@code avg} columns of a plan that splits keys must agree within a relative
-     * 1e-12 of the largest magnitude in their column, which bounds what reordering the additions
-     * can change. Every other value, also of a split plan, must be the serial one exactly.
+     * Every value must be the serial one bit for bit, whatever the split: a replayed frame
+     * (OP_REPLAY), a fold (OP_FOLD), warm-up rows and the exact carries alike. There is no
+     * tolerance: a carry lost, doubled or added in another order shows in the last bit.
      */
-    private static void assertSameWithinUlps(String query, RecordCursorFactory factory, String expected, String actual) {
-        final String[] expectedLines = expected.split("\n");
-        final String[] actualLines = actual.split("\n");
-        Assert.assertEquals(query, expectedLines.length, actualLines.length);
-        final RecordMetadata metadata = factory.getMetadata();
-        final int columnCount = metadata.getColumnCount();
-        final AsyncWindowRecordCursorFactory asyncFactory = findAsyncFactory(factory);
-        final boolean splits = asyncFactory.getSplitPlan().getMode() != AsyncWindowSplitPlan.MODE_NONE;
-        final boolean[] tolerant = new boolean[columnCount];
-        final double[] magnitude = new double[columnCount];
-        for (int c = 0; c < columnCount; c++) {
-            final int asyncColumn = asyncFactory.getMetadata().getColumnIndexQuiet(metadata.getColumnName(c));
-            if (splits && asyncColumn > -1 && asyncFactory.getFunctions().getQuick(asyncColumn) instanceof WindowFunction wf) {
-                final int type = ColumnType.tagOf(metadata.getColumnType(c));
-                tolerant[c] = (type == ColumnType.DOUBLE || type == ColumnType.FLOAT)
-                        && ("sum".equals(wf.getName()) || "avg".equals(wf.getName()));
-            }
-        }
-        for (int i = 1; i < expectedLines.length; i++) {
-            final String[] e = expectedLines[i].split("\t", -1);
-            for (int c = 0; c < columnCount; c++) {
-                if (tolerant[c] && !"null".equals(e[c])) {
-                    magnitude[c] = Math.max(magnitude[c], Math.abs(Double.parseDouble(e[c])));
-                }
-            }
-        }
-        for (int i = 0; i < expectedLines.length; i++) {
-            if (expectedLines[i].equals(actualLines[i])) {
-                continue;
-            }
-            final String[] e = expectedLines[i].split("\t", -1);
-            final String[] a = actualLines[i].split("\t", -1);
-            Assert.assertEquals(query + " line " + i, e.length, a.length);
-            for (int c = 0; c < columnCount; c++) {
-                if (e[c].equals(a[c])) {
-                    continue;
-                }
-                final String message = query + " line " + i + " column " + c + ": expected " + e[c] + " but was " + a[c];
-                Assert.assertTrue(message, tolerant[c] && !"null".equals(e[c]) && !"null".equals(a[c]));
-                final double difference = Math.abs(Double.parseDouble(e[c]) - Double.parseDouble(a[c]));
-                Assert.assertTrue(message, difference <= 1e-12 * magnitude[c]);
-            }
-        }
+    private static void assertSameAsSerial(String query, String expected, String actual) {
+        TestUtils.assertEquals(query, expected, actual);
     }
 
     private void assertSerialPlan(String query) throws Exception {

@@ -116,6 +116,11 @@ public class CountIntGroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
     public boolean isOrderSensitive() {
         return false;
     }

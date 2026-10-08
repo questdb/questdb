@@ -161,6 +161,11 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
     public boolean isOrderSensitive() {
         return true;
     }

@@ -596,10 +596,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelTopKEnabled;
     private final boolean sqlParallelWindowEnabled;
     private final boolean sqlParallelWindowJoinEnabled;
+    private final boolean sqlParallelWindowChainEnabled;
+    private final boolean sqlParallelWindowShardEnabled;
     private final boolean sqlParallelWindowKeyRunsEnabled;
     private final long sqlParallelWindowMaxKeyRows;
     private final int sqlParallelWindowMaxRounds;
     private final long sqlParallelWindowMinRows;
+    private final long sqlParallelWindowPrefixRows;
     private final boolean sqlParallelWindowMinMaxRewriteEnabled;
     private final long sqlParallelWindowRoundRows;
     private final long sqlParallelWindowTaskRows;
@@ -2446,6 +2449,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelWindowJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelWindowEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelWindowKeyRunsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_KEY_RUNS_ENABLED, true);
+            this.sqlParallelWindowChainEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_CHAIN_ENABLED, true);
+            this.sqlParallelWindowShardEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_SHARD_ENABLED, true);
             this.sqlParallelWindowTaskRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_TASK_ROWS, 131_072);
             if (sqlParallelWindowTaskRows < 1) {
                 throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_TASK_ROWS.getPropertyPath(),
@@ -2465,6 +2470,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (sqlParallelWindowMinRows < 0) {
                 throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS.getPropertyPath(),
                         Long.toString(sqlParallelWindowMinRows));
+            }
+            this.sqlParallelWindowPrefixRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_PREFIX_ROWS, 16_384);
+            if (sqlParallelWindowPrefixRows < 0) {
+                throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_PREFIX_ROWS.getPropertyPath(),
+                        Long.toString(sqlParallelWindowPrefixRows));
             }
             this.sqlParallelWindowRoundRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_ROUND_ROWS, 2_097_152);
             if (sqlParallelWindowRoundRows < 1) {
@@ -6048,6 +6058,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getSqlParallelWindowPrefixRows() {
+            return sqlParallelWindowPrefixRows;
+        }
+
+        @Override
         public long getSqlParallelWindowRoundRows() {
             return sqlParallelWindowRoundRows;
         }
@@ -6075,6 +6090,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParallelWindowKeyRunsEnabled() {
             return sqlParallelWindowKeyRunsEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelWindowChainEnabled() {
+            return sqlParallelWindowChainEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelWindowShardEnabled() {
+            return sqlParallelWindowShardEnabled;
         }
 
         @Override

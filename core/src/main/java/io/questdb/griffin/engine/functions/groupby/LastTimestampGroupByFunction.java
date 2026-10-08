@@ -113,6 +113,11 @@ public class LastTimestampGroupByFunction extends FirstTimestampGroupByFunction 
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
     public boolean isOrderSensitive() {
         return true;
     }

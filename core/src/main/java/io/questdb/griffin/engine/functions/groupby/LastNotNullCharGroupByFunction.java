@@ -135,6 +135,11 @@ public class LastNotNullCharGroupByFunction extends FirstCharGroupByFunction {
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
     public boolean isOrderSensitive() {
         return true;
     }

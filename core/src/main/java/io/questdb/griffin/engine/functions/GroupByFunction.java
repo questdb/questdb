@@ -391,6 +391,18 @@ public interface GroupByFunction extends Function, Mutable {
         return false;
     }
 
+    /**
+     * Whether the function's whole state is its value slots, of fixed size: nothing allocated per
+     * group (no {@link GroupByAllocator}), nothing kept between rows outside the slots. A GROUP BY
+     * that streams its groups one after another, as a step of an Async Window chain does, may
+     * then aggregate a group in a plain value of the slots by {@code computeFirst} and
+     * {@code computeNext} alone, and copy it between threads. Each function that is declares it;
+     * false by default.
+     */
+    default boolean isFixedSizeState() {
+        return false;
+    }
+
     default boolean isInterpolationSupported() {
         return false;
     }

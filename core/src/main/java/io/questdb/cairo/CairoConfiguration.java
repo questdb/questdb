@@ -1142,6 +1142,14 @@ public interface CairoConfiguration {
     long getSqlParallelWindowMinRows();
 
     /**
+     * Rows of its scan the parallel window computes on the query's own thread before it dispatches
+     * anything, at most {@link #getSqlParallelWindowMinRows()}: a LIMIT within them never waits
+     * for a round of tasks, and a result of a few hundred thousand rows, a frequent key's, is still
+     * mostly computed by the workers.
+     */
+    long getSqlParallelWindowPrefixRows();
+
+    /**
      * Rows one round of the parallel window's tasks holds at most, past the last key it takes,
      * whatever the number of workers. Two rounds are live at a time, so this bounds the output
      * the parallel window buffers.
@@ -1537,6 +1545,24 @@ public interface CairoConfiguration {
      * than in their maps. Read when the query is compiled; EXPLAIN shows it as {@code keyRuns}.
      */
     boolean isSqlParallelWindowKeyRunsEnabled();
+
+    /**
+     * Whether a streaming window over an Async Window, directly or through a projection, and a
+     * filter over one, become steps the Async Window's workers compute after its own window,
+     * when they keep its keys apart; otherwise they run serially over its output. Read when the
+     * query is compiled; EXPLAIN shows the steps as {@code then}.
+     */
+    boolean isSqlParallelWindowChainEnabled();
+
+    /**
+     * Whether a window partitioned by a symbol column over a whole table, under an ORDER BY that
+     * makes the order of the keys invisible, runs on the shared workers with the keys sharded by
+     * hash over the plain table scan, see
+     * {@link io.questdb.griffin.engine.window.AsyncWindowShardCursor}; otherwise it walks the
+     * column's index key by key, when it has one. Read when the query is compiled; EXPLAIN shows
+     * {@code hashShards}.
+     */
+    boolean isSqlParallelWindowShardEnabled();
 
     boolean isSqlParquetRowGroupPruningEnabled();
 

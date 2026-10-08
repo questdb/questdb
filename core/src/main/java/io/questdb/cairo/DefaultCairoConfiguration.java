@@ -1440,6 +1440,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlParallelWindowPrefixRows() {
+        return 16_384;
+    }
+
+    @Override
     public long getSqlParallelWindowMinRows() {
         return 262_144;
     }
@@ -1971,6 +1976,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelWindowKeyRunsEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelWindowChainEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelWindowShardEnabled() {
         return true;
     }
 

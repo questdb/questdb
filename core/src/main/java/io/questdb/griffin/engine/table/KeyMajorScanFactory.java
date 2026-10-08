@@ -57,4 +57,22 @@ public interface KeyMajorScanFactory {
     default boolean hasDistinctKeys() {
         return false;
     }
+
+    /**
+     * The index, in this factory's metadata, of a column whose values ascend within each key of
+     * the walk, the table's designated timestamp when the walk reads each key's rows forward, or
+     * -1. A window {@code PARTITION BY <key> ORDER BY <that column>} over the walk sees each
+     * partition in order already.
+     */
+    default int getKeyMajorTimestampIndex() {
+        return -1;
+    }
+
+    /**
+     * Whether the walk visits its keys in ascending order of their values, as
+     * {@code ORDER BY <key> ASC} sorts them.
+     */
+    default boolean isKeyMajorAscending() {
+        return false;
+    }
 }

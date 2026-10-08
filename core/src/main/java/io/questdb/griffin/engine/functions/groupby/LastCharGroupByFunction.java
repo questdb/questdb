@@ -113,6 +113,11 @@ public class LastCharGroupByFunction extends FirstCharGroupByFunction {
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
     public boolean isOrderSensitive() {
         return true;
     }

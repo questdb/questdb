@@ -1310,7 +1310,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
     // handles avg() over (partition by x [order by o] rows between y and z)
     // removable cumulative aggregation
-    static class AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction, KeyRunWindowFunction {
+    static class AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction, KeyRunWindowFunction, ReplayableWindowFunction {
         // A run keeps its frame in a heap ring of bufferSize values; a frame larger than this
         // stays on the map path.
         private static final int KEY_RUN_MAX_BUFFER_SIZE = 1 << 16;
@@ -1614,7 +1614,40 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
          */
         @Override
         public void keyRunNext(Record record) {
-            final double d = arg.getDouble(record);
+            replayNext(arg.getDouble(record));
+        }
+
+        @Override
+        public double getReplayedValue() {
+            return getDouble(null);
+        }
+
+        /**
+         * A replay is a key run (see {@link #keyRunNext}) whose values another thread read: the
+         * same arithmetic in fields, bit for bit {@link #computeNext(Record)}'s and the fused
+         * group's.
+         */
+        @Override
+        public boolean isReplayable() {
+            return isKeyRunSupported();
+        }
+
+        @Override
+        public void replayKeyStart() {
+            keyRunStart();
+        }
+
+        /**
+         * The row went through the map, or the group, which the run's fields do not see: they
+         * take it too. Both leave the same value in {@code avg} and {@code sum}.
+         */
+        @Override
+        public void replayPrefixRow(Record record) {
+            replayNext(arg.getDouble(record));
+        }
+
+        @Override
+        public void replayNext(double d) {
             final double[] ring = keyRunRing;
             final int loIdx;
             if (!keyRunOpen) {
@@ -2172,7 +2205,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
     // Handles avg() over ([order by o] rows between y and z); there's no partition by.
     // Removable cumulative aggregation.
-    static class AvgOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDoubleFunction {
+    static class AvgOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDoubleFunction, ReplayableWindowFunction {
         private final MemoryARW buffer;
         private final int bufferSize;
         private final boolean frameIncludesCurrentValue;
@@ -2210,8 +2243,31 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void computeNext(Record record) {
-            double d = arg.getDouble(record);
+            replayNext(arg.getDouble(record));
+        }
 
+        @Override
+        public double getReplayedValue() {
+            return getDouble(null);
+        }
+
+        @Override
+        public boolean isReplayable() {
+            return true;
+        }
+
+        @Override
+        public void replayKeyStart() {
+            toTop();
+        }
+
+        @Override
+        public void replayPrefixRow(Record record) {
+            // computeNext() replays: the function's state is the replay's
+        }
+
+        @Override
+        public void replayNext(double d) {
             //compute value using top frame element (that could be current or previous row)
             double hiValue = d;
             if (frameLoBounded && !frameIncludesCurrentValue) {
