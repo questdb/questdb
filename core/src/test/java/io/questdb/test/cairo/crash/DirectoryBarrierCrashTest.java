@@ -494,6 +494,12 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         });
     }
 
+    /**
+     * A WAL writer created after the baseline writes three commits into three segments, and the power fails
+     * before any of them is applied. Every commit was acknowledged (ADAPTIVE) or returned (SYNC), so all of
+     * them must survive: {@code wal1} in the table directory, and each segment in {@code wal1}, have to be
+     * durable by the time a commit that names them is sequenced.
+     */
     private void assertWalSegmentsSurviveCrash(String commitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0);
