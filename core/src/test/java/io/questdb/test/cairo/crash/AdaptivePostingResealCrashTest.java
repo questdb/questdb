@@ -64,8 +64,6 @@ import java.util.stream.Stream;
 public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
     private static final long DAY = 86_400_000_000L;
     private static final long DAY1 = 1_704_067_200_000_000L; // 2024-01-01T00:00:00Z
-    // No periodic save point inside a test.
-    private static final long EPOCH_INTERVAL_MS = 1_000_000_000L;
     private static final String EPOCH_METRIC = "questdb_wal_adaptive_epoch_advances_total";
     private static final long HOUR = 3_600_000_000L;
     private static final int PASSES = 4;
@@ -74,7 +72,6 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
     // The sealed posting files of the covering column s and the plain column k of the three-day table.
     private static final Pattern SEALED_FILE_S_K = Pattern.compile("[sk]\\.(pv|pc\\d+)\\..*");
     private static final int SYMBOLS = 4;
-    private int modeSwitches;
 
     @Test
     public void testCrashBeforeNextSavePointRecoversFromLastSavePoint() throws Exception {
@@ -483,7 +480,8 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
 
     private static void setUpAdaptive() {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, EPOCH_INTERVAL_MS);
+        // No periodic save point inside a test.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1_000_000_000L);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, Long.MAX_VALUE);
         // A crash takes no save point at writer close.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
@@ -812,14 +810,9 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         }
     }
 
-    // Switches the instance mode and checks that the configuration reports it. The test harness drops a pending
-    // configuration change when a property is set again to the value it already has, so the epoch interval, set last,
-    // takes a value no earlier switch of the test used.
+    // Switches the instance mode and checks that the configuration reports it.
     private void setCommitMode(String mode) {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
-        final long epochIntervalMs = EPOCH_INTERVAL_MS + ++modeSwitches;
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, epochIntervalMs);
         Assert.assertEquals(mode, CommitMode.toString(engine.getConfiguration().getCommitMode()));
-        Assert.assertEquals(epochIntervalMs, engine.getConfiguration().getAdaptiveEpochIntervalMs());
     }
 }

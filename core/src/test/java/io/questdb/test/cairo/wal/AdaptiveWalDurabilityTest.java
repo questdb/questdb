@@ -819,8 +819,6 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         final String perFile = "_event: %1$s; _event.i: %1$s; ts.d: %1$s; v.d: %1$s";
         final String drained = String.format(perFile, "barrierFsync=1 msyncAsync=1 syncFileRange=1");
         // commit mode, group window in microseconds, the sync calls of one commit on the segment files.
-        // Setting a property to its current value cancels a pending configuration rebuild, so the mode is set
-        // last and differs from one case to the next.
         final String[][] cases = {
                 {"adaptive", "50000", drained},
                 {"nosync", "0", ""},
