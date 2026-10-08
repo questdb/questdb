@@ -31,6 +31,7 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
@@ -273,12 +274,30 @@ public class TableWriterSegmentFileCache {
                                     .I$();
                         }
 
-                        // Guard: data file must cover the byte range required by the last aux entry.
-                        // Uses the aux fd (now open inside auxMem) to read the data-end offset from disk
-                        // without requiring the aux to be mmap-ed yet (lazy mapping defers the mmap call).
+                        // Guard: the last aux entry must not be torn (its data starts at or past the previous row's
+                        // data end and holds at least the type's smallest value), and the data file must cover
+                        // its data. The aux guard above makes the aux mapping safe to read, and
+                        // configureDataMemOM() maps it anyway. The previous row's entry is outside the mapping
+                        // only when the rows start an aux page; then it is read from the file.
                         if (rowHi > 0) {
-                            validateSegmentFileLength(dataFd, dfile, metadata.getColumnName(columnIndex),
-                                    columnTypeDriver.getDataVectorSizeAtFromFd(ff, auxMem.getFd(), rowHi - 1),
+                            final long auxAddr = auxMem.addressOf(0);
+                            final long row = rowHi - 1;
+                            final long dataOffset = columnTypeDriver.getDataVectorOffset(auxAddr, row);
+                            final long dataEnd = columnTypeDriver.getDataVectorSizeAt(auxAddr, row);
+                            final long prevDataEnd = row == 0 ? 0
+                                    : row > rowLo || columnTypeDriver.getAuxVectorOffset(rowLo) % Files.PAGE_SIZE != 0
+                                      ? columnTypeDriver.getDataVectorSizeAt(auxAddr, row - 1)
+                                      : columnTypeDriver.getDataVectorSizeAtFromFd(ff, auxMem.getFd(), row - 1);
+                            if (dataOffset < prevDataEnd || dataEnd - dataOffset < columnTypeDriver.getDataVectorMinEntrySize()) {
+                                throw CairoException.critical(METADATA_VALIDATION)
+                                        .put("WAL segment column has a torn aux entry [col=").put(metadata.getColumnName(columnIndex))
+                                        .put(", row=").put(row)
+                                        .put(", dataOffset=").put(dataOffset)
+                                        .put(", dataEnd=").put(dataEnd)
+                                        .put(", prevDataEnd=").put(prevDataEnd)
+                                        .put(']');
+                            }
+                            validateSegmentFileLength(dataFd, dfile, metadata.getColumnName(columnIndex), dataEnd,
                                     knownLengths, 1 + 2 * columnIndex);
                         }
 
