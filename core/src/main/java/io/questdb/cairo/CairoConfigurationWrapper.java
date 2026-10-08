@@ -1995,6 +1995,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelWindowShardEnabled() {
+        return getDelegate().isSqlParallelWindowShardEnabled();
+    }
+
+    @Override
     public boolean isSqlParquetRowGroupPruningEnabled() {
         return getDelegate().isSqlParquetRowGroupPruningEnabled();
     }

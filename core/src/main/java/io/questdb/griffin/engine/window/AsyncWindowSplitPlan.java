@@ -61,6 +61,11 @@ public class AsyncWindowSplitPlan implements Plannable {
     public static final AsyncWindowSplitPlan NONE = new AsyncWindowSplitPlan(MODE_NONE, 0, new IntList(), new IntList(), new IntList());
     public static final int OP_ADD = 0;
     public static final int OP_FIRST = 3;
+    /**
+     * A running DOUBLE sum of a single key whose workers output each row's argument (see
+     * {@link AsyncWindowFoldEcho}) and whose query thread folds the sum over them, in order: exact.
+     */
+    public static final int OP_FOLD = 4;
     public static final int OP_MAX = 2;
     public static final int OP_MIN = 1;
     private final int mode;
@@ -88,6 +93,7 @@ public class AsyncWindowSplitPlan implements Plannable {
      * an INT widened. A NULL on either side yields the other.
      */
     public static long combine(int op, int columnType, long carry, long local) {
+        assert op != OP_FOLD : "a fold is not combined";
         if (op == OP_FIRST) {
             return carry;
         }
@@ -132,6 +138,19 @@ public class AsyncWindowSplitPlan implements Plannable {
                 return op == OP_MIN ? Math.min(c, l) : Math.max(c, l);
             }
         }
+    }
+
+    /**
+     * Whether a column is folded, see {@link #OP_FOLD}: every task's rows need the query thread's
+     * pass, also of a key the task starts.
+     */
+    public boolean hasFold() {
+        for (int i = 0, n = prefixOps.size(); i < n; i++) {
+            if (prefixOps.getQuick(i) == OP_FOLD) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public int getGroupCarryInputColumn() {

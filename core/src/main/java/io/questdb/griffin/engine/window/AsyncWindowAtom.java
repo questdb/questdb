@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
+import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLockOwner;
@@ -157,6 +158,24 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
 
     @Override
     public void clear() {
+    }
+
+    /**
+     * Gives every slot a filter its rows must pass before the window sees them, the WHERE of a
+     * plain scan, see {@link AsyncWindowShardCursor}: the query thread's, which the factory owns,
+     * and one per worker slot, which this atom owns once the method returns, also when it throws.
+     */
+    public void setPrefilters(@NotNull Function ownerFilter, @NotNull ObjList<Function> workerFilters) {
+        try {
+            assert workerFilters.size() == slots.size() - 1;
+            slots.getQuick(0).prefilter = ownerFilter;
+            for (int i = 1, n = slots.size(); i < n; i++) {
+                slots.getQuick(i).prefilter = workerFilters.getQuick(i - 1);
+                workerFilters.setQuick(i - 1, null);
+            }
+        } finally {
+            Misc.freeObjListAndClear(workerFilters);
+        }
     }
 
     @Override
@@ -409,6 +428,10 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         private final IntList crossIndex;
         // what the window functions read in the serial mode
         private Record serialInput;
+        // the scan's WHERE, which a row must pass before the window sees it, or null
+        private Function prefilter;
+        // rows the last computeSlice() output
+        private long sliceRowCount;
         private int stageCount;
         private final PageFrameRowToucher toucher = new PageFrameRowToucher();
         private final VirtualRecord virtualRecord;
@@ -632,6 +655,7 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             failure = Misc.freeBestEffort(failure, pool);
             failure = Misc.freeBestEffort(failure, record);
             if (ownsFunctions) {
+                failure = Misc.freeBestEffort(failure, prefilter);
                 failure = Misc.freeObjListBestEffort(failure, stages);
                 failure = Misc.freeObjListBestEffort(failure, mapStates);
                 failure = Misc.freeObjListBestEffort(failure, functions);
@@ -663,6 +687,9 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             }
             for (int i = 0; i < stageCount; i++) {
                 stages.getQuick(i).closeCursor();
+            }
+            if (prefilter != null) {
+                prefilter.cursorClosed();
             }
         }
 
@@ -789,6 +816,111 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 }
             }
             return prevOffset;
+        }
+
+        /**
+         * Computes a shard's rows of the frames from {@code frameLo} to {@code frameHi}, see
+         * {@link AsyncWindowShardCursor}: every row whose key falls in the shard, in table order,
+         * from the functions' state the shard's earlier rows left; appends the output rows to the
+         * chain. Returns the offset of the last record appended, -1 when none was.
+         */
+        long computeShard(
+                int frameLo,
+                int frameHi,
+                int shard,
+                int shardCount,
+                int keyColumnIndex,
+                RecordChain chain,
+                SqlExecutionCircuitBreaker circuitBreaker,
+                UnorderedPageFrameSequence<?> sequence
+        ) {
+            streamFrameIndex = -1;
+            long prevOffset = -1;
+            int checks = 0;
+            final int nullKey = NullMemoryCMR.INSTANCE.getInt(0);
+            for (int frameIndex = frameLo; frameIndex < frameHi; frameIndex++) {
+                final PageFrameMemory frameMemory = pool.navigateTo(frameIndex);
+                record.init(frameMemory);
+                final long rowCount = frameAddressCache.getFrameSize(frameIndex);
+                // The key column's symbol keys, read straight from the frame: every shard reads
+                // every key of the round, and computes only the rows of its own. A column top
+                // (no address) is NULL keys, as the record reads it.
+                final long keyAddress = frameMemory.getPageAddresses().get(frameMemory.getColumnOffset() + keyColumnIndex);
+                for (long row = 0; row < rowCount; row++) {
+                    if (++checks == CHECK_BATCHES * BATCH_ROWS) {
+                        checks = 0;
+                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        if (!sequence.isActive()) {
+                            // the round was cancelled: its output will never be read
+                            return prevOffset;
+                        }
+                    }
+                    final int key = keyAddress != 0 ? Unsafe.getInt(keyAddress + (row << 2)) : nullKey;
+                    if (AsyncWindowShardCursor.shardOf(key, shardCount) != shard) {
+                        continue;
+                    }
+                    record.setRowIndex(row);
+                    if ((prefilter == null || prefilter.getBool(functionInput)) && computeNext(functionInput)) {
+                        prevOffset = chain.put(outputRecord, prevOffset);
+                    }
+                }
+            }
+            return prevOffset;
+        }
+
+        /**
+         * Computes the rows of a frame from {@code rowLo} to {@code rowHi} that pass the
+         * prefilter, from the functions' clean state, see {@link AsyncWindowShardCursor}; appends
+         * the output rows to the chain. Returns the offset of the last record appended, -1 when
+         * none was; {@link #getSliceRowCount()} tells how many.
+         */
+        long computeSlice(
+                int frameIndex,
+                long rowLo,
+                long rowHi,
+                RecordChain chain,
+                SqlExecutionCircuitBreaker circuitBreaker,
+                UnorderedPageFrameSequence<?> sequence
+        ) {
+            streamFrameIndex = -1;
+            record.init(pool.navigateTo(frameIndex));
+            long prevOffset = -1;
+            long rowCount = 0;
+            int checks = 0;
+            for (long row = rowLo; row < rowHi; row++) {
+                if (++checks == CHECK_BATCHES * BATCH_ROWS) {
+                    checks = 0;
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    if (!sequence.isActive()) {
+                        sliceRowCount = rowCount;
+                        return prevOffset;
+                    }
+                }
+                record.setRowIndex(row);
+                if ((prefilter == null || prefilter.getBool(functionInput)) && computeNext(functionInput)) {
+                    prevOffset = chain.put(outputRecord, prevOffset);
+                    rowCount++;
+                }
+            }
+            sliceRowCount = rowCount;
+            return prevOffset;
+        }
+
+        long getSliceRowCount() {
+            return sliceRowCount;
+        }
+
+        /**
+         * Computes the row of a frame for the serial mode of {@link AsyncWindowShardCursor},
+         * leaving its output in the output record. Returns false when a filter step drops it.
+         */
+        boolean streamFrameRow(int frameIndex, long row) {
+            if (frameIndex != streamFrameIndex) {
+                record.init(pool.navigateTo(frameIndex));
+                streamFrameIndex = frameIndex;
+            }
+            record.setRowIndex(row);
+            return (prefilter == null || prefilter.getBool(functionInput)) && computeNext(functionInput);
         }
 
         /**
@@ -1079,6 +1211,15 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             for (int i = 0; i < stageCount; i++) {
                 stages.getQuick(i).open(executionContext, ownsFunctions || executionContext.getCloneSymbolTables());
             }
+            if (prefilter != null) {
+                final boolean current = executionContext.getCloneSymbolTables();
+                executionContext.setCloneSymbolTables(ownsFunctions || current);
+                try {
+                    prefilter.init(symbolTableSource, executionContext);
+                } finally {
+                    executionContext.setCloneSymbolTables(current);
+                }
+            }
         }
 
         /**
@@ -1140,6 +1281,9 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             }
             for (int i = 0; i < stageCount; i++) {
                 stages.getQuick(i).toTop();
+            }
+            if (prefilter != null) {
+                prefilter.toTop();
             }
         }
 

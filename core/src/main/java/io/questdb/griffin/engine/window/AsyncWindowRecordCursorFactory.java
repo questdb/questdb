@@ -33,6 +33,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -87,6 +89,12 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
     // the output column that carries the column ascending within each key, -1 when none does
     private int timestampOutputIndex = -1;
     private AsyncWindowRecordCursor cursor;
+    // the cursor of a plain scan whose keys are sharded by hash, see shardKeyColumnIndex
+    private AsyncWindowShardCursor shardCursor;
+    private final int shardKeyColumnIndex;
+    private final boolean sliceMode;
+    // the slice mode's WHERE for the query's thread, which this factory owns, or null
+    private Function prefilter;
     private ObjList<Function> functions;
     // one per round that can be alive at a time
     private ObjList<UnorderedPageFrameSequence<AsyncWindowRecordCursor.RoundAtom>> sequences;
@@ -106,6 +114,12 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
      * @param partitionedByKeyOnly whether every window function is partitioned by that column and
      *                             no other, so that tasks may compute key runs, see
      *                             {@link KeyRunWindowFunction}
+     * @param crossIndex           see {@link AsyncWindowAtom}
+     * @param shardKeyColumnIndex  the symbol column of a plain scan whose keys the workers shard
+     *                             by hash, see {@link AsyncWindowShardCursor}; -1 for a key-major
+     *                             scan
+     * @param sliceMode            whether the workers compute disjoint row ranges of a plain
+     *                             scan of a single stream, see {@link AsyncWindowShardCursor}
      */
     public AsyncWindowRecordCursorFactory(
             @NotNull CairoEngine engine,
@@ -122,9 +136,13 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
             int keyColumnIndex,
             boolean partitionedByKeyOnly,
             int workerCount,
-            @Nullable IntList crossIndex
+            @Nullable IntList crossIndex,
+            int shardKeyColumnIndex,
+            boolean sliceMode
     ) {
         super(metadata);
+        this.shardKeyColumnIndex = shardKeyColumnIndex;
+        this.sliceMode = sliceMode;
         this.configuration = configuration;
         this.ownerStages = new ObjList<>();
         this.windowFunctions = new ObjList<>();
@@ -165,7 +183,11 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
                         workerCount
                 ));
             }
-            this.cursor = new AsyncWindowRecordCursor(configuration, atom, sequences, metadata, recordSink, splitPlan, workerCount);
+            if (shardKeyColumnIndex > -1 || sliceMode) {
+                this.shardCursor = new AsyncWindowShardCursor(configuration, atom, sequences, metadata, recordSink, base.getMetadata(), sliceMode ? -1 : shardKeyColumnIndex, splitPlan);
+            } else {
+                this.cursor = new AsyncWindowRecordCursor(configuration, atom, sequences, metadata, recordSink, splitPlan, workerCount);
+            }
         } catch (Throwable th) {
             // The caller keeps base, functions and windowMapStates; free what this built and the
             // worker copies no atom took.
@@ -195,7 +217,15 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
     ) {
         super(metadata);
         // the only allocation that can fail, before anything changes hands
-        this.cursor = new AsyncWindowRecordCursor(from.configuration, from.atom, from.sequences, metadata, recordSink, splitPlan, from.workerCount);
+        if (from.shardKeyColumnIndex > -1 || from.sliceMode) {
+            this.shardCursor = new AsyncWindowShardCursor(from.configuration, from.atom, from.sequences, metadata, recordSink, from.base.getMetadata(), from.sliceMode ? -1 : from.shardKeyColumnIndex, splitPlan);
+        } else {
+            this.cursor = new AsyncWindowRecordCursor(from.configuration, from.atom, from.sequences, metadata, recordSink, splitPlan, from.workerCount);
+        }
+        this.shardKeyColumnIndex = from.shardKeyColumnIndex;
+        this.sliceMode = from.sliceMode;
+        this.prefilter = from.prefilter;
+        from.prefilter = null;
         this.configuration = from.configuration;
         this.keyColumnIndex = from.keyColumnIndex;
         this.scan = from.scan;
@@ -214,6 +244,8 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
         // the other factory's cursor was never opened, and its rounds hold no task yet
         Misc.free(from.cursor);
         from.cursor = null;
+        Misc.free(from.shardCursor);
+        from.shardCursor = null;
         from.atom = null;
         from.base = null;
         from.functions = null;
@@ -223,8 +255,9 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public boolean followedOrderByAdvice() {
-        // a GROUP BY step returns groups, which follow no ORDER BY the scan followed
-        return base.followedOrderByAdvice() && !atom.hasGroupByStage();
+        // a GROUP BY step returns groups, which follow no ORDER BY the scan followed, and shards
+        // return their keys round by round
+        return shardKeyColumnIndex < 0 && base.followedOrderByAdvice() && !atom.hasGroupByStage();
     }
 
     @Override
@@ -245,6 +278,17 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        if (shardCursor != null) {
+            final PageFrameCursor frameCursor = scan.getPageFrameCursor(executionContext, PartitionFrameCursorFactory.ORDER_ASC);
+            try {
+                shardCursor.of(frameCursor, executionContext);
+                return shardCursor;
+            } catch (Throwable th) {
+                // the cursor owns the frame cursor from the start of of()
+                shardCursor.close();
+                throw th;
+            }
+        }
         final RecordCursor baseCursor = scan.getCursor(executionContext);
         try {
             cursor.of(baseCursor, executionContext);
@@ -258,7 +302,41 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public int getScanDirection() {
-        return base.getScanDirection();
+        // shards return their keys round by round, not in the scan's order
+        return shardKeyColumnIndex > -1 ? SCAN_DIRECTION_OTHER : base.getScanDirection();
+    }
+
+    /**
+     * The cursor of a factory that shards a plain scan's keys by hash, see
+     * {@link AsyncWindowShardCursor}, else null.
+     */
+    @TestOnly
+    public AsyncWindowShardCursor getShardCursor() {
+        return shardCursor;
+    }
+
+    /**
+     * Whether the workers shard a plain scan's keys by hash, see {@link AsyncWindowShardCursor}.
+     */
+    public boolean isShardMode() {
+        return shardKeyColumnIndex > -1;
+    }
+
+    /**
+     * Whether the workers compute disjoint row ranges of a plain scan of a single stream, see
+     * {@link AsyncWindowShardCursor}.
+     */
+    public boolean isSliceMode() {
+        return sliceMode;
+    }
+
+    /**
+     * Gives the slice mode's scan its WHERE: this factory takes {@code ownerFilter}, and the atom
+     * the worker copies, also when it throws.
+     */
+    public void setPrefilters(@NotNull Function ownerFilter, @NotNull ObjList<Function> workerFilters) {
+        this.prefilter = ownerFilter;
+        atom.setPrefilters(ownerFilter, workerFilters);
     }
 
     /**
@@ -438,7 +516,14 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
         sink.type("Async Window");
         sink.meta("workers").val(workerCount);
         sink.optAttr("functions", windowFunctions, true);
-        if (keyColumnIndex > -1) {
+        if (sliceMode) {
+            sink.attr("rowSlices").val(true);
+            if (prefilter != null) {
+                sink.optAttr("filter", prefilter, true);
+            }
+        } else if (shardKeyColumnIndex > -1) {
+            sink.attr("hashShards").putBaseColumnName(shardKeyColumnIndex);
+        } else if (keyColumnIndex > -1) {
             sink.attr("keyShards").putBaseColumnName(keyColumnIndex);
         } else {
             // a single key the window does not read
@@ -482,6 +567,10 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
     protected void _close() {
         final AsyncWindowRecordCursor cursor = this.cursor;
         this.cursor = null;
+        final AsyncWindowShardCursor shardCursor = this.shardCursor;
+        this.shardCursor = null;
+        final Function prefilter = this.prefilter;
+        this.prefilter = null;
         final ObjList<UnorderedPageFrameSequence<AsyncWindowRecordCursor.RoundAtom>> sequences = this.sequences;
         this.sequences = null;
         final RecordCursorFactory base = this.base;
@@ -493,6 +582,8 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
         final AsyncWindowAtom atom = this.atom;
         this.atom = null;
         Throwable failure = Misc.freeBestEffort(null, cursor);
+        failure = Misc.freeBestEffort(failure, shardCursor);
+        failure = Misc.freeBestEffort(failure, prefilter);
         failure = Misc.freeObjListBestEffort(failure, sequences);
         // frees the worker copies
         failure = Misc.freeBestEffort(failure, atom);

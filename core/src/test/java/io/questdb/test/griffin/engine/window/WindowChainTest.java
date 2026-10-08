@@ -103,6 +103,11 @@ public class WindowChainTest extends AbstractCairoTest {
         return "SELECT time, sum(size) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS size FROM trade WHERE sym = '" + sym + "'";
     }
 
+    // idx 55: a running sum over a filtered table
+    public static String q55(String ex) {
+        return "SELECT time, sum(size) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS size FROM trade WHERE ex = '" + ex + "'";
+    }
+
     // idx 61, Index text: the lag inside an expression, filtered on it
     public static String q61Index() {
         return "SELECT sym, seq AS seqDecr FROM (SELECT sym, seq, seq - lag(seq) OVER (PARTITION BY sym ORDER BY time) AS seq_delta FROM trade) WHERE seq_delta < 0 ORDER BY sym, seqDecr";
@@ -200,6 +205,31 @@ public class WindowChainTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIdx55RowSlices() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrade(engine, sqlExecutionContext, 3_000);
+            final String[] queries = {
+                    q55("T"),
+                    q55("NOPE"),
+                    "SELECT time, sum(size) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS s," +
+                            " count() OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS c," +
+                            " row_number() OVER () AS rn FROM trade",
+                    q55("T") + " LIMIT 13",
+                    q55("Q") + " LIMIT -7",
+            };
+            for (String query : queries) {
+                assertMatchesSerial(engine, sqlExecutionContext, query, null);
+            }
+            sqlExecutionContext.setParallelWindowEnabled(true);
+            try (RecordCursorFactory factory = engine.select(q55("T"), sqlExecutionContext)) {
+                Assert.assertTrue(findAsyncFactory(factory).isSliceMode());
+            } finally {
+                sqlExecutionContext.setParallelWindowEnabled(false);
+            }
+        });
+    }
+
+    @Test
     public void testIdx61WholeTable() throws Exception {
         assertMemoryLeak(() -> {
             createTrade(engine, sqlExecutionContext, 3_000);
@@ -255,7 +285,7 @@ public class WindowChainTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_ROUND_ROWS, 1_000);
         assertMemoryLeak(() -> inPool((engine, ctx) -> {
             createTrade(engine, ctx, 20_000);
-            final String[] queries = {q48("BIG"), q52("BIG"), q61Index(), q61ManualOpt(), q72("BIG"), q73(allKeys()), q74ManualOpt(allKeys())};
+            final String[] queries = {q48("BIG"), q52("BIG"), q55("T"), q61Index(), q61ManualOpt(), q72("BIG"), q73(allKeys()), q74ManualOpt(allKeys())};
             long workerTasks = 0;
             for (String query : queries) {
                 for (int run = 0; run < 3; run++) {
@@ -400,7 +430,7 @@ public class WindowChainTest extends AbstractCairoTest {
 
     private static void assertRowsMatch(String query, RecordCursorFactory factory, String expected, String actual) {
         final AsyncWindowRecordCursorFactory async = findAsyncFactoryOrNull(factory);
-        if (async == null || async.getSplitPlan().getMode() == AsyncWindowSplitPlan.MODE_NONE) {
+        if (async == null || !mayDifferInLastBits(async.getSplitPlan())) {
             TestUtils.assertEquals(query, expected, actual);
             return;
         }
@@ -427,6 +457,21 @@ public class WindowChainTest extends AbstractCairoTest {
                 Assert.assertTrue(message, Math.abs(x - y) <= 1e-12 * Math.max(1.0, Math.abs(x)));
             }
         }
+    }
+
+    // The documented exception: warm-up rows rebuild a frame's sum in another order, and a carry
+    // is added to a DOUBLE sum computed from scratch. A fold (OP_FOLD) and every integer
+    // combination are exact.
+    private static boolean mayDifferInLastBits(AsyncWindowSplitPlan plan) {
+        if (plan.getMode() == AsyncWindowSplitPlan.MODE_WARMUP) {
+            return true;
+        }
+        for (int i = 0, n = plan.getPrefixCount(); i < n; i++) {
+            if (plan.getPrefixOp(i) == AsyncWindowSplitPlan.OP_ADD && ColumnType.tagOf(plan.getPrefixType(i)) == ColumnType.DOUBLE) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void assertSlotsReleased(RecordCursorFactory factory) {

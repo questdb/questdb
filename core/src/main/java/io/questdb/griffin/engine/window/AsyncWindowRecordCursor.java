@@ -112,6 +112,9 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     private final AsyncWindowAtom atom;
     // MODE_PREFIX: each combined column's value at the last row returned, as raw bits
     private final long[] carry;
+    // OP_FOLD: each folded column's running sum and whether a value was counted, see applyCarry()
+    private final boolean[] foldCounted;
+    private final double[] foldSums;
     private final long chainMaxPages;
     private final long chainPageSize;
     private final ColumnTypes columnTypes;
@@ -200,6 +203,8 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         this.splitPlan = splitPlan;
         this.splitsKeys = splitPlan.getMode() != AsyncWindowSplitPlan.MODE_NONE;
         this.carry = new long[splitPlan.getPrefixCount()];
+        this.foldSums = new double[splitPlan.getPrefixCount()];
+        this.foldCounted = new boolean[splitPlan.getPrefixCount()];
         this.taskRows = configuration.getSqlParallelWindowTaskRows();
         this.maxKeyRows = Math.max(taskRows, configuration.getSqlParallelWindowMaxKeyRows());
         // the prefix: no more than min.rows, which also gates the parallel plan, see prefix.rows
@@ -606,12 +611,33 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     private void applyCarry(Task task) {
         final RecordChain chain = task.chain;
         final int n = carry.length;
+        final boolean continues = task.continuesKey;
+        // OP_FOLD: the running sums, from the key's sum before the task, or from scratch
+        for (int j = 0; j < n; j++) {
+            if (splitPlan.getPrefixOp(j) == AsyncWindowSplitPlan.OP_FOLD) {
+                final double before = continues ? Double.longBitsToDouble(carry[j]) : Double.NaN;
+                foldSums[j] = Double.isNaN(before) ? 0.0 : before;
+                foldCounted[j] = !Double.isNaN(before);
+            }
+        }
         long offset = 0;
         for (long r = 0, hi = task.firstKeyRows; r < hi; r++) {
             for (int j = 0; j < n; j++) {
                 final int type = splitPlan.getPrefixType(j);
+                final int op = splitPlan.getPrefixOp(j);
                 final long address = chain.getAddress(offset, splitPlan.getPrefixColumn(j));
-                if (ColumnType.tagOf(type) == ColumnType.INT) {
+                if (op == AsyncWindowSplitPlan.OP_FOLD) {
+                    // as SumOverUnboundedRowsFrameFunction.computeNext() adds, in the same order
+                    final double value = Unsafe.getDouble(address);
+                    if (Numbers.isFinite(value)) {
+                        foldSums[j] += value;
+                        foldCounted[j] = true;
+                    }
+                    Unsafe.putDouble(address, foldCounted[j] ? foldSums[j] : Double.NaN);
+                } else if (!continues) {
+                    // a key the task starts needs no carry
+                    continue;
+                } else if (ColumnType.tagOf(type) == ColumnType.INT) {
                     Unsafe.putInt(address, (int) AsyncWindowSplitPlan.combine(splitPlan.getPrefixOp(j), type, carry[j], Unsafe.getInt(address)));
                 } else {
                     Unsafe.putLong(address, AsyncWindowSplitPlan.combine(splitPlan.getPrefixOp(j), type, carry[j], Unsafe.getLong(address)));
@@ -1111,7 +1137,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                     return;
                 }
             }
-        } else if (carry.length > 0 && task.continuesKey) {
+        } else if (carry.length > 0 && (task.continuesKey || splitPlan.hasFold())) {
             applyCarry(task);
         }
         beginEmitting(task);
@@ -1283,6 +1309,8 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     static class RoundAtom implements StatefulAtom {
         final AsyncWindowAtom atom;
         Round round;
+        // the round of an AsyncWindowShardCursor, when the factory hashes keys into shards
+        AsyncWindowShardCursor.ShardRound shardRound;
 
         RoundAtom(AsyncWindowAtom atom) {
             this.atom = atom;

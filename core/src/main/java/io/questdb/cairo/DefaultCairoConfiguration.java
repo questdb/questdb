@@ -1970,6 +1970,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelWindowShardEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlParquetRowGroupPruningEnabled() {
         return true;
     }

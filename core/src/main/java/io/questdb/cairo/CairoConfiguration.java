@@ -1534,6 +1534,16 @@ public interface CairoConfiguration {
      */
     boolean isSqlParallelWindowChainEnabled();
 
+    /**
+     * Whether a window partitioned by a symbol column over a whole table, under an ORDER BY that
+     * makes the order of the keys invisible, runs on the shared workers with the keys sharded by
+     * hash over the plain table scan, see
+     * {@link io.questdb.griffin.engine.window.AsyncWindowShardCursor}; otherwise it walks the
+     * column's index key by key, when it has one. Read when the query is compiled; EXPLAIN shows
+     * {@code hashShards}.
+     */
+    boolean isSqlParallelWindowShardEnabled();
+
     boolean isSqlParquetRowGroupPruningEnabled();
 
     boolean isSqlWindowCachedLightEnabled();

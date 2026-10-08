@@ -318,6 +318,7 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowMinMaxRewriteEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowKeyRunsEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowChainEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowShardEnabled());
         Assert.assertEquals(131_072, configuration.getCairoConfiguration().getSqlParallelWindowTaskRows());
         Assert.assertEquals(4_194_304, configuration.getCairoConfiguration().getSqlParallelWindowMaxKeyRows());
         Assert.assertEquals(3, configuration.getCairoConfiguration().getSqlParallelWindowMaxRounds());
@@ -3403,6 +3404,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isSqlParallelWindowJoinEnabled());
         Assert.assertFalse(configuration.isSqlParallelWindowKeyRunsEnabled());
         Assert.assertFalse(configuration.isSqlParallelWindowChainEnabled());
+        Assert.assertFalse(configuration.isSqlParallelWindowShardEnabled());
         Assert.assertEquals(4096, configuration.getSqlParallelWindowPrefixRows());
         Assert.assertFalse(configuration.isSqlParallelGroupByEnabled());
         Assert.assertFalse(configuration.isSqlParallelReadParquetEnabled());
