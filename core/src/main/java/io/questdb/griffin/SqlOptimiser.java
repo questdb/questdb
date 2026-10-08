@@ -541,6 +541,9 @@ public class SqlOptimiser implements Mutable {
         pivotFuseAliasMap.clear();
         pivotFuseRefCounts.clear();
         pivotFuseProjection = null;
+        pivotFuseProjectionAlias = null;
+        pivotFuseSourceAlias = null;
+        pivotFuseFailed = false;
         distinctKeysOnlyForNested = false;
         subsampleNameScopeDepth = 0;
         for (int i = 0, n = subsampleNameScopes.size(); i < n; i++) {
@@ -10014,6 +10017,8 @@ public class SqlOptimiser implements Mutable {
 
     private boolean canDropUnreadGroupByKeys(IQueryModel model) {
         if (model.getSelectModelType() != IQueryModel.SELECT_MODEL_GROUP_BY
+                // another reader (the outer side of a JOIN LATERAL) may read the keys this consumer does not
+                || model.hasSharedRefs()
                 || model.getLimitLo() != null
                 || model.getLimitHi() != null
                 || model.getSampleBy() != null
@@ -11060,7 +11065,10 @@ public class SqlOptimiser implements Mutable {
             return null;
         }
         final IQueryModel from = projection.getNestedModel();
-        if (from == null || from.getJoinModels().size() > 1) {
+        if (!isPlainPivotFuseFrom(from)) {
+            // the filter pushed below the projection must mean what it meant above it: only a table,
+            // with nothing (SAMPLE BY, FILL, LIMIT, ...) a later rewrite could put between the filter and
+            // the rows
             return null;
         }
 
@@ -11080,6 +11088,13 @@ public class SqlOptimiser implements Mutable {
             }
             pivotFuseAliasMap.put(name, i);
             pivotFuseRefCounts.add(0);
+        }
+        for (int i = 0, n = projected.size(); i < n; i++) {
+            if (referencesOtherProjectedAlias(projected.getQuick(i).getAst(), i, projected)) {
+                // bid * 2 AS b2x, b2x + 1 AS b3: b2x resolves to the projected alias, which the FROM the
+                // substituted expression moves to does not have
+                return null;
+            }
         }
 
         pivotFuseSourceAlias = source.getAlias() != null ? unquote(source.getAlias().token) : null;
@@ -11142,6 +11157,26 @@ public class SqlOptimiser implements Mutable {
         return fused;
     }
 
+    // True for a plain table: no clause that a filter pushed onto its rows could end up above, or that a
+    // later rewrite (SAMPLE BY, FILL) could put between the filter and the rows.
+    private static boolean isPlainPivotFuseFrom(IQueryModel model) {
+        return model != null
+                && model.getTableNameExpr() != null
+                && model.getNestedModel() == null
+                && model.getBottomUpColumns().size() == 0
+                && model.getJoinModels().size() == 1
+                && model.getUnionModel() == null
+                && model.getGroupBy().size() == 0
+                && model.getOrderBy().size() == 0
+                && model.getLatestBy().size() == 0
+                && model.getSampleBy() == null
+                && model.getSampleByFill().size() == 0
+                && model.getSubsample() == null
+                && model.getLimitLo() == null
+                && model.getLimitHi() == null
+                && !model.isDistinct();
+    }
+
     private boolean isPlainPivotPassThrough(IQueryModel model) {
         return model != null
                 && model.isOptimisable()
@@ -11188,6 +11223,28 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return isRowWiseExpression(node.lhs) && isRowWiseExpression(node.rhs);
+    }
+
+    // True when the expression of projected column self reads another projected column's alias, other
+    // than a column projected as itself (bid AS bid names the same value either way).
+    private boolean referencesOtherProjectedAlias(ExpressionNode node, int self, ObjList<QueryColumn> projected) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == LITERAL) {
+            final int index = pivotFuseAliasMap.get(unquote(node.token));
+            if (index < 0 || index == self) {
+                return false;
+            }
+            final ExpressionNode other = projected.getQuick(index).getAst();
+            return other.type != LITERAL || !Chars.equalsIgnoreCase(unquote(other.token), unquote(node.token));
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (referencesOtherProjectedAlias(node.args.getQuick(i), self, projected)) {
+                return true;
+            }
+        }
+        return referencesOtherProjectedAlias(node.lhs, self, projected) || referencesOtherProjectedAlias(node.rhs, self, projected);
     }
 
     // Replaces, in place in a cloned tree, each reference to a projected column with a clone of the

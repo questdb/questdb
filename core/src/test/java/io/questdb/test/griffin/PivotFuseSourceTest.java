@@ -71,6 +71,9 @@ public class PivotFuseSourceTest extends AbstractCairoTest {
             // order-sensitive aggregates
             "SELECT * FROM (SELECT timestamp_floor('1h', ts) AS h, sym, bid, ts AS t FROM quote) "
                     + "PIVOT (first(bid) AS fb, last(bid) AS lb, min(t) AS mt FOR sym IN ('B', 'E') GROUP BY h) ORDER BY h",
+            // a projected expression reading a column projected as itself: the name means the same either way
+            "SELECT * FROM (SELECT timestamp_floor('1h', ts) AS h, sym, bid, bid * 2 AS b2 FROM quote) "
+                    + "PIVOT (sum(bid), max(b2) AS mx FOR sym IN ('A', 'B') GROUP BY h) ORDER BY h",
     };
     private static final String[] NOT_FUSED = {
             // an aggregating subquery (the Manual Opt form of idx 26) is already parallel inside
@@ -99,6 +102,18 @@ public class PivotFuseSourceTest extends AbstractCairoTest {
             // a projected column the PIVOT does not use
             "SELECT * FROM (SELECT timestamp_floor('1h', ts) AS h, sym, bid, ask * 2 AS unused FROM quote) "
                     + "PIVOT (sum(bid) FOR sym IN ('A', 'B') GROUP BY h) ORDER BY h",
+            // an alias shadowing a FROM column, read by another projected expression
+            "SELECT * FROM (SELECT timestamp_floor('1h', ts) AS h, sym, bid AS ask, ask * 2 AS a2 FROM quote) "
+                    + "PIVOT (sum(ask), sum(a2) AS s2 FOR sym IN ('A', 'B') GROUP BY h) ORDER BY h",
+            "SELECT * FROM (SELECT ts, sym, s * 2 AS s2 FROM (SELECT ts, sym, sum(bid) s FROM quote SAMPLE BY 1h)) "
+                    + "PIVOT (sum(s2) FOR sym IN ('A', 'B') GROUP BY ts) ORDER BY ts",
+            // DISTINCT, UNION ALL and LATEST ON under the projection
+            "SELECT * FROM (SELECT timestamp_floor('1h', ts) AS h, sym, bid * 2 AS b2 FROM (SELECT DISTINCT ts, sym, bid FROM quote)) "
+                    + "PIVOT (sum(b2) FOR sym IN ('A', 'B') GROUP BY h) ORDER BY h",
+            "SELECT * FROM (SELECT timestamp_floor('1h', ts) AS h, sym, bid * 2 AS b2 FROM (SELECT ts, sym, bid FROM quote WHERE bsize < 50 UNION ALL SELECT ts, sym, ask FROM quote WHERE bsize > 70)) "
+                    + "PIVOT (sum(b2) FOR sym IN ('A', 'B') GROUP BY h) ORDER BY h",
+            "SELECT * FROM (SELECT timestamp_floor('1h', ts) AS h, sym, bid * 2 AS b2 FROM (SELECT * FROM quote LATEST ON ts PARTITION BY sym, bsize)) "
+                    + "PIVOT (sum(b2) FOR sym IN ('A', 'B') GROUP BY h) ORDER BY h",
             // a table source is parallel already
             "SELECT * FROM quote PIVOT (sum(bid) FOR sym IN ('A', 'B') GROUP BY bsize) ORDER BY bsize",
     };
@@ -175,6 +190,25 @@ public class PivotFuseSourceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAliasOfAnEarlierAliasNotFused() throws Exception {
+        // b3 reads the projected alias b2x, which the projection's FROM does not have: substituting b3 alone
+        // made a valid query fail with "Invalid column: b2x"
+        assertNotFused(
+                "SELECT * FROM (SELECT timestamp_floor('1h', ts) AS h, sym, bid * 2 AS b2x, b2x + 1 AS b3 FROM quote) "
+                        + "PIVOT (sum(b3), max(b2x) AS mx FOR sym IN ('A', 'B') GROUP BY h) ORDER BY h"
+        );
+    }
+
+    @Test
+    public void testFromSelectStarPassThroughNotFused() throws Exception {
+        // only a table FROM is fused; fusing through these pass-throughs failed with "Invalid column: ts"
+        assertNotFused(
+                "SELECT * FROM (SELECT timestamp_floor('1h', ts) AS h, sym, bid * 2 AS b2 FROM (SELECT * FROM (SELECT * FROM quote) WHERE bsize > 10)) "
+                        + "PIVOT (sum(b2) FOR sym IN ('A', 'B') GROUP BY h) ORDER BY h"
+        );
+    }
+
+    @Test
     public void testHintsStillApply() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE q (ts TIMESTAMP, sym SYMBOL INDEX, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
@@ -189,6 +223,16 @@ public class PivotFuseSourceTest extends AbstractCairoTest {
             }
             assertMatchesUnfused(engine, sqlExecutionContext, query, true);
         });
+    }
+
+    @Test
+    public void testSampleByFillSourceNotFused() throws Exception {
+        // the pivot IN filter sits above the fill; fused, it was pushed below it and the fill made an extra
+        // all-NULL bucket for a row of another symbol
+        assertNotFused(
+                "SELECT * FROM (SELECT ts, sym, s * 2 AS s2 FROM (SELECT ts, sym, sum(bid) s FROM quote SAMPLE BY 1h FILL(NULL))) "
+                        + "PIVOT (sum(s2) FOR sym IN ('A', 'B') GROUP BY ts) ORDER BY ts"
+        );
     }
 
     @Test
@@ -210,6 +254,21 @@ public class PivotFuseSourceTest extends AbstractCairoTest {
                     }
                 }
             }
+        });
+    }
+
+    private static void assertNotFused(String query) throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, ctx) -> {
+                        createQuote(engine, ctx);
+                        assertMatchesUnfused(engine, ctx, query, false);
+                    },
+                    configuration,
+                    LOG
+            );
         });
     }
 

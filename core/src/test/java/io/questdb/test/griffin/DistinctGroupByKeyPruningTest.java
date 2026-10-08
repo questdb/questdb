@@ -79,6 +79,19 @@ public class DistinctGroupByKeyPruningTest extends AbstractCairoTest {
             "SELECT DISTINCT sym, r FROM (SELECT sym, row_number() OVER (ORDER BY sym, minute) AS r FROM (" + A + ")) ORDER BY sym, r",
             // SAMPLE BY with FILL makes rows of its own
             "SELECT DISTINCT sym FROM (SELECT ts, sym, avg(bid) FROM quote WHERE sym IN ('A', 'B') SAMPLE BY 30m FILL(NULL)) ORDER BY sym",
+            // a filter on an aggregate, directly, through a pass-through and through CASE
+            "WITH a AS (" + A + ") SELECT DISTINCT sym FROM a WHERE v > 50 ORDER BY sym",
+            "WITH a AS (" + A + ") SELECT DISTINCT sym FROM (SELECT sym, v FROM a) WHERE v > 50 ORDER BY sym",
+            "WITH a AS (" + A + ") SELECT DISTINCT sym FROM (SELECT sym, CASE WHEN v > 50 THEN 1 ELSE 0 END AS f FROM a) WHERE f = 1 ORDER BY sym",
+            // a consumer grouping by both keys and selecting one: one row per (sym, minute), duplicates kept
+            "WITH a AS (" + A + ") SELECT sym FROM a GROUP BY sym, minute ORDER BY sym",
+    };
+    // the plan may or may not change; the rows must not
+    private static final String[] SAME_ROWS = {
+            // a pruned DISTINCT as the outer side of a JOIN LATERAL
+            "SELECT o.sym, sub.n FROM (WITH a AS (" + A + ") SELECT DISTINCT sym FROM a) o JOIN LATERAL (SELECT count() n FROM quote q WHERE q.sym = o.sym) sub ORDER BY o.sym",
+            // the group by itself as the outer side, every key read through the outer reference
+            "SELECT o.minute, o.sym, sub.n FROM (" + A + ") o JOIN LATERAL (SELECT DISTINCT bsize % 2 AS n FROM quote q WHERE q.sym = o.sym) sub ORDER BY o.minute, o.sym, sub.n",
     };
 
     @Test
@@ -137,6 +150,9 @@ public class DistinctGroupByKeyPruningTest extends AbstractCairoTest {
                         for (String query : NOT_PRUNED) {
                             assertMatchesUnpruned(engine, ctx, query, false);
                         }
+                        for (String query : SAME_ROWS) {
+                            assertMatchesUnpruned(engine, ctx, query, null);
+                        }
                     },
                     configuration,
                     LOG
@@ -144,16 +160,16 @@ public class DistinctGroupByKeyPruningTest extends AbstractCairoTest {
         });
     }
 
-    private static void assertMatchesUnpruned(CairoEngine engine, SqlExecutionContext ctx, String query, boolean pruned) throws Exception {
+    private static void assertMatchesUnpruned(CairoEngine engine, SqlExecutionContext ctx, String query, Boolean pruned) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_DISTINCT_GROUPBY_KEY_PRUNING_ENABLED, "false");
         final String unprunedPlan = plan(engine, ctx, query);
         final StringSink expected = new StringSink();
         TestUtils.printSql(engine, ctx, query, expected);
         setProperty(PropertyKey.CAIRO_SQL_DISTINCT_GROUPBY_KEY_PRUNING_ENABLED, "true");
         final String prunedPlan = plan(engine, ctx, query);
-        if (pruned) {
+        if (Boolean.TRUE.equals(pruned)) {
             Assert.assertNotEquals(query + '\n' + prunedPlan, unprunedPlan, prunedPlan);
-        } else {
+        } else if (Boolean.FALSE.equals(pruned)) {
             Assert.assertEquals(query, unprunedPlan, prunedPlan);
         }
         Assert.assertTrue(query + '\n' + expected, expected.toString().split("\n").length > 2);
