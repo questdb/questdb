@@ -157,13 +157,13 @@ public class WalEventRewriteSyncTest extends AbstractCairoTest {
                 }
                 // The NO_TXN commit: its own per-commit grade, plus MS_ASYNC per file for a rewrite outside
                 // NOSYNC and a barrier per file for a flushed rewrite, and nothing more.
-                assertEventBarriers(ff, segmentMarker, isMsyncedRewrite ? 1 : 0, isFlushedRewrite ? 1 : 0);
+                assertEventBarriers(ff, segmentMarker, isMsyncedRewrite ? 1 : 0, isFlushedRewrite ? 1 : 0, isRoll);
 
                 for (int i = 2; i < 4; i++) {
                     appendRow(writer, i, i + 1);
                     ff.clearCounters();
                     writer.commit();
-                    assertEventBarriers(ff, segmentMarker, 0, 0);
+                    assertEventBarriers(ff, segmentMarker, 0, 0, false);
                 }
             }
             drainWalQueue();
@@ -196,9 +196,17 @@ public class WalEventRewriteSyncTest extends AbstractCairoTest {
 
     /**
      * Exact event-file barriers of one commit: the per-commit grade of the mode, plus {@code rewriteMsyncs}
-     * MS_ASYNC and {@code rewriteBarriers} fdatasync per file.
+     * MS_ASYNC and {@code rewriteBarriers} fdatasync per file. ADAPTIVE commits sync the event files with
+     * MS_ASYNC at every window; a record the roll re-created in a new segment is synced by
+     * {@code WalEventWriter.sync(ADAPTIVE)}, which is MS_SYNC at W=0.
      */
-    private void assertEventBarriers(SyncAttributingFilesFacade ff, String segmentMarker, int rewriteMsyncs, int rewriteBarriers) {
+    private void assertEventBarriers(
+            SyncAttributingFilesFacade ff,
+            String segmentMarker,
+            int rewriteMsyncs,
+            int rewriteBarriers,
+            boolean isRolledRecord
+    ) {
         final boolean isAdaptive = "adaptive".equals(commitMode);
         final int commitMsyncs = "nosync".equals(commitMode) ? 0 : 1;
         final int commitFsyncs = isAdaptive ? 1 : 0;
@@ -212,7 +220,7 @@ public class WalEventRewriteSyncTest extends AbstractCairoTest {
                     ? ff.msyncCount(path, false) - ff.msyncCount(path + ".", false) : ff.msyncCount(path, false);
             final int fsyncs = WalUtils.EVENT_FILE_NAME.equals(file)
                     ? ff.fsyncCount(path) - ff.fsyncCount(path + ".") : ff.fsyncCount(path);
-            final boolean isSyncGrade = "sync".equals(commitMode) || isAdaptiveW0;
+            final boolean isSyncGrade = "sync".equals(commitMode) || (isAdaptiveW0 && isRolledRecord);
             final String what = file + ff.debugDump();
             Assert.assertEquals(what + " msyncs", commitMsyncs + rewriteMsyncs, msyncs);
             Assert.assertEquals(what + " MS_SYNC msyncs", isSyncGrade ? commitMsyncs : 0, syncMsyncs);
