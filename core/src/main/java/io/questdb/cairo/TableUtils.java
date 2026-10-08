@@ -278,11 +278,28 @@ public final class TableUtils {
     }
 
     /**
-     * Grows the file to at least {@code size} bytes, rounded up to a whole page. On XFS, growing
-     * a file that ends mid-block waits for a synchronous disk write.
+     * Rounds an allocation size up to a page on Linux. Growing a file that does not end on a page
+     * boundary can make XFS wait for a synchronous disk write. Other platforms keep the exact size.
      */
-    public static void allocateDiskSpace(FilesFacade ff, long fd, long size) {
-        if (ff.length(fd) < size && !ff.allocate(fd, Files.ceilPageSize(size))) {
+    public static long alignedSize(long size) {
+        return Os.isLinux() ? Files.ceilPageSize(size) : size;
+    }
+
+    /**
+     * Grows the file to at least {@code size} bytes, rounded up by {@link #alignedSize(long)}.
+     * Use it for files that are appended to later.
+     */
+    public static void allocateDiskSpaceAligned(FilesFacade ff, long fd, long size) {
+        if (ff.length(fd) < size && !ff.allocate(fd, alignedSize(size))) {
+            throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
+        }
+    }
+
+    /**
+     * Grows the file to at least exactly {@code size} bytes. Use it for small files that never grow.
+     */
+    public static void allocateDiskSpaceUnaligned(FilesFacade ff, long fd, long size) {
+        if (ff.length(fd) < size && !ff.allocate(fd, size)) {
             throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
         }
     }
@@ -1571,7 +1588,7 @@ public final class TableUtils {
     public static long mapRW(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
         assert fd != -1;
         assert offset % Files.PAGE_SIZE == 0;
-        allocateDiskSpace(ff, fd, size + offset);
+        allocateDiskSpaceAligned(ff, fd, size + offset);
         return mapRWNoAlloc(ff, fd, size, offset, memoryTag);
     }
 

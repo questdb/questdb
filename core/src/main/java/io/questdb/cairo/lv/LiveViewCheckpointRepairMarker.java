@@ -154,7 +154,7 @@ public final class LiveViewCheckpointRepairMarker {
             if (!ff.exists(path.$()) || ff.length(path.$()) != SIZE) {
                 return Numbers.LONG_NULL;
             }
-            final MemoryMARW mem = Vm.getCMARWInstance();
+            final MemoryMARW mem = Vm.getExactCMARWInstance();
             try {
                 mem.of(ff, path.$(), SIZE, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
                 if (mem.getLong(MAGIC_OFFSET) != MARKER_MAGIC
@@ -194,7 +194,7 @@ public final class LiveViewCheckpointRepairMarker {
             LiveViewCheckpointLayout.repairingMarkerPath(finalPath, checkpointsDir);
             LiveViewCheckpointLayout.repairingMarkerPath(tmpPath, checkpointsDir);
             tmpPath.put(LiveViewCheckpointLayout.TMP_SUFFIX);
-            final MemoryMARW mem = Vm.getCMARWInstance();
+            final MemoryMARW mem = Vm.getExactCMARWInstance();
             try {
                 mem.of(ff, tmpPath.$(), SIZE, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
                 mem.putLong(MAGIC_OFFSET, MARKER_MAGIC);
@@ -206,15 +206,13 @@ public final class LiveViewCheckpointRepairMarker {
                 mem.putLong(FLOOR_TIMESTAMP_OFFSET, floorTimestamp);
                 final int crc = Zip.crc32(0, mem.addressOf(0), CRC_COVERAGE);
                 mem.putInt(CRC_OFFSET, crc);
-                // readBaseGeneration() requires the exact size; close() truncates to this offset
-                mem.jumpTo(SIZE);
                 if (commitMode != CommitMode.NOSYNC) {
                     mem.sync(commitMode == CommitMode.ASYNC);
                 }
             } finally {
                 // Close before rename: Windows rejects a rename over an open
                 // file, and POSIX would leave a stale mapping to the old inode.
-                mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                mem.close(false);
             }
             // A second repair rewrites the fixed-name marker, so the destination
             // can already exist.

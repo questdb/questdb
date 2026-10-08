@@ -593,8 +593,8 @@ public class O3Test extends AbstractO3Test {
 
     @Test
     public void testO3MergeAllocatesColumnFilesToPage() throws Exception {
-        // XFS synchronously writes back the tail block when a file with an unaligned EOF grows,
-        // so O3 must leave column files page-aligned
+        // on Linux, growing a file that does not end on a page boundary can make XFS write back
+        // synchronously, so O3 must leave column files aligned
         executeVanilla((engine, compiler, context) -> {
             engine.execute("create table x (v long, ts " + timestampType.getTypeName() + ") timestamp(ts) partition by DAY", context);
             engine.execute("insert into x values (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T02:00:00.000000Z'), (3, '2024-01-02T00:00:00.000000Z')", context);
@@ -615,7 +615,7 @@ public class O3Test extends AbstractO3Test {
                         txFile.getPartitionNameTxn(0)
                 );
                 long length = TestFilesFacadeImpl.INSTANCE.length(path.concat("v.d").$());
-                Assert.assertEquals(0, length % Files.PAGE_SIZE);
+                Assert.assertEquals(TableUtils.alignedSize(3L * Long.BYTES), length);
             }
         });
     }

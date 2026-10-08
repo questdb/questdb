@@ -150,7 +150,7 @@ public class O3FailureTest extends AbstractO3Test {
                 0, O3FailureTest::testAllocateFailsAtO3OpenColumn0, new TestFilesFacadeImpl() {
                     @Override
                     public boolean allocate(long fd, long size) {
-                        if (fd == this.fd && size == Files.ceilPageSize(1472)) {
+                        if (fd == this.fd && size == TableUtils.alignedSize(1472)) {
                             this.fd = -1;
                             return false;
                         }
@@ -205,8 +205,8 @@ public class O3FailureTest extends AbstractO3Test {
                     @Override
                     public boolean allocate(long fd, long size) {
                         if (fd == this.fd) {
-                            // the O3 append grows 1970-01-06/ts.d from one page to two
-                            if (size == 2L * Files.PAGE_SIZE) {
+                            // the O3 append grows 1970-01-06/ts.d past one page
+                            if (size == TableUtils.alignedSize(Files.PAGE_SIZE + Long.BYTES)) {
                                 this.fd = -1;
                                 return false;
                             }
