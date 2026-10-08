@@ -640,8 +640,8 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
     }
 
     /**
-     * W=0: a data commit and a custom event each sync their event file before the sequencer record, and the
-     * frontier covers them before the call returns.
+     * W=0: every data commit and every custom event on a reused writer syncs its event file before the sequencer
+     * record, and the frontier covers it before the call returns.
      */
     @Test
     public void testWindowZeroSyncsEventsBeforeSequencerAndPublishesAtOnce() throws Exception {
@@ -653,21 +653,24 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
                 final SeqTxnTracker tracker = createTable(table);
                 execute("insert into " + table + " values ('2024-01-01T00:00:00.000000Z', 0)");
                 try (WalWriter w = engine.getWalWriter(engine.verifyTableName(table))) {
-                    ff.reset();
-                    final long seqTxn;
-                    if (customEvent) {
-                        seqTxn = w.appendCustomEvent(CUSTOM_EVENT_TYPE, mem -> mem.putLong(42L));
-                    } else {
-                        commitRow(w, 60_000_000L, 1);
-                        seqTxn = tracker.getSeqTxn();
+                    for (int i = 1; i <= 3; i++) {
+                        final String commit = table + " commit " + i;
+                        ff.reset();
+                        final long seqTxn;
+                        if (customEvent) {
+                            seqTxn = w.appendCustomEvent(CUSTOM_EVENT_TYPE, mem -> mem.putLong(42L));
+                        } else {
+                            commitRow(w, i * 60_000_000L, i);
+                            seqTxn = tracker.getSeqTxn();
+                        }
+                        Assert.assertTrue(commit + ": the event file must be synced", ff.eventFdatasyncs() > 0);
+                        final int eventIdx = ff.firstIndex(WalFdatasyncFacade::isEventFile);
+                        final int seqIdx = ff.firstIndex(WalFdatasyncFacade::isSequencerFile);
+                        Assert.assertTrue(commit + ": W=0 must sync the sequencer record", seqIdx > -1);
+                        Assert.assertTrue(commit + ": event file before sequencer [eventIdx=" + eventIdx + ", seqIdx=" + seqIdx + ']', eventIdx < seqIdx);
+                        Assert.assertEquals(commit, seqTxn, tracker.getLocalDurableSeqTxn());
+                        Assert.assertEquals(commit, 0, tracker.getPendingWriterPinCount());
                     }
-                    final int eventIdx = ff.firstIndex(WalFdatasyncFacade::isEventFile);
-                    final int seqIdx = ff.firstIndex(WalFdatasyncFacade::isSequencerFile);
-                    Assert.assertTrue(table + ": the event file must be synced", eventIdx > -1);
-                    Assert.assertTrue(table + ": W=0 must sync the sequencer record", seqIdx > -1);
-                    Assert.assertTrue(table + ": event file before sequencer [eventIdx=" + eventIdx + ", seqIdx=" + seqIdx + ']', eventIdx < seqIdx);
-                    Assert.assertEquals(table, seqTxn, tracker.getLocalDurableSeqTxn());
-                    Assert.assertEquals(table, 0, tracker.getPendingWriterPinCount());
                 }
             }
         });
