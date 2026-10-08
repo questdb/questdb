@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
@@ -282,6 +283,9 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void cacheWriter(CacheEntry entry, CachedCharSequence tableName, TableToken tableToken) {
+        if (refuseWalTable(entry, tableName, tableToken != null && tableToken.isWal())) {
+            return;
+        }
         try {
             entry.writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
             this.tableToken = tableToken;
@@ -361,6 +365,9 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                             throw CairoException.nonCritical()
                                     .put("table does not exist, cannot create table, creating new columns is disabled [table=").put(token)
                                     .put(']');
+                        }
+                        if (refuseWalTable(entry, token, tableStructureAdapter.isWalEnabled())) {
+                            break;
                         }
                         tableName = token.getCacheAddress();
                         if (onLineEnd != MY_NEW_LINE_END) {
@@ -515,6 +522,22 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private void prepareNewColumn(CachedCharSequence token) {
         columnName = token.getCacheAddress();
         columnType = ColumnType.UNDEFINED;
+    }
+
+    // A WAL table written here bypasses the WAL, and an ADAPTIVE start-up rolls such a table back to its last save
+    // point, so its rows would be lost at the next restart: ADAPTIVE refuses the table, existing or new, for the
+    // parser's life.
+    private boolean refuseWalTable(CacheEntry entry, CharSequence tableName, boolean isWal) {
+        if (isWal && configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+            LOG.error().$("UDP line protocol cannot write a WAL table in ADAPTIVE commit mode, skipping its lines [table=")
+                    .$safe(tableName).I$();
+            entry.state = 3;
+            // The previous table's writer is on the commit list; the next line of this table must not append to it.
+            writer = null;
+            switchModeToSkipLine();
+            return true;
+        }
+        return false;
     }
 
     /**
