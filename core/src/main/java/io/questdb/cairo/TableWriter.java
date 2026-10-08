@@ -4267,6 +4267,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             LOG.info().$("linking index files to parquet [path=").$substr(pathRootSize, path).I$();
             linkPartitionIndexFiles(partitionTimestamp, partitionNameTxn, partitionDirLen, newPartitionDirLen);
+            fsyncConvertedPartitionDir(partitionTimestamp);
 
             final long originalSize = txWriter.getPartitionSize(partitionIndex);
             // used to update txn and bump recordStructureVersion

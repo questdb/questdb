@@ -43,6 +43,7 @@ import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.File;
+import java.util.Arrays;
 
 /**
  * Every commit mode that promises durability keeps its promise with only the directory barriers it takes.
@@ -55,8 +56,9 @@ import java.io.File;
  *   before the commit that publishes the partition. A barrier issued before the files exist persists an
  *   empty directory.</li>
  *   <li>SYNC fsyncs each partition directory in which ALTER COLUMN TYPE creates converted column files, and the
- *   partition directory a parquet conversion creates and then the table directory, before the commit that
- *   publishes them. A failed one poisons the engine, as every failed barrier does.</li>
+ *   partition directory a parquet conversion or the switch of a native partition to its parquet file creates and
+ *   then the table directory, before the commit that publishes them. A failed one poisons the engine, as every
+ *   failed barrier does.</li>
  *   <li>ADAPTIVE takes no directory barrier in {@code TableWriter.openPartition}: the durable epoch makes
  *   directory entries durable, and recovery re-creates the later ones when it replays the WAL. That holds
  *   also when {@code syncfs} is not filesystem-wide (macOS, Windows), where the epoch fsyncs the dirty
@@ -229,6 +231,26 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
+    public void testSyncSwitchToParquetNonWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncSchemaChangeBarrierFailureIsFailStop(false, this::stageParquetForSwitch, this::switchFirstPartitionToParquet, "fsyncConvertedPartitionDir");
+    }
+
+    @Test
+    public void testSyncSwitchToParquetNonWalSurvivesCrash() throws Exception {
+        assertSyncSchemaChangeSurvivesCrash(false, this::stageParquetForSwitch, this::switchFirstPartitionToParquet, this::assertParquetPartitionNames);
+    }
+
+    @Test
+    public void testSyncSwitchToParquetWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncSchemaChangeBarrierFailureIsFailStop(true, this::stageParquetForSwitch, this::switchFirstPartitionToParquet, "fsyncConvertedPartitionDir");
+    }
+
+    @Test
+    public void testSyncSwitchToParquetWalSurvivesCrash() throws Exception {
+        assertSyncSchemaChangeSurvivesCrash(true, this::stageParquetForSwitch, this::switchFirstPartitionToParquet, this::assertParquetPartitionNames);
+    }
+
+    @Test
     public void testSyncWalApplyNewPartitionSurvivesCrash() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         runWithCrashFacade(() -> {
@@ -384,16 +406,18 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     /**
      * The parquet encoder writes {@code data.parquet} and {@code _pm} through JNI, which the crash model does not
-     * see, so it cannot check their content; it checks that the new partition directory and the files in it
-     * survive under their names.
+     * see, so it cannot check their content; it checks that the new partition directory and the files in it,
+     * {@code data.parquet}, {@code _pm} and the index files of the symbol, survive under their names.
      */
     private void assertParquetPartitionNames() {
         final File[] dirs = new File(root, engine.verifyTableName("x").getDirName())
                 .listFiles((dir, name) -> name.startsWith("2024-01-01."));
         Assert.assertNotNull(dirs);
         Assert.assertEquals("the converted partition directory must survive", 1, dirs.length);
-        Assert.assertTrue(new File(dirs[0], TableUtils.PARQUET_PARTITION_NAME).exists());
-        Assert.assertTrue(new File(dirs[0], TableUtils.PARQUET_METADATA_FILE_NAME).exists());
+        final String[] names = dirs[0].list();
+        Assert.assertNotNull(names);
+        Arrays.sort(names);
+        Assert.assertEquals("[_pm, data.parquet, s.k, s.v]", Arrays.toString(names));
     }
 
     private void assertRows(String expected) throws Exception {
@@ -413,6 +437,19 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
             String ddl,
             String barrierCaller
     ) throws Exception {
+        assertSyncSchemaChangeBarrierFailureIsFailStop(wal, isFirstPartitionParquet ? this::convertFirstPartitionToParquet : null, () -> execute(ddl), barrierCaller);
+    }
+
+    /**
+     * @param prepare runs once the rows are inserted, before they are applied to a WAL table; null for none
+     * @param change  the change whose directory barrier fails
+     */
+    private void assertSyncSchemaChangeBarrierFailureIsFailStop(
+            boolean wal,
+            TestUtils.LeakProneCode prepare,
+            TestUtils.LeakProneCode change,
+            String barrierCaller
+    ) throws Exception {
         Assume.assumeFalse("a directory takes no fsync on Windows", Os.isWindows());
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         final FsyncAndCloseFailureFacade ff = new FsyncAndCloseFailureFacade(barrierCaller);
@@ -425,14 +462,14 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
                         ('2024-01-02T00:00:00.000000Z', 'b', 2.0),
                         ('2024-01-03T00:00:00.000000Z', 'a', 3.0)
                     """);
-            if (isFirstPartitionParquet) {
-                execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            if (prepare != null) {
+                prepare.run();
             }
             drainWalQueue();
             Throwable failure = null;
             ff.isArmed = true;
             try {
-                execute(ddl);
+                change.run();
                 drainWalQueue();
             } catch (Throwable th) {
                 failure = th;
@@ -456,13 +493,28 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     /**
      * A schema change that rewrites data returns under SYNC, then the power fails. Each name it created must
      * survive: the converted column files in every partition directory, the partition directory a parquet
-     * conversion creates, and the index files it copies or restores there. Otherwise the durable {@code _meta}
-     * and {@code _txn} name files that are gone and the table does not open.
+     * conversion or the switch of a native partition to its parquet file creates, and the index files it copies,
+     * restores or links there. Otherwise the durable {@code _meta} and {@code _txn} name files that are gone and
+     * the table does not open.
      */
     private void assertSyncSchemaChangeSurvivesCrash(
             boolean wal,
             boolean isFirstPartitionParquet,
             String ddl,
+            TestUtils.LeakProneCode assertAfterCrash
+    ) throws Exception {
+        assertSyncSchemaChangeSurvivesCrash(wal, isFirstPartitionParquet ? this::convertFirstPartitionToParquet : null, () -> execute(ddl), assertAfterCrash);
+    }
+
+    /**
+     * @param prepare runs once the rows are inserted, before they are applied to a WAL table and before the
+     *                durable baseline; null for none
+     * @param change  the change the power loss follows
+     */
+    private void assertSyncSchemaChangeSurvivesCrash(
+            boolean wal,
+            TestUtils.LeakProneCode prepare,
+            TestUtils.LeakProneCode change,
             TestUtils.LeakProneCode assertAfterCrash
     ) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
@@ -475,13 +527,13 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
                         ('2024-01-02T00:00:00.000000Z', 'b', 2.0),
                         ('2024-01-03T00:00:00.000000Z', 'a', 3.0)
                     """);
-            if (isFirstPartitionParquet) {
-                execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            if (prepare != null) {
+                prepare.run();
             }
             drainWalQueue();
             final TableToken token = engine.verifyTableName("x");
             markDurableBaseline();
-            execute(ddl);
+            change.run();
             drainWalQueue();
             if (wal) {
                 recoverAfterCrash(new TableToken[]{token});
@@ -533,11 +585,49 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         });
     }
 
+    private void convertFirstPartitionToParquet() throws Exception {
+        execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+    }
+
     private void runWithFacade(CrashFaultFilesFacade facade, TestUtils.LeakProneCode body) throws Exception {
         assumeCrashHarnessSupported();
         crashFf = facade;
         crashFf.setDbRoot(root);
         assertMemoryLeak(crashFf, body);
+    }
+
+    /**
+     * Leaves {@code data.parquet} and {@code _pm} in the first, native partition, as the cold storage job does
+     * before it switches the partition to them. The switch only links them, so empty files do.
+     */
+    private void stageParquetForSwitch() throws Exception {
+        drainWalQueue();
+        try (TableReader reader = engine.getReader(engine.verifyTableName("x")); Path path = new Path()) {
+            path.of(root).concat(reader.getTableToken().getDirName());
+            TableUtils.setPathForNativePartition(
+                    path,
+                    reader.getMetadata().getTimestampType(),
+                    reader.getPartitionedBy(),
+                    reader.getPartitionTimestampByIndex(0),
+                    reader.getPartitionNameTxnByIndex(0)
+            );
+            final int partitionDirLen = path.size();
+            Assert.assertTrue(Files.touch(path.concat(TableUtils.PARQUET_PARTITION_NAME).$()));
+            Assert.assertTrue(Files.touch(path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$()));
+        }
+    }
+
+    /**
+     * Switches the first partition to its staged parquet file the way the cold storage job does: marks the file
+     * ready, then switches. The switch creates a new partition directory and links the parquet and index files
+     * into it.
+     */
+    private void switchFirstPartitionToParquet() {
+        try (TableWriter writer = getWriter("x")) {
+            final long partitionTimestamp = writer.getTxWriter().getPartitionTimestampByIndex(0);
+            Assert.assertTrue(writer.markPartitionParquetReady(partitionTimestamp));
+            Assert.assertEquals(TableWriter.SWITCH_OK, writer.switchNativePartitionWithParquet(partitionTimestamp, 0));
+        }
     }
 
     /**
