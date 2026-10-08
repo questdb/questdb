@@ -321,6 +321,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             // sendfile path bypasses write()/msync tracking, writtenDataEnd stays 0, and crash() would
             // roll the copied file back to length 0). Mirrors how write()/append() advance writtenDataEnd.
             final String dst = toAbsPath(to);
+            shrinkTo(dst, 0); // creat() truncated a destination that already existed
             track(dst);
             // After the copy the real file length IS the written extent (creat truncated, sendfile filled).
             advanceWrittenDataEnd(dst, length(to));
@@ -791,6 +792,32 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         return rc;
     }
 
+    @Override
+    public boolean allocate(long fd, long size) {
+        final long lengthBefore = trackedLength(fd);
+        final boolean ok = super.allocate(fd, size);
+        shrinkAfterAllocate(fd, lengthBefore);
+        return ok;
+    }
+
+    @Override
+    public boolean allocateRange(long fd, long offset, long size) {
+        final long lengthBefore = trackedLength(fd);
+        final boolean ok = super.allocateRange(fd, offset, size);
+        shrinkAfterAllocate(fd, lengthBefore);
+        return ok;
+    }
+
+    @Override
+    public boolean truncate(long fd, long size) {
+        final boolean ok = super.truncate(fd, size);
+        final String p = fdToPath.get(fd);
+        if (ok && p != null) {
+            shrinkTo(p, size);
+        }
+        return ok;
+    }
+
     /**
      * Clear all tracked fd→path and durable-size/content state (for reuse across crash/retry cycles).
      */
@@ -1204,6 +1231,47 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
+     * F shrank to {@code size}: its blocks past {@code size} are freed. Drop them from the device image and pull
+     * every watermark back to the new end, so space F grows into again starts unwritten, as re-allocated space
+     * does. Otherwise a later ranged sync (which merges its range into the previous device image) or any flush
+     * would bring the freed bytes back. The durable image is left alone: until a journal commit covers the
+     * shrink, a crash restores F as it was.
+     */
+    private void shrinkTo(String path, long size) {
+        if (!trackedFiles.contains(path)) {
+            return;
+        }
+        final byte[] device = deviceCacheContent.get(path);
+        if (device != null && device.length > size) {
+            deviceCacheContent.put(path, truncateTo(device, size));
+        }
+        clampTo(writtenDataEnd, path, size);
+        clampTo(syncedDataEnd, path, size);
+        clampTo(journaledDataEnd, path, size);
+    }
+
+    /**
+     * allocate() never shrinks a file on Linux (posix_fallocate), but on macOS and Windows it ends in a truncate
+     * to the requested size, which shrinks a longer file.
+     */
+    private void shrinkAfterAllocate(long fd, long lengthBefore) {
+        if (lengthBefore > 0) {
+            final long lengthAfter = super.length(fd);
+            if (lengthAfter >= 0 && lengthAfter < lengthBefore) {
+                shrinkTo(fdToPath.get(fd), lengthAfter);
+            }
+        }
+    }
+
+    /**
+     * The current length of a file the content model tracks, or -1 for any other fd.
+     */
+    private long trackedLength(long fd) {
+        final String p = fdToPath.get(fd);
+        return p != null && trackedFiles.contains(p) ? super.length(fd) : -1L;
+    }
+
+    /**
      * A JOURNAL COMMIT covering F. F's own pending extent conversions become journaled
      * ({@code journaledDataEnd[F]=syncedDataEnd[F]}). If {@link #modelSharedJournal} (default ext4 jbd2 /
      * xfs single filesystem-wide journal), the same commit ALSO journals every OTHER tracked file's pending
@@ -1215,6 +1283,13 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             for (String g : trackedFiles) {
                 journaledDataEnd.put(g, syncedDataEnd.getOrDefault(g, 0L));
             }
+        }
+    }
+
+    private static void clampTo(Map<String, Long> watermark, String path, long end) {
+        final Long current = watermark.get(path);
+        if (current != null && current > end) {
+            watermark.put(path, end);
         }
     }
 

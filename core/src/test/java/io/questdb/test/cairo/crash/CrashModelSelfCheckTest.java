@@ -431,6 +431,43 @@ public class CrashModelSelfCheckTest extends AbstractTest {
         }
     }
 
+    /**
+     * Test 15 — a shrink frees the bytes past the new end for good.
+     * A holds two durable pages of PRIOR. It shrinks (truncate to zero, truncate to one page, or a copy of an
+     * empty file over it, which truncates with O_TRUNC) and grows back to two pages. A freed page 0 is written
+     * again through a mapping and released with msync(MS_ASYNC); page 1 is written through a mapping and then
+     * written back by a ranged msync(MS_SYNC), or by sync_file_range plus another file's fdatasync, or not
+     * written back before another file's fdatasync. Each of them journals the shrink, so after a crash a freed
+     * page reads zero or the new bytes, never PRIOR; a kept page still reads PRIOR, and a written-back page 1
+     * reads NEW. A model that keeps the pre-shrink device image lets a ranged sync or a flush bring the freed
+     * bytes back, and hides a missing flush whenever the new bytes equal the freed ones.
+     */
+    @Test
+    public void test15_shrinkFreesBytesPastNewEnd() throws Exception {
+        final String[] shrinks = {"truncate to zero", "truncate to one page", "copy an empty file over it"};
+        final String[] syncs = {"msync(MS_SYNC) of page 1", "sync_file_range of page 1, then fdatasync(B)", "fdatasync(B) only"};
+        final StringBuilder failures = new StringBuilder();
+        for (int shrink = 0; shrink < shrinks.length; shrink++) {
+            for (int sync = 0; sync < syncs.length; sync++) {
+                final String what = "test15 [" + shrinks[shrink] + ", " + syncs[sync] + "]: ";
+                final byte[] got = shrinkRewriteAndCrash(temp.newFolder("model15-" + shrink + "-" + sync).getAbsolutePath(), shrink, sync);
+                if (shrink == 1 && !pageHolds(got, 0, PRIOR)) {
+                    failures.append(what).append("page 0, kept by the shrink, lost its durable bytes\n");
+                }
+                if (shrink != 1 && pageHolds(got, 0, PRIOR)) {
+                    failures.append(what).append("page 0 came back with the bytes the shrink freed\n");
+                }
+                if (pageHolds(got, 1, PRIOR)) {
+                    failures.append(what).append("page 1 came back with the bytes the shrink freed\n");
+                }
+                if (sync < 2 && !pageHolds(got, 1, NEW)) {
+                    failures.append(what).append("page 1, written back after the shrink, was lost\n");
+                }
+            }
+        }
+        Assert.assertEquals("", failures.toString());
+    }
+
     // === helpers ===
 
     private static final class Mapped {
@@ -504,6 +541,18 @@ public class CrashModelSelfCheckTest extends AbstractTest {
         Assert.assertEquals(msg, present, allNew);
     }
 
+    /**
+     * Whether OS page {@code page} of {@code got} holds only {@code value}.
+     */
+    private static boolean pageHolds(byte[] got, int page, byte value) {
+        for (int i = page * (int) Files.PAGE_SIZE, n = i + (int) Files.PAGE_SIZE; i < n; i++) {
+            if (got[i] != value) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static byte[] readBack(CrashFaultFilesFacade ff, Path path) {
         return readBack(ff, path, SIZE);
     }
@@ -523,6 +572,69 @@ public class CrashModelSelfCheckTest extends AbstractTest {
         } finally {
             Unsafe.free(buf, size, MemoryTag.NATIVE_DEFAULT);
             ff.close(rd);
+        }
+    }
+
+    /**
+     * Test 15's sequence: two durable pages of PRIOR in A, a shrink, growth back to two pages, the freed
+     * pages written again with NEW, the given write-back of page 1, then a crash. Returns A's first two pages.
+     */
+    private static byte[] shrinkRewriteAndCrash(String dir, int shrink, int sync) {
+        final int page = (int) Files.PAGE_SIZE;
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        try (
+                Path a = new Path().of(dir).concat("a.d");
+                Path b = new Path().of(dir).concat("b.d");
+                Path empty = new Path().of(dir).concat("empty.d")
+        ) {
+            final long fd = ff.openRW(a.$(), CairoConfiguration.O_NONE);
+            Assert.assertTrue("openRW failed, fd=" + fd, fd > 0);
+            Assert.assertTrue("allocate failed", ff.allocate(fd, 2L * page));
+            final long buf = Unsafe.malloc(2L * page, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().setMemory(buf, 2L * page, PRIOR);
+                Assert.assertEquals(2L * page, ff.write(fd, buf, 2L * page, 0));
+            } finally {
+                Unsafe.free(buf, 2L * page, MemoryTag.NATIVE_DEFAULT);
+            }
+            ff.fdatasync(fd);
+
+            switch (shrink) {
+                case 0 -> Assert.assertTrue("truncate failed", ff.truncate(fd, 0));
+                case 1 -> Assert.assertTrue("truncate failed", ff.truncate(fd, page));
+                default -> {
+                    Assert.assertTrue("touch failed", ff.touch(empty.$()));
+                    Assert.assertEquals("copy failed", 0, ff.copy(empty.$(), a.$()));
+                }
+            }
+            Assert.assertTrue("allocate failed", ff.allocate(fd, 2L * page));
+            if (shrink != 1) {
+                final long page0 = ff.mmap(fd, page, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+                Assert.assertNotEquals("mmap failed", -1L, page0);
+                Unsafe.getUnsafe().setMemory(page0, page, NEW);
+                ff.msync(page0, page, true);
+                ff.munmap(page0, page, MemoryTag.MMAP_DEFAULT);
+            }
+            final long page1 = ff.mmap(fd, page, page, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+            Assert.assertNotEquals("mmap failed", -1L, page1);
+            Unsafe.getUnsafe().setMemory(page1, page, NEW);
+            if (sync == 0) {
+                ff.msync(page1, page, false);
+            } else {
+                ff.msync(page1, page, true);
+                if (sync == 1) {
+                    ff.syncFileRange(fd, page, page, Files.SYNC_FILE_RANGE_WRITE | Files.SYNC_FILE_RANGE_WAIT_AFTER);
+                }
+            }
+            ff.munmap(page1, page, MemoryTag.MMAP_DEFAULT);
+            if (sync > 0) {
+                final Mapped mb = mapAndFill(ff, b, NEW);
+                ff.fdatasync(mb.fd); // shared journal: journals A's shrink too
+                unmapAndClose(ff, mb);
+            }
+            ff.close(fd);
+            ff.crash(dir);
+            return readBack(ff, a, 2 * page);
         }
     }
 
