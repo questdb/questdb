@@ -36,7 +36,8 @@ import java.util.Map;
  * <p>
  * A recording is a text block per type and kit class, split into sections, one per path: a line
  * {@code ## <path>} opens a section. A test computes one section per path and mode and asserts it
- * against the section of the same name; the expected text is the same in every mode. Lines are
+ * against the section of the same name, or, when the recording has none, the section of the path
+ * whose output it equals ({@link #SAME_AS}); the expected text is the same in every mode. Lines are
  * tab-separated and start with the value row's label, so a failure names the type, the value row,
  * the path and the mode.
  * <p>
@@ -47,6 +48,15 @@ import java.util.Map;
  * There is no switch that rewrites a recording: a difference is a behaviour change to explain.
  */
 public final class TypeConformanceRecording {
+    // a path whose output equals another path's for every type, so a recording holds the other
+    // path's section only; a type whose output differs keeps a section of its own (SYMBOL's
+    // frames-o3 and http.parquet-cursor)
+    private static final Map<String, String> SAME_AS = Map.of(
+            "eq_null_double", "filter_null",
+            "frames-o3", "frames",
+            "http.parquet-cursor", "http.parquet",
+            "parquet-native", "parquet"
+    );
     private static final String SECTION_PREFIX = "## ";
 
     private TypeConformanceRecording() {
@@ -65,7 +75,11 @@ public final class TypeConformanceRecording {
         if (recording == null) {
             Assert.fail("type=" + type.label + " path=" + path + " mode=" + mode + ": no recording for this type");
         }
-        final String expected = sections(recording).get(path);
+        final Map<String, String> sections = sections(recording);
+        String expected = sections.get(path);
+        if (expected == null && SAME_AS.containsKey(path)) {
+            expected = sections.get(SAME_AS.get(path));
+        }
         if (expected == null) {
             Assert.fail("type=" + type.label + " path=" + path + " mode=" + mode + ": the recording has no section " + path
                     + "\nactual:\n" + actual);

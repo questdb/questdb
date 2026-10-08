@@ -668,22 +668,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 min\tfalse
                 max\ttrue
                 null\tfalse
-                ## http.parquet-cursor
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t576 sha256=042a14b413c43cafc93fd5641b2946c92ac30bc2ee23258b2a39fd6830415f7b
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":1,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:BOOLEAN
-                k\tv
-                min\tfalse
-                max\ttrue
-                null\tfalse
                 ## http.parquet-hybrid
                 status\t200 OK
                 header\tServer: questDB/1.0
@@ -728,23 +712,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 null\t["null",0]
                 tail\t],"count":4}
                 ## http.parquet
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t665 sha256=60b26200483e0ea1886973cf04483838847b8d9cdebae47b82b068b5c1813fe4
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":2,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:BYTE
-                k\tv
-                min\t-128
-                max\t127
-                other_null\t-1
-                null\t0
-                ## http.parquet-cursor
                 status\t200 OK
                 header\tServer: questDB/1.0
                 header\tDate: <date>
@@ -825,23 +792,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 max\t32767
                 other_null\t-1
                 null\t0
-                ## http.parquet-cursor
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t665 sha256=2cd716e4ef89b08502406814871b829b95b8ad796bb46dff2c5c7da23cce7278
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":3,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:SHORT
-                k\tv
-                min\t-32768
-                max\t32767
-                other_null\t-1
-                null\t0
                 ## http.parquet-hybrid
                 status\t200 OK
                 header\tServer: questDB/1.0
@@ -875,23 +825,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 """);
         rec("CHAR", """
                 ## http.parquet
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t665 sha256=72eee948b62e0453917e05dc34979c583351d61a875072da549876e9e6f129e1
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":4,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:CHAR
-                k\tv
-                min\t
-                max\t\\uffff
-                other_null\t\\uffff
-                null\t
-                ## http.parquet-cursor
                 status\t200 OK
                 header\tServer: questDB/1.0
                 header\tDate: <date>
@@ -998,23 +931,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 max\t2147483647
                 sentinel\tnull
                 null\tnull
-                ## http.parquet-cursor
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t637 sha256=a1f1e0f863a348f24511a63d32559008eca7402028b3a2ee56a2beafd3b9abe4
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":5,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:INT
-                k\tv
-                min\t-2147483647
-                max\t2147483647
-                sentinel\tnull
-                null\tnull
                 ## http.parquet-hybrid
                 status\t200 OK
                 header\tServer: questDB/1.0
@@ -1062,23 +978,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 null\t["null",null]
                 tail\t],"count":4}
                 ## http.parquet
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t675 sha256=a49a2c428eb2d0aaf96274e45387d999e56c57353fd2ef78c1cf6f561d81e747
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":6,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:LONG
-                k\tv
-                min\t-9223372036854775807
-                max\t9223372036854775807
-                sentinel\tnull
-                null\tnull
-                ## http.parquet-cursor
                 status\t200 OK
                 header\tServer: questDB/1.0
                 header\tDate: <date>
@@ -1158,23 +1057,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 max\t292278994-08-17T07:12:55.807Z
                 sentinel\t
                 null\t
-                ## http.parquet-cursor
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t686 sha256=aaff04c4cdb3760745da3c8c7b4c1c4eafe0dd2a87dd43f4bd0ab2c4cf3987a6
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":7,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:DATE
-                k\tv
-                min\t-292275055-05-16T16:47:04.193Z
-                max\t292278994-08-17T07:12:55.807Z
-                sentinel\t
-                null\t
                 ## http.parquet-hybrid
                 status\t200 OK
                 header\tServer: questDB/1.0
@@ -1209,23 +1091,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 null\t"null",\\u000d
                 eof\tnewline
                 ## http.parquet
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t686 sha256=ed9d31a3b1d0d8143e0424e0a02fa2c99241610662725f725e7e99161d509e92
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":8,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:TIMESTAMP
-                k\tv
-                min\t-290308-01-01T19:59:05.224193Z
-                max\t294247-01-10T04:00:54.775807Z
-                sentinel\t
-                null\t
-                ## http.parquet-cursor
                 status\t200 OK
                 header\tServer: questDB/1.0
                 header\tDate: <date>
@@ -1292,27 +1157,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 ninf\t["ninf",null]
                 tail\t],"count":8}
                 ## http.parquet
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t657 sha256=ba4abf70d25466cbadfcad81e7241beb38ccdcc2f99b96882dcabe95de0233e0
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":9,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:FLOAT
-                k\tv
-                min\t-3.4028235E38
-                max\t3.4028235E38
-                nan\tnull
-                literal_inf\tnull
-                negzero\t-0.0
-                null\tnull
-                inf\tnull
-                ninf\tnull
-                ## http.parquet-cursor
                 status\t200 OK
                 header\tServer: questDB/1.0
                 header\tDate: <date>
@@ -1413,27 +1257,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 null\tnull
                 inf\tnull
                 ninf\tnull
-                ## http.parquet-cursor
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t704 sha256=50f3e7fa6f54cc2736b39f548866a6d333a7f7ae397d8f5dc6db84fee9ed6b49
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":10,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:DOUBLE
-                k\tv
-                min\t-1.7976931348623157E308
-                max\t1.7976931348623157E308
-                nan\tnull
-                literal_inf\tnull
-                negzero\t-0.0
-                null\tnull
-                inf\tnull
-                ninf\tnull
                 ## http.parquet-hybrid
                 status\t200 OK
                 header\tServer: questDB/1.0
@@ -1504,24 +1327,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 null\t["null",null]
                 tail\t],"count":5}
                 ## http.parquet
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t691 sha256=28466d6e23fb014e29d75561edf5b4606783584a1b0ba6519b680ee63e22e018
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":11,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:STRING
-                k\tv
-                empty\t
-                min\t\s
-                max\tü€😀�
-                escape\ta"b,c\\d'e
-                null\t
-                ## http.parquet-cursor
                 status\t200 OK
                 header\tServer: questDB/1.0
                 header\tDate: <date>
@@ -1661,23 +1466,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 max\t0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
                 sentinel\t
                 null\t
-                ## http.parquet-cursor
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t878 sha256=c6fe3f4ee40430a3176a11855d10c0663c2e5fec8656cd80a83b2d714d0dfaef
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":13,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:LONG256
-                k\tv
-                min\t0x00
-                max\t0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
-                sentinel\t
-                null\t
                 ## http.parquet-hybrid
                 status\t200 OK
                 header\tServer: questDB/1.0
@@ -1753,22 +1541,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 min\t0000000
                 max\t1111111
                 null\t
-                ## http.parquet-cursor
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t620 sha256=3dab8ea159c5daf2bd3f50eabcd51bd739fe3ffdf0ae95d60aa69c69ed4d73fe
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":67342,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:GEOHASH(7b)
-                k\tv
-                min\t0000000
-                max\t1111111
-                null\t
                 ## http.parquet-hybrid
                 status\t200 OK
                 header\tServer: questDB/1.0
@@ -1800,22 +1572,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 """);
         rec("GEOSHORT", """
                 ## http.parquet
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t620 sha256=da4759adc81456044bde1f78ec599b2344e56566c69e045f0506686e6c0837e2
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":69391,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:GEOHASH(3c)
-                k\tv
-                min\t000
-                max\tzzz
-                null\t
-                ## http.parquet-cursor
                 status\t200 OK
                 header\tServer: questDB/1.0
                 header\tDate: <date>
@@ -1890,22 +1646,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 min\t000000
                 max\tzzzzzz
                 null\t
-                ## http.parquet-cursor
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t620 sha256=c9f33a4765f67d9cf5e7d22ba32ac41dde86045b59fe6870c636768eaa03870a
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":73232,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:GEOHASH(6c)
-                k\tv
-                min\t000000
-                max\tzzzzzz
-                null\t
                 ## http.parquet-hybrid
                 status\t200 OK
                 header\tServer: questDB/1.0
@@ -1950,22 +1690,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 """);
         rec("GEOLONG", """
                 ## http.parquet
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t656 sha256=e3d2140dde93276163906d5fbc39674a23db6d81ae12dfad379df67b7ff844c2
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":75793,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:GEOHASH(8c)
-                k\tv
-                min\t00000000
-                max\tzzzzzzzz
-                null\t
-                ## http.parquet-cursor
                 status\t200 OK
                 header\tServer: questDB/1.0
                 header\tDate: <date>
@@ -2065,22 +1789,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 empty\t
                 max\t00000000 00 01 02 fd fe ff
                 null\t
-                ## http.parquet-cursor
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t620 sha256=3d5020254a29a103f2c4dfb78c588282d01e40d69131d4445448b6fcb82d05d6
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":18,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:BINARY
-                k\tv
-                empty\t
-                max\t00000000 00 01 02 fd fe ff
-                null\t
                 ## http.parquet-hybrid
                 status\t200 OK
                 header\tServer: questDB/1.0
@@ -2127,23 +1835,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 null\t["null",null]
                 tail\t],"count":4}
                 ## http.parquet
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t750 sha256=d7fecfe5e2bbdb10b4af648459b07762b94dae650f07ce67667e6d1b8ebc57f6
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":19,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:UUID
-                k\tv
-                min\t00000000-0000-0000-0000-000000000000
-                max\tffffffff-ffff-ffff-ffff-ffffffffffff
-                sentinel\t
-                null\t
-                ## http.parquet-cursor
                 status\t200 OK
                 header\tServer: questDB/1.0
                 header\tDate: <date>
@@ -2213,23 +1904,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 max\tffffffff-ffff-ffff-ffff-ffffffffffff
                 sentinel\t
                 null\t
-                ## http.parquet-cursor
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t746 sha256=4ccb961d072bbe6d2290fbeded93ab22144e98ecbf6109eff6f6cb5bd64d9b76
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":24,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:LONG128
-                k\tv
-                min\t00000000-0000-0000-0000-000000000000
-                max\tffffffff-ffff-ffff-ffff-ffffffffffff
-                sentinel\t
-                null\t
                 ## http.parquet-hybrid
                 status\t200 OK
                 header\tServer: questDB/1.0
@@ -2264,23 +1938,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 null\t"null",\\u000d
                 eof\tnewline
                 ## http.parquet
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t647 sha256=ded8c26b5d0f4b4fe897c27cfa4cb0179893e1942273036a632ac63c1a62dc51
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":25,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:IPv4
-                k\tv
-                min\t0.0.0.1
-                max\t255.255.255.255
-                sentinel\t
-                null\t
-                ## http.parquet-cursor
                 status\t200 OK
                 header\tServer: questDB/1.0
                 header\tDate: <date>
@@ -2361,24 +2018,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 max\tü€😀�
                 escape\ta"b,c\\d'e
                 null\t
-                ## http.parquet-cursor
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t691 sha256=5a760909b45fadf9de0b835d7b04d87ed96a7c52c94dcd47eea7568d535bf4d2
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":26,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:VARCHAR
-                k\tv
-                empty\t
-                min\t\s
-                max\tü€😀�
-                escape\ta"b,c\\d'e
-                null\t
                 ## http.parquet-hybrid
                 status\t200 OK
                 header\tServer: questDB/1.0
@@ -2415,24 +2054,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 """);
         rec("DOUBLE[]", """
                 ## http.parquet
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t632 sha256=92cfdb897da5ba42d5f14ea3bae4cdf8ddd718231e8d7eb5f214db4e26945304
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":2587,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:DOUBLE[]
-                k\tv
-                min\t[-1.7976931348623157E308]
-                max\t[1.7976931348623157E308]
-                empty\t[null]
-                specials\t[null,null,null,-0.0]
-                null\tnull
-                ## http.parquet-cursor
                 status\t200 OK
                 header\tServer: questDB/1.0
                 header\tDate: <date>
@@ -2515,22 +2136,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 min\t-9.9
                 max\t9.9
                 null\t
-                ## http.parquet-cursor
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t598 sha256=e8cb57c88035d07899e06bf6446cf6aeb0213de4c8446db7bbd4ed7c4bb72b5a
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":262684,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:DECIMAL(2,1)
-                k\tv
-                min\t-9.9
-                max\t9.9
-                null\t
                 ## http.parquet-hybrid
                 status\t200 OK
                 header\tServer: questDB/1.0
@@ -2575,22 +2180,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 """);
         rec("DECIMAL16", """
                 ## http.parquet
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t608 sha256=464dd18f1980c1f7fdb9e538efcfeee07ea8d3974ecc3432578ccf74787f84b8
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":525341,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:DECIMAL(4,2)
-                k\tv
-                min\t-99.99
-                max\t99.99
-                null\t
-                ## http.parquet-cursor
                 status\t200 OK
                 header\tServer: questDB/1.0
                 header\tDate: <date>
@@ -2662,22 +2251,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 null\t["null",null]
                 tail\t],"count":3}
                 ## http.parquet
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t626 sha256=7b65d1c203fb98b9a0fdf798acce64308bb1d0c74711bbab8377cd14cfe02931
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":2334,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:DECIMAL(9,0)
-                k\tv
-                min\t-999999999
-                max\t999999999
-                null\t
-                ## http.parquet-cursor
                 status\t200 OK
                 header\tServer: questDB/1.0
                 header\tDate: <date>
@@ -2765,22 +2338,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 min\t-999999999999.9999
                 max\t999999999999.9999
                 null\t
-                ## http.parquet-cursor
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t673 sha256=68a8600723b97c930a860b13c9d6b12fc4d1093df7991af72b4352efa6918c62
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":1052703,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:DECIMAL(16,4)
-                k\tv
-                min\t-999999999999.9999
-                max\t999999999999.9999
-                null\t
                 ## http.parquet-hybrid
                 status\t200 OK
                 header\tServer: questDB/1.0
@@ -2813,22 +2370,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 null\t"null",\\u000d
                 eof\tnewline
                 ## http.parquet
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t755 sha256=099389cc6c2e89e976c07bcbce3e201a1b26cd37192d60c3dfe19b696bf40785
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":2631200,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:DECIMAL(38,10)
-                k\tv
-                min\t-9999999999999999999999999999.9999999999
-                max\t9999999999999999999999999999.9999999999
-                null\t
-                ## http.parquet-cursor
                 status\t200 OK
                 header\tServer: questDB/1.0
                 header\tDate: <date>
@@ -2915,22 +2456,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 min\t-99999999999999999999999999999999999999999999999999999999.99999999999999999999
                 max\t99999999999999999999999999999999999999999999999999999999.99999999999999999999
                 null\t
-                ## http.parquet-cursor
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t917 sha256=138b5909fc94644f0c1e3ba72ff64d04cf60e7181a7f5287117f6cd1de387dc6
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":5262369,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:DECIMAL(76,20)
-                k\tv
-                min\t-99999999999999999999999999999999999999999999999999999999.99999999999999999999
-                max\t99999999999999999999999999999999999999999999999999999999.99999999999999999999
-                null\t
                 ## http.parquet-hybrid
                 status\t200 OK
                 header\tServer: questDB/1.0
@@ -2947,30 +2472,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 min\t-99999999999999999999999999999999999999999999999999999999.99999999999999999999\t7
                 max\t99999999999999999999999999999999999999999999999999999999.99999999999999999999\t7
                 null\t\t7
-                """);
-        rec("INTERVAL", """
-                ## http.csv
-                error: create: [29] non-persisted type: INTERVAL
-                ## http.json
-                error: create: [29] non-persisted type: INTERVAL
-                ## http.parquet
-                error: create: [29] non-persisted type: INTERVAL
-                ## http.parquet-cursor
-                error: create: [29] non-persisted type: INTERVAL
-                ## http.parquet-hybrid
-                error: create: [29] non-persisted type: INTERVAL
-                """);
-        rec("VARCHAR_SLICE", """
-                ## http.csv
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## http.parquet
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## http.parquet-cursor
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## http.parquet-hybrid
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## http.json
-                error: create: [29] unsupported column type: VARCHAR_SLICE
                 """);
         rec("TIMESTAMP_NS", """
                 ## http.json
@@ -3001,23 +2502,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 null\t"null",\\u000d
                 eof\tnewline
                 ## http.parquet
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t689 sha256=d2b22c5eb53c0edb3dba6ee4cd239729c9c1204bcaec3e6dc51a8a112fb36966
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":262152,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:TIMESTAMP_NS
-                k\tv
-                min\t1677-01-01T00:12:43.145224193Z
-                max\t2262-04-11T23:47:16.854775807Z
-                sentinel\t
-                null\t
-                ## http.parquet-cursor
                 status\t200 OK
                 header\tServer: questDB/1.0
                 header\tDate: <date>
@@ -3082,22 +2566,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 min\t0
                 max\tz
                 null\t
-                ## http.parquet-cursor
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t620 sha256=aa5188802dc1617c3d53f7f6a97747a389f60027449b63a972ffc17e6a710b4f
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":66830,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:GEOHASH(1c)
-                k\tv
-                min\t0
-                max\tz
-                null\t
                 ## http.parquet-hybrid
                 status\t200 OK
                 header\tServer: questDB/1.0
@@ -3129,22 +2597,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 """);
         rec("GEOHASH(8b)", """
                 ## http.parquet
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t620 sha256=66d481a42776360f232a383757327016c70a413a98b34b3b68f89c68f5a7bece
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":67599,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:GEOHASH(8b)
-                k\tv
-                min\t00000000
-                max\t11111111
-                null\t
-                ## http.parquet-cursor
                 status\t200 OK
                 header\tServer: questDB/1.0
                 header\tDate: <date>
@@ -3204,22 +2656,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 """);
         rec("GEOHASH(31b)", """
                 ## http.parquet
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t620 sha256=7dc4eecd2b35dcd924ecb541ec6b8fc5e834b8640654a89b4ef69409fc2f8cdf
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":73488,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:GEOHASH(31b)
-                k\tv
-                min\t0000000000000000000000000000000
-                max\t1111111111111111111111111111111
-                null\t
-                ## http.parquet-cursor
                 status\t200 OK
                 header\tServer: questDB/1.0
                 header\tDate: <date>
@@ -3319,22 +2755,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 min\t000000000000
                 max\tzzzzzzzzzzzz
                 null\t
-                ## http.parquet-cursor
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t656 sha256=eeb0e5472407175498917d26e502d88ad2d6172f2fb78ef2eee20a4a7792c3a6
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":80913,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:GEOHASH(12c)
-                k\tv
-                min\t000000000000
-                max\tzzzzzzzzzzzz
-                null\t
                 ## http.parquet-hybrid
                 status\t200 OK
                 header\tServer: questDB/1.0
@@ -3394,22 +2814,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 min\t-999.99
                 max\t999.99
                 null\t
-                ## http.parquet-cursor
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t628 sha256=04f8e08a5bb8f24d6c61f950cfdf3345dd131c7511fee979e10f843fc9785cd5
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":525598,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:DECIMAL(5,2)
-                k\tv
-                min\t-999.99
-                max\t999.99
-                null\t
                 ## http.parquet-hybrid
                 status\t200 OK
                 header\tServer: questDB/1.0
@@ -3429,22 +2833,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 """);
         rec("DECIMAL(18,3)", """
                 ## http.parquet
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t672 sha256=0592f0e18e88365fc5b8ca98fa9cbe5e2d98b364aa3074b85dbdfd944a27626b
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":791071,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:DECIMAL(18,3)
-                k\tv
-                min\t-999999999999999.999
-                max\t999999999999999.999
-                null\t
-                ## http.parquet-cursor
                 status\t200 OK
                 header\tServer: questDB/1.0
                 header\tDate: <date>
@@ -3536,24 +2924,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 empty\t[[null]]
                 specials\t[[null,null,null,-0.0]]
                 null\tnull
-                ## http.parquet-cursor
-                status\t200 OK
-                header\tServer: questDB/1.0
-                header\tDate: <date>
-                header\tTransfer-Encoding: chunked
-                header\tContent-Type: application/vnd.apache.parquet
-                header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
-                header\tKeep-Alive: timeout=5, max=10000
-                bytes\t692 sha256=363c44a49e99e40f8211fba130466af309543d93d8a73f4a5a68d6211a501def
-                created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":18971,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:DOUBLE[][]
-                k\tv
-                min\t[[-1.7976931348623157E308]]
-                max\t[[1.7976931348623157E308]]
-                empty\t[[null]]
-                specials\t[[null,null,null,-0.0]]
-                null\tnull
                 ## http.parquet-hybrid
                 status\t200 OK
                 header\tServer: questDB/1.0
@@ -3586,30 +2956,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 specials\t["specials",[[null,null,null,-0.0]]]
                 null\t["null",null]
                 tail\t],"count":5}
-                """);
-        rec("INTERVAL(us)", """
-                ## http.csv
-                error: create: [29] non-persisted type: INTERVAL
-                ## http.json
-                error: create: [29] non-persisted type: INTERVAL
-                ## http.parquet
-                error: create: [29] non-persisted type: INTERVAL
-                ## http.parquet-cursor
-                error: create: [29] non-persisted type: INTERVAL
-                ## http.parquet-hybrid
-                error: create: [29] non-persisted type: INTERVAL
-                """);
-        rec("INTERVAL(ns)", """
-                ## http.csv
-                error: create: [29] non-persisted type: INTERVAL
-                ## http.json
-                error: create: [29] non-persisted type: INTERVAL
-                ## http.parquet
-                error: create: [29] non-persisted type: INTERVAL
-                ## http.parquet-cursor
-                error: create: [29] non-persisted type: INTERVAL
-                ## http.parquet-hybrid
-                error: create: [29] non-persisted type: INTERVAL
                 """);
     }
     // recordings: end

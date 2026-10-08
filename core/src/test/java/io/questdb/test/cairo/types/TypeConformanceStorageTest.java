@@ -1377,11 +1377,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t00
                 null\t00
-                ## frames-o3
-                frame 0 rows=3 native
-                min\t00
-                max\t01
-                null\t00
                 ## parquet
                 k\tv
                 d0:min\tfalse
@@ -1399,14 +1394,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:min\t00
                 d1:max\t01
                 d1:null\t00
-                ## parquet-native
-                k\tv
-                d0:min\tfalse
-                d0:max\ttrue
-                d0:null\tfalse
-                d1:min\tfalse
-                d1:max\ttrue
-                d1:null\tfalse
                 ## parquet-native-frames
                 frame 0 rows=3 native
                 d0:min\t00
@@ -1621,16 +1608,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:max\t7f
                 d1:other_null\tff
                 d1:null\t00
-                ## parquet-native
-                k\tv
-                d0:min\t-128
-                d0:max\t127
-                d0:other_null\t-1
-                d0:null\t0
-                d1:min\t-128
-                d1:max\t127
-                d1:other_null\t-1
-                d1:null\t0
                 ## parquet-native-frames
                 frame 0 rows=4 native
                 d0:min\t80
@@ -1663,12 +1640,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t80
                 other_null\tff
-                ## frames-o3
-                frame 0 rows=4 native
-                min\t80
-                max\t7f
-                other_null\tff
-                null\t00
                 ## alter
                 target\td0:min|d0:max|d0:other_null|d0:null|d1:min|d1:max|d1:other_null|d1:null
                 BOOLEAN\tfalse|false|false|false|true|true|true|false
@@ -1754,16 +1725,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:max\tff7f
                 d1:other_null\tffff
                 d1:null\t0000
-                ## parquet-native
-                k\tv
-                d0:min\t-32768
-                d0:max\t32767
-                d0:other_null\t-1
-                d0:null\t0
-                d1:min\t-32768
-                d1:max\t32767
-                d1:other_null\t-1
-                d1:null\t0
                 ## parquet-native-frames
                 frame 0 rows=4 native
                 d0:min\t0080
@@ -1809,12 +1770,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t0080
                 other_null\tffff
-                ## frames-o3
-                frame 0 rows=4 native
-                min\t0080
-                max\tff7f
-                other_null\tffff
-                null\t0000
                 ## dedup
                 k\tv
                 dup:min\t-32768
@@ -2133,12 +2088,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t0000
                 other_null\tffff
-                ## frames-o3
-                frame 0 rows=4 native
-                min\t0000
-                max\tffff
-                other_null\tffff
-                null\t0000
                 ## parquet
                 k\tv
                 d0:min\t
@@ -2160,16 +2109,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:max\tffff
                 d1:other_null\tffff
                 d1:null\t0000
-                ## parquet-native
-                k\tv
-                d0:min\t
-                d0:max\t\\uffff
-                d0:other_null\t\\uffff
-                d0:null\t
-                d1:min\t
-                d1:max\t\\uffff
-                d1:other_null\t\\uffff
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=4 native
                 d0:min\t0000
@@ -2252,12 +2191,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t01000080
                 sentinel\t00000080
-                ## frames-o3
-                frame 0 rows=4 native
-                min\t01000080
-                max\tffffff7f
-                sentinel\t00000080
-                null\t00000080
                 ## tops
                 k\tv
                 d0:min\tnull
@@ -2356,16 +2289,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:max\tffffff7f
                 d1:sentinel\t00000080
                 d1:null\t00000080
-                ## parquet-native
-                k\tv
-                d0:min\t-2147483647
-                d0:max\t2147483647
-                d0:sentinel\tnull
-                d0:null\tnull
-                d1:min\t-2147483647
-                d1:max\t2147483647
-                d1:sentinel\tnull
-                d1:null\tnull
                 ## parquet-native-frames
                 frame 0 rows=4 native
                 d0:min\t01000080
@@ -2474,16 +2397,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:max\tffffffffffffff7f
                 d1:sentinel\t0000000000000080
                 d1:null\t0000000000000080
-                ## parquet-native
-                k\tv
-                d0:min\t-9223372036854775807
-                d0:max\t9223372036854775807
-                d0:sentinel\tnull
-                d0:null\tnull
-                d1:min\t-9223372036854775807
-                d1:max\t9223372036854775807
-                d1:sentinel\tnull
-                d1:null\tnull
                 ## parquet-native-frames
                 frame 0 rows=4 native
                 d0:min\t0100000000000080
@@ -2516,12 +2429,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t0100000000000080
                 sentinel\t0000000000000080
-                ## frames-o3
-                frame 0 rows=4 native
-                min\t0100000000000080
-                max\tffffffffffffff7f
-                sentinel\t0000000000000080
-                null\t0000000000000080
                 ## alter
                 target\td0:min|d0:max|d0:sentinel|d0:null|d1:min|d1:max|d1:sentinel|d1:null
                 BOOLEAN\tfalse|false|false|false|true|true|false|false
@@ -2714,12 +2621,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t0100000000000080
                 sentinel\t0000000000000080
-                ## frames-o3
-                frame 0 rows=4 native
-                min\t0100000000000080
-                max\tffffffffffffff7f
-                sentinel\t0000000000000080
-                null\t0000000000000080
                 ## empty_table
                 k\tv
                 ## empty_table-frames
@@ -2892,16 +2793,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:max\tffffffffffffff7f
                 d1:sentinel\t0000000000000080
                 d1:null\t0000000000000080
-                ## parquet-native
-                k\tv
-                d0:min\t-292275055-05-16T16:47:04.193Z
-                d0:max\t292278994-08-17T07:12:55.807Z
-                d0:sentinel\t
-                d0:null\t
-                d1:min\t-292275055-05-16T16:47:04.193Z
-                d1:max\t292278994-08-17T07:12:55.807Z
-                d1:sentinel\t
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=4 native
                 d0:min\t0100000000000080
@@ -3105,16 +2996,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:max\tffffffffffffff7f
                 d1:sentinel\t0000000000000080
                 d1:null\t0000000000000080
-                ## parquet-native
-                k\tv
-                d0:min\t-290308-01-01T19:59:05.224193Z
-                d0:max\t294247-01-10T04:00:54.775807Z
-                d0:sentinel\t
-                d0:null\t
-                d1:min\t-290308-01-01T19:59:05.224193Z
-                d1:max\t294247-01-10T04:00:54.775807Z
-                d1:sentinel\t
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=4 native
                 d0:min\t0100000000000080
@@ -3147,12 +3028,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t0100000000000080
                 sentinel\t0000000000000080
-                ## frames-o3
-                frame 0 rows=4 native
-                min\t0100000000000080
-                max\tffffffffffffff7f
-                sentinel\t0000000000000080
-                null\t0000000000000080
                 ## latest_by_key
                 k\tv
                 b:max\t294247-01-10T04:00:54.775807Z
@@ -3381,24 +3256,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:null\t0000c07f
                 d1:inf\t0000807f
                 d1:ninf\t000080ff
-                ## parquet-native
-                k\tv
-                d0:min\t-3.4028235E38
-                d0:max\t3.4028235E38
-                d0:nan\tnull
-                d0:literal_inf\tnull
-                d0:negzero\t-0.0
-                d0:null\tnull
-                d0:inf\tnull
-                d0:ninf\tnull
-                d1:min\t-3.4028235E38
-                d1:max\t3.4028235E38
-                d1:nan\tnull
-                d1:literal_inf\tnull
-                d1:negzero\t-0.0
-                d1:null\tnull
-                d1:inf\tnull
-                d1:ninf\tnull
                 ## parquet-native-frames
                 frame 0 rows=8 native
                 d0:min\tffff7fff
@@ -3464,16 +3321,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 min\tffff7fff
                 nan\t0000c07f
                 negzero\t00000080
-                inf\t0000807f
-                ninf\t000080ff
-                ## frames-o3
-                frame 0 rows=8 native
-                min\tffff7fff
-                max\tffff7f7f
-                nan\t0000c07f
-                literal_inf\t0000c07f
-                negzero\t00000080
-                null\t0000c07f
                 inf\t0000807f
                 ninf\t000080ff
                 ## alter
@@ -3771,24 +3618,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:null\t000000000000f87f
                 d1:inf\t000000000000f07f
                 d1:ninf\t000000000000f0ff
-                ## parquet-native
-                k\tv
-                d0:min\t-1.7976931348623157E308
-                d0:max\t1.7976931348623157E308
-                d0:nan\tnull
-                d0:literal_inf\tnull
-                d0:negzero\t-0.0
-                d0:null\tnull
-                d0:inf\tnull
-                d0:ninf\tnull
-                d1:min\t-1.7976931348623157E308
-                d1:max\t1.7976931348623157E308
-                d1:nan\tnull
-                d1:literal_inf\tnull
-                d1:negzero\t-0.0
-                d1:null\tnull
-                d1:inf\tnull
-                d1:ninf\tnull
                 ## parquet-native-frames
                 frame 0 rows=8 native
                 d0:min\tffffffffffffefff
@@ -3886,16 +3715,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 negzero\t0000000000000080
                 inf\t000000000000f07f
                 ninf\t000000000000f0ff
-                ## frames-o3
-                frame 0 rows=8 native
-                min\tffffffffffffefff
-                max\tffffffffffffef7f
-                nan\t000000000000f87f
-                literal_inf\t000000000000f87f
-                negzero\t0000000000000080
-                null\t000000000000f87f
-                inf\t000000000000f07f
-                ninf\t000000000000f0ff
                 ## latest_by_key
                 k\tv
                 b:inf\tnull
@@ -3952,18 +3771,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:max\taux=0a00000000000000 data=05000000fc00ac203dd800defdff
                 d1:escape\taux=1800000000000000 data=090000006100220062002c0063005c00640027006500
                 d1:null\taux=2e00000000000000 data=ffffffff
-                ## parquet-native
-                k\tv
-                d0:empty\t
-                d0:min\t\s
-                d0:max\tü€😀�
-                d0:escape\ta"b,c\\d'e
-                d0:null\t
-                d1:empty\t
-                d1:min\t\s
-                d1:max\tü€😀�
-                d1:escape\ta"b,c\\d'e
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=5 native
                 d0:empty\taux=0000000000000000 data=00000000
@@ -4175,13 +3982,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 empty\taux=0000000000000000 data=00000000
                 max\taux=0400000000000000 data=05000000fc00ac203dd800defdff
                 null\taux=1200000000000000 data=ffffffff
-                ## frames-o3
-                frame 0 rows=5 native
-                empty\taux=0000000000000000 data=00000000
-                min\taux=0400000000000000 data=010000002000
-                max\taux=0a00000000000000 data=05000000fc00ac203dd800defdff
-                escape\taux=1800000000000000 data=090000006100220062002c0063005c00640027006500
-                null\taux=2e00000000000000 data=ffffffff
                 ## latest_by_key
                 k\tv
                 b:empty\t
@@ -4244,18 +4044,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:max\t02000000
                 d1:escape\t03000000
                 d1:null\t00000080
-                ## parquet-native
-                k\tv
-                d0:empty\t
-                d0:min\t\s
-                d0:max\tü€😀�
-                d0:escape\ta"b,c\\d'e
-                d0:null\t
-                d1:empty\t
-                d1:min\t\s
-                d1:max\tü€😀�
-                d1:escape\ta"b,c\\d'e
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=5 native
                 d0:empty\t00000000
@@ -4533,12 +4321,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t0000000000000000000000000000000000000000000000000000000000000000
                 sentinel\t0000000000000080000000000000008000000000000000800000000000000080
-                ## frames-o3
-                frame 0 rows=4 native
-                min\t0000000000000000000000000000000000000000000000000000000000000000
-                max\tffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
-                sentinel\t0000000000000080000000000000008000000000000000800000000000000080
-                null\t0000000000000080000000000000008000000000000000800000000000000080
                 ## parquet
                 k\tv
                 d0:min\t0x00
@@ -4560,16 +4342,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:max\tffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
                 d1:sentinel\t0000000000000080000000000000008000000000000000800000000000000080
                 d1:null\t0000000000000080000000000000008000000000000000800000000000000080
-                ## parquet-native
-                k\tv
-                d0:min\t0x00
-                d0:max\t0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
-                d0:sentinel\t
-                d0:null\t
-                d1:min\t0x00
-                d1:max\t0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
-                d1:sentinel\t
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=4 native
                 d0:min\t0000000000000000000000000000000000000000000000000000000000000000
@@ -4795,14 +4567,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:min\t00
                 d1:max\t7f
                 d1:null\tff
-                ## parquet-native
-                k\tv
-                d0:min\t0000000
-                d0:max\t1111111
-                d0:null\t
-                d1:min\t0000000
-                d1:max\t1111111
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=3 native
                 d0:min\t00
@@ -4859,11 +4623,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 ## frames-o3-none
                 frame 0 rows=2 native
                 min\t00
-                null\tff
-                ## frames-o3
-                frame 0 rows=3 native
-                min\t00
-                max\t7f
                 null\tff
                 ## tops
                 k\tv
@@ -5036,14 +4795,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:min\t0000
                 d1:max\tff7f
                 d1:null\tffff
-                ## parquet-native
-                k\tv
-                d0:min\t000
-                d0:max\tzzz
-                d0:null\t
-                d1:min\t000
-                d1:max\tzzz
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=3 native
                 d0:min\t0000
@@ -5071,11 +4822,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 ## frames-o3-none
                 frame 0 rows=2 native
                 min\t0000
-                null\tffff
-                ## frames-o3
-                frame 0 rows=3 native
-                min\t0000
-                max\tff7f
                 null\tffff
                 ## alter
                 target\td0:min|d0:max|d0:null|d1:min|d1:max|d1:null
@@ -5291,11 +5037,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t00000000
                 null\tffffffff
-                ## frames-o3
-                frame 0 rows=3 native
-                min\t00000000
-                max\tffffff3f
-                null\tffffffff
                 ## parquet
                 k\tv
                 d0:min\t000000
@@ -5313,14 +5054,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:min\t00000000
                 d1:max\tffffff3f
                 d1:null\tffffffff
-                ## parquet-native
-                k\tv
-                d0:min\t000000
-                d0:max\tzzzzzz
-                d0:null\t
-                d1:min\t000000
-                d1:max\tzzzzzz
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=3 native
                 d0:min\t00000000
@@ -5501,11 +5234,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t0000000000000000
                 null\tffffffffffffffff
-                ## frames-o3
-                frame 0 rows=3 native
-                min\t0000000000000000
-                max\tffffffffff000000
-                null\tffffffffffffffff
                 ## parquet
                 k\tv
                 d0:min\t00000000
@@ -5523,14 +5251,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:min\t0000000000000000
                 d1:max\tffffffffff000000
                 d1:null\tffffffffffffffff
-                ## parquet-native
-                k\tv
-                d0:min\t00000000
-                d0:max\tzzzzzzzz
-                d0:null\t
-                d1:min\t00000000
-                d1:max\tzzzzzzzz
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=3 native
                 d0:min\t0000000000000000
@@ -5608,14 +5328,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:empty\taux=0000000000000000 data=0000000000000000
                 d1:max\taux=0800000000000000 data=0600000000000000000102fdfeff
                 d1:null\taux=1600000000000000 data=ffffffffffffffff
-                ## parquet-native
-                k\tv
-                d0:empty\t
-                d0:max\t00000000 00 01 02 fd fe ff
-                d0:null\t
-                d1:empty\t
-                d1:max\t00000000 00 01 02 fd fe ff
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=3 native
                 d0:empty\taux=0000000000000000 data=0000000000000000
@@ -5644,11 +5356,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 empty\taux=0000000000000000 data=0000000000000000
                 null\taux=0800000000000000 data=ffffffffffffffff
-                ## frames-o3
-                frame 0 rows=3 native
-                empty\taux=0000000000000000 data=0000000000000000
-                max\taux=0800000000000000 data=0600000000000000000102fdfeff
-                null\taux=1600000000000000 data=ffffffffffffffff
                 ## tops
                 k\tv
                 d0:empty\t
@@ -5816,16 +5523,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:max\tffffffffffffffffffffffffffffffff
                 d1:sentinel\t00000000000000800000000000000080
                 d1:null\t00000000000000800000000000000080
-                ## parquet-native
-                k\tv
-                d0:min\t00000000-0000-0000-0000-000000000000
-                d0:max\tffffffff-ffff-ffff-ffff-ffffffffffff
-                d0:sentinel\t
-                d0:null\t
-                d1:min\t00000000-0000-0000-0000-000000000000
-                d1:max\tffffffff-ffff-ffff-ffff-ffffffffffff
-                d1:sentinel\t
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=4 native
                 d0:min\t00000000000000000000000000000000
@@ -5953,12 +5650,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t00000000000000000000000000000000
                 sentinel\t00000000000000800000000000000080
-                ## frames-o3
-                frame 0 rows=4 native
-                min\t00000000000000000000000000000000
-                max\tffffffffffffffffffffffffffffffff
-                sentinel\t00000000000000800000000000000080
-                null\t00000000000000800000000000000080
                 ## alter
                 target\td0:min|d0:max|d0:sentinel|d0:null|d1:min|d1:max|d1:sentinel|d1:null
                 BOOLEAN\tincompatible [41]
@@ -6120,16 +5811,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:max\tffffffffffffffffffffffffffffffff
                 d1:sentinel\t00000000000000800000000000000080
                 d1:null\t00000000000000800000000000000080
-                ## parquet-native
-                k\tv
-                d0:min\t00000000-0000-0000-0000-000000000000
-                d0:max\tffffffff-ffff-ffff-ffff-ffffffffffff
-                d0:sentinel\t
-                d0:null\t
-                d1:min\t00000000-0000-0000-0000-000000000000
-                d1:max\tffffffff-ffff-ffff-ffff-ffffffffffff
-                d1:sentinel\t
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=4 native
                 d0:min\t00000000000000000000000000000000
@@ -6236,12 +5917,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t00000000000000000000000000000000
                 sentinel\t00000000000000800000000000000080
-                ## frames-o3
-                frame 0 rows=4 native
-                min\t00000000000000000000000000000000
-                max\tffffffffffffffffffffffffffffffff
-                sentinel\t00000000000000800000000000000080
-                null\t00000000000000800000000000000080
                 ## latest_by_key
                 k\tv
                 b:max\tffffffff-ffff-ffff-ffff-ffffffffffff
@@ -6422,16 +6097,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:max\tffffffff
                 d1:sentinel\t00000000
                 d1:null\t00000000
-                ## parquet-native
-                k\tv
-                d0:min\t0.0.0.1
-                d0:max\t255.255.255.255
-                d0:sentinel\t
-                d0:null\t
-                d1:min\t0.0.0.1
-                d1:max\t255.255.255.255
-                d1:sentinel\t
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=4 native
                 d0:min\t01000000
@@ -6464,12 +6129,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t01000000
                 sentinel\t00000000
-                ## frames-o3
-                frame 0 rows=4 native
-                min\t01000000
-                max\tffffffff
-                sentinel\t00000000
-                null\t00000000
                 ## empty_table
                 k\tv
                 ## empty_table-frames
@@ -6527,13 +6186,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=3 native
                 empty\taux=03000000000000000000000000000000 data=
                 max\taux=c0000000c3bce282acf0000000000000 data=c3bce282acf09f9880efbfbd
-                null\taux=040000000000000000000c0000000000 data=
-                ## frames-o3
-                frame 0 rows=5 native
-                empty\taux=03000000000000000000000000000000 data=
-                min\taux=13200000000000000000000000000000 data=
-                max\taux=c0000000c3bce282acf0000000000000 data=c3bce282acf09f9880efbfbd
-                escape\taux=936122622c635c6427650c0000000000 data=
                 null\taux=040000000000000000000c0000000000 data=
                 ## alter
                 target\td0:empty|d0:min|d0:max|d0:escape|d0:null|d1:empty|d1:min|d1:max|d1:escape|d1:null
@@ -6616,18 +6268,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:max\taux=c0000000c3bce282acf0000000000000 data=c3bce282acf09f9880efbfbd
                 d1:escape\taux=936122622c635c6427650c0000000000 data=
                 d1:null\taux=040000000000000000000c0000000000 data=
-                ## parquet-native
-                k\tv
-                d0:empty\t
-                d0:min\t\s
-                d0:max\tü€😀�
-                d0:escape\ta"b,c\\d'e
-                d0:null\t
-                d1:empty\t
-                d1:min\t\s
-                d1:max\tü€😀�
-                d1:escape\ta"b,c\\d'e
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=5 native
                 d0:empty\taux=03000000000000000000000000000000 data=
@@ -6901,13 +6541,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 min\taux=00000000000000001000000000000000 data=0100000000000000ffffffffffffefff
                 empty\taux=10000000000000000800000000000000 data=0000000000000000
                 null\taux=18000000000000000000000000000000 data=
-                ## frames-o3
-                frame 0 rows=5 native
-                min\taux=00000000000000001000000000000000 data=0100000000000000ffffffffffffefff
-                max\taux=10000000000000001000000000000000 data=0100000000000000ffffffffffffef7f
-                empty\taux=20000000000000000800000000000000 data=0000000000000000
-                specials\taux=28000000000000002800000000000000 data=0400000000000000000000000000f87f000000000000f87f000000000000f87f0000000000000080
-                null\taux=50000000000000000000000000000000 data=
                 ## parquet
                 k\tv
                 d0:min\t[-1.7976931348623157E308]
@@ -6933,18 +6566,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:empty\taux=20000000000000000800000000000000 data=0000000000000000
                 d1:specials\taux=28000000000000002800000000000000 data=0400000000000000000000000000f87f000000000000f87f000000000000f87f0000000000000080
                 d1:null\taux=50000000000000000000000000000000 data=
-                ## parquet-native
-                k\tv
-                d0:min\t[-1.7976931348623157E308]
-                d0:max\t[1.7976931348623157E308]
-                d0:empty\t[]
-                d0:specials\t[null,null,null,-0.0]
-                d0:null\tnull
-                d1:min\t[-1.7976931348623157E308]
-                d1:max\t[1.7976931348623157E308]
-                d1:empty\t[]
-                d1:specials\t[null,null,null,-0.0]
-                d1:null\tnull
                 ## parquet-native-frames
                 frame 0 rows=5 native
                 d0:min\taux=00000000000000001000000000000000 data=0100000000000000ffffffffffffefff
@@ -7056,14 +6677,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:min\t9d
                 d1:max\t63
                 d1:null\t80
-                ## parquet-native
-                k\tv
-                d0:min\t-9.9
-                d0:max\t9.9
-                d0:null\t
-                d1:min\t-9.9
-                d1:max\t9.9
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=3 native
                 d0:min\t9d
@@ -7107,11 +6720,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 ## frames-o3-none
                 frame 0 rows=2 native
                 min\t9d
-                null\t80
-                ## frames-o3
-                frame 0 rows=3 native
-                min\t9d
-                max\t63
                 null\t80
                 ## alter
                 target\td0:min|d0:max|d0:null|d1:min|d1:max|d1:null
@@ -7280,11 +6888,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\tf1d8
                 null\t0080
-                ## frames-o3
-                frame 0 rows=3 native
-                min\tf1d8
-                max\t0f27
-                null\t0080
                 ## tops
                 k\tv
                 d0:min\t
@@ -7406,14 +7009,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:min\tf1d8
                 d1:max\t0f27
                 d1:null\t0080
-                ## parquet-native
-                k\tv
-                d0:min\t-99.99
-                d0:max\t99.99
-                d0:null\t
-                d1:min\t-99.99
-                d1:max\t99.99
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=3 native
                 d0:min\tf1d8
@@ -7542,11 +7137,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t013665c4
                 null\t00000080
-                ## frames-o3
-                frame 0 rows=3 native
-                min\t013665c4
-                max\tffc99a3b
-                null\t00000080
                 ## parquet
                 k\tv
                 d0:min\t-999999999
@@ -7564,14 +7154,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:min\t013665c4
                 d1:max\tffc99a3b
                 d1:null\t00000080
-                ## parquet-native
-                k\tv
-                d0:min\t-999999999
-                d0:max\t999999999
-                d0:null\t
-                d1:min\t-999999999
-                d1:max\t999999999
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=3 native
                 d0:min\t013665c4
@@ -7674,14 +7256,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:min\t01003f900d79dcff
                 d1:max\tffffc06ff2862300
                 d1:null\t0000000000000080
-                ## parquet-native
-                k\tv
-                d0:min\t-999999999999.9999
-                d0:max\t999999999999.9999
-                d0:null\t
-                d1:min\t-999999999999.9999
-                d1:max\t999999999999.9999
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=3 native
                 d0:min\t01003f900d79dcff
@@ -7709,11 +7283,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 ## frames-o3-none
                 frame 0 rows=2 native
                 min\t01003f900d79dcff
-                null\t0000000000000080
-                ## frames-o3
-                frame 0 rows=3 native
-                min\t01003f900d79dcff
-                max\tffffc06ff2862300
                 null\t0000000000000080
                 ## dedup
                 k\tv
@@ -7954,11 +7523,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t853b79a557b3c4b401000000c0dd75f6
                 null\t00000000000000800000000000000000
-                ## frames-o3
-                frame 0 rows=3 native
-                min\t853b79a557b3c4b401000000c0dd75f6
-                max\t7ac4865aa84c3b4bffffffff3f228a09
-                null\t00000000000000800000000000000000
                 ## parquet
                 k\tv
                 d0:min\t-9999999999999999999999999999.9999999999
@@ -7976,14 +7540,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:min\t853b79a557b3c4b401000000c0dd75f6
                 d1:max\t7ac4865aa84c3b4bffffffff3f228a09
                 d1:null\t00000000000000800000000000000000
-                ## parquet-native
-                k\tv
-                d0:min\t-9999999999999999999999999999.9999999999
-                d0:max\t9999999999999999999999999999.9999999999
-                d0:null\t
-                d1:min\t-9999999999999999999999999999.9999999999
-                d1:max\t9999999999999999999999999999.9999999999
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=3 native
                 d0:min\t853b79a557b3c4b401000000c0dd75f6
@@ -8087,11 +7643,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 ## frames-o3-none
                 frame 0 rows=2 native
                 min\t4aea66ee5833e4e986d69a17544b9bf800f06a8e0e5a8a880100000000000000
-                null\t0000000000000080000000000000000000000000000000000000000000000000
-                ## frames-o3
-                frame 0 rows=3 native
-                min\t4aea66ee5833e4e986d69a17544b9bf800f06a8e0e5a8a880100000000000000
-                max\tb5159911a7cc1b16792965e8abb46407ff0f9571f1a57577ffffffffffffffff
                 null\t0000000000000080000000000000000000000000000000000000000000000000
                 ## tops
                 k\tv
@@ -8230,14 +7781,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:min\t4aea66ee5833e4e986d69a17544b9bf800f06a8e0e5a8a880100000000000000
                 d1:max\tb5159911a7cc1b16792965e8abb46407ff0f9571f1a57577ffffffffffffffff
                 d1:null\t0000000000000080000000000000000000000000000000000000000000000000
-                ## parquet-native
-                k\tv
-                d0:min\t-99999999999999999999999999999999999999999999999999999999.99999999999999999999
-                d0:max\t99999999999999999999999999999999999999999999999999999999.99999999999999999999
-                d0:null\t
-                d1:min\t-99999999999999999999999999999999999999999999999999999999.99999999999999999999
-                d1:max\t99999999999999999999999999999999999999999999999999999999.99999999999999999999
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=3 native
                 d0:min\t4aea66ee5833e4e986d69a17544b9bf800f06a8e0e5a8a880100000000000000
@@ -8274,110 +7817,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 max\t99999999999999999999999999999999999999999999999999999999.99999999999999999999
                 null\t
                 """);
-        rec("INTERVAL", """
-                ## empty_table
-                error: create: [37] non-persisted type: INTERVAL
-                ## empty_table-frames
-                error: create: [37] non-persisted type: INTERVAL
-                ## single_row
-                error: create: [37] non-persisted type: INTERVAL
-                ## single_row-frames
-                error: create: [37] non-persisted type: INTERVAL
-                ## empty_partition
-                error: create: [37] non-persisted type: INTERVAL
-                ## empty_partition-frames
-                error: create: [37] non-persisted type: INTERVAL
-                ## alter
-                target\td0:max|d0:null|d1:max|d1:null
-                *\terror: add column: [34] non-persisted type: INTERVAL error: insert d1:: [25] Invalid column: v
-                ## dedup
-                error: create: [35] non-persisted type: INTERVAL
-                error: [17] table does not exist [table=dedup_t]
-                ## dedup-frames
-                error: [17] table does not exist [table=dedup_t]
-                ## tops
-                error: add column: [34] non-persisted type: INTERVAL
-                ## tops-frames
-                error: add column: [34] non-persisted type: INTERVAL
-                ## tops-o3
-                error: add column: [34] non-persisted type: INTERVAL
-                ## tops-o3-frames
-                error: add column: [34] non-persisted type: INTERVAL
-                ## insert
-                error: create: [35] non-persisted type: INTERVAL
-                ## frames
-                error: create: [35] non-persisted type: INTERVAL
-                ## insert-o3-none
-                error: create: [35] non-persisted type: INTERVAL
-                ## frames-o3-none
-                error: create: [35] non-persisted type: INTERVAL
-                ## frames-o3
-                error: create: [35] non-persisted type: INTERVAL
-                ## parquet
-                error: create: [34] non-persisted type: INTERVAL
-                ## parquet-frames
-                error: create: [34] non-persisted type: INTERVAL
-                ## parquet-native
-                error: create: [34] non-persisted type: INTERVAL
-                ## parquet-native-frames
-                error: create: [34] non-persisted type: INTERVAL
-                ## latest_by_key
-                error: create: [34] non-persisted type: INTERVAL
-                ## parquet_convert
-                error: create: [35] non-persisted type: INTERVAL
-                """);
-        rec("VARCHAR_SLICE", """
-                ## dedup
-                error: create: [35] unsupported column type: VARCHAR_SLICE
-                error: [17] table does not exist [table=dedup_t]
-                ## dedup-frames
-                error: [17] table does not exist [table=dedup_t]
-                ## tops
-                error: add column: [34] unsupported column type: VARCHAR_SLICE
-                ## tops-frames
-                error: add column: [34] unsupported column type: VARCHAR_SLICE
-                ## tops-o3
-                error: add column: [34] unsupported column type: VARCHAR_SLICE
-                ## tops-o3-frames
-                error: add column: [34] unsupported column type: VARCHAR_SLICE
-                ## empty_table
-                error: create: [37] unsupported column type: VARCHAR_SLICE
-                ## empty_table-frames
-                error: create: [37] unsupported column type: VARCHAR_SLICE
-                ## single_row
-                error: create: [37] unsupported column type: VARCHAR_SLICE
-                ## single_row-frames
-                error: create: [37] unsupported column type: VARCHAR_SLICE
-                ## empty_partition
-                error: create: [37] unsupported column type: VARCHAR_SLICE
-                ## empty_partition-frames
-                error: create: [37] unsupported column type: VARCHAR_SLICE
-                ## parquet
-                error: create: [34] unsupported column type: VARCHAR_SLICE
-                ## parquet-frames
-                error: create: [34] unsupported column type: VARCHAR_SLICE
-                ## parquet-native
-                error: create: [34] unsupported column type: VARCHAR_SLICE
-                ## parquet-native-frames
-                error: create: [34] unsupported column type: VARCHAR_SLICE
-                ## alter
-                target\td0:empty|d0:min|d0:max|d0:escape|d0:null|d1:empty|d1:min|d1:max|d1:escape|d1:null
-                *\terror: add column: [34] unsupported column type: VARCHAR_SLICE error: insert d1:: [25] Invalid column: v
-                ## insert
-                error: create: [35] unsupported column type: VARCHAR_SLICE
-                ## frames
-                error: create: [35] unsupported column type: VARCHAR_SLICE
-                ## insert-o3-none
-                error: create: [35] unsupported column type: VARCHAR_SLICE
-                ## frames-o3-none
-                error: create: [35] unsupported column type: VARCHAR_SLICE
-                ## frames-o3
-                error: create: [35] unsupported column type: VARCHAR_SLICE
-                ## latest_by_key
-                error: create: [34] unsupported column type: VARCHAR_SLICE
-                ## parquet_convert
-                error: create: [35] unsupported column type: VARCHAR_SLICE
-                """);
         rec("TIMESTAMP_NS", """
                 ## empty_table
                 k\tv
@@ -8413,12 +7852,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t0100000000000080
                 sentinel\t0000000000000080
-                ## frames-o3
-                frame 0 rows=4 native
-                min\t0100000000000080
-                max\tffffffffffffff7f
-                sentinel\t0000000000000080
-                null\t0000000000000080
                 ## alter
                 target\td0:min|d0:max|d0:sentinel|d0:null|d1:min|d1:max|d1:sentinel|d1:null
                 BOOLEAN\tfalse|false|false|false|true|true|false|false
@@ -8483,16 +7916,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:max\tffffffffffffff7f
                 d1:sentinel\t0000000000000080
                 d1:null\t0000000000000080
-                ## parquet-native
-                k\tv
-                d0:min\t1677-01-01T00:12:43.145224193Z
-                d0:max\t2262-04-11T23:47:16.854775807Z
-                d0:sentinel\t
-                d0:null\t
-                d1:min\t1677-01-01T00:12:43.145224193Z
-                d1:max\t2262-04-11T23:47:16.854775807Z
-                d1:sentinel\t
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=4 native
                 d0:min\t0100000000000080
@@ -8728,11 +8151,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t00
                 null\tff
-                ## frames-o3
-                frame 0 rows=3 native
-                min\t00
-                max\t1f
-                null\tff
                 ## parquet
                 k\tv
                 d0:min\t0
@@ -8750,14 +8168,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:min\t00
                 d1:max\t1f
                 d1:null\tff
-                ## parquet-native
-                k\tv
-                d0:min\t0
-                d0:max\tz
-                d0:null\t
-                d1:min\t0
-                d1:max\tz
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=3 native
                 d0:min\t00
@@ -8859,14 +8269,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:min\t0000
                 d1:max\tff00
                 d1:null\tffff
-                ## parquet-native
-                k\tv
-                d0:min\t00000000
-                d0:max\t11111111
-                d0:null\t
-                d1:min\t00000000
-                d1:max\t11111111
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=3 native
                 d0:min\t0000
@@ -9015,11 +8417,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t0000
                 null\tffff
-                ## frames-o3
-                frame 0 rows=3 native
-                min\t0000
-                max\tff00
-                null\tffff
                 ## latest_by_key
                 k\tv
                 b:max\t11111111
@@ -9148,11 +8545,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t00000000
                 null\tffffffff
-                ## frames-o3
-                frame 0 rows=3 native
-                min\t00000000
-                max\tffffff7f
-                null\tffffffff
                 ## parquet
                 k\tv
                 d0:min\t0000000000000000000000000000000
@@ -9170,14 +8562,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:min\t00000000
                 d1:max\tffffff7f
                 d1:null\tffffffff
-                ## parquet-native
-                k\tv
-                d0:min\t0000000000000000000000000000000
-                d0:max\t1111111111111111111111111111111
-                d0:null\t
-                d1:min\t0000000000000000000000000000000
-                d1:max\t1111111111111111111111111111111
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=3 native
                 d0:min\t00000000
@@ -9340,11 +8724,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t0000000000000000
                 null\tffffffffffffffff
-                ## frames-o3
-                frame 0 rows=3 native
-                min\t0000000000000000
-                max\tffffffffffffff0f
-                null\tffffffffffffffff
                 ## parquet
                 k\tv
                 d0:min\t000000000000
@@ -9362,14 +8741,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:min\t0000000000000000
                 d1:max\tffffffffffffff0f
                 d1:null\tffffffffffffffff
-                ## parquet-native
-                k\tv
-                d0:min\t000000000000
-                d0:max\tzzzzzzzzzzzz
-                d0:null\t
-                d1:min\t000000000000
-                d1:max\tzzzzzzzzzzzz
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=3 native
                 d0:min\t0000000000000000
@@ -9534,11 +8905,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t6179feff
                 null\t00000080
-                ## frames-o3
-                frame 0 rows=3 native
-                min\t6179feff
-                max\t9f860100
-                null\t00000080
                 ## tops
                 k\tv
                 d0:min\t
@@ -9633,14 +8999,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:min\t6179feff
                 d1:max\t9f860100
                 d1:null\t00000080
-                ## parquet-native
-                k\tv
-                d0:min\t-999.99
-                d0:max\t999.99
-                d0:null\t
-                d1:min\t-999.99
-                d1:max\t999.99
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=3 native
                 d0:min\t6179feff
@@ -9756,11 +9114,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 frame 0 rows=2 native
                 min\t01009c584c491ff2
                 null\t0000000000000080
-                ## frames-o3
-                frame 0 rows=3 native
-                min\t01009c584c491ff2
-                max\tffff63a7b3b6e00d
-                null\t0000000000000080
                 ## parquet
                 k\tv
                 d0:min\t-999999999999999.999
@@ -9778,14 +9131,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:min\t01009c584c491ff2
                 d1:max\tffff63a7b3b6e00d
                 d1:null\t0000000000000080
-                ## parquet-native
-                k\tv
-                d0:min\t-999999999999999.999
-                d0:max\t999999999999999.999
-                d0:null\t
-                d1:min\t-999999999999999.999
-                d1:max\t999999999999999.999
-                d1:null\t
                 ## parquet-native-frames
                 frame 0 rows=3 native
                 d0:min\t01009c584c491ff2
@@ -10037,13 +9382,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 min\taux=00000000000000001000000000000000 data=0100000001000000ffffffffffffefff
                 empty\taux=10000000000000000800000000000000 data=0000000000000000
                 null\taux=18000000000000000000000000000000 data=
-                ## frames-o3
-                frame 0 rows=5 native
-                min\taux=00000000000000001000000000000000 data=0100000001000000ffffffffffffefff
-                max\taux=10000000000000001000000000000000 data=0100000001000000ffffffffffffef7f
-                empty\taux=20000000000000000800000000000000 data=0000000000000000
-                specials\taux=28000000000000002800000000000000 data=0100000004000000000000000000f87f000000000000f87f000000000000f87f0000000000000080
-                null\taux=50000000000000000000000000000000 data=
                 ## empty_table
                 k\tv
                 ## empty_table-frames
@@ -10082,18 +9420,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:empty\taux=20000000000000000800000000000000 data=0000000000000000
                 d1:specials\taux=28000000000000002800000000000000 data=0100000004000000000000000000f87f000000000000f87f000000000000f87f0000000000000080
                 d1:null\taux=50000000000000000000000000000000 data=
-                ## parquet-native
-                k\tv
-                d0:min\t[[-1.7976931348623157E308]]
-                d0:max\t[[1.7976931348623157E308]]
-                d0:empty\t[]
-                d0:specials\t[[null,null,null,-0.0]]
-                d0:null\tnull
-                d1:min\t[[-1.7976931348623157E308]]
-                d1:max\t[[1.7976931348623157E308]]
-                d1:empty\t[]
-                d1:specials\t[[null,null,null,-0.0]]
-                d1:null\tnull
                 ## parquet-native-frames
                 frame 0 rows=5 native
                 d0:min\taux=00000000000000001000000000000000 data=0100000001000000ffffffffffffefff
@@ -10125,110 +9451,6 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 empty\t[]
                 specials\t[[null,null,null,-0.0]]
                 null\t
-                """);
-        rec("INTERVAL(us)", """
-                ## empty_table
-                error: create: [37] non-persisted type: INTERVAL
-                ## empty_table-frames
-                error: create: [37] non-persisted type: INTERVAL
-                ## single_row
-                error: create: [37] non-persisted type: INTERVAL
-                ## single_row-frames
-                error: create: [37] non-persisted type: INTERVAL
-                ## empty_partition
-                error: create: [37] non-persisted type: INTERVAL
-                ## empty_partition-frames
-                error: create: [37] non-persisted type: INTERVAL
-                ## parquet
-                error: create: [34] non-persisted type: INTERVAL
-                ## parquet-frames
-                error: create: [34] non-persisted type: INTERVAL
-                ## parquet-native
-                error: create: [34] non-persisted type: INTERVAL
-                ## parquet-native-frames
-                error: create: [34] non-persisted type: INTERVAL
-                ## alter
-                target\td0:max|d0:null|d1:max|d1:null
-                *\terror: add column: [34] non-persisted type: INTERVAL error: insert d1:: [25] Invalid column: v
-                ## tops
-                error: add column: [34] non-persisted type: INTERVAL
-                ## tops-frames
-                error: add column: [34] non-persisted type: INTERVAL
-                ## tops-o3
-                error: add column: [34] non-persisted type: INTERVAL
-                ## tops-o3-frames
-                error: add column: [34] non-persisted type: INTERVAL
-                ## dedup
-                error: create: [35] non-persisted type: INTERVAL
-                error: [17] table does not exist [table=dedup_t]
-                ## dedup-frames
-                error: [17] table does not exist [table=dedup_t]
-                ## insert
-                error: create: [35] non-persisted type: INTERVAL
-                ## frames
-                error: create: [35] non-persisted type: INTERVAL
-                ## insert-o3-none
-                error: create: [35] non-persisted type: INTERVAL
-                ## frames-o3-none
-                error: create: [35] non-persisted type: INTERVAL
-                ## frames-o3
-                error: create: [35] non-persisted type: INTERVAL
-                ## latest_by_key
-                error: create: [34] non-persisted type: INTERVAL
-                ## parquet_convert
-                error: create: [35] non-persisted type: INTERVAL
-                """);
-        rec("INTERVAL(ns)", """
-                ## empty_table
-                error: create: [37] non-persisted type: INTERVAL
-                ## empty_table-frames
-                error: create: [37] non-persisted type: INTERVAL
-                ## single_row
-                error: create: [37] non-persisted type: INTERVAL
-                ## single_row-frames
-                error: create: [37] non-persisted type: INTERVAL
-                ## empty_partition
-                error: create: [37] non-persisted type: INTERVAL
-                ## empty_partition-frames
-                error: create: [37] non-persisted type: INTERVAL
-                ## insert
-                error: create: [35] non-persisted type: INTERVAL
-                ## frames
-                error: create: [35] non-persisted type: INTERVAL
-                ## insert-o3-none
-                error: create: [35] non-persisted type: INTERVAL
-                ## frames-o3-none
-                error: create: [35] non-persisted type: INTERVAL
-                ## frames-o3
-                error: create: [35] non-persisted type: INTERVAL
-                ## dedup
-                error: create: [35] non-persisted type: INTERVAL
-                error: [17] table does not exist [table=dedup_t]
-                ## dedup-frames
-                error: [17] table does not exist [table=dedup_t]
-                ## parquet
-                error: create: [34] non-persisted type: INTERVAL
-                ## parquet-frames
-                error: create: [34] non-persisted type: INTERVAL
-                ## parquet-native
-                error: create: [34] non-persisted type: INTERVAL
-                ## parquet-native-frames
-                error: create: [34] non-persisted type: INTERVAL
-                ## tops
-                error: add column: [34] non-persisted type: INTERVAL
-                ## tops-frames
-                error: add column: [34] non-persisted type: INTERVAL
-                ## tops-o3
-                error: add column: [34] non-persisted type: INTERVAL
-                ## tops-o3-frames
-                error: add column: [34] non-persisted type: INTERVAL
-                ## alter
-                target\td0:max|d0:null|d1:max|d1:null
-                *\terror: add column: [34] non-persisted type: INTERVAL error: insert d1:: [25] Invalid column: v
-                ## latest_by_key
-                error: create: [34] non-persisted type: INTERVAL
-                ## parquet_convert
-                error: create: [35] non-persisted type: INTERVAL
                 """);
     }
     // recordings: end

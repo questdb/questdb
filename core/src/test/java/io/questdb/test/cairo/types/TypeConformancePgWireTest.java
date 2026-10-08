@@ -922,18 +922,6 @@ public class TypeConformancePgWireTest extends BasePGTest {
                 C\t430000000d53454c454354203300
                 Z\t5a0000000549
                 """);
-        rec("INTERVAL", """
-                ## pg.binary
-                error: create: [29] non-persisted type: INTERVAL
-                ## pg.text
-                error: create: [29] non-persisted type: INTERVAL
-                """);
-        rec("VARCHAR_SLICE", """
-                ## pg.text
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## pg.binary
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                """);
         rec("TIMESTAMP_NS", """
                 ## pg.text
                 T\t540000002e00026b0000000000000100000413ffffffffffff000076000000000000020000045a0008ffffffff0000
@@ -1083,18 +1071,6 @@ public class TypeConformancePgWireTest extends BasePGTest {
                 null\t44000000120002000000046e756c6cffffffff
                 C\t430000000d53454c454354203500
                 Z\t5a0000000549
-                """);
-        rec("INTERVAL(us)", """
-                ## pg.binary
-                error: create: [29] non-persisted type: INTERVAL
-                ## pg.text
-                error: create: [29] non-persisted type: INTERVAL
-                """);
-        rec("INTERVAL(ns)", """
-                ## pg.binary
-                error: create: [29] non-persisted type: INTERVAL
-                ## pg.text
-                error: create: [29] non-persisted type: INTERVAL
                 """);
     }
     // recordings: end

@@ -3882,46 +3882,6 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                 max\t99999999999999999999999999999999999999999999999999999999.99999999999999999999
                 null\t
                 """);
-        rec("INTERVAL", """
-                ## ilp-tcp
-                error: [31] non-persisted type: INTERVAL
-                ## qwp-egress
-                error: [31] non-persisted type: INTERVAL
-                ## parquet
-                error: [31] non-persisted type: INTERVAL
-                ## qwp-nonwal
-                error: [31] non-persisted type: INTERVAL
-                ## qwp
-                error: [31] non-persisted type: INTERVAL
-                ## ilp-udp
-                error: [31] non-persisted type: INTERVAL
-                ## csv
-                error: [31] non-persisted type: INTERVAL
-                ## ilp-http-nonwal
-                error: [31] non-persisted type: INTERVAL
-                ## ilp-http
-                error: [31] non-persisted type: INTERVAL
-                """);
-        rec("VARCHAR_SLICE", """
-                ## qwp-nonwal
-                error: [31] unsupported column type: VARCHAR_SLICE
-                ## qwp
-                error: [31] unsupported column type: VARCHAR_SLICE
-                ## csv
-                error: [31] unsupported column type: VARCHAR_SLICE
-                ## qwp-egress
-                error: [31] unsupported column type: VARCHAR_SLICE
-                ## ilp-tcp
-                error: [31] unsupported column type: VARCHAR_SLICE
-                ## ilp-http-nonwal
-                error: [31] unsupported column type: VARCHAR_SLICE
-                ## ilp-http
-                error: [31] unsupported column type: VARCHAR_SLICE
-                ## ilp-udp
-                error: [31] unsupported column type: VARCHAR_SLICE
-                ## parquet
-                error: [31] unsupported column type: VARCHAR_SLICE
-                """);
         rec("TIMESTAMP_NS", """
                 ## ilp-udp
                 min\ttimestamp -9223372036854775807 Nanos
@@ -4567,46 +4527,6 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                 /imp status 200
                 no adapter for type [id=18971, name=DOUBLE[][]]
                 k\tv
-                """);
-        rec("INTERVAL(us)", """
-                ## qwp-egress
-                error: [31] non-persisted type: INTERVAL
-                ## csv
-                error: [31] non-persisted type: INTERVAL
-                ## qwp-nonwal
-                error: [31] non-persisted type: INTERVAL
-                ## qwp
-                error: [31] non-persisted type: INTERVAL
-                ## ilp-udp
-                error: [31] non-persisted type: INTERVAL
-                ## ilp-http-nonwal
-                error: [31] non-persisted type: INTERVAL
-                ## ilp-http
-                error: [31] non-persisted type: INTERVAL
-                ## ilp-tcp
-                error: [31] non-persisted type: INTERVAL
-                ## parquet
-                error: [31] non-persisted type: INTERVAL
-                """);
-        rec("INTERVAL(ns)", """
-                ## ilp-tcp
-                error: [31] non-persisted type: INTERVAL
-                ## qwp-nonwal
-                error: [31] non-persisted type: INTERVAL
-                ## qwp
-                error: [31] non-persisted type: INTERVAL
-                ## csv
-                error: [31] non-persisted type: INTERVAL
-                ## qwp-egress
-                error: [31] non-persisted type: INTERVAL
-                ## ilp-udp
-                error: [31] non-persisted type: INTERVAL
-                ## ilp-http-nonwal
-                error: [31] non-persisted type: INTERVAL
-                ## ilp-http
-                error: [31] non-persisted type: INTERVAL
-                ## parquet
-                error: [31] non-persisted type: INTERVAL
                 """);
     }
     // recordings: end

@@ -3026,9 +3026,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: BOOLEAN
-                ## eq_null_double
-                props: random_access=true size=known timestamp=none
-                k\tv
                 ## bind_value
                 setBoolean\ttrue
                 setByte\terror: [0] bind variable at 0 is defined as BOOLEAN and cannot accept BYTE
@@ -3294,9 +3291,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: BYTE
-                ## eq_null_double
-                props: random_access=true size=known timestamp=none
-                k\tv
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as BYTE and cannot accept BOOLEAN
                 setByte\t1
@@ -3562,9 +3556,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: SHORT
-                ## eq_null_double
-                props: random_access=true size=known timestamp=none
-                k\tv
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as SHORT and cannot accept BOOLEAN
                 setByte\t1
@@ -3810,11 +3801,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 other_null
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: CHAR
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                min\t
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as CHAR and cannot accept BOOLEAN
                 setByte\t1
@@ -4080,11 +4066,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 k\tv
                 min\t-2147483647
                 max\t2147483647
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                sentinel\tnull
-                null\tnull
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as INT and cannot accept BOOLEAN
                 setByte\t1
@@ -4352,11 +4333,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 ## between_timestamp
                 props: random_access=true size=unknown timestamp=none
                 k\tv
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                sentinel\tnull
-                null\tnull
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as LONG and cannot accept BOOLEAN
                 setByte\t1
@@ -4611,11 +4587,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 k\tv
                 min\t-292275055-05-16T16:47:04.193Z
                 max\t292278994-08-17T07:12:55.807Z
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                sentinel\t
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as DATE and cannot accept BOOLEAN
                 setByte\t1970-01-01T00:00:00.001Z
@@ -4864,11 +4835,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 ## between_timestamp
                 props: random_access=true size=unknown timestamp=none
                 k\tv
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                sentinel\t
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as TIMESTAMP and cannot accept BOOLEAN
                 setByte\t1970-01-01T00:00:00.000001Z
@@ -5207,14 +5173,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: FLOAT
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                nan\tnull
-                literal_inf\tnull
-                null\tnull
-                inf\tnull
-                ninf\tnull
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as FLOAT and cannot accept BOOLEAN
                 setByte\t1.0
@@ -5549,14 +5507,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: DOUBLE
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                nan\tnull
-                literal_inf\tnull
-                null\tnull
-                inf\tnull
-                ninf\tnull
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as DOUBLE and cannot accept BOOLEAN
                 setByte\t1.0
@@ -5832,10 +5782,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max
                 ## between_timestamp
                 error: inconvertible value: `` [STRING -> TIMESTAMP_NS]
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                null\t
                 ## bind_value
                 setBoolean\ttrue
                 setByte\t1
@@ -6118,10 +6064,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max
                 ## between_timestamp
                 error: inconvertible value: `` [SYMBOL -> TIMESTAMP_NS]
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                null\t
                 ## bind_value
                 setBoolean\ttrue
                 setByte\t1
@@ -6370,11 +6312,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 bind error: inconvertible value: `0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff` [STRING -> LONG256]
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: LONG256
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                sentinel\t
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as LONG256 and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as LONG256 and cannot accept BYTE
@@ -6593,10 +6530,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 bind error: [0] bind variable at 0 is defined as GEOHASH(7b) and cannot accept STRING
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: GEOHASH(7b)
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as GEOHASH(7b) and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as GEOHASH(7b) and cannot accept BYTE
@@ -6821,10 +6754,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 bind error: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept STRING
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: GEOHASH(3c)
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept BYTE
@@ -7049,10 +6978,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 bind error: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept STRING
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: GEOHASH(6c)
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept BYTE
@@ -7277,10 +7202,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 bind error: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept STRING
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: GEOHASH(8c)
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept BYTE
@@ -7459,10 +7380,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 bind error: [0] bind variable at 0 is defined as BINARY and cannot accept STRING
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: BINARY
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as BINARY and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as BINARY and cannot accept BYTE
@@ -7709,11 +7626,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: UUID
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                sentinel\t
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as UUID and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as UUID and cannot accept BYTE
@@ -7918,11 +7830,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 bind error: [0] bind variable cannot be used [contextType=24, index=0]
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: LONG128
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                sentinel\t
-                null\t
                 ## bind_value
                 setBoolean\tdefine error: [0] bind variable cannot be used [contextType=24, index=0]
                 setByte\tdefine error: [0] bind variable cannot be used [contextType=24, index=0]
@@ -8174,11 +8081,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: IPv4
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                sentinel\t
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as IPv4 and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as IPv4 and cannot accept BYTE
@@ -8454,10 +8356,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max
                 ## between_timestamp
                 error: inconvertible value: `` [VARCHAR -> TIMESTAMP_NS]
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                null\t
                 ## bind_value
                 setBoolean\ttrue
                 setByte\t1
@@ -8689,8 +8587,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 k
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: DOUBLE[]
-                ## eq_null_double
-                error: [27] there is no matching operator `=` with the argument types: DOUBLE[] = NULL
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as DOUBLE[] and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as DOUBLE[] and cannot accept BYTE
@@ -8916,10 +8812,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: DECIMAL(2,1)
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as DECIMAL(2,1) and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as DECIMAL(2,1) and cannot accept BYTE
@@ -9145,10 +9037,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: DECIMAL(4,2)
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as DECIMAL(4,2) and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as DECIMAL(4,2) and cannot accept BYTE
@@ -9380,10 +9268,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: DECIMAL(9,0)
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as DECIMAL(9,0) and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as DECIMAL(9,0) and cannot accept BYTE
@@ -9609,10 +9493,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: DECIMAL(16,4)
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as DECIMAL(16,4) and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as DECIMAL(16,4) and cannot accept BYTE
@@ -9838,10 +9718,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: DECIMAL(38,10)
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as DECIMAL(38,10) and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as DECIMAL(38,10) and cannot accept BYTE
@@ -10067,10 +9943,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: DECIMAL(76,20)
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as DECIMAL(76,20) and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as DECIMAL(76,20) and cannot accept BYTE
@@ -10093,74 +9965,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         rec("INTERVAL", """
                 ## filter_eq
                 error: create: [29] non-persisted type: INTERVAL
-                ## filter_ne
-                error: create: [29] non-persisted type: INTERVAL
-                ## filter_null
-                error: create: [29] non-persisted type: INTERVAL
-                ## filter_not_null
-                error: create: [29] non-persisted type: INTERVAL
-                ## filter_lt
-                error: create: [29] non-persisted type: INTERVAL
-                ## filter_ge
-                error: create: [29] non-persisted type: INTERVAL
-                ## order_asc
-                error: create: [29] non-persisted type: INTERVAL
-                ## order_desc
-                error: create: [29] non-persisted type: INTERVAL
-                ## group_by
-                error: create: [29] non-persisted type: INTERVAL
-                ## join_inner
-                error: create: [29] non-persisted type: INTERVAL
-                ## join_left
-                error: create: [29] non-persisted type: INTERVAL
-                ## join_left_null
-                error: create: [29] non-persisted type: INTERVAL
-                ## union_all
-                error: create: [29] non-persisted type: INTERVAL
-                ## union_null
-                error: create: [29] non-persisted type: INTERVAL
-                ## case_no_else
-                error: create: [29] non-persisted type: INTERVAL
-                ## case_else
-                error: create: [29] non-persisted type: INTERVAL
-                ## lag
-                error: create: [29] non-persisted type: INTERVAL
-                ## sample_by
-                error: create: [29] non-persisted type: INTERVAL
-                ## first_last
-                error: create: [29] non-persisted type: INTERVAL
-                ## first_not_null
-                error: create: [29] non-persisted type: INTERVAL
-                ## fill_prev
-                error: create: [29] non-persisted type: INTERVAL
-                ## latest_on
-                error: create: [29] non-persisted type: INTERVAL
-                ## cast
-                error: create: [29] non-persisted type: INTERVAL
-                ## fill_null
-                error: create: [29] non-persisted type: INTERVAL
-                ## fill_value
-                error: create: [29] non-persisted type: INTERVAL
-                ## fill_linear
-                error: create: [29] non-persisted type: INTERVAL
-                ## subsample_stride
-                error: create: [29] non-persisted type: INTERVAL
-                ## subsample_target
-                error: create: [29] non-persisted type: INTERVAL
-                ## memoized
-                error: create: [29] non-persisted type: INTERVAL
-                ## where_bound_const
-                error: create: [29] non-persisted type: INTERVAL
-                ## where_bound_bind
-                error: create: [29] non-persisted type: INTERVAL
-                ## where_key
-                error: create: [29] non-persisted type: INTERVAL
-                ## copy_bind
-                error: create: [29] non-persisted type: INTERVAL
-                ## between_timestamp
-                error: create: [29] non-persisted type: INTERVAL
-                ## eq_null_double
-                error: create: [29] non-persisted type: INTERVAL
                 ## bind_value
                 setBoolean\tdefine error: [0] bind variable cannot be used [contextType=39, index=0]
                 setByte\tdefine error: [0] bind variable cannot be used [contextType=39, index=0]
@@ -10177,79 +9981,9 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 setLong256\tdefine error: [0] bind variable cannot be used [contextType=39, index=0]
                 setUuid\tdefine error: [0] bind variable cannot be used [contextType=39, index=0]
                 setArray\tdefine error: [0] bind variable cannot be used [contextType=39, index=0]
-                ## window_anchor
-                error: create: [41] non-persisted type: INTERVAL
                 """);
         rec("VARCHAR_SLICE", """
                 ## filter_eq
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## filter_ne
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## filter_null
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## filter_not_null
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## filter_lt
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## filter_ge
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## order_asc
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## order_desc
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## group_by
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## join_inner
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## join_left
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## join_left_null
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## union_all
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## union_null
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## case_no_else
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## case_else
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## lag
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## sample_by
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## first_last
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## first_not_null
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## fill_prev
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## latest_on
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## cast
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## fill_null
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## fill_value
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## fill_linear
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## subsample_stride
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## subsample_target
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## memoized
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## where_bound_const
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## where_bound_bind
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## where_key
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## copy_bind
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## between_timestamp
-                error: create: [29] unsupported column type: VARCHAR_SLICE
-                ## eq_null_double
                 error: create: [29] unsupported column type: VARCHAR_SLICE
                 ## bind_value
                 setBoolean\ttrue
@@ -10267,8 +10001,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 setLong256\t0x01
                 setUuid\t00000000-0000-0000-0000-000000000001
                 setArray\terror: [0] bind variable at 0 is defined as VARCHAR and cannot accept ARRAY
-                ## window_anchor
-                error: create: [41] unsupported column type: VARCHAR_SLICE
                 """);
         rec("TIMESTAMP_NS", """
                 ## filter_eq
@@ -10508,11 +10240,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 ## between_timestamp
                 props: random_access=true size=unknown timestamp=none
                 k\tv
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                sentinel\t
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as TIMESTAMP_NS and cannot accept BOOLEAN
                 setByte\t1970-01-01T00:00:00.000000001Z
@@ -10735,10 +10462,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 bind error: [0] bind variable at 0 is defined as GEOHASH(1c) and cannot accept STRING
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: GEOHASH(1c)
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as GEOHASH(1c) and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as GEOHASH(1c) and cannot accept BYTE
@@ -10957,10 +10680,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 bind error: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept STRING
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: GEOHASH(8b)
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept BYTE
@@ -11179,10 +10898,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 bind error: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept STRING
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: GEOHASH(31b)
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept BYTE
@@ -11407,10 +11122,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 bind error: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept STRING
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: GEOHASH(12c)
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept BYTE
@@ -11636,10 +11347,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: DECIMAL(5,2)
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as DECIMAL(5,2) and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as DECIMAL(5,2) and cannot accept BYTE
@@ -11865,10 +11572,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: DECIMAL(18,3)
-                ## eq_null_double
-                props: random_access=true size=unknown timestamp=none
-                k\tv
-                null\t
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as DECIMAL(18,3) and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as DECIMAL(18,3) and cannot accept BYTE
@@ -12100,8 +11803,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 k
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: DOUBLE[][]
-                ## eq_null_double
-                error: [27] there is no matching operator `=` with the argument types: DOUBLE[][] = NULL
                 ## bind_value
                 setBoolean\terror: [0] bind variable at 0 is defined as DOUBLE[][] and cannot accept BOOLEAN
                 setByte\terror: [0] bind variable at 0 is defined as DOUBLE[][] and cannot accept BYTE
@@ -12124,74 +11825,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         rec("INTERVAL(us)", """
                 ## filter_eq
                 error: create: [29] non-persisted type: INTERVAL
-                ## filter_ne
-                error: create: [29] non-persisted type: INTERVAL
-                ## filter_null
-                error: create: [29] non-persisted type: INTERVAL
-                ## filter_not_null
-                error: create: [29] non-persisted type: INTERVAL
-                ## filter_lt
-                error: create: [29] non-persisted type: INTERVAL
-                ## filter_ge
-                error: create: [29] non-persisted type: INTERVAL
-                ## order_asc
-                error: create: [29] non-persisted type: INTERVAL
-                ## order_desc
-                error: create: [29] non-persisted type: INTERVAL
-                ## group_by
-                error: create: [29] non-persisted type: INTERVAL
-                ## join_inner
-                error: create: [29] non-persisted type: INTERVAL
-                ## join_left
-                error: create: [29] non-persisted type: INTERVAL
-                ## join_left_null
-                error: create: [29] non-persisted type: INTERVAL
-                ## union_all
-                error: create: [29] non-persisted type: INTERVAL
-                ## union_null
-                error: create: [29] non-persisted type: INTERVAL
-                ## case_no_else
-                error: create: [29] non-persisted type: INTERVAL
-                ## case_else
-                error: create: [29] non-persisted type: INTERVAL
-                ## lag
-                error: create: [29] non-persisted type: INTERVAL
-                ## sample_by
-                error: create: [29] non-persisted type: INTERVAL
-                ## first_last
-                error: create: [29] non-persisted type: INTERVAL
-                ## first_not_null
-                error: create: [29] non-persisted type: INTERVAL
-                ## fill_prev
-                error: create: [29] non-persisted type: INTERVAL
-                ## latest_on
-                error: create: [29] non-persisted type: INTERVAL
-                ## cast
-                error: create: [29] non-persisted type: INTERVAL
-                ## fill_null
-                error: create: [29] non-persisted type: INTERVAL
-                ## fill_value
-                error: create: [29] non-persisted type: INTERVAL
-                ## fill_linear
-                error: create: [29] non-persisted type: INTERVAL
-                ## subsample_stride
-                error: create: [29] non-persisted type: INTERVAL
-                ## subsample_target
-                error: create: [29] non-persisted type: INTERVAL
-                ## memoized
-                error: create: [29] non-persisted type: INTERVAL
-                ## where_bound_const
-                error: create: [29] non-persisted type: INTERVAL
-                ## where_bound_bind
-                error: create: [29] non-persisted type: INTERVAL
-                ## where_key
-                error: create: [29] non-persisted type: INTERVAL
-                ## copy_bind
-                error: create: [29] non-persisted type: INTERVAL
-                ## between_timestamp
-                error: create: [29] non-persisted type: INTERVAL
-                ## eq_null_double
-                error: create: [29] non-persisted type: INTERVAL
                 ## bind_value
                 setBoolean\tdefine error: [0] bind variable cannot be used [contextType=131111, index=0]
                 setByte\tdefine error: [0] bind variable cannot be used [contextType=131111, index=0]
@@ -12208,79 +11841,9 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 setLong256\tdefine error: [0] bind variable cannot be used [contextType=131111, index=0]
                 setUuid\tdefine error: [0] bind variable cannot be used [contextType=131111, index=0]
                 setArray\tdefine error: [0] bind variable cannot be used [contextType=131111, index=0]
-                ## window_anchor
-                error: create: [41] non-persisted type: INTERVAL
                 """);
         rec("INTERVAL(ns)", """
-                ## cast
-                error: create: [29] non-persisted type: INTERVAL
                 ## filter_eq
-                error: create: [29] non-persisted type: INTERVAL
-                ## filter_ne
-                error: create: [29] non-persisted type: INTERVAL
-                ## filter_null
-                error: create: [29] non-persisted type: INTERVAL
-                ## filter_not_null
-                error: create: [29] non-persisted type: INTERVAL
-                ## filter_lt
-                error: create: [29] non-persisted type: INTERVAL
-                ## filter_ge
-                error: create: [29] non-persisted type: INTERVAL
-                ## order_asc
-                error: create: [29] non-persisted type: INTERVAL
-                ## order_desc
-                error: create: [29] non-persisted type: INTERVAL
-                ## group_by
-                error: create: [29] non-persisted type: INTERVAL
-                ## join_inner
-                error: create: [29] non-persisted type: INTERVAL
-                ## join_left
-                error: create: [29] non-persisted type: INTERVAL
-                ## join_left_null
-                error: create: [29] non-persisted type: INTERVAL
-                ## union_all
-                error: create: [29] non-persisted type: INTERVAL
-                ## union_null
-                error: create: [29] non-persisted type: INTERVAL
-                ## case_no_else
-                error: create: [29] non-persisted type: INTERVAL
-                ## case_else
-                error: create: [29] non-persisted type: INTERVAL
-                ## lag
-                error: create: [29] non-persisted type: INTERVAL
-                ## sample_by
-                error: create: [29] non-persisted type: INTERVAL
-                ## first_last
-                error: create: [29] non-persisted type: INTERVAL
-                ## first_not_null
-                error: create: [29] non-persisted type: INTERVAL
-                ## fill_prev
-                error: create: [29] non-persisted type: INTERVAL
-                ## latest_on
-                error: create: [29] non-persisted type: INTERVAL
-                ## fill_null
-                error: create: [29] non-persisted type: INTERVAL
-                ## fill_value
-                error: create: [29] non-persisted type: INTERVAL
-                ## fill_linear
-                error: create: [29] non-persisted type: INTERVAL
-                ## subsample_stride
-                error: create: [29] non-persisted type: INTERVAL
-                ## subsample_target
-                error: create: [29] non-persisted type: INTERVAL
-                ## memoized
-                error: create: [29] non-persisted type: INTERVAL
-                ## where_bound_const
-                error: create: [29] non-persisted type: INTERVAL
-                ## where_bound_bind
-                error: create: [29] non-persisted type: INTERVAL
-                ## where_key
-                error: create: [29] non-persisted type: INTERVAL
-                ## copy_bind
-                error: create: [29] non-persisted type: INTERVAL
-                ## between_timestamp
-                error: create: [29] non-persisted type: INTERVAL
-                ## eq_null_double
                 error: create: [29] non-persisted type: INTERVAL
                 ## bind_value
                 setBoolean\tdefine error: [0] bind variable cannot be used [contextType=262183, index=0]
@@ -12298,8 +11861,6 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 setLong256\tdefine error: [0] bind variable cannot be used [contextType=262183, index=0]
                 setUuid\tdefine error: [0] bind variable cannot be used [contextType=262183, index=0]
                 setArray\tdefine error: [0] bind variable cannot be used [contextType=262183, index=0]
-                ## window_anchor
-                error: create: [41] non-persisted type: INTERVAL
                 """);
     }
     // recordings: end

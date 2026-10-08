@@ -94,6 +94,8 @@ public final class TypeConformanceInvariants {
     private static final String FAMILY_ARM_REFUSAL = "no family arm for <type> at ";
     private static final String KEPT_REFUSAL_SEPARATOR = ": ";
     private static final String MIX_PREFIX = "mix|";
+    // the paths a type no table can hold runs: the CREATE refusal once, and its bind values
+    private static final Set<String> NOT_PERSISTED_PATHS = Set.of("sql.filter_eq", "sql.bind_value");
     private static final String TYPE_PLACEHOLDER = "<type>";
     // the guarded sites a type can declare it is refused at, by label, with each one's refusal
     private static Map<String, String> declarableSites;
@@ -404,7 +406,9 @@ public final class TypeConformanceInvariants {
 
     public static boolean isEnabled(TypeConformanceTypes.Entry type, String path, String mode) {
         if (!type.isLater()) {
-            return true;
+            // a type no table can hold (INTERVAL, VARCHAR_SLICE) fails every path at CREATE TABLE:
+            // it runs one such path, for the refusal, and its bind values
+            return ColumnType.isPersisted(ColumnType.tagOf(type.columnType)) || NOT_PERSISTED_PATHS.contains(path);
         }
         if (type.laterPaths == null) {
             Assert.fail("type=" + type.label + " path=" + path + " mode=" + mode + ": registered later, with no recording, but "
