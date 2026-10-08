@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.join.AsyncAsOfJoinAtom;
 import io.questdb.griffin.engine.join.AsyncAsOfJoinRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -61,6 +62,12 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
             " WHERE t.sym = 'f2'",
             " WHERE t.sym = 'r4'",
     };
+    // the parallel and the serial way of keying the join, and the automatic choice between them
+    private static final int[] KEYS_MODES = {
+            AsyncAsOfJoinAtom.KEYS_PARALLEL,
+            AsyncAsOfJoinAtom.KEYS_SERIAL,
+            AsyncAsOfJoinAtom.KEYS_AUTO
+    };
     private static final int PAGE_FRAME_MAX_ROWS = 100;
     private static final String[] SERIAL_HINTS = {"asof_linear", "asof_dense"};
     private static final int[] WALK_MODES = {
@@ -82,12 +89,14 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
         super.setUp();
         AsyncAsOfJoinRecordCursorFactory.WALK_MODE = AsyncAsOfJoinRecordCursorFactory.WALK_AUTO;
+        AsyncAsOfJoinAtom.KEYS_MODE = AsyncAsOfJoinAtom.KEYS_AUTO;
     }
 
     @Override
     @After
     public void tearDown() throws Exception {
         AsyncAsOfJoinRecordCursorFactory.WALK_MODE = AsyncAsOfJoinRecordCursorFactory.WALK_AUTO;
+        AsyncAsOfJoinAtom.KEYS_MODE = AsyncAsOfJoinAtom.KEYS_AUTO;
         super.tearDown();
     }
 
@@ -345,10 +354,12 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMemoryLimitFallsBackToLeanJoin() throws Exception {
-        // 300k master symbols that only grow the master's symbol table: the shared key arrays need
-        // 1.2 MB. Under limits that refuse them the join runs every frame without per-key state, and
-        // must return what it returns without a limit, wherever the serial join completes too.
+    public void testMemoryLimitFallsBackToSerialJoin() throws Exception {
+        // 300k master symbols that only grow the master's symbol table: the parallel way's key arrays
+        // need 1.2 MB. Under limits that refuse them the query joins serially, holding only the keys
+        // it meets, and must return what it returns without a limit, wherever the serial ASOF JOIN
+        // completes too.
+        AsyncAsOfJoinAtom.KEYS_MODE = AsyncAsOfJoinAtom.KEYS_PARALLEL;
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4);
             TestUtils.execute(
@@ -368,15 +379,20 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
                         final StringSink expected = new StringSink();
                         TestUtils.printSql(engine, ctx, serial, expected);
                         assertNotVacuous(engine, ctx, parallel, "bid");
+                        // no limit: the parallel way
+                        try (RecordCursorFactory factory = engine.select(parallel, ctx)) {
+                            drain(factory, ctx);
+                            Assert.assertEquals(0, findAtom(factory).getStatFramesSerial());
+                        }
                         final StringSink actual = new StringSink();
-                        boolean leanSeen = false;
+                        boolean serialSeen = false;
                         for (long limit : new long[]{512L << 10, 1L << 20, 2L << 20, 64L << 20}) {
                             setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
                             try {
                                 try {
                                     TestUtils.printSql(engine, ctx, serial, actual);
                                 } catch (Throwable th) {
-                                    // the serial join does not complete under this limit either
+                                    // the serial ASOF JOIN does not complete under this limit either
                                     LOG.info().$("serial join fails under limit [limit=").$(limit).$(", error=").$(th.getMessage()).I$();
                                     continue;
                                 }
@@ -384,7 +400,7 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
                                     try (RecordCursor cursor = factory.getCursor(ctx)) {
                                         CursorPrinter.println(cursor, factory.getMetadata(), actual);
                                     }
-                                    leanSeen |= findAtom(factory).getStatFramesLean() > 0;
+                                    serialSeen |= findAtom(factory).getStatFramesSerial() > 0;
                                 } catch (Throwable th) {
                                     throw new AssertionError("parallel join failed under limit=" + limit, th);
                                 }
@@ -393,7 +409,114 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
                                 setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
                             }
                         }
-                        Assert.assertTrue("no limit made the join fall back to the lean mode", leanSeen);
+                        Assert.assertTrue("no limit made the join fall back to the serial way", serialSeen);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testMemoryLimitScale() throws Exception {
+        // Under a limit that refuses the parallel way's key arrays, the join must cost about what the
+        // serial ASOF JOIN costs: not a backward scan per master row. A third of the master's keys are
+        // never quoted, a third only on day 1; the slave has 1M rows before the master's day.
+        AsyncAsOfJoinAtom.KEYS_MODE = AsyncAsOfJoinAtom.KEYS_PARALLEL;
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 10_000);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 10_000);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, ctx) -> {
+                        engine.execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        engine.execute("INSERT INTO quotes SELECT '2024-01-01'::timestamp + x * 400_000L, 'f' || (x % 10), x FROM long_sequence(1000000)", ctx);
+                        engine.execute("INSERT INTO quotes SELECT '2024-01-01'::timestamp + x * 60_000_000L + 3, 'r' || (x % 20), x FROM long_sequence(100)", ctx);
+                        engine.execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        engine.execute("INSERT INTO trades SELECT '2023-12-31'::timestamp + x, 'm' || x, 0.0 FROM long_sequence(300000)", ctx);
+                        engine.execute("INSERT INTO trades SELECT '2024-01-05'::timestamp + x * 10_000_000L, CASE WHEN x % 3 = 0 THEN 'f' || (x % 10) "
+                                + "WHEN x % 3 = 1 THEN 'zz' || (x % 7) ELSE 'r' || (x % 20) END, x FROM long_sequence(3000)", ctx);
+                        final String body = " t.ts, t.sym, q.bid, q.ts qts FROM trades t ASOF JOIN quotes q ON (sym) WHERE t.ts >= '2024-01-05'";
+                        final StringSink expected = new StringSink();
+                        long serialNanos = Long.MAX_VALUE;
+                        for (int i = 0; i < 3; i++) {
+                            final long t0 = System.nanoTime();
+                            expected.clear();
+                            TestUtils.printSql(engine, ctx, "SELECT /*+ asof_linear(t q) */" + body, expected);
+                            serialNanos = Math.min(serialNanos, System.nanoTime() - t0);
+                        }
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 512L << 10);
+                        try {
+                            final StringSink actual = new StringSink();
+                            long parallelNanos = Long.MAX_VALUE;
+                            try (RecordCursorFactory factory = engine.select("SELECT /*+ asof_parallel(t q) */" + body, ctx)) {
+                                for (int i = 0; i < 3; i++) {
+                                    final long t0 = System.nanoTime();
+                                    actual.clear();
+                                    try (RecordCursor cursor = factory.getCursor(ctx)) {
+                                        CursorPrinter.println(cursor, factory.getMetadata(), actual);
+                                    }
+                                    parallelNanos = Math.min(parallelNanos, System.nanoTime() - t0);
+                                    Assert.assertTrue("the limit must refuse the parallel way", findAtom(factory).getStatFramesSerial() > 0);
+                                }
+                            }
+                            TestUtils.assertEquals(expected, actual);
+                            // a backward scan per master row took seconds here; the bound is loose
+                            Assert.assertTrue(
+                                    "serial way ms=" + parallelNanos / 1_000_000 + ", asof_linear ms=" + serialNanos / 1_000_000,
+                                    parallelNanos < 20 * serialNanos + 500_000_000L
+                            );
+                        } finally {
+                            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testOutputChargedToQueryTracker() throws Exception {
+        // a frame's output (a slave row id and 20 gathered columns per master row) sits in a pooled
+        // reduce task's row list: the query's tracker must be charged for it, and settled at close
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 100_000);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1L << 30);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, ctx) -> {
+                        final StringBuilder columns = new StringBuilder();
+                        final StringBuilder values = new StringBuilder();
+                        for (int i = 0; i < 18; i++) {
+                            columns.append(", l").append(i).append(" LONG");
+                            values.append(", x + ").append(i);
+                        }
+                        engine.execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL" + columns + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        engine.execute("INSERT INTO quotes SELECT '2024-01-01'::timestamp + x * 100_000L, 'f' || (x % 10)" + values + " FROM long_sequence(200000)", ctx);
+                        engine.execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        engine.execute("INSERT INTO trades SELECT '2024-01-01'::timestamp + x * 200_000L + 1, 'f' || (x % 10), x FROM long_sequence(50000)", ctx);
+                        try (RecordCursorFactory factory = engine.select("SELECT /*+ asof_parallel(t q) */ * FROM trades t ASOF JOIN quotes q ON (sym)", ctx)) {
+                            findAtom(factory);
+                            final MemoryTracker tracker;
+                            try (RecordCursor cursor = factory.getCursor(ctx)) {
+                                tracker = ctx.getMemoryTracker();
+                                Assert.assertNotNull(tracker);
+                                Assert.assertTrue(cursor.hasNext());
+                                // one 50k-row frame: 50k x (1 + 20) longs
+                                final long outputBytes = 50_000L * 21 * Long.BYTES;
+                                Assert.assertTrue("used=" + tracker.getUsed(), tracker.getUsed() >= outputBytes);
+                                //noinspection StatementWithEmptyBody
+                                while (cursor.hasNext()) {
+                                }
+                            }
+                            Assert.assertEquals(0, tracker.getUsed());
+                        }
                     },
                     configuration,
                     LOG
@@ -424,6 +547,153 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
                             // the hint still applies
                             assertParallel(engine, ctx, join.replace("SELECT", "SELECT /*+ asof_parallel(t q) */") + " WHERE t.ts IN '2024-01-01T03:00:00.000001'", true);
                         }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testSmallMasterHighCardinality() throws Exception {
+        // 200k symbols on each side and a master of one row: the automatic choice is a serial plan,
+        // filtered slave or not; with the hint, the join keys itself the serial way and holds the
+        // one key it meets, not the 200k it could join
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 10_000);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 10_000);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, ctx) -> {
+                        engine.execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL CAPACITY 262144, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        engine.execute("INSERT INTO quotes SELECT '2024-01-01'::timestamp + x * 100_000L, 's' || x, x FROM long_sequence(200000)", ctx);
+                        engine.execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL CAPACITY 262144, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        engine.execute("INSERT INTO trades SELECT '2024-01-01'::timestamp + x * 100_000L + 1, 's' || x, x FROM long_sequence(200000)", ctx);
+                        final String[] bodies = {
+                                " t.ts, t.sym, q.bid, q.ts qts FROM trades t ASOF JOIN quotes q ON (sym) WHERE t.ts IN '2024-01-01T03:00:00.000001'",
+                                " t.ts, t.sym, q.bid, q.ts qts FROM trades t ASOF JOIN (SELECT * FROM quotes WHERE sym != 's5') q ON (sym) WHERE t.ts IN '2024-01-01T03:00:00.000001'",
+                        };
+                        for (String body : bodies) {
+                            assertParallel(engine, ctx, "SELECT" + body, false);
+                            final String parallel = "SELECT /*+ asof_parallel(t q) */" + body;
+                            assertParallel(engine, ctx, parallel, true);
+                            try (RecordCursorFactory factory = engine.select(parallel, ctx)) {
+                                final AsyncAsOfJoinAtom atom = findAtom(factory);
+                                for (int run = 0; run < 2; run++) {
+                                    try (RecordCursor cursor = factory.getCursor(ctx)) {
+                                        final StringSink actual = new StringSink();
+                                        CursorPrinter.println(cursor, factory.getMetadata(), actual);
+                                        TestUtils.assertEquals(
+                                                "ts\tsym\tbid\tqts\n" +
+                                                        "2024-01-01T03:00:00.000001Z\ts108000\t108000.0\t2024-01-01T03:00:00.000000Z\n",
+                                                actual
+                                        );
+                                        Assert.assertTrue(atom.isSerial());
+                                        Assert.assertEquals(1, atom.getStatFramesSerial());
+                                        // no key arrays; the state holds the key met, in its smallest table
+                                        Assert.assertEquals(0, atom.getJoinableCount());
+                                        Assert.assertTrue(atom.getKeyTable(-1).getCapacity() <= 1024);
+                                    }
+                                }
+                            }
+                            TestUtils.assertSqlCursors(engine, ctx, "SELECT /*+ asof_linear(t q) */" + body, parallel, LOG);
+                        }
+                        // an hour of the master: still small against 400k keys, so serial, and 36k keys
+                        // met past the array's limit, so hashed
+                        final String hour = "SELECT /*+ asof_parallel(t q) */ t.ts, t.sym, q.bid, q.ts qts FROM trades t ASOF JOIN quotes q ON (sym) "
+                                + "WHERE t.ts IN '2024-01-01T03'";
+                        try (RecordCursorFactory factory = engine.select(hour, ctx)) {
+                            final AsyncAsOfJoinAtom atom = findAtom(factory);
+                            try (RecordCursor cursor = factory.getCursor(ctx)) {
+                                //noinspection StatementWithEmptyBody
+                                while (cursor.hasNext()) {
+                                }
+                                Assert.assertTrue(atom.isSerial());
+                                Assert.assertFalse(atom.getKeyTable(-1).isDirect());
+                            }
+                        }
+                        TestUtils.assertSqlCursors(engine, ctx, hour.replace("asof_parallel", "asof_linear"), hour, LOG);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testStatsPerExecution() throws Exception {
+        // a cached factory's walk statistics start from zero on every execution: the walk's give-up
+        // ratio compares one execution's give-ups with the same execution's walked frames
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 10_000);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 10_000);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, ctx) -> {
+                        engine.execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        engine.execute("INSERT INTO quotes SELECT '2024-01-01'::timestamp + x * 100_000L, CASE WHEN x % 2 = 0 THEN 'k0' ELSE 'k' || (x % 400) END, x "
+                                + "FROM long_sequence(400000)", ctx);
+                        engine.execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        engine.execute("INSERT INTO trades SELECT '2024-01-01'::timestamp + x * 20_000L + 7, 'k' || ((x * 7) % 400), x FROM long_sequence(2000000)", ctx);
+                        for (String sql : new String[]{
+                                "SELECT /*+ asof_parallel(t q) */ t.ts, t.sym, q.bid FROM trades t ASOF JOIN quotes q ON (sym) WHERE t.sym = 'k0'",
+                                "SELECT /*+ asof_parallel(t q) */ t.ts, t.sym, q.bid FROM trades t ASOF JOIN quotes q ON (sym)"
+                        }) {
+                            try (RecordCursorFactory factory = engine.select(sql, ctx)) {
+                                final AsyncAsOfJoinAtom atom = findAtom(factory);
+                                drain(factory, ctx);
+                                // every frame is joined once, by the walk or the span scan (which of
+                                // the two can vary with the order the workers take the frames in)
+                                final long frames = atom.getStatFramesWalk() + atom.getStatFramesSpan();
+                                Assert.assertTrue(frames > 0);
+                                Assert.assertTrue(atom.getStatWalkAborts() <= frames);
+                                drain(factory, ctx);
+                                Assert.assertEquals(sql, frames, atom.getStatFramesWalk() + atom.getStatFramesSpan());
+                                Assert.assertTrue(sql, atom.getStatWalkAborts() <= frames);
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testWalkUnreadableFramesNotGivenUp() throws Exception {
+        // a slave frame the walk cannot read (Parquet) is not a give-up: two of them must not stop the
+        // walk for the native frames that follow
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 10_000);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 10_000);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, ctx) -> {
+                        engine.execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        // four days; the first two in Parquet
+                        engine.execute("INSERT INTO quotes SELECT '2024-01-01'::timestamp + x * 1_000_000L, CASE WHEN x % 2 = 0 THEN 'k0' ELSE 'k' || (x % 400) END, x "
+                                + "FROM long_sequence(345000)", ctx);
+                        engine.execute("ALTER TABLE quotes CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-03'", ctx);
+                        engine.execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        engine.execute("INSERT INTO trades SELECT '2024-01-01'::timestamp + x * 200_000L + 7, 'k' || ((x * 7) % 400), x FROM long_sequence(1700000)", ctx);
+                        final String selective = "SELECT /*+ asof_parallel(t q) */ t.ts, t.sym, q.bid FROM trades t ASOF JOIN quotes q ON (sym) WHERE t.sym = 'k0'";
+                        try (RecordCursorFactory factory = engine.select(selective, ctx)) {
+                            drain(factory, ctx);
+                            final AsyncAsOfJoinAtom atom = findAtom(factory);
+                            Assert.assertEquals(0, atom.getStatWalkAborts());
+                            Assert.assertTrue("the walk must serve the native days", atom.getStatFramesWalk() > 0);
+                        }
+                        TestUtils.assertSqlCursors(engine, ctx, selective.replace("asof_parallel", "asof_linear"), selective, LOG);
                     },
                     configuration,
                     LOG
@@ -612,13 +882,15 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
     private void assertFuzz(int seeds, boolean parquetSlave, boolean parquetMaster, boolean columnTops) throws Exception {
         final Rnd seedRnd = TestUtils.generateRandom(LOG);
         for (int s = 0; s < seeds; s++) {
-            // the walk and the span scan forced, then the automatic choice between them
+            // the walk and the span scan forced, then the automatic choice between them; the parallel and
+            // the serial way of keying the join, then the automatic choice
+            AsyncAsOfJoinAtom.KEYS_MODE = KEYS_MODES[(s + 1) % KEYS_MODES.length];
             assertSeed(seedRnd.nextLong(), seedRnd.nextLong(), WALK_MODES[s % WALK_MODES.length], parquetSlave, parquetMaster, columnTops);
         }
     }
 
     private void assertSeed(long s0, long s1, int walkMode, boolean parquetSlave, boolean parquetMaster, boolean columnTops) throws Exception {
-        LOG.info().$("seed [s0=").$(s0).$(", s1=").$(s1).$(", walkMode=").$(walkMode).I$();
+        LOG.info().$("seed [s0=").$(s0).$(", s1=").$(s1).$(", walkMode=").$(walkMode).$(", keysMode=").$(AsyncAsOfJoinAtom.KEYS_MODE).I$();
         AsyncAsOfJoinRecordCursorFactory.WALK_MODE = walkMode;
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4);

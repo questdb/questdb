@@ -67,6 +67,8 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
     // optional dense slave key -> master key map, see setDenseLookup()
     private long denseLookupAddress;
     private int denseLookupCount;
+    // keys are slave keys, see setIdentityLookup()
+    private boolean identityLookup;
 
     WindowJoinPrevailingCache() {
         this.cache = new DirectIntLongHashMap(
@@ -197,7 +199,20 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
         this.denseLookupCount = count;
     }
 
+    /**
+     * Makes the lookups work in slave keys: {@link #findPrevailingSlaveRowId} takes the slave key
+     * to find in place of the master key, every slave key the backward scan meets is cached, and
+     * the slave key lookup map is not read. For a caller that does not list the keys that can join.
+     * Not for use with summaries, which are keyed by the joinable keys.
+     */
+    public void setIdentityLookup(boolean identityLookup) {
+        this.identityLookup = identityLookup;
+    }
+
     private int lookupMasterKey(DirectIntIntHashMap slaveSymbolLookupMap, int slaveKey) {
+        if (identityLookup) {
+            return slaveKey;
+        }
         if (denseLookupAddress != 0) {
             final int index = Math.max(slaveKey + 1, 0);
             return index < denseLookupCount ? Unsafe.getInt(denseLookupAddress + ((long) index << 2)) : StaticSymbolTable.VALUE_NOT_FOUND;

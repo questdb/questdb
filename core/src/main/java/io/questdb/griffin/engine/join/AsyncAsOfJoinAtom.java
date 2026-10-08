@@ -74,20 +74,40 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMem
  * Shared and per-worker state of {@link AsyncAsOfJoinRecordCursorFactory}, a keyed ASOF JOIN on one
  * SYMBOL column that joins the page frames of the master in parallel.
  * <p>
- * Keys: every master key whose value the slave's symbol table holds (and, with a slave key filter,
- * whose slave key passes it) gets a dense "joinable slot". Two shared int arrays map the master and
- * the slave symbol keys to their slot, -1 for a key that cannot join; NULL maps to NULL. The per
- * worker span scan keeps, per slot, the last slave row id met so far in the page frame's slave span,
- * tagged with the frame's epoch so that nothing has to be cleared between frames.
- * <p>
- * Memory: the shared arrays take 4 bytes per master and per slave symbol, a worker's span state 12
- * bytes per joinable key. They are charged to the query's memory tracker when the cursor opens. When
- * the tracker refuses them, the join runs every frame in "lean" mode, which allocates nothing per key
- * (a backward scan per master row, with symbol lookups), so that a memory limit never fails a query
- * the serial ASOF JOIN would complete.
+ * Two ways to key the join, chosen when the cursor opens:
+ * <ul>
+ * <li><b>Parallel</b>: every master key whose value the slave's symbol table holds (and, with a slave
+ * key filter, whose slave key passes it) gets a dense "joinable slot". Two shared int arrays map the
+ * master and the slave symbol keys to their slot, -1 for a key that cannot join; NULL maps to NULL.
+ * Building them reads every symbol of both tables, so the join takes this way only when the master
+ * has enough rows to repay it ({@link #EAGER_ROWS_PER_KEY}) or the symbol tables are small.</li>
+ * <li><b>Serial</b>: the query's thread joins the frames, in order, as it collects them (the workers
+ * still filter the master). A master key is translated to its slave key the first time a frame meets
+ * it, and the per-key state is keyed by the slave key, so the join holds the keys it meets and
+ * nothing more. Taken for a master that is small against its symbol tables, and for the rest of a
+ * query whose per-worker state the memory tracker refused: one state, as the serial ASOF JOIN
+ * holds.</li>
+ * </ul>
+ * Per slot (and for the query's thread), the span scan keeps per key the last slave row id met so
+ * far in the page frame's slave span, in an {@link AsyncAsOfJoinKeyTable}: allocated by the slot's
+ * first frame, grown with the keys met, tagged with the frame's epoch so that nothing has to be
+ * cleared between frames. All of it is charged to the query's memory tracker.
  */
 public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reopenable, Plannable {
+    // the parallel way's key arrays are built when the master has at least this many rows per key
+    // of the two symbol tables, or when the tables have at most EAGER_MIN_KEYS keys between them
+    public static final int EAGER_MIN_KEYS = 4096;
+    public static final int EAGER_ROWS_PER_KEY = 4;
     public static final int GATHER_NONE = -1;
+    @TestOnly
+    public static final int KEYS_AUTO = 0;
+    @TestOnly
+    public static final int KEYS_PARALLEL = 1;
+    @TestOnly
+    public static final int KEYS_SERIAL = 2;
+    // tests force one way of keying the join
+    @TestOnly
+    public static volatile int KEYS_MODE = KEYS_AUTO;
     private static final int GATHER_BOOL = 0;
     private static final int GATHER_BYTE = 1;
     private static final int GATHER_CHAR = 3;
@@ -125,19 +145,20 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
     private Function ownerMasterFilter;
     private final WindowJoinPrevailingCache ownerPrevailingCache;
     private final SelectivityStats ownerSelectivityStats = new SelectivityStats();
+    private final AsyncAsOfJoinKeyTable ownerKeyTable = new AsyncAsOfJoinKeyTable();
     private final ConcurrentTimeFrameCursor ownerSlaveTimeFrameCursor;
     private final WindowJoinTimeFrameHelper ownerSlaveTimeFrameHelper;
-    private final DirectLongList ownerSpanState = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);
+    private final ObjList<AsyncAsOfJoinKeyTable> perWorkerKeyTables;
     private ObjList<Function> perWorkerMasterFilters;
     private final ObjList<WindowJoinPrevailingCache> perWorkerPrevailingCaches;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
     private final ObjList<ConcurrentTimeFrameCursor> perWorkerSlaveTimeFrameCursors;
     private final ObjList<WindowJoinTimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
-    private final ObjList<DirectLongList> perWorkerSpanStates;
     private final PerWorkerLocks perWorkerLocks;
     private final WindowJoinPrevailingSummaries prevailingSummaries;
-    // span scan epochs, one per slot (the owner last); a frame's epoch tags the span state it wrote
-    private final int[] slotEpochs;
+    // the serial way: the prevailing scans in slave keys, master key -> slave key as met
+    private final WindowJoinPrevailingCache serialPrevailingCache;
+    private final AsyncAsOfJoinKeyTable serialTranslations = new AsyncAsOfJoinKeyTable();
     // master key + 1 -> slot, then slave key + 1 -> slot, NULL at 0; for a key that cannot join -1
     // on the master side and the span state's spare slot (joinableCount) on the slave side
     private final DirectLongList slotArrays = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);
@@ -152,7 +173,7 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
     private final DirectIntIntHashMap slaveSymbolLookupMap;
     private final int slaveSymbolIndex;
     private final long slaveTsScale;
-    private final AtomicLong statFramesLean = new AtomicLong();
+    private final AtomicLong statFramesSerial = new AtomicLong();
     private final AtomicLong statFramesSpan = new AtomicLong();
     private final AtomicLong statFramesWalk = new AtomicLong();
     private final AtomicLong statWalkAborts = new AtomicLong();
@@ -163,14 +184,18 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
     private final long toleranceInterval;
     private boolean compiledMasterFilterSuspended;
     private int joinableCount;
-    // no span state: every frame joins in lean mode (the memory tracker refused the state)
-    private volatile boolean leanOnly;
+    private StaticSymbolTable masterSymbolTable;
     private int masterSlotCount;
     private long masterSlotsAddress;
     private MemoryTracker memoryTracker;
+    // the query's thread joins the frames: chosen when the cursor opens, or set by a worker whose
+    // per-key state the memory tracker refused
+    private volatile boolean serial;
+    private @Nullable SlaveKeyRecord serialKeyRecord;
     private boolean skipJoin;
     private int slaveSlotCount;
     private long slaveSlotsAddress;
+    private StaticSymbolTable slaveSymbolTable;
     private long slaveToMasterAddress;
 
     public AsyncAsOfJoinAtom(
@@ -209,7 +234,10 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
             this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(slotCount);
             this.perWorkerPrevailingCaches = new ObjList<>(slotCount);
             this.perWorkerSelectivityStats = new ObjList<>(slotCount);
-            this.perWorkerSpanStates = new ObjList<>(slotCount);
+            this.perWorkerKeyTables = new ObjList<>(slotCount);
+            // no summaries: they are sized by the joinable keys, which the serial way does not list
+            this.serialPrevailingCache = new WindowJoinPrevailingCache();
+            serialPrevailingCache.setIdentityLookup(true);
             for (int i = 0; i < slotCount; i++) {
                 perWorkerSlaveTimeFrameCursors.extendAndSet(i, slaveFactory.newTimeFrameCursor());
                 perWorkerSlaveTimeFrameHelpers.extendAndSet(i, new WindowJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTsScale));
@@ -217,9 +245,8 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
                 cache.setSummaries(prevailingSummaries);
                 perWorkerPrevailingCaches.extendAndSet(i, cache);
                 perWorkerSelectivityStats.extendAndSet(i, new SelectivityStats());
-                perWorkerSpanStates.extendAndSet(i, new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true));
+                perWorkerKeyTables.extendAndSet(i, new AsyncAsOfJoinKeyTable());
             }
-            this.slotEpochs = new int[slotCount + 1];
             this.perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
 
             // what the reduce gathers per slave column
@@ -330,13 +357,18 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
         failure = Misc.freeObjListAndKeepObjectsBestEffort(failure, perWorkerSlaveTimeFrameCursors);
         failure = Misc.freeBestEffort(failure, slaveSymbolLookupMap);
         failure = Misc.freeBestEffort(failure, slotArrays);
-        failure = Misc.freeBestEffort(failure, ownerSpanState);
-        failure = Misc.freeObjListAndKeepObjectsBestEffort(failure, perWorkerSpanStates);
+        failure = Misc.freeBestEffort(failure, ownerKeyTable);
+        failure = Misc.freeObjListAndKeepObjectsBestEffort(failure, perWorkerKeyTables);
+        failure = Misc.freeBestEffort(failure, serialTranslations);
         failure = Misc.freeBestEffort(failure, ownerPrevailingCache);
         failure = Misc.freeObjListAndKeepObjectsBestEffort(failure, perWorkerPrevailingCaches);
+        failure = Misc.freeBestEffort(failure, serialPrevailingCache);
         failure = Misc.freeBestEffort(failure, prevailingSummaries);
         failure = Misc.clearBestEffort(failure, ownerSelectivityStats);
         failure = Misc.clearObjListBestEffort(failure, perWorkerSelectivityStats);
+        masterSymbolTable = null;
+        slaveSymbolTable = null;
+        serialKeyRecord = null;
         memoryTracker = null;
         CairoException.rethrowCleanupFailure(failure);
     }
@@ -354,10 +386,12 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
         failure = Misc.freeBestEffort(failure, slaveKeyFilter);
         failure = Misc.freeBestEffort(failure, slaveSymbolLookupMap);
         failure = Misc.freeBestEffort(failure, slotArrays);
-        failure = Misc.freeBestEffort(failure, ownerSpanState);
-        failure = Misc.freeObjListBestEffort(failure, perWorkerSpanStates);
+        failure = Misc.freeBestEffort(failure, ownerKeyTable);
+        failure = Misc.freeObjListBestEffort(failure, perWorkerKeyTables);
+        failure = Misc.freeBestEffort(failure, serialTranslations);
         failure = Misc.freeBestEffort(failure, ownerPrevailingCache);
         failure = Misc.freeObjListBestEffort(failure, perWorkerPrevailingCaches);
+        failure = Misc.freeBestEffort(failure, serialPrevailingCache);
         failure = Misc.freeBestEffort(failure, prevailingSummaries);
         CairoException.rethrowCleanupFailure(failure);
     }
@@ -468,17 +502,24 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
     }
 
     /**
-     * The span state of a slot: per span slot (see {@link #getSpanSlotCount()}), the last slave row id
-     * met (8 bytes), then per span slot the row id the walk has walked back from (8 bytes), then per
-     * span slot the epoch both belong to (4 bytes).
+     * The per-key state of a slot (-1: the query's thread), keyed by the span slot in the parallel
+     * way (see {@link #getSpanSlotCount()}) and by the slave key + 1 (NULL at 0) in the serial way.
      */
-    public long getSpanStateAddress(int slotId) {
-        return (slotId == -1 ? ownerSpanState : perWorkerSpanStates.getQuick(slotId)).getAddress();
+    public AsyncAsOfJoinKeyTable getKeyTable(int slotId) {
+        return slotId == -1 ? ownerKeyTable : perWorkerKeyTables.getQuick(slotId);
+    }
+
+    public MemoryTracker getMemoryTracker() {
+        return memoryTracker;
+    }
+
+    public WindowJoinPrevailingCache getSerialPrevailingCache() {
+        return serialPrevailingCache;
     }
 
     @TestOnly
-    public long getStatFramesLean() {
-        return statFramesLean.get();
+    public long getStatFramesSerial() {
+        return statFramesSerial.get();
     }
 
     @TestOnly
@@ -512,14 +553,18 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
     }
 
     /**
-     * Binds the slave time frame cursors and computes the joinable slots. Runs on the query's thread
-     * when the cursor reads its first row.
+     * Binds the slave time frame cursors and chooses the way the join is keyed (see the class
+     * comment); the parallel way also computes the joinable slots. Runs on the query's thread when
+     * the cursor reads its first row, before any frame is dispatched.
+     *
+     * @param masterRowCount the rows of the master's page frames, before the master filter
      */
     public void initTimeFrameCursors(
             SqlExecutionContext executionContext,
             SymbolTableSource masterSymbolTableSource,
             TablePageFrameCursor pageFrameCursor,
-            ConcurrentTimeFrameState sharedState
+            ConcurrentTimeFrameState sharedState,
+            long masterRowCount
     ) throws SqlException {
         final int timestampIndex = ownerSlaveTimeFrameCursor.getTimestampIndex();
         ownerSlaveTimeFrameCursor.of(sharedState, pageFrameCursor, timestampIndex);
@@ -542,109 +587,63 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
             cache.setMemoryTracker(memoryTracker);
             cache.reopen();
         }
+        serialPrevailingCache.setMemoryTracker(memoryTracker);
+        serialPrevailingCache.reopen();
+        serialTranslations.of(memoryTracker, 0);
+        // one epoch for the query: a translation holds for all of it
+        serialTranslations.nextEpoch();
 
         if (slaveKeyFilter != null) {
             // the filter reads the key column at its index in the filter's own metadata
             slaveKeyFilter.init(new KeyColumnSymbolTableSource(pageFrameCursor, slaveKeyFilterColumnIndex, slaveSymbolIndex), executionContext);
         }
 
-        final StaticSymbolTable masterSymbolTable = (StaticSymbolTable) masterSymbolTableSource.getSymbolTable(masterSymbolIndex);
-        final StaticSymbolTable slaveSymbolTable = pageFrameCursor.getSymbolTable(slaveSymbolIndex);
+        masterSymbolTable = (StaticSymbolTable) masterSymbolTableSource.getSymbolTable(masterSymbolIndex);
+        slaveSymbolTable = pageFrameCursor.getSymbolTable(slaveSymbolIndex);
+        serialKeyRecord = slaveKeyFilter != null ? new SlaveKeyRecord(slaveSymbolTable, slaveKeyFilterColumnIndex) : null;
         final int masterCount = masterSymbolTable.getSymbolCount();
         final int slaveCount = slaveSymbolTable.getSymbolCount();
-        leanOnly = false;
+        statFramesSerial.set(0);
+        statFramesSpan.set(0);
+        statFramesWalk.set(0);
+        statWalkAborts.set(0);
         joinableCount = 0;
-        try {
-            masterSlotCount = masterCount + 1;
-            slaveSlotCount = slaveCount + 1;
-            // master slots, slave slots, then the slave key -> master key map of the prevailing scans
-            final long slotBytes = 4L * (masterSlotCount + 2L * slaveSlotCount);
-            slotArrays.close();
-            slotArrays.setMemoryTracker(memoryTracker);
-            slotArrays.setCapacity((slotBytes + 7) >>> 3);
-            masterSlotsAddress = slotArrays.getAddress();
-            slaveSlotsAddress = masterSlotsAddress + 4L * masterSlotCount;
-            slaveToMasterAddress = slaveSlotsAddress + 4L * slaveSlotCount;
-            Vect.memset(masterSlotsAddress, 4L * (masterSlotCount + slaveSlotCount), -1);
-            for (long i = 0; i < slaveSlotCount; i++) {
-                Unsafe.putInt(slaveToMasterAddress + 4 * i, StaticSymbolTable.VALUE_NOT_FOUND);
-            }
-        } catch (CairoException e) {
-            if (!e.isOutOfMemory()) {
-                throw e;
-            }
-            slotArrays.close();
-            masterSlotsAddress = 0;
-            slaveSlotsAddress = 0;
-            slaveToMasterAddress = 0;
-            leanOnly = true;
-        }
-
-        final SlaveKeyRecord keyRecord = slaveKeyFilter != null ? new SlaveKeyRecord(slaveSymbolTable, slaveKeyFilterColumnIndex) : null;
-        final SlaveKeyRecord masterKeyRecord = isMasterKeyFilter ? new SlaveKeyRecord(masterSymbolTable, masterSymbolIndex) : null;
-        int slot = 0;
-        for (int masterKey = 0; masterKey < masterCount; masterKey++) {
-            if (!passesMasterKeyFilter(masterKeyRecord, masterKey)) {
-                // no master row of this key passes the master filter
-                continue;
-            }
-            final int slaveKey = slaveSymbolTable.keyOf(masterSymbolTable.valueOf(masterKey));
-            if (slaveKey != StaticSymbolTable.VALUE_NOT_FOUND && passesKeyFilter(keyRecord, slaveKey)) {
-                slaveSymbolLookupMap.put(slaveKey + AsyncWindowJoinFastAtom.KEY_SHIFT, masterKey);
-                if (!leanOnly) {
-                    Unsafe.putInt(masterSlotsAddress + 4L * (masterKey + 1), slot);
-                    Unsafe.putInt(slaveSlotsAddress + 4L * (slaveKey + 1), slot);
-                    Unsafe.putInt(slaveToMasterAddress + 4L * (slaveKey + 1), masterKey);
-                }
-                slot++;
-            }
-        }
-        // NULL joins NULL, the way the serial ASOF JOIN compares symbol keys: rows above a column top
-        // read as NULL too, so this does not depend on the symbol table's null flag
-        if (passesMasterKeyFilter(masterKeyRecord, StaticSymbolTable.VALUE_IS_NULL) && passesKeyFilter(keyRecord, StaticSymbolTable.VALUE_IS_NULL)) {
-            slaveSymbolLookupMap.put(AsyncWindowJoinFastAtom.NULL_KEY, StaticSymbolTable.VALUE_IS_NULL);
-            if (!leanOnly) {
-                Unsafe.putInt(masterSlotsAddress, slot);
-                Unsafe.putInt(slaveSlotsAddress, slot);
-                Unsafe.putInt(slaveToMasterAddress, StaticSymbolTable.VALUE_IS_NULL);
-            }
-            slot++;
-        }
-        joinableCount = slot;
-        if (!leanOnly) {
-            // a slave key that cannot join takes the span state's spare slot: the span scan then
-            // stores every row without a branch on the key
-            for (long i = 0; i < slaveSlotCount; i++) {
-                final long address = slaveSlotsAddress + 4 * i;
-                if (Unsafe.getInt(address) < 0) {
-                    Unsafe.putInt(address, joinableCount);
-                }
-            }
-        }
-
-        if (!leanOnly) {
+        masterSlotCount = 0;
+        slaveSlotCount = 0;
+        final int keysMode = KEYS_MODE;
+        final long keyCount = (long) masterCount + slaveCount;
+        boolean serial = keysMode == KEYS_SERIAL
+                || (keysMode == KEYS_AUTO && keyCount > EAGER_MIN_KEYS && keyCount > masterRowCount / EAGER_ROWS_PER_KEY);
+        if (!serial) {
             try {
-                final long stateLongs = 2L * getSpanSlotCount() + ((getSpanSlotCount() + 1) >>> 1);
-                reserveSpanState(ownerSpanState, memoryTracker, stateLongs);
-                for (int i = 0, n = perWorkerSpanStates.size(); i < n; i++) {
-                    reserveSpanState(perWorkerSpanStates.getQuick(i), memoryTracker, stateLongs);
-                }
-                for (int i = 0; i < slotEpochs.length; i++) {
-                    slotEpochs[i] = 0;
-                }
+                buildJoinableSlots(memoryTracker, masterCount, slaveCount);
             } catch (CairoException e) {
                 if (!e.isOutOfMemory()) {
                     throw e;
                 }
-                ownerSpanState.close();
-                for (int i = 0, n = perWorkerSpanStates.size(); i < n; i++) {
-                    perWorkerSpanStates.getQuick(i).close();
-                }
-                leanOnly = true;
+                // the memory tracker refused the key arrays: join serially, holding only the keys met
+                serial = true;
             }
         }
+        if (serial) {
+            slotArrays.close();
+            slaveSymbolLookupMap.clear();
+            masterSlotsAddress = 0;
+            slaveSlotsAddress = 0;
+            slaveToMasterAddress = 0;
+            masterSlotCount = 0;
+            slaveSlotCount = 0;
+            joinableCount = 0;
+        }
+        // the per-key state is allocated by each slot's first frame; the parallel way keys it by the
+        // span slots, dense, the serial way by the slave keys met
+        final int denseKeyCount = serial ? 0 : getSpanSlotCount();
+        ownerKeyTable.of(memoryTracker, denseKeyCount);
+        for (int i = 0, n = perWorkerKeyTables.size(); i < n; i++) {
+            perWorkerKeyTables.getQuick(i).of(memoryTracker, denseKeyCount);
+        }
         // the prevailing scans look slave keys up in the dense map when there is one
-        final long denseAddress = leanOnly ? 0 : slaveToMasterAddress;
+        final long denseAddress = serial ? 0 : slaveToMasterAddress;
         ownerPrevailingCache.setDenseLookup(denseAddress, slaveSlotCount);
         for (int i = 0, n = perWorkerPrevailingCaches.size(); i < n; i++) {
             perWorkerPrevailingCaches.getQuick(i).setDenseLookup(denseAddress, slaveSlotCount);
@@ -652,9 +651,8 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
         // sized by the joinable keys; allocates only when a lookup first needs a block
         prevailingSummaries.of(sharedState.getFrameCount(), slaveSymbolLookupMap, memoryTracker);
         this.sharedState = sharedState;
-        statWalkAborts.set(0);
         final int frameCacheLength = 4 * sharedState.getFrameCount();
-        for (int i = 0, n = slotEpochs.length; i < n; i++) {
+        for (int i = 0, n = perWorkerKeyTables.size() + 1; i < n; i++) {
             long[] cache = walkFrameCaches.getQuiet(i);
             if (cache == null || cache.length < frameCacheLength) {
                 cache = new long[frameCacheLength];
@@ -663,6 +661,7 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
                 java.util.Arrays.fill(cache, 0, frameCacheLength, 0);
             }
         }
+        this.serial = serial;
     }
 
     /**
@@ -707,8 +706,11 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
         return statWalkAborts.get();
     }
 
-    public boolean isLeanOnly() {
-        return leanOnly;
+    /**
+     * True when the query's thread joins the frames, see the class comment.
+     */
+    public boolean isSerial() {
+        return serial;
     }
 
     public boolean isSkipJoin() {
@@ -716,7 +718,7 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
     }
 
     /**
-     * The joinable slot of a master symbol key, -1 when it cannot join. Not valid in lean mode.
+     * The joinable slot of a master symbol key, -1 when it cannot join. The parallel way only.
      */
     public int masterSlotOf(int masterKey) {
         // NULL (Integer.MIN_VALUE) goes to index 0, key k to k + 1
@@ -731,24 +733,8 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
         return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
     }
 
-    /**
-     * Starts a frame's span scan on a slot: the epoch its span state entries are tagged with.
-     */
-    public int nextEpoch(int slotId) {
-        final int index = slotId + 1;
-        int epoch = slotEpochs[index] + 1;
-        if (epoch == 0) {
-            // wrapped: untag every entry
-            final long address = getSpanStateAddress(slotId);
-            Vect.memset(address + 16L * getSpanSlotCount(), 4L * getSpanSlotCount(), 0);
-            epoch = 1;
-        }
-        slotEpochs[index] = epoch;
-        return epoch;
-    }
-
-    public void recordFrameLean() {
-        statFramesLean.incrementAndGet();
+    public void recordFrameSerial() {
+        statFramesSerial.incrementAndGet();
     }
 
     public void recordFrameSpan() {
@@ -768,6 +754,36 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
         this.skipJoin = skipJoin;
     }
 
+    /**
+     * From here on the query's thread joins the frames: a worker's per-key state hit the query's
+     * memory limit. The frames a worker has joined stay joined.
+     */
+    public void switchToSerial() {
+        serial = true;
+    }
+
+    /**
+     * The serial way: the slave key a master key joins, {@link StaticSymbolTable#VALUE_NOT_FOUND}
+     * when it cannot join (the slave's symbol table does not hold its value, or the slave key filter
+     * refuses it). NULL joins NULL. Resolved once per key and query. The query's thread only.
+     */
+    public int translateSerial(int masterKey) {
+        final int index = Math.max(masterKey + 1, 0);
+        long e = serialTranslations.find(index);
+        if (e != 0) {
+            return (int) Unsafe.getLong(e + 8);
+        }
+        int slaveKey = masterKey == StaticSymbolTable.VALUE_IS_NULL
+                ? StaticSymbolTable.VALUE_IS_NULL
+                : slaveSymbolTable.keyOf(masterSymbolTable.valueOf(masterKey));
+        if (slaveKey != StaticSymbolTable.VALUE_NOT_FOUND && !passesKeyFilter(serialKeyRecord, slaveKey)) {
+            slaveKey = StaticSymbolTable.VALUE_NOT_FOUND;
+        }
+        e = serialTranslations.entry(index);
+        Unsafe.putLong(e + 8, slaveKey);
+        return slaveKey;
+    }
+
     public boolean shouldUseLateMaterialization(int slotId, boolean isParquetFrame) {
         if (!isParquetFrame) {
             return false;
@@ -779,7 +795,7 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
     }
 
     /**
-     * The joinable slot of a slave symbol key, -1 when it cannot join. Not valid in lean mode.
+     * The joinable slot of a slave symbol key, -1 when it cannot join. The parallel way only.
      */
     public int slaveSlotOf(int slaveKey) {
         final int index = Math.max(slaveKey + 1, 0);
@@ -809,12 +825,58 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
         }
     }
 
-    private static void reserveSpanState(DirectLongList state, MemoryTracker memoryTracker, long longs) {
-        state.close();
-        state.setMemoryTracker(memoryTracker);
-        state.setCapacity(Math.max(1, longs));
-        // epochs start untagged
-        Vect.memset(state.getAddress(), 8L * Math.max(1, longs), 0);
+    // the parallel way: the dense joinable slots of every key of both symbol tables
+    private void buildJoinableSlots(MemoryTracker memoryTracker, int masterCount, int slaveCount) {
+        masterSlotCount = masterCount + 1;
+        slaveSlotCount = slaveCount + 1;
+        // master slots, slave slots, then the slave key -> master key map of the prevailing scans
+        final long slotBytes = 4L * (masterSlotCount + 2L * slaveSlotCount);
+        slotArrays.close();
+        slotArrays.setMemoryTracker(memoryTracker);
+        slotArrays.setCapacity((slotBytes + 7) >>> 3);
+        masterSlotsAddress = slotArrays.getAddress();
+        slaveSlotsAddress = masterSlotsAddress + 4L * masterSlotCount;
+        slaveToMasterAddress = slaveSlotsAddress + 4L * slaveSlotCount;
+        Vect.memset(masterSlotsAddress, 4L * (masterSlotCount + slaveSlotCount), -1);
+        for (long i = 0; i < slaveSlotCount; i++) {
+            Unsafe.putInt(slaveToMasterAddress + 4 * i, StaticSymbolTable.VALUE_NOT_FOUND);
+        }
+
+        final SlaveKeyRecord keyRecord = slaveKeyFilter != null ? new SlaveKeyRecord(slaveSymbolTable, slaveKeyFilterColumnIndex) : null;
+        final SlaveKeyRecord masterKeyRecord = isMasterKeyFilter ? new SlaveKeyRecord(masterSymbolTable, masterSymbolIndex) : null;
+        int slot = 0;
+        for (int masterKey = 0; masterKey < masterCount; masterKey++) {
+            if (!passesMasterKeyFilter(masterKeyRecord, masterKey)) {
+                // no master row of this key passes the master filter
+                continue;
+            }
+            final int slaveKey = slaveSymbolTable.keyOf(masterSymbolTable.valueOf(masterKey));
+            if (slaveKey != StaticSymbolTable.VALUE_NOT_FOUND && passesKeyFilter(keyRecord, slaveKey)) {
+                slaveSymbolLookupMap.put(slaveKey + AsyncWindowJoinFastAtom.KEY_SHIFT, masterKey);
+                Unsafe.putInt(masterSlotsAddress + 4L * (masterKey + 1), slot);
+                Unsafe.putInt(slaveSlotsAddress + 4L * (slaveKey + 1), slot);
+                Unsafe.putInt(slaveToMasterAddress + 4L * (slaveKey + 1), masterKey);
+                slot++;
+            }
+        }
+        // NULL joins NULL, the way the serial ASOF JOIN compares symbol keys: rows above a column top
+        // read as NULL too, so this does not depend on the symbol table's null flag
+        if (passesMasterKeyFilter(masterKeyRecord, StaticSymbolTable.VALUE_IS_NULL) && passesKeyFilter(keyRecord, StaticSymbolTable.VALUE_IS_NULL)) {
+            slaveSymbolLookupMap.put(AsyncWindowJoinFastAtom.NULL_KEY, StaticSymbolTable.VALUE_IS_NULL);
+            Unsafe.putInt(masterSlotsAddress, slot);
+            Unsafe.putInt(slaveSlotsAddress, slot);
+            Unsafe.putInt(slaveToMasterAddress, StaticSymbolTable.VALUE_IS_NULL);
+            slot++;
+        }
+        joinableCount = slot;
+        // a slave key that cannot join takes the span state's spare slot: the span scan then stores
+        // every row without a branch on the key
+        for (long i = 0; i < slaveSlotCount; i++) {
+            final long address = slaveSlotsAddress + 4 * i;
+            if (Unsafe.getInt(address) < 0) {
+                Unsafe.putInt(address, joinableCount);
+            }
+        }
     }
 
     private boolean passesMasterKeyFilter(@Nullable SlaveKeyRecord keyRecord, int masterKey) {

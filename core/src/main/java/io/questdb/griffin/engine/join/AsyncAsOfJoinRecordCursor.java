@@ -257,6 +257,12 @@ class AsyncAsOfJoinRecordCursor implements NoRandomAccessRecordCursor {
 
     private void buildSlaveTimeFrameCacheConditionally() {
         if (!isSlaveTimeFrameCacheBuilt) {
+            // the master's rows decide how the join is keyed; nothing is dispatched yet
+            masterFrameSequence.prepareForDispatch();
+            long masterRowCount = 0;
+            for (int i = 0, n = masterFrameSequence.getFrameCount(); i < n; i++) {
+                masterRowCount += masterFrameSequence.getFrameRowCount(i);
+            }
             slaveTimeFrameState.of(
                     slaveFrameCursor,
                     slaveMetadata,
@@ -272,7 +278,8 @@ class AsyncAsOfJoinRecordCursor implements NoRandomAccessRecordCursor {
                         executionContext,
                         masterFrameSequence.getSymbolTableSource(),
                         slaveFrameCursor,
-                        slaveTimeFrameState
+                        slaveTimeFrameState,
+                        masterRowCount
                 );
             } catch (SqlException e) {
                 throw CairoException.nonCritical().put(e.getFlyweightMessage());
@@ -365,6 +372,18 @@ class AsyncAsOfJoinRecordCursor implements NoRandomAccessRecordCursor {
                     frameRowIndex = 0;
                     if (frameRowCount > 0 && masterFrameSequence.isActive()) {
                         masterRecord.init(task.getFrameMemory());
+                        final AsyncAsOfJoinAtom atom = masterFrameSequence.getAtom();
+                        if (!atom.isSkipJoin() && !AsyncAsOfJoinRecordCursorFactory.isFrameJoined(atom, filteredRows, isMasterFiltered, frameRowCount)) {
+                            // the serial way: this thread joins the frame
+                            AsyncAsOfJoinRecordCursorFactory.joinFrameSerial(
+                                    atom,
+                                    masterRecord,
+                                    filteredRows,
+                                    isMasterFiltered,
+                                    frameRowCount,
+                                    executionContext.getCircuitBreaker()
+                            );
+                        }
                         break;
                     } else {
                         frameRowCount = 0;

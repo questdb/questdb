@@ -55,6 +55,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -81,6 +82,10 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilt
  * row id per master row, -1 for none, and the values of the slave's fixed-size columns gathered by
  * those row ids, so that a column-wise consumer reads both sides as arrays.
  * <p>
+ * A master that is small against the two symbol tables, or a query whose per-worker state the
+ * memory tracker refused, is joined the serial way: the query's thread joins each frame as it
+ * collects it, with one per-key state that holds the keys met (see {@link AsyncAsOfJoinAtom}).
+ * <p>
  * Results are those of the serial ASOF JOIN, TOLERANCE included.
  */
 public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -91,8 +96,12 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
     public static final int WALK_AUTO = 0;
     @TestOnly
     public static final int WALK_NEVER = 2;
+    // joinWalk(): the frame is joined; the walk gave up for the span scan; the walk cannot read the frame
+    private static final int WALK_DONE = 0;
+    private static final int WALK_GAVE_UP = 1;
     // walked rows the walk may spend over half the span rows it passed before it gives up
     private static final long WALK_SLACK_ROWS = 4096;
+    private static final int WALK_UNSUPPORTED = 2;
     // tests force one mode: the walk always (never giving up), or the span scan always
     @TestOnly
     public static volatile int WALK_MODE = WALK_AUTO;
@@ -350,7 +359,8 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         try {
             final long rowCount = applyFilter(record, task, atom, slotId, frameRowCount);
-            if (rowCount > 0 && !atom.isSkipJoin()) {
+            // in the serial way the query's thread joins the frame when it collects it
+            if (rowCount > 0 && !atom.isSkipJoin() && !atom.isSerial()) {
                 joinFrame(atom, slotId, record, task.getFilteredRows(), true, rowCount, circuitBreaker);
             }
         } finally {
@@ -429,7 +439,8 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
             final DirectLongList rows = task.getFilteredRows();
             rows.clear();
             task.setFilteredRowCount(frameRowCount);
-            if (!atom.isSkipJoin()) {
+            // in the serial way the query's thread joins the frame when it collects it
+            if (!atom.isSkipJoin() && !atom.isSerial()) {
                 joinFrame(atom, slotId, record, rows, false, frameRowCount, circuitBreaker);
             }
         } finally {
@@ -438,7 +449,10 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     // Joins one master page frame: writes the slave row ids, then the gathered slave columns, after
-    // the master row indexes (when filtered) in the task's row list.
+    // the master row indexes (when filtered) in the task's row list. A worker whose per-key state,
+    // prevailing cache or output hits the query's memory limit leaves the frame unjoined (the row
+    // list holds the master row indexes only) and switches the query to the serial way: the
+    // query's thread then joins this frame and the rest, see joinFrameSerial().
     private static void joinFrame(
             AsyncAsOfJoinAtom atom,
             int slotId,
@@ -449,45 +463,63 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         final long outOffset = isMasterFiltered ? rowCount : 0;
-        final long totalLongs = outOffset + rowCount * (1 + atom.getGatherCount());
-        rows.ensureCapacity(totalLongs - rows.size());
-        rows.setPos(totalLongs);
-        final long outAddress = rows.getAddress() + (outOffset << 3);
-        final WindowJoinTimeFrameHelper helper = atom.getSlaveTimeFrameHelper(slotId);
-        boolean done = false;
-        if (!atom.isLeanOnly()) {
-            try {
-                final int walkMode = WALK_MODE;
-                if (walkMode != WALK_NEVER && (walkMode == WALK_ALWAYS || atom.isWalkWorthTrying())) {
-                    if (joinWalk(atom, slotId, helper, record, rows, isMasterFiltered, rowCount, outAddress, walkMode == WALK_ALWAYS, circuitBreaker)) {
-                        atom.recordFrameWalk();
-                        done = true;
-                    } else {
-                        atom.recordWalkAbort();
-                    }
-                }
-                if (!done) {
-                    joinSpan(atom, slotId, helper, record, rows, isMasterFiltered, rowCount, outAddress, circuitBreaker);
-                    atom.recordFrameSpan();
+        try {
+            final long outAddress = reserveOutput(atom, rows, outOffset, rowCount);
+            final WindowJoinTimeFrameHelper helper = atom.getSlaveTimeFrameHelper(slotId);
+            boolean done = false;
+            final int walkMode = WALK_MODE;
+            if (walkMode != WALK_NEVER && (walkMode == WALK_ALWAYS || atom.isWalkWorthTrying())) {
+                final int walk = joinWalk(atom, slotId, helper, record, rows, isMasterFiltered, rowCount, outAddress, walkMode == WALK_ALWAYS, circuitBreaker);
+                if (walk == WALK_DONE) {
+                    atom.recordFrameWalk();
                     done = true;
+                } else if (walk == WALK_GAVE_UP) {
+                    // a frame the walk could not even start (no slave row in the span, Parquet, a
+                    // column top) says nothing about whether walking pays off
+                    atom.recordWalkAbort();
                 }
-            } catch (CairoException e) {
-                if (!e.isOutOfMemory()) {
-                    throw e;
-                }
-                // the prevailing cache hit the query's memory limit: this frame joins without it
             }
+            if (!done) {
+                joinSpan(atom, slotId, helper, record, rows, isMasterFiltered, rowCount, outAddress, circuitBreaker);
+                atom.recordFrameSpan();
+            }
+            gather(atom, helper, outAddress, rowCount, record, rows, isMasterFiltered, circuitBreaker);
+        } catch (CairoException e) {
+            if (!e.isOutOfMemory()) {
+                throw e;
+            }
+            rows.setPos(outOffset);
+            atom.switchToSerial();
         }
-        if (!done) {
-            joinLean(atom, helper, record, rows, isMasterFiltered, rowCount, outAddress, circuitBreaker);
-            atom.recordFrameLean();
-        }
-        gather(atom, helper, outAddress, rowCount, record, rows, isMasterFiltered, circuitBreaker);
     }
 
-    // Lean mode: no per-key state. Per master row, a backward scan from the last slave row at or before
-    // its timestamp to the first row of its key, bounded by TOLERANCE. Allocates nothing.
-    private static void joinLean(
+    // The serial way: joins a frame on the query's thread, see joinFrame(). The per-key state is the
+    // query thread's, keyed by the slave key, and holds the keys the frame meets.
+    static void joinFrameSerial(
+            AsyncAsOfJoinAtom atom,
+            PageFrameMemoryRecord record,
+            DirectLongList rows,
+            boolean isMasterFiltered,
+            long rowCount,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        final long outOffset = isMasterFiltered ? rowCount : 0;
+        final long outAddress = reserveOutput(atom, rows, outOffset, rowCount);
+        final WindowJoinTimeFrameHelper helper = atom.getSlaveTimeFrameHelper(-1);
+        joinSpanSerial(atom, helper, record, rows, isMasterFiltered, rowCount, outAddress, circuitBreaker);
+        gather(atom, helper, outAddress, rowCount, record, rows, isMasterFiltered, circuitBreaker);
+        atom.recordFrameSerial();
+    }
+
+    // True when the frame's row list holds the join's output, false when the query's thread still
+    // has to join it (the serial way).
+    static boolean isFrameJoined(AsyncAsOfJoinAtom atom, DirectLongList rows, boolean isMasterFiltered, long rowCount) {
+        return rows.size() == (isMasterFiltered ? rowCount : 0) + rowCount * (1 + atom.getGatherCount());
+    }
+
+    // Serial span mode: joinSpan() with the per-key state keyed by the slave key, master keys
+    // translated as met, and the prevailing scans in slave keys.
+    private static void joinSpanSerial(
             AsyncAsOfJoinAtom atom,
             WindowJoinTimeFrameHelper helper,
             PageFrameMemoryRecord record,
@@ -498,54 +530,133 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         final Record slaveRecord = helper.getRecord();
-        final DirectIntIntHashMap lookupMap = atom.getSlaveSymbolLookupMap();
+        final PageFrameMemoryRecord slaveFrameRecord = slaveRecord instanceof PageFrameMemoryRecord pfmr ? pfmr : null;
         final int masterTimestampIndex = atom.getMasterTimestampIndex();
         final int masterSymbolIndex = atom.getMasterSymbolIndex();
         final int slaveSymbolIndex = atom.getSlaveSymbolIndex();
         final int slaveTimestampIndex = helper.getTimestampIndex();
         final long masterTsScale = atom.getMasterTsScale();
         final long slaveTsScale = atom.getSlaveTsScale();
-        final long tolerance = atom.getToleranceInterval();
-        int scanned = 0;
+
+        record.setRowIndex(isMasterFiltered ? rows.get(0) : 0);
+        final long masterTsLo = scaleTimestamp(record.getTimestamp(masterTimestampIndex), masterTsScale);
+        record.setRowIndex(isMasterFiltered ? rows.get(rowCount - 1) : rowCount - 1);
+        final long masterTsHi = scaleTimestamp(record.getTimestamp(masterTimestampIndex), masterTsScale);
+
+        long r = helper.findRowLo(masterTsLo, masterTsHi, true);
+        final WindowJoinPrevailingCache prevailingCache = atom.getSerialPrevailingCache();
+        prevailingCache.of(helper.getPrevailingFrameIndex(), helper.getPrevailingRowIndex(), circuitBreaker);
+        final AsyncAsOfJoinKeyTable keys = atom.getKeyTable(-1);
+        keys.nextEpoch();
+
+        boolean exhausted = r == Long.MIN_VALUE;
+        int frameIndex = -1;
+        long frameRowHi = 0;
+        long tsAddress = 0;
+        long keyAddress = 0;
+        if (!exhausted) {
+            frameIndex = helper.getTimeFrameIndex();
+            frameRowHi = helper.getTimeFrameRowHi();
+            helper.recordAt(frameIndex, r);
+            if (slaveFrameRecord != null) {
+                tsAddress = slaveFrameRecord.getPageAddress(slaveTimestampIndex);
+                keyAddress = slaveFrameRecord.getPageAddress(slaveSymbolIndex);
+            }
+        }
+
         for (long i = 0; i < rowCount; i++) {
+            if ((i & (CIRCUIT_BREAKER_CHECK_ROWS - 1)) == 0) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+            }
             record.setRowIndex(isMasterFiltered ? rows.get(i) : i);
             final long masterTs = scaleTimestamp(record.getTimestamp(masterTimestampIndex), masterTsScale);
-            final int masterKey = record.getInt(masterSymbolIndex);
-            final long minSlaveTs = tolerance != Numbers.LONG_NULL ? masterTs - tolerance : Long.MIN_VALUE;
-            long found = NO_ROW;
-            // the last slave row at or before masterTs: the row before the first one past it
-            helper.findRowLo(masterTs == Long.MAX_VALUE ? masterTs : masterTs + 1, Long.MAX_VALUE, true);
-            int frameIndex = helper.getPrevailingFrameIndex();
-            long rowIndex = helper.getPrevailingRowIndex();
-            if (frameIndex >= 0) {
-                helper.openFrame(frameIndex);
-                outer:
-                do {
-                    frameIndex = helper.getTimeFrameIndex();
-                    helper.recordAt(frameIndex, 0);
-                    final long rowLo = helper.getTimeFrameRowLo();
-                    for (long r = Math.min(rowIndex, helper.getTimeFrameRowHi() - 1); r >= rowLo; r--) {
-                        if ((scanned++ & (CIRCUIT_BREAKER_CHECK_ROWS - 1)) == 0) {
-                            circuitBreaker.statefulThrowExceptionIfTripped();
-                        }
-                        helper.recordAtRowIndex(r);
-                        if (scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale) < minSlaveTs) {
-                            break outer;
-                        }
-                        final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                        final int matchingMasterKey = lookupMap.get(AsyncWindowJoinFastAtom.toSymbolMapKey(slaveKey));
-                        if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND && matchingMasterKey == masterKey) {
-                            found = Rows.toRowID(frameIndex, r);
-                            break outer;
+            while (!exhausted) {
+                if ((r & (CIRCUIT_BREAKER_CHECK_ROWS - 1)) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                }
+                final long slaveTs;
+                if (tsAddress != 0) {
+                    slaveTs = Unsafe.getLong(tsAddress + (r << 3));
+                } else {
+                    helper.recordAtRowIndex(r);
+                    slaveTs = slaveRecord.getTimestamp(slaveTimestampIndex);
+                }
+                if (scaleTimestamp(slaveTs, slaveTsScale) > masterTs) {
+                    break;
+                }
+                final int slaveKey;
+                if (keyAddress != 0) {
+                    slaveKey = Unsafe.getInt(keyAddress + (r << 2));
+                } else {
+                    helper.recordAtRowIndex(r);
+                    slaveKey = slaveRecord.getInt(slaveSymbolIndex);
+                }
+                // NULL (Integer.MIN_VALUE) at 0, key k at k + 1
+                Unsafe.putLong(keys.entry(Math.max(slaveKey + 1, 0)) + 8, Rows.toRowID(frameIndex, r));
+                if (++r >= frameRowHi) {
+                    if (!helper.nextFrame(masterTsHi)) {
+                        exhausted = true;
+                    } else {
+                        frameIndex = helper.getTimeFrameIndex();
+                        frameRowHi = helper.getTimeFrameRowHi();
+                        r = helper.getTimeFrameRowLo();
+                        helper.recordAt(frameIndex, r);
+                        if (slaveFrameRecord != null) {
+                            tsAddress = slaveFrameRecord.getPageAddress(slaveTimestampIndex);
+                            keyAddress = slaveFrameRecord.getPageAddress(slaveSymbolIndex);
                         }
                     }
-                    rowIndex = Long.MAX_VALUE;
-                } while (helper.previousFrame());
+                }
             }
-            Unsafe.putLong(outAddress + (i << 3), found);
+            final int slaveKey = atom.translateSerial(record.getInt(masterSymbolIndex));
+            final long rowId;
+            if (slaveKey == StaticSymbolTable.VALUE_NOT_FOUND) {
+                rowId = NO_ROW;
+            } else {
+                final long e = keys.find(Math.max(slaveKey + 1, 0));
+                rowId = e != 0 ? Unsafe.getLong(e + 8) : PREVAILING;
+            }
+            Unsafe.putLong(outAddress + (i << 3), rowId);
         }
-        // findRowLo() bookmarks positions per master row; the next frame's lookups start afresh
-        helper.toTop();
+
+        // keys with no slave row in the span up to their master row: the prevailing row before the span
+        final DirectIntIntHashMap lookupMap = atom.getSlaveSymbolLookupMap();
+        for (long i = 0; i < rowCount; i++) {
+            if (Unsafe.getLong(outAddress + (i << 3)) == PREVAILING) {
+                record.setRowIndex(isMasterFiltered ? rows.get(i) : i);
+                final long rowId = prevailingCache.findPrevailingSlaveRowId(
+                        helper,
+                        slaveRecord,
+                        slaveSymbolIndex,
+                        lookupMap,
+                        atom.translateSerial(record.getInt(masterSymbolIndex))
+                );
+                Unsafe.putLong(outAddress + (i << 3), rowId == Long.MIN_VALUE ? NO_ROW : rowId);
+            }
+        }
+    }
+
+    // Sizes the frame's output in the task's row list and returns its address. The row list belongs
+    // to a pooled reduce task and outlives the query, so growth is charged to the query's tracker
+    // and the charge settled when the tracker is released (its covered-bytes ledger), as the
+    // covered index decode buffers of the frame memory pool are.
+    private static long reserveOutput(AsyncAsOfJoinAtom atom, DirectLongList rows, long outOffset, long rowCount) {
+        final long totalLongs = outOffset + rowCount * (1 + atom.getGatherCount());
+        final long capacity = rows.getCapacity();
+        if (capacity < totalLongs) {
+            final MemoryTracker memoryTracker = atom.getMemoryTracker();
+            rows.setMemoryTracker(memoryTracker);
+            try {
+                rows.ensureCapacity(totalLongs - rows.size());
+            } finally {
+                rows.setMemoryTracker(null);
+            }
+            if (memoryTracker != null) {
+                memoryTracker.addCoveredBytes((rows.getCapacity() - capacity) << 3);
+            }
+        }
+        rows.setPos(totalLongs);
+        return rows.getAddress() + (outOffset << 3);
     }
 
     // Span mode, see the class comment.
@@ -578,10 +689,9 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
         final WindowJoinPrevailingCache prevailingCache = atom.getPrevailingCache(slotId);
         prevailingCache.of(helper.getPrevailingFrameIndex(), helper.getPrevailingRowIndex(), circuitBreaker);
 
-        final int epoch = atom.nextEpoch(slotId);
-        final long lastRowsAddress = atom.getSpanStateAddress(slotId);
+        final AsyncAsOfJoinKeyTable keys = atom.getKeyTable(slotId);
+        keys.nextEpoch();
         final int spareSlot = atom.getJoinableCount();
-        final long epochsAddress = lastRowsAddress + 16L * atom.getSpanSlotCount();
         final long slaveSlotsAddress = atom.getSlaveSlotsAddress();
         final int slaveSlotCount = atom.getSlaveSlotCount();
 
@@ -607,6 +717,10 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
             record.setRowIndex(isMasterFiltered ? rows.get(i) : i);
             final long masterTs = scaleTimestamp(record.getTimestamp(masterTimestampIndex), masterTsScale);
             while (!exhausted) {
+                if ((r & (CIRCUIT_BREAKER_CHECK_ROWS - 1)) == 0) {
+                    // a long span between two master rows
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                }
                 final long slaveTs;
                 if (tsAddress != 0) {
                     slaveTs = Unsafe.getLong(tsAddress + (r << 3));
@@ -628,8 +742,7 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
                 // into the spare slot, so that there is no branch on the key
                 final int index = Math.max(slaveKey + 1, 0);
                 final int slot = index < slaveSlotCount ? Unsafe.getInt(slaveSlotsAddress + ((long) index << 2)) : spareSlot;
-                Unsafe.putLong(lastRowsAddress + ((long) slot << 3), Rows.toRowID(frameIndex, r));
-                Unsafe.putInt(epochsAddress + ((long) slot << 2), epoch);
+                Unsafe.putLong(keys.entry(slot) + 8, Rows.toRowID(frameIndex, r));
                 if (++r >= frameRowHi) {
                     if (!helper.nextFrame(masterTsHi)) {
                         exhausted = true;
@@ -649,10 +762,9 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
             final long rowId;
             if (slot < 0) {
                 rowId = NO_ROW;
-            } else if (Unsafe.getInt(epochsAddress + ((long) slot << 2)) == epoch) {
-                rowId = Unsafe.getLong(lastRowsAddress + ((long) slot << 3));
             } else {
-                rowId = PREVAILING;
+                final long e = keys.find(slot);
+                rowId = e != 0 ? Unsafe.getLong(e + 8) : PREVAILING;
             }
             Unsafe.putLong(outAddress + (i << 3), rowId);
         }
@@ -663,9 +775,10 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
     // Walk mode, for a frame with few master rows against a long slave span. Per master row: R, the
     // last slave row at or before it, by a galloping search forward from the previous row's R; then
     // a walk back from R to the key's previous row, no further than an earlier row of the same key
-    // already walked back from. Native slave frames only. Gives up (returns false) when it has walked
-    // more than half the span rows R has passed: the span scan is then the cheaper of the two.
-    private static boolean joinWalk(
+    // already walked back from. Native slave frames only (WALK_UNSUPPORTED otherwise). Gives up
+    // (WALK_GAVE_UP) when it has walked more than half the span rows R has passed: the span scan is
+    // then the cheaper of the two.
+    private static int joinWalk(
             AsyncAsOfJoinAtom atom,
             int slotId,
             WindowJoinTimeFrameHelper helper,
@@ -678,7 +791,7 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         if (!(helper.getRecord() instanceof PageFrameMemoryRecord slaveFrameRecord)) {
-            return false;
+            return WALK_UNSUPPORTED;
         }
         final int masterTimestampIndex = atom.getMasterTimestampIndex();
         final int masterSymbolIndex = atom.getMasterSymbolIndex();
@@ -695,7 +808,7 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
         final long spanRow = helper.findRowLo(masterTsLo, masterTsHi, true);
         if (spanRow == Long.MIN_VALUE) {
             // no slave row in the span: the span scan is just the prevailing lookups
-            return false;
+            return WALK_UNSUPPORTED;
         }
         final int spanFrame = helper.getTimeFrameIndex();
         final int prevailingFrameIndex = helper.getPrevailingFrameIndex();
@@ -703,16 +816,13 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
         final long[] frames = atom.getWalkFrameCache(slotId);
         final int frameCount = atom.getSlaveFrameCount();
         if (!walkFrame(atom, helper, slaveFrameRecord, frames, spanFrame, slaveTimestampIndex, slaveSymbolIndex)) {
-            return false;
+            return WALK_UNSUPPORTED;
         }
         final WindowJoinPrevailingCache prevailingCache = atom.getPrevailingCache(slotId);
         prevailingCache.of(prevailingFrameIndex, prevailingRowIndex, circuitBreaker);
 
-        final int epoch = atom.nextEpoch(slotId);
-        final int spanSlotCount = atom.getSpanSlotCount();
-        final long lastRowsAddress = atom.getSpanStateAddress(slotId);
-        final long walkedToAddress = lastRowsAddress + 8L * spanSlotCount;
-        final long epochsAddress = lastRowsAddress + 16L * spanSlotCount;
+        final AsyncAsOfJoinKeyTable keys = atom.getKeyTable(slotId);
+        keys.nextEpoch();
         final long slaveSlotsAddress = atom.getSlaveSlotsAddress();
         final int slaveSlotCount = atom.getSlaveSlotCount();
 
@@ -762,7 +872,8 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
                 int nextFrame = rFrame + 1;
                 while (nextFrame < frameCount) {
                     if (!walkFrame(atom, helper, slaveFrameRecord, frames, nextFrame, slaveTimestampIndex, slaveSymbolIndex)) {
-                        return false;
+                        // a Parquet or column top frame ahead: the walk cannot read it
+                        return WALK_UNSUPPORTED;
                     }
                     if (frames[4 * nextFrame] > 1) {
                         break;
@@ -782,16 +893,12 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
                 Unsafe.putLong(outAddress + (i << 3), NO_ROW);
                 continue;
             }
-            final long slotOffset8 = (long) slot << 3;
-            if (Unsafe.getInt(epochsAddress + ((long) slot << 2)) != epoch) {
-                Unsafe.putInt(epochsAddress + ((long) slot << 2), epoch);
-                Unsafe.putLong(lastRowsAddress + slotOffset8, NO_ROW);
-                Unsafe.putLong(walkedToAddress + slotOffset8, NO_ROW);
-            }
+            // the key's last row (+8) and walked-to row (+16), both NO_ROW for a key new to the frame
+            final long entry = keys.entry(slot);
             // R before the span's first row: no span row at or before the master row
             if (rRow >= 0 && (rFrame != spanFrame || rRow >= spanRow)) {
                 final long rRowId = Rows.toRowID(rFrame, rRow);
-                final long walkedTo = Unsafe.getLong(walkedToAddress + slotOffset8);
+                final long walkedTo = Unsafe.getLong(entry + 16);
                 if (rRowId > walkedTo) {
                     // walk back from R over the rows not yet walked for the key
                     long found = NO_ROW;
@@ -808,7 +915,9 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
                             if (Rows.toRowID(g, x) <= walkedTo) {
                                 break walk;
                             }
-                            walked++;
+                            if ((++walked & (CIRCUIT_BREAKER_CHECK_ROWS - 1)) == 0) {
+                                circuitBreaker.statefulThrowExceptionIfTripped();
+                            }
                             final int index = Math.max(Unsafe.getInt(keyAddress + (x << 2)) + 1, 0);
                             if (index < slaveSlotCount && Unsafe.getInt(slaveSlotsAddress + ((long) index << 2)) == slot) {
                                 found = Rows.toRowID(g, x);
@@ -817,19 +926,19 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
                         }
                     }
                     if (found != NO_ROW) {
-                        Unsafe.putLong(lastRowsAddress + slotOffset8, found);
+                        Unsafe.putLong(entry + 8, found);
                     }
-                    Unsafe.putLong(walkedToAddress + slotOffset8, rRowId);
+                    Unsafe.putLong(entry + 16, rRowId);
                     if (!neverGiveUp && walked > (passed >> 1) + WALK_SLACK_ROWS) {
-                        return false;
+                        return WALK_GAVE_UP;
                     }
                 }
             }
-            final long last = Unsafe.getLong(lastRowsAddress + slotOffset8);
+            final long last = Unsafe.getLong(entry + 8);
             Unsafe.putLong(outAddress + (i << 3), last != NO_ROW ? last : PREVAILING);
         }
         resolvePrevailing(atom, prevailingCache, helper, record, rows, isMasterFiltered, rowCount, outAddress);
-        return true;
+        return WALK_DONE;
     }
 
     // keys with no slave row in the span up to their master row: the prevailing row before the span
