@@ -15218,6 +15218,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     functions.extendAndSet(i, f);
                     // the function owns its PARTITION BY terms now
                     partitionByFunctions = null;
+                    if (dropPartitionBy && ac.getPartitionBy().size() > 0) {
+                        // one key at a time, as the partitioned function the serial plan runs
+                        wf.adoptPartitionedArithmetic();
+                    }
                     windowMapSpecs.extendAndSet(i, WindowMapSpec.of(
                             executionContext.getWindowContext(),
                             dropPartitionBy ? NO_PARTITION_BY : ac.getPartitionBy(),

@@ -2214,7 +2214,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         protected double externalSum = 0;
         private double avg = 0;
         private long count = 0;
+        // the next row is the first since toTop(), see adoptPartitionedArithmetic()
+        private boolean firstRow = true;
         private int loIdx = 0;
+        // whether a first row sets the sum, as AvgOverPartitionRowsFrameFunction does
+        private boolean partitionedFirstRow;
         private double sum = 0.0;
 
         public AvgOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory) {
@@ -2233,6 +2237,17 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
+        }
+
+        /**
+         * A partition's first row sets the sum to its value, as
+         * {@link AvgOverPartitionRowsFrameFunction} does, rather than adding it to 0.0: the two
+         * differ for -0.0, which 0.0 + -0.0 turns into 0.0. Every later row is the same arithmetic
+         * in both.
+         */
+        @Override
+        public void adoptPartitionedArithmetic() {
+            partitionedFirstRow = true;
         }
 
         @Override
@@ -2268,6 +2283,24 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void replayNext(double d) {
+            if (firstRow) {
+                firstRow = false;
+                if (partitionedFirstRow) {
+                    // AvgOverPartitionRowsFrameFunction.computeNext's value.isNew() branch
+                    if (frameIncludesCurrentValue && Numbers.isFinite(d)) {
+                        sum = d;
+                        count = 1;
+                        avg = d;
+                        externalSum = d;
+                    } else {
+                        avg = Double.NaN;
+                        externalSum = Double.NaN;
+                    }
+                    buffer.putDouble((long) loIdx * Double.BYTES, d);
+                    loIdx = (loIdx + 1) % bufferSize;
+                    return;
+                }
+            }
             //compute value using top frame element (that could be current or previous row)
             double hiValue = d;
             if (frameLoBounded && !frameIncludesCurrentValue) {
@@ -2328,6 +2361,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void reopen() {
             avg = 0;
             count = 0;
+            firstRow = true;
             loIdx = 0;
             sum = 0.0;
             initBuffer();
@@ -2339,6 +2373,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             buffer.close();
             avg = 0;
             count = 0;
+            firstRow = true;
             loIdx = 0;
             sum = 0.0;
         }
@@ -2368,6 +2403,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             super.toTop();
             avg = 0;
             count = 0;
+            firstRow = true;
             loIdx = 0;
             sum = 0.0;
             initBuffer();

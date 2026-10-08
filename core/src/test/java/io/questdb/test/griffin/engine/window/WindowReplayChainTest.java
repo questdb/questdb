@@ -150,6 +150,76 @@ public class WindowReplayChainTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSignedZeroAtKeyStart() throws Exception {
+        // Review round 4, m1: worker copies compiled without the PARTITION BY started a bounded
+        // frame's sum from 0.0, and 0.0 + -0.0 is 0.0, where the partitioned serial function
+        // starts from the first value, -0.0. A running DOUBLE max beside it keeps the keys whole
+        // (no key runs, no split), so the workers compute every key afresh.
+        assertMemoryLeak(() -> {
+            engine.execute(
+                    "create table z (time timestamp, sym symbol index type " + indexType + ", v double, w double)" +
+                            " timestamp(time) partition by DAY",
+                    sqlExecutionContext
+            );
+            // every key's first three rows are -0.0, then values that keep the sum at a signed zero
+            // for a while (-0.0, 0.0), then ordinary ones
+            engine.execute(
+                    "insert into z select" +
+                            " (x * 1_000_000L)::timestamp," +
+                            " 'K' || (x % 10)," +
+                            " case when x <= 30 then -0.0 when x <= 60 then (case when x % 20 < 10 then -0.0 else 0.0 end)" +
+                            " when x % 7 = 0 then null else rnd_double() * 10.0 / 3.0 - 1.5 end," +
+                            " rnd_double()" +
+                            " from long_sequence(4000)",
+                    sqlExecutionContext
+            );
+            final String[] frames = {
+                    "avg(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN 5 PRECEDING AND CURRENT ROW)",
+                    "sum(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)",
+                    "sum(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN 4 PRECEDING AND 1 PRECEDING)",
+                    "avg(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING)",
+                    "sum(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+                    "avg(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+                    "sum(v) OVER (PARTITION BY sym ORDER BY time)",
+                    "avg(v) OVER (PARTITION BY sym)",
+                    "first_value(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)",
+                    "last_value(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)",
+                    "min(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)",
+                    "max(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)",
+                    "lag(v) OVER (PARTITION BY sym ORDER BY time)",
+            };
+            for (String frame : frames) {
+                for (String where : new String[]{"", " WHERE sym IN ('K3', 'K1', 'K7', 'K0')"}) {
+                    final String query = "SELECT sym, time, y, m FROM (SELECT sym, time, " + frame + " y," +
+                            " max(w) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) m" +
+                            " FROM z" + where + ") ORDER BY sym, time, y, m";
+                    final String expected = serial(engine, sqlExecutionContext, query);
+                    sqlExecutionContext.setParallelWindowEnabled(true);
+                    try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+                        if (findAsyncFactoryOrNull(factory) == null) {
+                            // a window that does not stream, cached as serially
+                            continue;
+                        }
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            TestUtils.assertEquals(query, expected, rawRows(cursor, factory.getMetadata()));
+                        }
+                    } finally {
+                        sqlExecutionContext.setParallelWindowEnabled(false);
+                    }
+                }
+            }
+            // the bounded frames, the ones that differed, ran in parallel
+            sqlExecutionContext.setParallelWindowEnabled(true);
+            try (RecordCursorFactory factory = engine.select("SELECT sym, time, y, m FROM (SELECT sym, time, " + frames[0] + " y," +
+                    " max(w) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) m FROM z) ORDER BY sym, time, y, m", sqlExecutionContext)) {
+                Assert.assertNotNull(findAsyncFactoryOrNull(factory));
+            } finally {
+                sqlExecutionContext.setParallelWindowEnabled(false);
+            }
+        });
+    }
+
+    @Test
     public void testLimitAndRewindOnWorkerPool() throws Exception {
         // a LIMIT closes the cursor with rounds in flight and passes pending; the next execution
         // of the same factory starts the pass afresh
