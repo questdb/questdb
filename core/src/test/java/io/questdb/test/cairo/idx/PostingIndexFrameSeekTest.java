@@ -341,6 +341,67 @@ public class PostingIndexFrameSeekTest extends AbstractCairoTest {
         assertFrames(PostingIndexUtils.ENCODING_EF, true, LAYOUT_SPARSE, 50_000);
     }
 
+    /**
+     * The NULL key's cursor over a sealed index whose key 0 has a block of its own (300 keys, so
+     * stride 0 stores per-key blobs), on ranges that cross the column top: the cursor decodes the
+     * key's first block when it opens, while the column top's NULL rows are still to come.
+     * {@link RowCursor#drainTo} must return those NULL rows first, as {@code hasNext()} does.
+     */
+    @Test
+    public void testEfSealedNullKeyBlockDrainColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final int rows = 20_000;
+            final int keyCount = 300;
+            int prefilled = 0;
+            for (long columnTop : new long[]{1, 100, 5_000}) {
+                final LongList expected = new LongList();
+                for (long r = 0; r < columnTop; r++) {
+                    expected.add(r);
+                }
+                try (Path path = new Path().of(configuration.getDbRoot())) {
+                    final int plen = path.size();
+                    final String name = "null_block_" + columnTop;
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, PostingIndexUtils.ENCODING_EF)) {
+                        writer.of(path, name, COLUMN_NAME_TXN_NONE, true);
+                        writer.setNextTxnAtSeal(0L);
+                        for (long r = columnTop; r < rows; r++) {
+                            final int key = (int) (r % keyCount);
+                            writer.add(key, r);
+                            if (key == 0) {
+                                expected.add(r);
+                            }
+                        }
+                        writer.setMaxValue(rows - 1);
+                        writer.commit();
+                        writer.seal();
+                    }
+                    path.trimTo(plen);
+                    try (PostingIndexFwdReader fwd = new PostingIndexFwdReader(configuration, path, name, COLUMN_NAME_TXN_NONE, -1, columnTop)) {
+                        final long[][] ranges = {
+                                {0, rows - 1}, {0, Long.MAX_VALUE}, {columnTop - 1, columnTop + 500}, {Math.max(0, columnTop - 50), rows - 1}
+                        };
+                        for (long[] range : ranges) {
+                            final long lo = range[0];
+                            final long hi = range[1];
+                            final String label = "top=" + columnTop + " [" + lo + "," + hi + "]";
+                            if (isNullBlockPrefilled(fwd.getCursor(0, lo, hi))) {
+                                prefilled++;
+                            }
+                            for (int chunk : new int[]{1, 2, 7, 64, 1_000, 1 << 20}) {
+                                assertDrainedInChunks(label + " chunk=" + chunk, fwd.getCursor(0, lo, hi), expected, lo, hi, chunk);
+                            }
+                            assertDrained(label + " drain", fwd.getCursor(0, lo, hi), expected, lo, hi, rnd);
+                            assertFrame(label + " fwd", fwd.getCursor(0, lo, hi), expected, lo, hi, true);
+                        }
+                    }
+                }
+            }
+            // the state the test is for: a decoded block with NULL rows still pending, at every range
+            Assert.assertEquals(12, prefilled);
+        });
+    }
+
     @Test
     public void testForwardFirstValueGuard() throws Exception {
         // A forward cursor skips the seek when the blob's first value is already >= minValue
@@ -617,6 +678,32 @@ public class PostingIndexFrameSeekTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * {@link RowCursor#drainTo} in chunks of a fixed size, nothing else: the rows of the cursor
+     * in order, each OR-ed with the row id base; a short chunk ends the cursor.
+     */
+    private static void assertDrainedInChunks(String label, RowCursor cursor, LongList expected, long lo, long hi, int chunk) {
+        final long base = 5L << 44;
+        try (DirectLongList sink = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT)) {
+            while (true) {
+                final long size = sink.size();
+                final long n = cursor.drainTo(sink, base, chunk);
+                Assert.assertEquals(label + " drained", n, sink.size() - size);
+                if (n < chunk) {
+                    break;
+                }
+            }
+            final int from = lowerBound(expected, lo);
+            final int to = hi == Long.MAX_VALUE ? expected.size() : lowerBound(expected, hi + 1);
+            Assert.assertEquals(label + " rows", to - from, sink.size());
+            for (int i = from, k = 0; i < to; i++, k++) {
+                Assert.assertEquals(label + " ordinal " + i, expected.getQuick(i), (sink.get(k) & ~base) + lo);
+            }
+        } finally {
+            Misc.free(cursor);
+        }
+    }
+
     private static Object fieldObject(Object instance, String fieldName) throws Exception {
         Class<?> clazz = instance.getClass();
         while (clazz != null) {
@@ -678,6 +765,24 @@ public class PostingIndexFrameSeekTest extends AbstractCairoTest {
      * Decodes an EF blob from ordinal 0 exactly as the forward cursor's decode does, trusting
      * every high word: the from-zero (unranked) walk.
      */
+    // A NULL key cursor that decoded the key's first block when it opened, while NULL rows of the
+    // column top are still pending.
+    private static boolean isNullBlockPrefilled(RowCursor cursor) throws Exception {
+        try {
+            if (!cursor.getClass().getSimpleName().equals("NullCursor")) {
+                return false;
+            }
+            final long nullPos = (long) fieldObject(cursor, "nullPos");
+            final long nullCount = (long) fieldObject(cursor, "nullCount");
+            final int pos = (int) fieldObject(cursor, "blockBufferPos");
+            final int end = (int) fieldObject(cursor, "blockBufferEnd");
+            final int constantDeltaRemaining = (int) fieldObject(cursor, "constantDeltaRemaining");
+            return nullPos < nullCount && (end > pos || constantDeltaRemaining > 0);
+        } finally {
+            Misc.free(cursor);
+        }
+    }
+
     private static LongList javaDecodeEf(long blob) {
         final int count = Unsafe.getInt(blob + 4);
         final int bitsL = Unsafe.getByte(blob + 8) & 0xFF;
