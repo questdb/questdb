@@ -3546,7 +3546,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         }
                     }
 
-                    if (canSplit && tableWriter.tryAcquirePartitionSplit(partitionTimestamp)) {
+                    // No split gate: every split leaves a prefix of at least the split threshold, which bounds the
+                    // folders a day can hold while hot, and the commit-time squash folds cold siblings back to
+                    // cairo.o3.partition.max.splits.
+                    if (canSplit) {
                         partitionSplit = true;
                         partitionTimestamp = maxSourceTimestamp + 1;
                         prefixType = O3_BLOCK_NONE;

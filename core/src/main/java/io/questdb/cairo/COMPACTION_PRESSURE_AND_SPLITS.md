@@ -47,12 +47,10 @@ all splits are squashed in the apply path the moment the next day appears.
   could not work: a day at the cap never went over it, so the squash never ran. In TSBS
   every day reached 20 folders by mid-day, and from then on the last folder grew to
   1.4K-2.8K pieces and 100-225M physical rows.
-- One hard ceiling, `PartitionCompactionPolicy.getSplitCeiling`: cap + min(cap *
-  `split.overflow.percent` / 100, max(1, `hot.commits`)). The overflow allowance covers the
-  folders the hot window keeps out of the squash's reach, and is at most the cap itself by
-  default (`split.overflow.percent=100`), so a day never holds more than twice the cap. Every split path checks `getSplitRoom`, so all paths agree on when a day is
-  full. The O3 split reserves room per logical day, because concurrent partition jobs can
-  split the same day in one commit.
+- There is no split ceiling either. Every split leaves a prefix of at least
+  `cairo.o3.partition.split.min.size`, so a hot day holds at most its size divided by that
+  minimum, and the squash brings the count back to the cap once the folders cool. Concurrent
+  partition jobs of one commit may each split the same day; nothing reserves room per day.
 - Plain WAL folders age by their native seqTxn. A folder with no seqTxn stamp (an O3 split's
   suffix, a MOVE-TAIL tail, a squash of unstamped sources) ages by the txn that named its
   directory instead. Treating it as hot forever would keep the day above the cap for good.
@@ -95,8 +93,8 @@ preferred. Splits: a day with 5 splits survives the next day's creation and is f
 sweep after `squash.idle.timeout`; a day at the cap squashes the smallest pair on commit; a split
 written within `squash.idle.timeout` blocks the merge, and one only hot by commit count does
 not; the merge folds the day in one staged copy. MOVE-TAIL and the O3 split still cut a
-day that is at the cap; the count never passes the ceiling, and it settles at the cap once the
-folders cool, `hot.commits` commits later (`CompactionSplitOverflowTest`). Fuzz with cap 2, 3,
+day that is at or past the cap, and the count settles at the cap once the folders cool,
+`hot.commits` commits later (`CompactionSplitOverflowTest`). Fuzz with cap 2, 3,
 20 and checkpoints.
 Replay acceptance: no REWRITE below 50% dead under pressure, no day squash inside apply,
 day-one compaction copies < 1x live, amplification < 3x (was 4.28x). No day stays at 19-20

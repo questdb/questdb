@@ -470,7 +470,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int partitionCompactionMoveTailPrefixMultiple;
     private final int partitionCompactionPieceThreshold;
     private final int partitionCompactionPrefixMinPercent;
-    private final int partitionCompactionSplitOverflowPercent;
     private final int partitionCompactionSquashTargetSizeMultiple;
     private final long partitionCompactionSwapTimeout;
     private final int partitionCompactionTableDeadStopPercent;
@@ -1984,7 +1983,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.partitionCompactionIoCostMultiplier = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_IO_COST_MULTIPLIER, 2));
             this.partitionCompactionMoveTailPieceThreshold = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PIECE_THRESHOLD, 1_000));
             this.partitionCompactionMoveTailPrefixMultiple = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PREFIX_MULTIPLE, 2));
-            this.partitionCompactionSplitOverflowPercent = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_SPLIT_OVERFLOW_PERCENT, 100));
             this.partitionCompactionSquashTargetSizeMultiple = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_SQUASH_TARGET_SIZE_MULTIPLE, 4));
             this.partitionCompactionSwapTimeout = Math.max(1, getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_SWAP_TIMEOUT, 30 * Micros.MINUTE_MICROS));
             this.partitionCompactionTableDeadStopTriggerPercent = getIntPercentage(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_TRIGGER_PERCENT, 50);
@@ -5056,11 +5054,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPartitionCompactionPrefixMinPercent() {
             return partitionCompactionPrefixMinPercent;
-        }
-
-        @Override
-        public int getPartitionCompactionSplitOverflowPercent() {
-            return partitionCompactionSplitOverflowPercent;
         }
 
         @Override

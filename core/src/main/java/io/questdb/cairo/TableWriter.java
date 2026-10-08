@@ -109,7 +109,6 @@ import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
-import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
@@ -315,7 +314,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<>(O3Basket::new, 64);
     // Flat [minTs, maxTs] pairs, one per transaction in the block being applied.
     private final LongList o3ClusterTxnRanges = new LongList();
-    private final LongIntHashMap o3BlockSplitCapacity = new LongIntHashMap();
     private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<>(O3MutableAtomicInteger::new, 64);
     private final int o3ColumnMemorySize;
     private final ObjList<MemoryCR> o3ColumnOverrides;
@@ -10456,8 +10454,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final long ceil = txWriter.getCurrentPartitionMaxTimestamp(incomingLo);
                 final long hi = O3CompositeMergeStrategy.lastAtOrBelow(sortedTimestampsAddr, lo, rowHi - 1, ceil);
                 final int index = txWriter.getPartitionIndex(incomingLo);
-                if (index >= 0 && txWriter.isPartitionComposite(index) && !txWriter.isPartitionReadOnly(index)
-                        && PartitionCompactionPolicy.hasSplitRoom(configuration, txWriter, index)) {
+                if (index >= 0 && txWriter.isPartitionComposite(index) && !txWriter.isPartitionReadOnly(index)) {
                     final PartitionGeometry geometry = getGeometry();
                     if (isMoveTailForecastRequired(geometry, index, incomingLo, hi - lo + 1)
                             && (!isCommitDedupMode() || !O3PartitionJob.hasTouchingPieces(geometry, index))) {
@@ -10545,7 +10542,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long deadRows = e - liveRows;
         if ((isRewriteDue ? prefixRows <= tailRows : !O3CompositeMergeStrategy.isMoveTailEconomical(prefixRows, tailRows, 0,
                 configuration.getPartitionCompactionMoveTailPrefixMultiple()))
-                || !PartitionCompactionPolicy.hasSplitRoom(configuration, txWriter, partitionIndex)
                 || !geometry.hasGenerationForNextPublish(partitionIndex, cut)) {
             return COMPACTION_NONE;
         }
@@ -12230,7 +12226,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         lastErrno = 0;
         partitionRemoveCandidates.clear();
         o3ColumnCounters.clear();
-        o3BlockSplitCapacity.clear();
         o3BasketPool.clear();
         commitRowCount = srcOooMax;
         deferredCoveringSinkAddr = 0;
@@ -18699,36 +18694,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return breaches;
     }
 
-    /**
-     * Uses the same incoming-range, fragmentation and size tests as the writer-side mover.
-     */
-    boolean tryAcquirePartitionSplit(long partitionTimestamp) {
-        final long logicalTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
-        // Several partition jobs for one logical day can split concurrently. Reserve their slots against
-        // the post-forecast native directory once per block, before any worker publishes a new folder.
-        synchronized (o3BlockSplitCapacity) {
-            final int keyIndex = o3BlockSplitCapacity.keyIndex(logicalTimestamp);
-            int remaining;
-            if (keyIndex < 0) {
-                remaining = o3BlockSplitCapacity.valueAt(keyIndex);
-            } else {
-                final int index = txWriter.getPartitionIndex(partitionTimestamp);
-                if (index < 0) {
-                    return false;
-                }
-                remaining = PartitionCompactionPolicy.getSplitRoom(configuration, txWriter, index);
-            }
-            if (remaining <= 0) {
-                return false;
-            }
-            o3BlockSplitCapacity.putAt(keyIndex, logicalTimestamp, remaining - 1);
-            return true;
-        }
-    }
-
     boolean wouldMoveTailSucceed(int partitionIndex, LongList bounds, O3CompositeMergeStrategy.Plan plan) {
-        return PartitionCompactionPolicy.hasSplitRoom(configuration, txWriter, partitionIndex)
-                && !isCommitReplaceMode() && txWriter.getLagRowCount() == 0
+        return !isCommitReplaceMode() && txWriter.getLagRowCount() == 0
                 && moveTailCut(bounds, plan, getMoveTailFutureFloor()) > 0;
     }
 

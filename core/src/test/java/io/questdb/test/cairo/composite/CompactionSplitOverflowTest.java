@@ -26,7 +26,6 @@ package io.questdb.test.cairo.composite;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
-import io.questdb.cairo.PartitionCompactionPolicy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TxReader;
 import io.questdb.std.LongList;
@@ -36,9 +35,8 @@ import org.junit.Test;
 
 /**
  * {@code cairo.o3.partition.max.splits} is the squash target, not a split gate. A split that pays - MOVE-TAIL or
- * the O3 prefix split - happens even when its day already holds the cap, up to
- * {@link PartitionCompactionPolicy#getSplitCeiling}; housekeeping then squashes the smallest cold adjacent pairs
- * back to the cap, and a day stays over the cap only while its folders are hot.
+ * the O3 prefix split - happens however many folders its day already holds; housekeeping then squashes the
+ * smallest cold adjacent pairs back to the cap, so a day stays over the cap only while its folders are hot.
  */
 public class CompactionSplitOverflowTest extends AbstractCairoTest {
     private static final int CAP = 2;
@@ -49,12 +47,10 @@ public class CompactionSplitOverflowTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final int hotCommits = 3;
             createClassicSplitTable(hotCommits);
-            final int ceiling = PartitionCompactionPolicy.getSplitCeiling(configuration);
-            Assert.assertEquals(CAP + CAP, ceiling);
             for (int minute : new int[]{600, 540, 480}) {
                 insertClassicRows(minute);
             }
-            Assert.assertEquals("three splits in a row leave every folder of the day hot", ceiling, dayFolderCount());
+            Assert.assertEquals("three splits in a row leave every folder of the day hot", 1 + 3, dayFolderCount());
             // Commits that do not touch the day only age its folders. The splits went in one commit apart, so
             // they cool one commit apart: each commit frees exactly one more cold pair for the squash, and the
             // last hot folder cools on the hotCommits-th commit.
@@ -86,8 +82,6 @@ public class CompactionSplitOverflowTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_TIME, 0);
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_MIN_GAIN, 1);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, CAP);
-            final int ceiling = PartitionCompactionPolicy.getSplitCeiling(configuration);
-            Assert.assertEquals(CAP + hotCommits, ceiling);
             execute("CREATE TABLE x (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE oracle (v LONG, ts TIMESTAMP)");
             // A later day, so 2024-01-01 is never the active partition and every write to it is O3.
@@ -101,10 +95,10 @@ public class CompactionSplitOverflowTest extends AbstractCairoTest {
                 node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
                 node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1G");
                 insertBoth(rowsAt(base, 440));
-                maxCount = Math.max(maxCount, assertWithinCeiling(ceiling));
+                maxCount = Math.max(maxCount, dayFolderCount());
                 // ...leave dead rows over its top 40 rows, which the pre-split cuts into a tail piece...
                 insertBoth(rowsAt(base + 400, 40));
-                maxCount = Math.max(maxCount, assertWithinCeiling(ceiling));
+                maxCount = Math.max(maxCount, dayFolderCount());
                 // ...and merge into that tail piece, which the forecast moves to a fresh folder first.
                 node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE / 8);
                 node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 20);
@@ -112,7 +106,7 @@ public class CompactionSplitOverflowTest extends AbstractCairoTest {
                 final int countBefore = dayFolderCount();
                 final long lastFolderBefore = lastDayFolderTimestamp();
                 insertBoth(rowsAt(base + 410, 10));
-                maxCount = Math.max(maxCount, assertWithinCeiling(ceiling));
+                maxCount = Math.max(maxCount, dayFolderCount());
                 Assert.assertTrue("MOVE-TAIL must cut a fresh folder on iteration " + iter, lastDayFolderTimestamp() > lastFolderBefore);
                 if (countBefore >= CAP) {
                     movesAtCap++;
@@ -120,6 +114,9 @@ public class CompactionSplitOverflowTest extends AbstractCairoTest {
             }
             Assert.assertTrue("splits must not stop at the cap", movesAtCap >= iterations - 2);
             Assert.assertTrue("the day must overflow the cap while its new folders are hot", maxCount > CAP);
+            // Only hot folders sit above the cap, and a commit leaves at most two of its day's folders hot: the one
+            // it wrote and the one it cut.
+            Assert.assertTrue("the day held " + maxCount + " folders", maxCount <= CAP + 2 * hotCommits);
 
             for (int commit = 0; commit <= hotCommits; commit++) {
                 insertNextDayRow(1_000 + commit);
@@ -139,8 +136,6 @@ public class CompactionSplitOverflowTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final int hotCommits = 2;
             createClassicSplitTable(hotCommits);
-            final int ceiling = PartitionCompactionPolicy.getSplitCeiling(configuration);
-            Assert.assertEquals(CAP + hotCommits, ceiling);
             final int[] minutes = {600, 540, 480, 420, 360, 300, 240, 180};
             int splitsAtCap = 0;
             int maxCount = 0;
@@ -148,25 +143,22 @@ public class CompactionSplitOverflowTest extends AbstractCairoTest {
                 final int countBefore = dayFolderCount();
                 final LongList foldersBefore = dayFolderTimestamps();
                 insertClassicRows(minute);
-                maxCount = Math.max(maxCount, assertWithinCeiling(ceiling));
+                maxCount = Math.max(maxCount, dayFolderCount());
                 if (countBefore >= CAP && hasNewFolder(foldersBefore, dayFolderTimestamps())) {
                     splitsAtCap++;
                 }
             }
-            Assert.assertTrue("O3 splits must not stop at the cap", splitsAtCap >= 3);
-            Assert.assertEquals("the day must reach, and not pass, the ceiling", ceiling, maxCount);
+            // Every commit splits: nothing gates a split on the folder count, so the day runs past the cap
+            // for as long as its folders stay hot.
+            Assert.assertEquals("every O3 commit past the cap must split", minutes.length - (CAP - 1), splitsAtCap);
+            Assert.assertTrue("the day must overflow the cap while its new folders are hot", maxCount > CAP);
+            Assert.assertTrue("the day held " + maxCount + " folders", maxCount <= CAP + 2 * hotCommits);
             for (int commit = 0; commit <= hotCommits; commit++) {
                 insertNextDayRow(commit);
             }
             Assert.assertEquals("cold folders must be squashed back to the cap", CAP, dayFolderCount());
             assertClassicRows(minutes.length, hotCommits + 1);
         });
-    }
-
-    private static int assertWithinCeiling(int ceiling) {
-        final int count = dayFolderCount();
-        Assert.assertTrue("the day holds " + count + " folders, over the ceiling of " + ceiling, count <= ceiling);
-        return count;
     }
 
     private static void createClassicSplitTable(int hotCommits) throws Exception {

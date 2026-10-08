@@ -676,7 +676,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_PARTITION_COMPACTION_IO_COST_MULTIPLIER("cairo.partition.compaction.io.cost.multiplier"),
     CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PIECE_THRESHOLD("cairo.partition.compaction.move.tail.piece.threshold"),
     CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PREFIX_MULTIPLE("cairo.partition.compaction.move.tail.prefix.multiple"),
-    CAIRO_PARTITION_COMPACTION_SPLIT_OVERFLOW_PERCENT("cairo.partition.compaction.split.overflow.percent"),
     CAIRO_PARTITION_COMPACTION_SQUASH_TARGET_SIZE_MULTIPLE("cairo.partition.compaction.squash.target.size.multiple"),
     CAIRO_PARTITION_COMPACTION_SWAP_TIMEOUT("cairo.partition.compaction.swap.timeout"),
     CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_TRIGGER_PERCENT("cairo.partition.compaction.table.dead.stop.trigger.percent"),

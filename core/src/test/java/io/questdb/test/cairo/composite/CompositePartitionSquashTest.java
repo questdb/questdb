@@ -27,7 +27,6 @@ package io.questdb.test.cairo.composite;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
-import io.questdb.cairo.PartitionCompactionPolicy;
 import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -131,14 +130,13 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
                 prefixRows = reader.getTxFile().getPartitionSize(0);
                 Assert.assertTrue("the move must preserve the large prefix", prefixRows > 9_000);
             }
-            // The cap is a squash target, not a split gate: hot tails may overflow it up to the ceiling.
-            final int ceiling = PartitionCompactionPolicy.getSplitCeiling(configuration);
-            Assert.assertTrue("the ceiling must leave room past the cap", ceiling > 2);
+            // The cap is a squash target, not a split gate: hot tails overflow it, and each commit adds at most
+            // one sibling, which the squash folds back once it is cold.
             for (int i = 0; i < 8; i++) {
                 execute("INSERT INTO x SELECT x::INT + 30_000, timestamp_sequence('2024-01-01T02:42:30'::TIMESTAMP + "
                         + (i * 25_000_000L) + ", 1_000_000L) FROM long_sequence(25)");
                 drainWalQueue();
-                Assert.assertTrue("ordinary squash must bound sibling growth", partitionCountOfDay() <= ceiling);
+                Assert.assertTrue("ordinary squash must bound sibling growth", partitionCountOfDay() <= 2 + i + 1);
             }
             final long written = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - writtenBefore;
             Assert.assertTrue("tail moves and squash must not copy the 9,500-row prefix repeatedly: " + written, written < 20_000);

@@ -979,11 +979,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getPartitionCompactionSplitOverflowPercent() {
-        return 100;
-    }
-
-    @Override
     public long getPartitionCompactionSquashIdleTimeout() {
         return 30 * Micros.MINUTE_MICROS;
     }

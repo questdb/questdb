@@ -965,11 +965,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getPartitionCompactionSplitOverflowPercent() {
-        return getDelegate().getPartitionCompactionSplitOverflowPercent();
-    }
-
-    @Override
     public long getPartitionCompactionSquashIdleTimeout() {
         return getDelegate().getPartitionCompactionSquashIdleTimeout();
     }

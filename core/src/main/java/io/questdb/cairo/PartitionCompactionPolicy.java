@@ -144,45 +144,10 @@ public class PartitionCompactionPolicy implements Mutable {
     }
 
     /**
-     * The hard ceiling on the folders one logical partition may hold. {@code cairo.o3.partition.max.splits} is the
-     * squash target, not a split gate: a split that pays always happens, and housekeeping squashes the smallest cold
-     * adjacent pairs back down to the cap once the folders cool. The overflow allowance covers the folders the last
-     * {@code hot.commits} commits keep hot - and so out of the squash's reach - but never more than
-     * {@code split.overflow.percent} of the cap, so by default a day never holds more than twice the cap.
-     */
-    public static int getSplitCeiling(CairoConfiguration configuration) {
-        final int cap = Math.max(1, configuration.getO3PartitionMaxSplits());
-        final long overflowCap = (long) cap * configuration.getPartitionCompactionSplitOverflowPercent() / 100;
-        final long overflow = Math.min(overflowCap, Math.max(1, configuration.getPartitionCompactionHotCommits()));
-        return (int) Math.min(Integer.MAX_VALUE, cap + overflow);
-    }
-
-    /**
-     * How many more folders the logical partition holding {@code partitionIndex} may take before it reaches
-     * {@link #getSplitCeiling}. Every split path - MOVE-TAIL, its forecast and the O3 prefix split - gates on this one
-     * number, so they agree on when a day is full.
-     */
-    public static int getSplitRoom(CairoConfiguration configuration, TxReader txReader, int partitionIndex) {
-        final long logicalTimestamp = txReader.getLogicalPartitionTimestamp(txReader.getPartitionTimestampByIndex(partitionIndex));
-        int lo = partitionIndex;
-        while (lo > 0 && txReader.getLogicalPartitionTimestamp(txReader.getPartitionTimestampByIndex(lo - 1)) == logicalTimestamp) {
-            lo--;
-        }
-        int hi = partitionIndex + 1;
-        while (hi < txReader.getPartitionCount()
-                && txReader.getLogicalPartitionTimestamp(txReader.getPartitionTimestampByIndex(hi)) == logicalTimestamp) {
-            hi++;
-        }
-        return getSplitCeiling(configuration) - (hi - lo);
-    }
-
-    public static boolean hasSplitRoom(CairoConfiguration configuration, TxReader txReader, int partitionIndex) {
-        return getSplitRoom(configuration, txReader, partitionIndex) > 0;
-    }
-
-    /**
      * Once a folder needs compaction, preserve a majority cold prefix without the ingestion forecast's waste gate.
      * The cut respects timestamp ties and loaded backfill, but the prefix may contain holes or reordered files.
+     * There is no split gate: {@code cairo.o3.partition.max.splits} is the squash target, and housekeeping folds
+     * cold siblings back down to it once they cool.
      */
     public static int moveTailCut(
             CairoConfiguration configuration,
@@ -193,8 +158,7 @@ public class PartitionCompactionPolicy implements Mutable {
             long futureFloor
     ) {
         final long liveRows = txReader.getPartitionSize(partitionIndex);
-        if (liveRows <= configuration.getPartitionO3SplitMinSize() / Math.max(1, avgRecordSize)
-                || !hasSplitRoom(configuration, txReader, partitionIndex)) {
+        if (liveRows <= configuration.getPartitionO3SplitMinSize() / Math.max(1, avgRecordSize)) {
             return 0;
         }
         final int hotCommits = configuration.getPartitionCompactionHotCommits();

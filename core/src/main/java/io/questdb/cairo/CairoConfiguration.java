@@ -719,8 +719,6 @@ public interface CairoConfiguration {
 
     int getPartitionCompactionPrefixMinPercent();
 
-    int getPartitionCompactionSplitOverflowPercent();
-
     /**
      * How long every folder of a logical partition - the main directory and all its MOVE-TAIL splits - has to
      * have been idle before the background sweep merges the whole logical partition into a single folder. Always

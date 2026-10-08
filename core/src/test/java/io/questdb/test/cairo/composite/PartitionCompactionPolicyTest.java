@@ -141,27 +141,6 @@ public class PartitionCompactionPolicyTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSplitOverflowPercentBoundsTheCeiling() {
-        final TestConfiguration cfg = new TestConfiguration();
-        cfg.hotCommits = 10;
-        cfg.maxSplits = 4;
-        Assert.assertEquals(8, PartitionCompactionPolicy.getSplitCeiling(cfg));
-        cfg.splitOverflowPercent = 50;
-        Assert.assertEquals(6, PartitionCompactionPolicy.getSplitCeiling(cfg));
-        cfg.splitOverflowPercent = 25;
-        Assert.assertEquals(5, PartitionCompactionPolicy.getSplitCeiling(cfg));
-        // 0 restores the cap as a hard gate.
-        cfg.splitOverflowPercent = 0;
-        Assert.assertEquals(4, PartitionCompactionPolicy.getSplitCeiling(cfg));
-        // Above 100%, the hot-commit window becomes the binding limit.
-        cfg.splitOverflowPercent = 1_000;
-        Assert.assertEquals(14, PartitionCompactionPolicy.getSplitCeiling(cfg));
-        cfg.maxSplits = Integer.MAX_VALUE;
-        cfg.splitOverflowPercent = Integer.MAX_VALUE;
-        Assert.assertEquals(Integer.MAX_VALUE, PartitionCompactionPolicy.getSplitCeiling(cfg));
-    }
-
-    @Test
     public void testWasteAndPieceRulesRetainTheirOwnTiers() throws Exception {
         assertMemoryLeak(() -> {
             final TestConfiguration cfg = new TestConfiguration();
@@ -211,26 +190,15 @@ public class PartitionCompactionPolicyTest extends AbstractCairoTest {
                 cfg.splitMinSize = 100;
                 Assert.assertEquals(0, PartitionCompactionPolicy.moveTailCut(cfg, tx, geometry, 0, 1, Long.MAX_VALUE));
                 cfg.splitMinSize = 50;
-                // A day AT the cap still splits: the overflow is squashed back once the folders cool.
+                // The folder count never gates a split: a day at or past the cap still cuts, and
+                // housekeeping squashes the cold overflow back to the cap.
                 cfg.maxSplits = 4;
-                Assert.assertEquals(8, PartitionCompactionPolicy.getSplitCeiling(cfg));
                 Assert.assertEquals(1, PartitionCompactionPolicy.moveTailCut(cfg, tx, geometry, 0, 1, Long.MAX_VALUE));
-                // Only the ceiling - the cap plus the hot window, at most twice the cap - stops it.
-                cfg.maxSplits = 2;
-                Assert.assertEquals(4, PartitionCompactionPolicy.getSplitCeiling(cfg));
-                Assert.assertEquals(0, PartitionCompactionPolicy.moveTailCut(cfg, tx, geometry, 0, 1, Long.MAX_VALUE));
-                // Without a hot window the commit's own squash folds the overflow at once, so one split over
-                // the cap is all the room a day needs.
+                cfg.maxSplits = 1;
+                Assert.assertEquals(1, PartitionCompactionPolicy.moveTailCut(cfg, tx, geometry, 0, 1, Long.MAX_VALUE));
+                // Without a hot window every piece but the last is a prefix candidate.
                 cfg.hotCommits = 0;
-                cfg.maxSplits = 4;
-                Assert.assertEquals(5, PartitionCompactionPolicy.getSplitCeiling(cfg));
-                Assert.assertTrue(PartitionCompactionPolicy.moveTailCut(cfg, tx, geometry, 0, 1, Long.MAX_VALUE) > 0);
-                cfg.maxSplits = 3;
-                Assert.assertEquals(4, PartitionCompactionPolicy.getSplitCeiling(cfg));
-                Assert.assertEquals(0, PartitionCompactionPolicy.moveTailCut(cfg, tx, geometry, 0, 1, Long.MAX_VALUE));
-                cfg.maxSplits = Integer.MAX_VALUE;
-                cfg.hotCommits = Integer.MAX_VALUE;
-                Assert.assertEquals(Integer.MAX_VALUE, PartitionCompactionPolicy.getSplitCeiling(cfg));
+                Assert.assertEquals(2, PartitionCompactionPolicy.moveTailCut(cfg, tx, geometry, 0, 1, Long.MAX_VALUE));
             }
         });
     }
@@ -244,7 +212,6 @@ public class PartitionCompactionPolicyTest extends AbstractCairoTest {
         private int maxSplits = 20;
         private double pressureRatio = 0.5;
         private long splitMinSize = 50;
-        private int splitOverflowPercent = 100;
 
         private TestConfiguration() {
             super(root);
@@ -278,11 +245,6 @@ public class PartitionCompactionPolicyTest extends AbstractCairoTest {
         @Override
         public long getPartitionCompactionIdleTimeout() {
             return 1;
-        }
-
-        @Override
-        public int getPartitionCompactionSplitOverflowPercent() {
-            return splitOverflowPercent;
         }
 
         @Override
