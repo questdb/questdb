@@ -898,7 +898,7 @@ public class WindowChainTest extends AbstractCairoTest {
             assertMatchesSerial(
                     engine,
                     ctx,
-                    "SELECT sym, time, s FROM (SELECT sym, time, sum(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM " + table + " WHERE sym IN ('BIG', 'K1', 'K2')) ORDER BY sym, time",
+                    "SELECT sym, time, s FROM (SELECT sym, time, sum(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM " + table + " WHERE sym IN ('BIG', 'K1', 'K2')) ORDER BY sym, time, s",
                     null,
                     tolerance
             );
@@ -906,11 +906,13 @@ public class WindowChainTest extends AbstractCairoTest {
             assertMatchesSerial(
                     engine,
                     ctx,
-                    "SELECT sym, time, s FROM (SELECT sym, time, sum(x) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM " + table + " WHERE sym IN ('BIG', 'K1', 'K2')) ORDER BY sym, time",
+                    "SELECT sym, time, s FROM (SELECT sym, time, sum(x) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM " + table + " WHERE sym IN ('BIG', 'K1', 'K2')) ORDER BY sym, time, s",
                     null,
                     tolerance
             );
         }
+        // the exception's plans do split keys and carry the sums
+        assertSplitOp(engine, ctx, "SELECT sym, time, s FROM (SELECT sym, time, sum(x) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM d WHERE sym IN ('BIG', 'K1', 'K2')) ORDER BY sym, time, s", AsyncWindowSplitPlan.OP_ADD);
         // slices of the whole table, a running sum folded
         assertMatchesSerial(engine, ctx, "SELECT time, sum(v) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM u WHERE i > 0", null);
         assertMatchesSerial(engine, ctx, "SELECT time, sum(x) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM u", null);
