@@ -178,18 +178,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 //noinspection resource
                 commitList.valueQuick(i).commit();
             }
-            // A WAL table written here bypasses the WAL, so no replay can redo its rows, including those a column add
-            // committed before this commit: an enrolled adaptive table takes a durable epoch at most once per interval.
-            // Every cached writer, not only the ones this tick committed: a table that went quiet still takes the
-            // epoch its UDP rows owe within the interval. Only ADAPTIVE enrols a table, so other modes skip the loop.
-            if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
-                for (int i = 0, n = writerCache.size(); i < n; i++) {
-                    final TableWriter cachedWriter = writerCache.valueQuick(i).writer;
-                    if (cachedWriter != null) {
-                        cachedWriter.advanceDurableEpochAtInterval("udp commit");
-                    }
-                }
-            }
         } finally {
             commitList.clear();
             lock.unlock();
@@ -295,6 +283,9 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void cacheWriter(CacheEntry entry, CachedCharSequence tableName, TableToken tableToken) {
+        if (refuseWalTable(entry, tableName, tableToken != null && tableToken.isWal())) {
+            return;
+        }
         try {
             entry.writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
             this.tableToken = tableToken;
@@ -345,6 +336,10 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 false,
                 TableUtils.TABLE_KIND_REGULAR_TABLE
         );
+        // Another session can create the table as WAL after the parser found it missing.
+        if (refuseWalTable(writerCache.valueAtQuick(cacheEntryIndex), cache.get(tableName), tableToken.isWal())) {
+            return;
+        }
         appendFirstRowAndCacheWriter(cache);
     }
 
@@ -374,6 +369,9 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                             throw CairoException.nonCritical()
                                     .put("table does not exist, cannot create table, creating new columns is disabled [table=").put(token)
                                     .put(']');
+                        }
+                        if (refuseWalTable(entry, token, tableStructureAdapter.isWalEnabled())) {
+                            break;
                         }
                         tableName = token.getCacheAddress();
                         if (onLineEnd != MY_NEW_LINE_END) {
@@ -530,6 +528,20 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         columnType = ColumnType.UNDEFINED;
     }
 
+    // A WAL table written here bypasses the WAL, and an ADAPTIVE start-up rolls such a table back to its last save
+    // point, so its rows would be lost at the next restart: ADAPTIVE refuses the table, existing or new, for the
+    // parser's life.
+    private boolean refuseWalTable(CacheEntry entry, CharSequence tableName, boolean isWal) {
+        if (isWal && configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+            LOG.error().$("UDP line protocol cannot write a WAL table in ADAPTIVE commit mode, skipping its lines until restart [table=")
+                    .$safe(tableName).I$();
+            entry.state = 3;
+            switchModeToSkipLine();
+            return true;
+        }
+        return false;
+    }
+
     /**
      * Releases every cached writer on the read-only (demoting) branch, mirroring ILP-TCP's
      * closeNoLock. The parser caches a TableWriter per table under the "ilpUdp" lock for the
@@ -611,6 +623,9 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         this.cacheEntryIndex = entryIndex;
 
         if (entry.writer == null) {
+            // The previous table's writer is on the commit list. A table left without a writer must not take the
+            // same-table shortcut into it on its next line.
+            writer = null;
             initCacheEntry(tableName, entry);
         } else {
             createState(entry);

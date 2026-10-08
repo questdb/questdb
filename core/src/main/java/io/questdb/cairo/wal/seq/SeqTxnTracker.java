@@ -58,9 +58,8 @@ public class SeqTxnTracker {
     // (counts rollbacks since process start). Exposed via wal_tables() as an operator signal that
     // recovery was required for this table in the current process lifetime.
     private volatile long recoveryIncarnation = 0;
-    // Set when an inline durable epoch after a change no WAL replay can redo failed, was skipped or, for UDP rows,
-    // waits for the interval: the next apply batch or a clean close takes an epoch regardless of the cadence.
-    // Cleared when an epoch publishes.
+    // Set when an inline durable epoch after a change no WAL replay can redo failed or was skipped: the next
+    // apply batch or a clean close takes an epoch regardless of the cadence. Cleared when an epoch publishes.
     // Written only by the thread that holds the table writer; RESUME WAL reads it before it takes the writer.
     private volatile boolean durableEpochOwed;
     // Wall-clock ms of the last durable epoch fired for this table (adaptive cadence gate). 0 => none

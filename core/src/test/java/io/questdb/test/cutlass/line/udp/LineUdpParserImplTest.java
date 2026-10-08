@@ -24,10 +24,12 @@
 
 package io.questdb.test.cutlass.line.udp;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
@@ -52,6 +54,7 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestFilesFacade;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestMicroClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -1028,6 +1031,244 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\"\n";
 
         assertMultiTable(expected1, expected2, lines);
+    }
+
+    // A table the parser cannot write (its writer is busy, or creating it fails) leaves the parser without a writer for
+    // the table's lines. Those lines, and the columns they add, must not land in the table of the line before, in any
+    // mode.
+    @Test
+    public void testUnresolvedTableLinesNeverLandInAnotherTable() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, "false");
+        assertMemoryLeak(() -> {
+            Assert.assertFalse(engine.getConfiguration().getWalEnabledDefault());
+            execute("create table n (s symbol, v long, ts timestamp) timestamp(ts) partition by day bypass wal");
+            execute("create table b (s symbol, v long, ts timestamp) timestamp(ts) partition by day bypass wal");
+            try (Path path = new Path()) {
+                // A directory in the way makes creating table x fail.
+                Files.mkdirs(path.of(root).concat("x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX).slash(), configuration.getMkDirMode());
+            }
+            try (
+                    TableWriter ignored = getWriter("b");
+                    LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration());
+                    LineUdpLexer lexer = new LineUdpLexer(4096)
+            ) {
+                lexer.withParser(parser);
+                parseDatagram(lexer, """
+                        n,s=a v=1i 1704153600000000000
+                        b,s=b v=2i 1704157200000000000
+                        b,s=c v=3i,q=1i 1704160800000000000
+                        n,s=d v=4i 1704164400000000000
+                        x,s=e v=5i 1704168000000000000
+                        x,s=f v=6i,r=1i 1704171600000000000
+                        n,s=g v=7i 1704175200000000000
+                        """);
+                lexer.parseLast();
+                parser.commitAll();
+            }
+            assertQuery("select * from n")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            s\tv\tts
+                            a\t1\t2024-01-02T00:00:00.000000Z
+                            d\t4\t2024-01-02T03:00:00.000000Z
+                            g\t7\t2024-01-02T06:00:00.000000Z
+                            """);
+            assertQuery("select * from b")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("s\tv\tts\n");
+            Assert.assertNull(engine.getTableTokenIfExists("x"));
+        });
+    }
+
+    // Another session can create a table as WAL while the parser is inside a line that creates it as non-WAL (WAL
+    // default off). ADAPTIVE refuses the table then too, with its later lines; other modes write it as on base.
+    @Test
+    public void testWalTableCreatedMidLineRefusedInAdaptiveOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, "false");
+                for (String mode : new String[]{"nosync", "async", "sync", "adaptive"}) {
+                    setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
+                    Assert.assertEquals(mode, CommitMode.fromString(mode), engine.getConfiguration().getCommitMode());
+                    Assert.assertFalse(mode, engine.getConfiguration().getWalEnabledDefault());
+                    final boolean refused = "adaptive".equals(mode);
+                    final String r = "r_" + mode;
+                    try (
+                            LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration());
+                            LineUdpLexer lexer = new LineUdpLexer(4096)
+                    ) {
+                        lexer.withParser(parser);
+                        // The parser finds no table at the measurement name and creates it at the line end.
+                        parseDatagram(lexer, r + ",s=a v=1i 1704153600000000000");
+                        execute("create table " + r + " (s symbol, v long, timestamp timestamp) timestamp(timestamp) partition by day wal");
+                        parseDatagram(lexer, "\n" + r + ",s=b v=2i 1704157200000000000\n");
+                        lexer.parseLast();
+                        parser.commitAll();
+                    }
+                    Assert.assertTrue(mode, engine.verifyTableName(r).isWal());
+                    assertQuery("select * from " + r)
+                            .noLeakCheck()
+                            .timestamp("timestamp")
+                            .expectSize()
+                            .returns(refused
+                                    ? "s\tv\ttimestamp\n"
+                                    : """
+                                    s\tv\ttimestamp
+                                    a\t1\t2024-01-02T00:00:00.000000Z
+                                    b\t2\t2024-01-02T01:00:00.000000Z
+                                    """);
+                }
+                capture.drain();
+                for (String mode : new String[]{"nosync", "async", "sync"}) {
+                    capture.assertNotLogged("table=r_" + mode + ']');
+                }
+                capture.assertOnlyOnce("cannot write a WAL table in ADAPTIVE commit mode, skipping its lines until restart.*table=r_adaptive]");
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    // The parser writes a WAL table through its writer, outside the WAL, and an ADAPTIVE start-up rolls such a table
+    // back to its last save point. So ADAPTIVE refuses the lines of a WAL table, existing or one a line would create,
+    // with one error per table, and still writes the non-WAL tables of the same datagrams; other modes write them all.
+    // The second datagram meets each refused table again between lines of two written tables: its lines, and the
+    // columns they add, must not land in either.
+    @Test
+    public void testWalTablesRefusedInAdaptiveOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, "true");
+                for (String mode : new String[]{"nosync", "async", "sync", "adaptive"}) {
+                    setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
+                    Assert.assertEquals(mode, CommitMode.fromString(mode), engine.getConfiguration().getCommitMode());
+                    final boolean refused = "adaptive".equals(mode);
+                    final String n = "n_" + mode;
+                    final String w = "w_" + mode;
+                    final String m = "m_" + mode;
+                    final String p = "p_" + mode;
+                    execute("create table " + n + " (s symbol, v long, ts timestamp) timestamp(ts) partition by day bypass wal");
+                    execute("create table " + p + " (s symbol, v long, ts timestamp) timestamp(ts) partition by day bypass wal");
+                    execute("create table " + w + " (s symbol, v long, ts timestamp) timestamp(ts) partition by day wal");
+                    execute("insert into " + w + " values ('wal', 0, '2024-01-01')");
+                    drainWalQueue();
+                    // 2024-01-02, one line an hour; a line of the WAL table and one of the missing table add a column.
+                    final String[] datagrams = {
+                            n + ",s=a v=1i 1704153600000000000\n"
+                                    + w + ",s=b v=2i 1704157200000000000\n"
+                                    + w + ",s=c v=3i 1704160800000000000\n"
+                                    + n + ",s=d v=4i 1704164400000000000\n"
+                                    + m + ",s=e v=5i 1704168000000000000\n"
+                                    + m + ",s=f v=6i 1704171600000000000\n"
+                                    + w + ",s=g v=7i,x=1i 1704175200000000000\n"
+                                    + n + ",s=h v=8i 1704178800000000000\n",
+                            n + ",s=i v=9i 1704182400000000000\n"
+                                    + w + ",s=j v=10i 1704186000000000000\n"
+                                    + w + ",s=k v=11i,y=1i 1704189600000000000\n"
+                                    + p + ",s=l v=12i 1704193200000000000\n"
+                                    + m + ",s=m v=13i 1704196800000000000\n"
+                                    + m + ",s=n v=14i,z=1i 1704200400000000000\n"
+                                    + n + ",s=o v=15i 1704204000000000000\n"
+                    };
+                    try (
+                            LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration());
+                            LineUdpLexer lexer = new LineUdpLexer(4096)
+                    ) {
+                        lexer.withParser(parser);
+                        for (String datagram : datagrams) {
+                            parseDatagram(lexer, datagram);
+                            lexer.parseLast();
+                            parser.commitAll();
+                        }
+                    }
+
+                    assertQuery("select * from " + n)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns("""
+                                    s\tv\tts
+                                    a\t1\t2024-01-02T00:00:00.000000Z
+                                    d\t4\t2024-01-02T03:00:00.000000Z
+                                    h\t8\t2024-01-02T07:00:00.000000Z
+                                    i\t9\t2024-01-02T08:00:00.000000Z
+                                    o\t15\t2024-01-02T14:00:00.000000Z
+                                    """);
+                    assertQuery("select * from " + p)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns("""
+                                    s\tv\tts
+                                    l\t12\t2024-01-02T11:00:00.000000Z
+                                    """);
+                    assertQuery("select * from " + w)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns(refused
+                                    ? """
+                                    s\tv\tts
+                                    wal\t0\t2024-01-01T00:00:00.000000Z
+                                    """
+                                    : """
+                                    s\tv\tts\tx\ty
+                                    wal\t0\t2024-01-01T00:00:00.000000Z\tnull\tnull
+                                    b\t2\t2024-01-02T01:00:00.000000Z\tnull\tnull
+                                    c\t3\t2024-01-02T02:00:00.000000Z\tnull\tnull
+                                    g\t7\t2024-01-02T06:00:00.000000Z\t1\tnull
+                                    j\t10\t2024-01-02T09:00:00.000000Z\tnull\tnull
+                                    k\t11\t2024-01-02T10:00:00.000000Z\tnull\t1
+                                    """);
+                    if (refused) {
+                        Assert.assertNull(mode, engine.getTableTokenIfExists(m));
+                    } else {
+                        Assert.assertTrue(mode, engine.verifyTableName(m).isWal());
+                        assertQuery("select * from " + m)
+                                .noLeakCheck()
+                                .timestamp("timestamp")
+                                .expectSize()
+                                .returns("""
+                                        s\tv\ttimestamp\tz
+                                        e\t5\t2024-01-02T04:00:00.000000Z\tnull
+                                        f\t6\t2024-01-02T05:00:00.000000Z\tnull
+                                        m\t13\t2024-01-02T12:00:00.000000Z\tnull
+                                        n\t14\t2024-01-02T13:00:00.000000Z\t1
+                                        """);
+                    }
+                }
+                capture.drain();
+                for (String mode : new String[]{"nosync", "async", "sync"}) {
+                    capture.assertNotLogged("table=w_" + mode + ']');
+                    capture.assertNotLogged("table=m_" + mode + ']');
+                }
+                capture.assertOnlyOnce("cannot write a WAL table in ADAPTIVE commit mode, skipping its lines until restart.*table=w_adaptive]");
+                capture.assertOnlyOnce("cannot write a WAL table in ADAPTIVE commit mode, skipping its lines until restart.*table=m_adaptive]");
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    private static void parseDatagram(LineUdpLexer lexer, String text) {
+        final byte[] bytes = text.getBytes(Files.UTF_8);
+        final long mem = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < bytes.length; i++) {
+                Unsafe.putByte(mem + i, bytes[i]);
+            }
+            lexer.parse(mem, mem + bytes.length);
+        } finally {
+            Unsafe.free(mem, bytes.length, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     private void assertMultiTable(String expected1, String expected2, String lines) throws Exception {
