@@ -24,21 +24,25 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.std.DirectBitSet;
 import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
-import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicIntegerArray;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * The prevailing-row backward scan of a window join, shared by every page frame of the master.
@@ -49,44 +53,84 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
  * rare key, a long way - and every page frame repeats it.
  * <p>
  * This class splits the slave's time frames into blocks of consecutive frames and keeps, per block,
- * the last row of every master key inside it. A block is summarised once, by whichever worker first
- * needs it, and then serves every page frame: the backward walk past the page frame's own block
- * becomes one array read per block instead of a scan of its rows. The answer is the row the plain
- * scan would find, since a block's last row of a key is the first one a backward scan meets there.
+ * the last row of each key that can join (a master key whose value the slave's symbol table holds)
+ * inside it. A block's summary is filled lazily, by a backward scan from the block's end that stops
+ * as soon as it has met the key a lookup asks for; the next lookup that needs an older row resumes
+ * the scan where it stopped. A block is therefore scanned at most once, and only as far as the
+ * lookups of this query need: no further than the plain scan of a single page frame would go into
+ * it. The summaries then serve every page frame: the backward walk past the page frame's own block
+ * becomes one array read per block. The answer is the row the plain scan would find, since a
+ * block's last row of a key is the first one a backward scan meets there.
  * <p>
- * Thread safety: a block is built under a CAS on its state and published by a volatile write, so
- * readers see it whole; a reader that finds a block being built waits for it. Building never
- * waits on anything else, so there is no deadlock. A builder that fails resets the state, and the
- * next reader builds the block itself.
+ * Memory: the row id array holds blocks x joinable keys entries, at most {@link #MAX_ENTRIES}; two
+ * key-to-slot int arrays span up to the highest joinable master and slave key. They are allocated
+ * by the first lookup that needs a block and charged to the query's tracker. If the tracker
+ * refuses them, the summaries switch off for the query and every
+ * lookup answers {@link #UNAVAILABLE}: the caller falls back to the plain scan, so the summaries
+ * never make a query fail that the plain scan serves.
+ * <p>
+ * Thread safety: a block is scanned under a lock (striped over the blocks); a reader that needs a
+ * block another worker is scanning waits for the lock, checking the query's circuit breaker, and then
+ * finds the scan advanced, or advances it itself. A finished block is published by a volatile state
+ * write and read without the lock. A scan that throws (the circuit breaker) leaves the block
+ * consistent: what it found stays, and the next reader resumes from the last row it completed.
  */
 public class WindowJoinPrevailingSummaries implements QuietCloseable {
     // total summary entries (blocks x keys) a query may hold; more keys or frames get bigger blocks
     static final long MAX_ENTRIES = 2 * 1024 * 1024;
-    private static final int STATE_BUILDING = 1;
+    /**
+     * Returned by {@link #lastRowIdInBlock} when the summaries are off for the query: the memory
+     * tracker refused them. The caller falls back to the plain backward scan.
+     */
+    static final long UNAVAILABLE = -2;
+    // the scan consults the circuit breaker once per this many rows (a power of two)
+    private static final int CIRCUIT_BREAKER_CHECK_ROWS = 1024;
+    private static final int LOCK_STRIPES = 64;
+    private static final long LOCK_WAIT_SLICE_NANOS = TimeUnit.MILLISECONDS.toNanos(1);
+    private static final int STATE_COMPLETE = 2;
     private static final int STATE_EMPTY = 0;
-    private static final int STATE_READY = 2;
-    private final DirectBitSet joinableSlots = new DirectBitSet(64, MemoryTag.NATIVE_BIT_SET, true);
+    private static final int STATE_PARTIAL = 1;
+    private final ReentrantLock[] locks = new ReentrantLock[LOCK_STRIPES];
     private final DirectLongList rowIds = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);
+    // Two int arrays, -1 for a key that cannot join: the slot of toSymbolMapKey(master key), at
+    // masterSlotsAddress, and the slot of toSymbolMapKey(slave key), at slaveSlotsAddress. Arrays,
+    // not maps: filling them costs a pass over the lookup map, with no hashing.
+    private final DirectLongList slotArrays = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);
     private int blockCount;
+    // per block, under its lock: joinable keys found so far, and the next row the scan reads
+    private int[] foundCounts = new int[0];
     private int frameCount;
     private int framesPerBlock;
+    // the block's scan resumes at this frame, at this row or, for Long.MAX_VALUE, the frame's last row
+    private int[] frontierFrames = new int[0];
+    private long[] frontierRows = new long[0];
     private int joinableKeyCount;
-    // slot = AsyncWindowJoinFastAtom.toSymbolMapKey(masterKey) - 1: the NULL key is 0, key k is k + 1
-    private int keyCount;
+    private int masterSlotCount;
+    private long masterSlotsAddress;
     private @Nullable MemoryTracker memoryTracker;
-    // the row id array is allocated by the first lookup that needs a block, not up front: a query
-    // whose prevailing rows all lie close to their page frames never pays for it
-    private volatile boolean isAllocated;
+    private int slaveSlotCount;
+    private long slaveSlotsAddress;
+    private @Nullable DirectIntIntHashMap slaveSymbolLookupMap;
     private AtomicIntegerArray states;
+    // set once, under this monitor, by the first lookup; volatile so that readers see the arrays
+    private volatile boolean isAllocated;
+    private volatile boolean isUnavailable;
+
+    public WindowJoinPrevailingSummaries() {
+        for (int i = 0; i < LOCK_STRIPES; i++) {
+            locks[i] = new ReentrantLock();
+        }
+    }
 
     @Override
     public void close() {
         Misc.free(rowIds);
+        Misc.free(slotArrays);
         isAllocated = false;
-        Misc.free(joinableSlots);
+        isUnavailable = false;
         blockCount = 0;
-        keyCount = 0;
         joinableKeyCount = 0;
+        slaveSymbolLookupMap = null;
     }
 
     public int getBlockCount() {
@@ -106,13 +150,14 @@ public class WindowJoinPrevailingSummaries implements QuietCloseable {
     }
 
     public boolean isEnabled() {
-        return blockCount > 0;
+        return blockCount > 0 && !isUnavailable;
     }
 
     /**
-     * Returns the last slave row id of {@code masterKey} in {@code block}, or {@link Long#MIN_VALUE}
-     * when the block holds none, summarising the block first if no worker has yet. The helper's
-     * position is not restored; the caller restores its bookmark.
+     * Returns the last slave row id of {@code masterKey} in {@code block}, {@link Long#MIN_VALUE}
+     * when the block holds none, or {@link #UNAVAILABLE} when the summaries are off for the query.
+     * Scans the block as far as needed first, if no worker has yet. The helper's position is not
+     * restored; the caller restores its bookmark.
      */
     public long lastRowIdInBlock(
             int block,
@@ -120,52 +165,58 @@ public class WindowJoinPrevailingSummaries implements QuietCloseable {
             WindowJoinTimeFrameHelper slaveTimeFrameHelper,
             Record slaveRecord,
             int slaveSymbolIndex,
-            DirectIntIntHashMap slaveSymbolLookupMap
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker
     ) {
-        final int slot = AsyncWindowJoinFastAtom.toSymbolMapKey(masterKey) - 1;
-        if (slot >= keyCount || !joinableSlots.get(slot)) {
+        if (!ensureAllocated()) {
+            return UNAVAILABLE;
+        }
+        final int masterMapKey = AsyncWindowJoinFastAtom.toSymbolMapKey(masterKey);
+        final int slot = masterMapKey < masterSlotCount ? Unsafe.getInt(masterSlotsAddress + ((long) masterMapKey << 2)) : -1;
+        if (slot < 0) {
+            // the slave's symbol table does not hold the key: no slave row can match it
             return Long.MIN_VALUE;
         }
-        ensureAllocated();
-        ensureBuilt(block, slaveTimeFrameHelper, slaveRecord, slaveSymbolIndex, slaveSymbolLookupMap);
-        return Unsafe.getLong(entryAddress(block, slot));
-    }
-
-    /**
-     * Records that a master key has a slave counterpart, so a block can stop summarising once it
-     * has seen them all. Called while the lookup map is built, before any block is.
-     */
-    public void markJoinable(int masterKey) {
-        final int slot = AsyncWindowJoinFastAtom.toSymbolMapKey(masterKey) - 1;
-        if (slot < keyCount && !joinableSlots.getAndSet(slot)) {
-            joinableKeyCount++;
+        if (states.get(block) == STATE_COMPLETE) {
+            return Unsafe.getLong(entryAddress(block, slot));
+        }
+        final ReentrantLock lock = locks[block % LOCK_STRIPES];
+        lockInterruptibly(lock, circuitBreaker);
+        try {
+            return scanUntilFound(block, slot, slaveTimeFrameHelper, slaveRecord, slaveSymbolIndex, circuitBreaker);
+        } finally {
+            lock.unlock();
         }
     }
 
     /**
-     * Sizes the summaries for a slave of {@code frameCount} time frames and a master symbol table of
-     * {@code masterSymbolCount} keys. Leaves them disabled (every lookup falls back to the plain scan)
-     * when there are no frames or the keys alone exceed the entry budget.
+     * Sizes the summaries for a slave of {@code frameCount} time frames and the keys of
+     * {@code slaveSymbolLookupMap} (slave key -> master key), the keys that can join. Allocates
+     * nothing: the first lookup that needs a block does. Leaves the summaries disabled (every lookup
+     * falls back to the plain scan) when there are no frames or keys, or the keys alone exceed the
+     * entry budget. The lookup map must not change while the summaries are in use.
      */
-    public void of(int frameCount, int masterSymbolCount, @Nullable MemoryTracker memoryTracker) {
-        this.frameCount = frameCount;
-        this.keyCount = masterSymbolCount + 1;
-        this.blockCount = 0;
-        this.joinableKeyCount = 0;
-        if (frameCount <= 0 || keyCount > MAX_ENTRIES) {
-            return;
-        }
-        final long maxBlocks = Math.max(1, MAX_ENTRIES / keyCount);
-        framesPerBlock = (int) Math.max(1, (frameCount + maxBlocks - 1) / maxBlocks);
-        final int blocks = (frameCount + framesPerBlock - 1) / framesPerBlock;
+    public void of(int frameCount, DirectIntIntHashMap slaveSymbolLookupMap, @Nullable MemoryTracker memoryTracker) {
         // free under the tracker that charged it, then charge this query
         rowIds.close();
+        slotArrays.close();
         isAllocated = false;
+        isUnavailable = false;
+        this.frameCount = frameCount;
+        this.slaveSymbolLookupMap = slaveSymbolLookupMap;
         this.memoryTracker = memoryTracker;
-        joinableSlots.reserve(keyCount);
-        joinableSlots.clear();
+        this.joinableKeyCount = slaveSymbolLookupMap.size();
+        this.blockCount = 0;
+        if (frameCount <= 0 || joinableKeyCount == 0 || joinableKeyCount > MAX_ENTRIES) {
+            return;
+        }
+        final long maxBlocks = Math.max(1, MAX_ENTRIES / joinableKeyCount);
+        framesPerBlock = (int) Math.max(1, (frameCount + maxBlocks - 1) / maxBlocks);
+        final int blocks = (frameCount + framesPerBlock - 1) / framesPerBlock;
         if (states == null || states.length() < blocks) {
             states = new AtomicIntegerArray(blocks);
+            foundCounts = new int[blocks];
+            frontierFrames = new int[blocks];
+            frontierRows = new long[blocks];
         } else {
             for (int i = 0; i < blocks; i++) {
                 states.set(i, STATE_EMPTY);
@@ -174,83 +225,163 @@ public class WindowJoinPrevailingSummaries implements QuietCloseable {
         this.blockCount = blocks;
     }
 
-    private void build(
-            int block,
-            WindowJoinTimeFrameHelper slaveTimeFrameHelper,
-            Record slaveRecord,
-            int slaveSymbolIndex,
-            DirectIntIntHashMap slaveSymbolLookupMap
-    ) {
-        final long base = entryAddress(block, 0);
-        for (int slot = 0; slot < keyCount; slot++) {
-            Unsafe.putLong(base + ((long) slot << 3), Long.MIN_VALUE);
-        }
-        final int frameLo = getFirstFrameOf(block);
-        final int frameHi = Math.min(frameLo + framesPerBlock, frameCount);
-        int found = 0;
-        // backwards, so the first row met for a key is its last one in the block
-        for (int frameIndex = frameHi - 1; frameIndex >= frameLo && found < joinableKeyCount; frameIndex--) {
-            if (slaveTimeFrameHelper.openFrame(frameIndex) <= 0) {
-                continue;
+    private static void lockInterruptibly(ReentrantLock lock, SqlExecutionCircuitBreaker circuitBreaker) {
+        // wait for the worker scanning the block, but stay cancellable
+        try {
+            while (!lock.tryLock(LOCK_WAIT_SLICE_NANOS, TimeUnit.NANOSECONDS)) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             }
-            slaveTimeFrameHelper.recordAt(frameIndex, 0);
-            final long rowLo = slaveTimeFrameHelper.getTimeFrameRowLo();
-            for (long r = slaveTimeFrameHelper.getTimeFrameRowHi() - 1; r >= rowLo; r--) {
-                slaveTimeFrameHelper.recordAtRowIndex(r);
-                final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                final int matchingMasterKey = slaveSymbolLookupMap.get(AsyncWindowJoinFastAtom.toSymbolMapKey(slaveKey));
-                if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
-                    final long address = base + ((long) (AsyncWindowJoinFastAtom.toSymbolMapKey(matchingMasterKey) - 1) << 3);
-                    if (Unsafe.getLong(address) == Long.MIN_VALUE) {
-                        Unsafe.putLong(address, Rows.toRowID(frameIndex, r));
-                        if (++found == joinableKeyCount) {
-                            break;
-                        }
-                    }
-                }
-            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw CairoException.nonCritical().put("interrupted while waiting for a window join prevailing summary");
         }
     }
 
-    private void ensureAllocated() {
-        if (!isAllocated) {
-            synchronized (this) {
-                if (!isAllocated) {
-                    rowIds.setMemoryTracker(memoryTracker);
-                    rowIds.setCapacity((long) blockCount * keyCount);
-                    isAllocated = true;
-                }
+    private void allocate() {
+        assert slaveSymbolLookupMap != null;
+        rowIds.setMemoryTracker(memoryTracker);
+        rowIds.setCapacity((long) blockCount * joinableKeyCount);
+        int maxSlaveMapKey = 0;
+        int maxMasterMapKey = 0;
+        final long capacity = slaveSymbolLookupMap.capacity();
+        for (long index = 0; index < capacity; index++) {
+            final int slaveMapKey = slaveSymbolLookupMap.keyAt(index);
+            if (slaveMapKey != 0) {
+                maxSlaveMapKey = Math.max(maxSlaveMapKey, slaveMapKey);
+                maxMasterMapKey = Math.max(maxMasterMapKey, AsyncWindowJoinFastAtom.toSymbolMapKey(slaveSymbolLookupMap.valueAt(-index - 1)));
             }
         }
+        masterSlotCount = maxMasterMapKey + 1;
+        slaveSlotCount = maxSlaveMapKey + 1;
+        final long slotBytes = 4L * (masterSlotCount + slaveSlotCount);
+        slotArrays.setMemoryTracker(memoryTracker);
+        slotArrays.setCapacity((slotBytes + 7) >>> 3);
+        masterSlotsAddress = slotArrays.getAddress();
+        slaveSlotsAddress = masterSlotsAddress + 4L * masterSlotCount;
+        // all bits set: -1 in every slot
+        Vect.memset(masterSlotsAddress, slotBytes, -1);
+        int slot = 0;
+        for (long index = 0; index < capacity; index++) {
+            final int slaveMapKey = slaveSymbolLookupMap.keyAt(index);
+            if (slaveMapKey != 0) {
+                final int masterMapKey = AsyncWindowJoinFastAtom.toSymbolMapKey(slaveSymbolLookupMap.valueAt(-index - 1));
+                Unsafe.putInt(slaveSlotsAddress + ((long) slaveMapKey << 2), slot);
+                Unsafe.putInt(masterSlotsAddress + ((long) masterMapKey << 2), slot);
+                slot++;
+            }
+        }
+        assert slot == joinableKeyCount;
     }
 
-    private void ensureBuilt(
-            int block,
-            WindowJoinTimeFrameHelper slaveTimeFrameHelper,
-            Record slaveRecord,
-            int slaveSymbolIndex,
-            DirectIntIntHashMap slaveSymbolLookupMap
-    ) {
-        while (true) {
-            final int state = states.get(block);
-            if (state == STATE_READY) {
-                return;
-            }
-            if (state == STATE_EMPTY && states.compareAndSet(block, STATE_EMPTY, STATE_BUILDING)) {
-                boolean built = false;
+    // Allocates the row id array and the slot arrays on first use; false when the tracker refused them.
+    private boolean ensureAllocated() {
+        if (isAllocated) {
+            return true;
+        }
+        if (isUnavailable) {
+            return false;
+        }
+        synchronized (this) {
+            if (!isAllocated && !isUnavailable) {
                 try {
-                    build(block, slaveTimeFrameHelper, slaveRecord, slaveSymbolIndex, slaveSymbolLookupMap);
-                    built = true;
-                } finally {
-                    states.set(block, built ? STATE_READY : STATE_EMPTY);
+                    allocate();
+                    isAllocated = true;
+                } catch (CairoException e) {
+                    if (!e.isOutOfMemory()) {
+                        throw e;
+                    }
+                    // the query's memory limit has no room for them: serve it by the plain scan
+                    rowIds.close();
+                    slotArrays.close();
+                    isUnavailable = true;
                 }
-                return;
             }
-            Os.pause();
+            return isAllocated;
         }
     }
 
     private long entryAddress(int block, int slot) {
-        return rowIds.getAddress() + (((long) block * keyCount + slot) << 3);
+        return rowIds.getAddress() + (((long) block * joinableKeyCount + slot) << 3);
+    }
+
+    // Under the block's lock: returns the key's last row in the block, scanning further back from
+    // where the block's scan stopped until the scan meets it or reaches the block's start.
+    private long scanUntilFound(
+            int block,
+            int slot,
+            WindowJoinTimeFrameHelper slaveTimeFrameHelper,
+            Record slaveRecord,
+            int slaveSymbolIndex,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        final long base = entryAddress(block, 0);
+        final int frameLo = getFirstFrameOf(block);
+        switch (states.get(block)) {
+            case STATE_COMPLETE:
+                return Unsafe.getLong(base + ((long) slot << 3));
+            case STATE_EMPTY:
+                for (int i = 0; i < joinableKeyCount; i++) {
+                    Unsafe.putLong(base + ((long) i << 3), Long.MIN_VALUE);
+                }
+                foundCounts[block] = 0;
+                frontierFrames[block] = Math.min(frameLo + framesPerBlock, frameCount) - 1;
+                frontierRows[block] = Long.MAX_VALUE;
+                states.set(block, STATE_PARTIAL);
+                break;
+            default:
+                final long rowId = Unsafe.getLong(base + ((long) slot << 3));
+                if (rowId != Long.MIN_VALUE) {
+                    return rowId;
+                }
+        }
+
+        final long slaveSlotsAddress = this.slaveSlotsAddress;
+        final int slaveSlotCount = this.slaveSlotCount;
+        int found = foundCounts[block];
+        int frameIndex = frontierFrames[block];
+        long r = frontierRows[block];
+        int rowsScanned = 0;
+        try {
+            // backwards, so the first row met for a key is its last one in the block
+            for (; frameIndex >= frameLo; frameIndex--, r = Long.MAX_VALUE) {
+                if (slaveTimeFrameHelper.openFrame(frameIndex) <= 0) {
+                    continue;
+                }
+                slaveTimeFrameHelper.recordAt(frameIndex, 0);
+                final long rowLo = slaveTimeFrameHelper.getTimeFrameRowLo();
+                for (r = Math.min(r, slaveTimeFrameHelper.getTimeFrameRowHi() - 1); r >= rowLo; r--) {
+                    if ((rowsScanned++ & (CIRCUIT_BREAKER_CHECK_ROWS - 1)) == 0) {
+                        circuitBreaker.statefulThrowExceptionIfTripped();
+                    }
+                    slaveTimeFrameHelper.recordAtRowIndex(r);
+                    final int slaveMapKey = AsyncWindowJoinFastAtom.toSymbolMapKey(slaveRecord.getInt(slaveSymbolIndex));
+                    final int s = slaveMapKey < slaveSlotCount ? Unsafe.getInt(slaveSlotsAddress + ((long) slaveMapKey << 2)) : -1;
+                    if (s >= 0) {
+                        final long address = base + ((long) s << 3);
+                        if (Unsafe.getLong(address) == Long.MIN_VALUE) {
+                            final long rowId = Rows.toRowID(frameIndex, r);
+                            Unsafe.putLong(address, rowId);
+                            if (++found == joinableKeyCount) {
+                                // every joinable key has its row: the rest of the block adds nothing
+                                states.set(block, STATE_COMPLETE);
+                                return Unsafe.getLong(base + ((long) slot << 3));
+                            }
+                            if (s == slot) {
+                                r--;
+                                return rowId;
+                            }
+                        }
+                    }
+                }
+            }
+            // reached the block's start: the keys not found have no row in it
+            states.set(block, STATE_COMPLETE);
+            return Long.MIN_VALUE;
+        } finally {
+            // the rows above (frameIndex, r) are summarised; a scan that threw resumes at r
+            foundCounts[block] = found;
+            frontierFrames[block] = frameIndex;
+            frontierRows[block] = r;
+        }
     }
 }

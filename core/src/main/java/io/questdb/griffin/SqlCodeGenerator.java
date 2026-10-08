@@ -522,7 +522,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final FunctionParser functionParser;
     private final IntList groupByFunctionPositions = new IntList();
-    private final IntList joinFilterSymbolPairs = new IntList();
     private final IntHashSet intHashSet = new IntHashSet();
     private final ObjectPool<IntList> intListPool = new ObjectPool<>(IntList::new, 4);
     private final MemoryCARW jitIRMem;
@@ -7788,7 +7787,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 int leftSymbolIndex = -1;
                                 int rightSymbolIndex = -1;
                                 ExpressionNode parent = null;
-                                joinFilterSymbolPairs.clear();
+                                // a local list: generating a nested factory below must not clobber it
+                                final IntList joinFilterSymbolPairs = intListPool.next();
                                 boolean isJoinFilterOnlySymbolPairs = false;
                                 if (node != null && !isDynamicWindow) {
                                     // Only extract symbol equality for the fast path.

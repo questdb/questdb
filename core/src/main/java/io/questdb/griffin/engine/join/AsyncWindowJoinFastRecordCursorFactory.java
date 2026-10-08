@@ -712,7 +712,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
             final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
             final long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
-            prevailingCache.of(prevailingFrameIndex, prevailingRowIndex);
+            prevailingCache.of(prevailingFrameIndex, prevailingRowIndex, circuitBreaker);
 
             // Scan forward to collect slave column values within all possible time windows.
             if (slaveRowIndex != Long.MIN_VALUE) {
@@ -916,7 +916,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
             final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
             final long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
-            prevailingCache.of(prevailingFrameIndex, prevailingRowIndex);
+            prevailingCache.of(prevailingFrameIndex, prevailingRowIndex, circuitBreaker);
 
             if (slaveRowIndex != Long.MIN_VALUE) {
                 long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
@@ -1677,7 +1677,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
                 final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
                 final long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
-                prevailingCache.of(prevailingFrameIndex, prevailingRowIndex);
+                prevailingCache.of(prevailingFrameIndex, prevailingRowIndex, circuitBreaker);
 
                 // Scan forward to collect slave column values within all possible time windows.
                 if (slaveRowIndex != Long.MIN_VALUE) {
@@ -1877,7 +1877,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
                 final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
                 final long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
-                prevailingCache.of(prevailingFrameIndex, prevailingRowIndex);
+                prevailingCache.of(prevailingFrameIndex, prevailingRowIndex, circuitBreaker);
 
                 if (slaveRowIndex != Long.MIN_VALUE) {
                     long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);

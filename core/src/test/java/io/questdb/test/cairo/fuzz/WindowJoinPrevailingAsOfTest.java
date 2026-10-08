@@ -65,7 +65,7 @@ public class WindowJoinPrevailingAsOfTest extends AbstractCairoTest {
 
     @Test
     public void testManyMasterKeysMakeMultiFrameBlocks() throws Exception {
-        // 4000 master symbols x ~600 slave frames is more than the summaries' entry budget, so a
+        // 4000 joinable keys x ~600 slave frames is more than the summaries' entry budget, so a
         // block spans several frames and the walk starts mid-block
         assertEquivalent(false, 4000);
     }
@@ -146,13 +146,18 @@ public class WindowJoinPrevailingAsOfTest extends AbstractCairoTest {
         engine.execute("INSERT INTO quotes SELECT '2024-01-01'::timestamp + x * 60_000_000L + 3, 'r' || (x % 50), 'X' || (x % 3), x::double + 0.5, 'rc' "
                 + "FROM long_sequence(180)", ctx);
         engine.execute("INSERT INTO quotes VALUES ('2024-01-03T20:00:00.000000Z', 'late', 'X0', 7.5, 'lc')", ctx);
+        if (extraMasterSymbols > 0) {
+            // keys the master also holds, each quoted once before everything else: they can join,
+            // so they widen the summaries and make a block span several time frames
+            engine.execute("INSERT INTO quotes SELECT '2023-12-30'::timestamp + x, 'm' || x, 'X0', 0.25, 'mc' FROM long_sequence(" + extraMasterSymbols + ")", ctx);
+        }
         if (parquetSlave) {
             engine.execute("ALTER TABLE quotes CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-03'", ctx);
         }
         // trades: the same three days; f*, r*, z* (never quoted), 'late', NULL
         engine.execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, ex SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
         if (extraMasterSymbols > 0) {
-            // symbols that only grow the master's symbol table, at the very start
+            // keys traded once, at the very start
             engine.execute("INSERT INTO trades SELECT '2023-12-31'::timestamp + x, 'm' || x, 'X0', 0.0 FROM long_sequence(" + extraMasterSymbols + ")", ctx);
         }
         engine.execute("INSERT INTO trades SELECT '2024-01-01'::timestamp + x * 43_200_000L + (x % 3), "

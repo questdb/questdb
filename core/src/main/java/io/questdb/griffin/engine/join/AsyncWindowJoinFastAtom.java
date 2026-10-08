@@ -338,21 +338,7 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
         }
 
         final SymbolTableSource slaveSymbolTableSource = ownerSlaveTimeFrameHelper.getSymbolTableSource();
-        joinFilterMasterSymbolCounts.clear();
-        for (int i = 0, n = joinFilterMasterKeysInSlave.size(); i < n; i++) {
-            final StaticSymbolTable masterTable = (StaticSymbolTable) masterSymbolTableSource.getSymbolTable(joinFilterSymbolPairs.getQuick(2 * i));
-            final StaticSymbolTable slaveTable = (StaticSymbolTable) slaveSymbolTableSource.getSymbolTable(joinFilterSymbolPairs.getQuick(2 * i + 1));
-            final DirectBitSet keysInSlave = joinFilterMasterKeysInSlave.getQuick(i);
-            final int masterCount = masterTable.getSymbolCount();
-            joinFilterMasterSymbolCounts.add(masterCount);
-            keysInSlave.reserve(Math.max(1, masterCount));
-            keysInSlave.clear();
-            for (int key = 0; key < masterCount; key++) {
-                if (slaveTable.keyOf(masterTable.valueOf(key)) != StaticSymbolTable.VALUE_NOT_FOUND) {
-                    keysInSlave.set(key);
-                }
-            }
-        }
+        initJoinFilterMasterKeysInSlave(masterSymbolTableSource, slaveSymbolTableSource, memoryTracker);
         if (ownerPrevailingMemo != null) {
             ownerPrevailingMemo.setMemoryTracker(memoryTracker);
             ownerPrevailingMemo.reopen();
@@ -364,25 +350,19 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
         }
         StaticSymbolTable masterSymbolTable = (StaticSymbolTable) masterSymbolTableSource.getSymbolTable(masterSymbolIndex);
         StaticSymbolTable slaveSymbolTable = (StaticSymbolTable) slaveSymbolTableSource.getSymbolTable(slaveSymbolIndex);
-        final int masterSymbolCount = masterSymbolTable.getSymbolCount();
-        if (prevailingSummaries != null) {
-            prevailingSummaries.of(sharedState.getFrameCount(), masterSymbolCount, memoryTracker);
-        }
-        for (int masterKey = 0; masterKey < masterSymbolCount; masterKey++) {
+        for (int masterKey = 0, n = masterSymbolTable.getSymbolCount(); masterKey < n; masterKey++) {
             final CharSequence masterSym = masterSymbolTable.valueOf(masterKey);
             final int slaveKey = slaveSymbolTable.keyOf(masterSym);
             if (slaveKey != StaticSymbolTable.VALUE_NOT_FOUND) {
                 slaveSymbolLookupMap.put(slaveKey + KEY_SHIFT, masterKey);
-                if (prevailingSummaries != null) {
-                    prevailingSummaries.markJoinable(masterKey);
-                }
             }
         }
         if (masterSymbolTable.containsNullValue() && slaveSymbolTable.containsNullValue()) {
             slaveSymbolLookupMap.put(NULL_KEY, StaticSymbolTable.VALUE_IS_NULL);
-            if (prevailingSummaries != null) {
-                prevailingSummaries.markJoinable(StaticSymbolTable.VALUE_IS_NULL);
-            }
+        }
+        if (prevailingSummaries != null) {
+            // sized by the keys that can join; allocates only when a lookup first needs a block
+            prevailingSummaries.of(sharedState.getFrameCount(), slaveSymbolLookupMap, memoryTracker);
         }
     }
 
@@ -418,6 +398,45 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerPrevailingMemo);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, joinFilterMasterKeysInSlave);
         CairoException.rethrowCleanupFailure(cleanupFailure);
+    }
+
+    // Per symbol-equality conjunct of the join filter, which master keys the slave column holds. An
+    // optimisation only: if the query's memory limit has no room for the bitsets, no master row is
+    // claimed unsatisfiable and every row takes the backward scan, as without them.
+    private void initJoinFilterMasterKeysInSlave(
+            SymbolTableSource masterSymbolTableSource,
+            SymbolTableSource slaveSymbolTableSource,
+            @Nullable MemoryTracker memoryTracker
+    ) {
+        joinFilterMasterSymbolCounts.clear();
+        final int pairCount = joinFilterMasterKeysInSlave.size();
+        try {
+            for (int i = 0; i < pairCount; i++) {
+                final StaticSymbolTable masterTable = (StaticSymbolTable) masterSymbolTableSource.getSymbolTable(joinFilterSymbolPairs.getQuick(2 * i));
+                final StaticSymbolTable slaveTable = (StaticSymbolTable) slaveSymbolTableSource.getSymbolTable(joinFilterSymbolPairs.getQuick(2 * i + 1));
+                final DirectBitSet keysInSlave = joinFilterMasterKeysInSlave.getQuick(i);
+                final int masterCount = masterTable.getSymbolCount();
+                keysInSlave.setMemoryTracker(memoryTracker);
+                keysInSlave.reserve(Math.max(1, masterCount));
+                keysInSlave.clear();
+                for (int key = 0; key < masterCount; key++) {
+                    if (slaveTable.keyOf(masterTable.valueOf(key)) != StaticSymbolTable.VALUE_NOT_FOUND) {
+                        keysInSlave.set(key);
+                    }
+                }
+                joinFilterMasterSymbolCounts.add(masterCount);
+            }
+        } catch (CairoException e) {
+            if (!e.isOutOfMemory()) {
+                throw e;
+            }
+            for (int i = 0; i < pairCount; i++) {
+                joinFilterMasterKeysInSlave.getQuick(i).close();
+            }
+            // a count of 0 makes no claim for any master key
+            joinFilterMasterSymbolCounts.clear();
+            joinFilterMasterSymbolCounts.setAll(pairCount, 0);
+        }
     }
 
     private static DirectLongLongHashMap newPrevailingMemo() {
