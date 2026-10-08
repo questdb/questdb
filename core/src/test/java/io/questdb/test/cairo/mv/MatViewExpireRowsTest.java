@@ -35,6 +35,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
@@ -42,6 +43,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.view.ViewDefinition;
+import io.questdb.griffin.ExpiryReadPolicy;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
@@ -985,6 +987,74 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("""
                     sym\tv
                     BBB\t2.5
+                    """);
+        });
+    }
+
+    @Test
+    public void testCreateMatViewRetryBuildsTheSameViewAsOnePass() throws Exception {
+        // Each pass of the CREATE loop writes column metadata, indexes, partitioning and the stored SQL into
+        // the same create operation, so a retry must build exactly the view a single pass builds.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE base (
+                        k SYMBOL INDEX TYPE POSTING INCLUDE (v), j SYMBOL INDEX, v DOUBLE, ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 'x', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('b', 'y', 2.0, '2024-01-02T00:00:00.000000Z')""");
+            drainWalQueue();
+            final String[] definitions = {
+                    "AS (SELECT * FROM base)",
+                    "AS (SELECT * FROM base) PARTITION BY MONTH",
+                    "AS (SELECT * FROM base), INDEX (k)",
+                    "AS (SELECT k, v, ts FROM base) PARTITION BY DAY",
+                    "AS (SELECT ts, k, sum(v) s FROM base SAMPLE BY 1h)",
+                    "AS (SELECT ts, k, count, pi FROM base SAMPLE BY 1h)",
+            };
+            for (int i = 0; i < definitions.length; i++) {
+                final int onePassBorrows = createMatView("CREATE MATERIALIZED VIEW once" + i + " " + definitions[i], false);
+                final int retriedBorrows = createMatView("CREATE MATERIALIZED VIEW retried" + i + " " + definitions[i], true);
+                assertTrue(definitions[i] + ": the CREATE must run a second pass", retriedBorrows > onePassBorrows);
+                drainWalAndMatViewQueues();
+                assertEquals(definitions[i], describeMatView("once" + i), describeMatView("retried" + i));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewRetryKeepsInheritedCoveringIndex() throws Exception {
+        // A passthrough view inherits the base table's covering index, INCLUDE list and all. The CREATE
+        // declares no index, so a retry must not read the index the first pass inherited as a declared one:
+        // a declared index carries no INCLUDE list.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE base (
+                        k SYMBOL INDEX TYPE POSTING INCLUDE (v), v DOUBLE, ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('b', 2.0, '2024-01-02T00:00:00.000000Z')""");
+            drainWalQueue();
+            final int onePassBorrows = createMatView("CREATE MATERIALIZED VIEW once AS (SELECT * FROM base)", false);
+            final int retriedBorrows = createMatView("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)", true);
+            assertTrue("the CREATE must run a second pass", retriedBorrows > onePassBorrows);
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT \"column\", indexed, indexType, indexInclude FROM table_columns('mv')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\tindexed\tindexType\tindexInclude
+                            k\ttrue\tPOSTING\tv,ts
+                            v\tfalse\t\t
+                            ts\tfalse\t\t
+                            """);
+            assertQuery("SELECT k, v, ts FROM mv").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    k\tv\tts
+                    a\t1.0\t2024-01-01T00:00:00.000000Z
+                    b\t2.0\t2024-01-02T00:00:00.000000Z
                     """);
         });
     }
@@ -2947,6 +3017,40 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         }
     }
 
+    // Runs a CREATE MATERIALIZED VIEW and returns how many base table readers it borrowed while compiling the
+    // view's query. With isRetryForced, the first such borrow publishes a row-expiry policy change, as a
+    // concurrent SET EXPIRE on another view does, so the CREATE compiles the query again on a second pass and
+    // borrows more readers than a CREATE that runs once.
+    private static int createMatView(String ddl, boolean isRetryForced) throws Exception {
+        final AtomicInteger readerBorrows = new AtomicInteger();
+        try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1) {
+            @Override
+            public TableReader getReader(TableToken tableToken, long version) {
+                onBorrow(tableToken);
+                return super.getReader(tableToken, version);
+            }
+
+            @Override
+            public TableReader getReader(TableToken tableToken) {
+                onBorrow(tableToken);
+                return super.getReader(tableToken);
+            }
+
+            private void onBorrow(TableToken tableToken) {
+                // REJECT mode is on only while the CREATE compiles the view's query.
+                if (getExpiryReadPolicy() == ExpiryReadPolicy.REJECT
+                        && !tableToken.isMatView()
+                        && readerBorrows.getAndIncrement() == 0
+                        && isRetryForced) {
+                    engine.getMetadataCache().publishExpiryPolicyUpdate();
+                }
+            }
+        }.with(AllowAllSecurityContext.INSTANCE)) {
+            execute(ddl, context);
+        }
+        return readerBorrows.get();
+    }
+
     // Base table plus a policied passthrough mat view "mv" whose keep-set is the single row B/9.0.
     private void createPolicedViewBase() throws Exception {
         execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2972,6 +3076,25 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         drainWalAndMatViewQueues();
         execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 2.0");
         drainWalAndMatViewQueues();
+    }
+
+    // Everything a CREATE pass decides about a view, with the view's own name masked so two views compare
+    // equal: the DDL, every column's type and index (type, capacity, INCLUDE list), partitioning, the stored
+    // SQL and the rows.
+    private static String describeMatView(String viewName) throws Exception {
+        final StringBuilder description = new StringBuilder();
+        for (String sql : new String[]{
+                "SHOW CREATE MATERIALIZED VIEW " + viewName,
+                "SELECT * FROM table_columns('" + viewName + "')",
+                "SELECT partitionBy, designatedTimestamp FROM tables() WHERE table_name = '" + viewName + "'",
+                "SELECT view_sql FROM materialized_views() WHERE view_name = '" + viewName + "'",
+                "SELECT * FROM " + viewName,
+        }) {
+            sink.clear();
+            printSql(sql);
+            description.append(sink.toString().replace(viewName, "<view>"));
+        }
+        return description.toString();
     }
 
     private void assertTtlKept(String viewName, int expectedDays) {
