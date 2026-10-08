@@ -44,9 +44,8 @@ import java.util.regex.Pattern;
  * tokens than its recorded baseline. Every token in the baseline is a NULL decision that already
  * sits in physical code; a change may move one out, never add one.
  * <p>
- * The baseline covers the record-access layers, the page-frame classes (including the
- * column-vector descriptor's {@code getNullCount}, a field rather than a decision) and the codecs
- * that key on the descriptor.
+ * The baseline covers the record-access layers, the page-frame classes and the codecs that key on
+ * the descriptor.
  */
 public class PhysicalLayerNullScanTest {
     // class -> NULL tokens allowed
@@ -111,9 +110,7 @@ public class PhysicalLayerNullScanTest {
         // per-getter column-top NULLs
         BASELINE.put("cairo/sql/PageFrameMemoryRecord.java", 41);
         BASELINE.put("cairo/sql/PageFrameMemoryPool.java", 2);
-        // the NULL count of the column-vector descriptor: a field name, not a decision
-        BASELINE.put("cairo/sql/PageFrameAddressCache.java", 2);
-        BASELINE.put("cairo/sql/ColumnVectorDescriptor.java", 2);
+        BASELINE.put("cairo/sql/PageFrameAddressCache.java", 0);
         // the codecs that key on the descriptor
         BASELINE.put("cairo/RecordChain.java", 0);
         BASELINE.put("cairo/map/RecordValueSinkFactory.java", 0);
