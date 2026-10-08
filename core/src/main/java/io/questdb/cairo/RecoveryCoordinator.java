@@ -94,6 +94,8 @@ public class RecoveryCoordinator {
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final FilesFacade ff;
+    // Whether the last false answer of epochCopiesValid was a definite content mismatch, not a read failure.
+    private boolean contentMismatch;
 
     public RecoveryCoordinator(CairoEngine engine) {
         this(engine, false);
@@ -427,6 +429,29 @@ public class RecoveryCoordinator {
     }
 
     /**
+     * Removes a generation that failed a content check of {@link #epochCopiesValid} on a definite mismatch, once
+     * the older generation is restored and has passed them. The same bytes fail the same way at every start, so
+     * the file can never be selected; left in place, it stays listed ahead of the live cut until the next save
+     * point overwrites it, and the lineage guard refuses a start that a kill leaves inside the replay. A failed
+     * removal leaves the table as it was before it.
+     */
+    private void removeRejectedGeneration(TableToken token, Path dir, SnapshotMarker.Candidate rejected) {
+        LOG.critical().$("removing adaptive save point that failed its content checks [table=").$(token)
+                .$(", generation=").$(rejected.generation)
+                .$(", epochSeqTxn=").$(rejected.epochSeqTxn)
+                .$(", epochTxn=").$(rejected.epochTxn).I$();
+        tablePath(dir, token);
+        final int rootLen = dir.size();
+        dir.concat(DurableEpochManifest.FILE_NAME).put('.').put(rejected.generation);
+        if (ff.removeQuiet(dir.$())) {
+            DurableEpochManifest.fsyncDirectory(configuration, dir, rootLen);
+        } else {
+            final int errno = ff.errno();
+            LOG.error().$("could not remove rejected adaptive save point [path=").$(dir).$(", errno=").$(errno).I$();
+        }
+    }
+
+    /**
      * Removes, from one partition, the value and cover files of one POSTING column version whose generation the
      * chain does not name at or below the save point's txn. Leaves everything when the chain is absent, empty or
      * does not walk cleanly. Returns the number of files removed.
@@ -706,6 +731,7 @@ public class RecoveryCoordinator {
 
         SnapshotMarker.Candidate selected = null;
         SnapshotMarker.Candidate ahead = null;
+        SnapshotMarker.Candidate rejected = null;
         boolean repairMarkerSelector = false;
         boolean restored = false;
         try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
@@ -729,8 +755,10 @@ public class RecoveryCoordinator {
                 // The lineage guard reads the live _txn, so it runs before any section is written over it.
                 if (epochIsAheadOfLiveTxn(token, src, candidate)) {
                     // A fallback below leaves this generation listed first and the live _txn rewound to an older
-                    // one. A live _txn equal to another valid generation's is that rewind: go on to it.
-                    if (isLiveTxnSavedByOtherGeneration(token, src, rootLen, candidates, candidate)) {
+                    // one. A live _txn equal to another valid generation's is that rewind: go on to it. A generation
+                    // of this lineage is within its sequencer; one beyond it is discarded after the loop.
+                    if (sequencerFrontierOrUnknown(token) >= candidate.epochSeqTxn
+                            && isLiveTxnSavedByOtherGeneration(token, src, rootLen, candidates, candidate)) {
                         LOG.info().$("adaptive epoch ahead of live state is a rejected generation, skipping it [table=").$(token)
                                 .$(", epochSeqTxn=").$(candidate.epochSeqTxn).I$();
                         continue;
@@ -748,6 +776,9 @@ public class RecoveryCoordinator {
                             || selectorTxn != candidate.epochTxn
                             || selectorGeneration != candidate.generation;
                     break;
+                }
+                if (contentMismatch) {
+                    rejected = candidate;
                 }
             }
         }
@@ -798,6 +829,9 @@ public class RecoveryCoordinator {
             throw CairoException.critical(0)
                     .put("no trustworthy adaptive epoch generation; refusing unsafe live-state fallback [table=")
                     .put(token.getTableName()).put(']');
+        }
+        if (rejected != null) {
+            removeRejectedGeneration(token, dir, rejected);
         }
         final long epochSeqTxn = selected.epochSeqTxn;
 
@@ -903,9 +937,12 @@ public class RecoveryCoordinator {
      * <p>
      * Any failure to decode is treated as invalid and returns {@code false}: a short file, a corrupt body, a
      * SIGBUS reading past a truncated mmap, or a cut other than the marker's. Recovery then restores the
-     * previous marker generation; if no generation validates, startup fails closed.
+     * previous marker generation; if no generation validates, startup fails closed. A definite mismatch (table id,
+     * cut, symbol count, versions) also sets {@link #contentMismatch}, and recovery removes this generation once
+     * the previous one is restored.
      */
     private boolean epochCopiesValid(TableToken token, Path scratch, SnapshotMarker.Candidate candidate) {
+        contentMismatch = false;
         final long markerEpochSeqTxn = candidate.epochSeqTxn;
         final int epochGeneration = candidate.generation;
         int partitionBy;
@@ -918,6 +955,7 @@ public class RecoveryCoordinator {
             epochMetadata.loadMetadata(scratch.$());
             if (epochMetadata.getTableId() != token.getTableId()) {
                 Misc.free(epochMetadata);
+                contentMismatch = true;
                 return false;
             }
             partitionBy = epochMetadata.getPartitionBy();
@@ -949,6 +987,7 @@ public class RecoveryCoordinator {
                 LOG.error().$("adaptive epoch _txn identity does not match _snapshot marker [table=").$(token)
                         .$(", copySeqTxn=").$(copySeqTxn).$(", markerSeqTxn=").$(markerEpochSeqTxn)
                         .$(", copyTxn=").$(txReader.getTxn()).$(", markerTxn=").$(candidate.epochTxn).I$();
+                contentMismatch = true;
                 return false;
             }
 
@@ -981,6 +1020,7 @@ public class RecoveryCoordinator {
                             .$(", generation=").$(epochGeneration)
                             .$(", txnSymbolColumns=").$(txReader.getSymbolColumnCount())
                             .$(", metaSymbolColumns=").$(metaSymbolColumns).I$();
+                    contentMismatch = true;
                     return false;
                 }
             }
@@ -990,12 +1030,16 @@ public class RecoveryCoordinator {
             tablePath(scratch, token).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
             cvReader = new ColumnVersionReader();
             cvReader.ofRO(ff, scratch.$());
-            if (!cvReader.readSafe() || txReader.getColumnVersion() != cvReader.getVersion()) {
+            if (!cvReader.readSafe()) {
+                return false;
+            }
+            if (txReader.getColumnVersion() != cvReader.getVersion()) {
+                contentMismatch = true;
                 return false;
             }
             tablePath(scratch, token);
             final int rootLen = scratch.size();
-            return DurableEpochManifest.validate(
+            if (DurableEpochManifest.validate(
                     configuration,
                     token,
                     scratch,
@@ -1005,15 +1049,22 @@ public class RecoveryCoordinator {
                     candidate.epochTxn,
                     txReader.getColumnVersion(),
                     metadataVersion
-            );
+            )) {
+                return true;
+            }
+            // The sections passed before the restore, so this is the header's versions, or a read failure,
+            // which the read below throws.
+            contentMismatch = !DurableEpochManifest.recordsVersions(configuration, scratch, rootLen, epochGeneration, txReader.getColumnVersion(), metadataVersion);
+            return false;
         } catch (Throwable e) {
             // FAIL SAFE: ANY failure while decoding a torn copy means "invalid -> skip restore", never
             // "fall through and blindly copy it over the live file". Concrete failure modes seen on a torn
             // copy: CairoException (fileNotFound on a 0-byte _txn.epoch; both-A/B checksum mismatch), an
             // mmap bounds AssertionError or SIGBUS-as-InternalError from a garbage base header steering an
             // out-of-bounds read, CairoError. We deliberately catch broadly here because the cost of a
-            // false "invalid" is only a fall-back to the (always-safe) live files + full WAL replay,
-            // whereas the cost of letting it through would be the brick this guard exists to prevent. The
+            // false "invalid" is a fall-back to the older generation, restored over the live files, and a
+            // longer WAL replay, whereas the cost of letting it through would be the brick this guard exists
+            // to prevent. Such a failure is never a content mismatch, so the generation's file stays. The
             // exception is confined to one table's .epoch decode and never escapes to abort recovery for
             // the rest of the tables.
             LOG.error().$("adaptive epoch durable copy failed validation, skipping roll-forward [table=").$(token)

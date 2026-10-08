@@ -353,6 +353,20 @@ public final class DurableEpochManifest {
     }
 
     /**
+     * Whether the header of generation {@code generation} records these column and metadata versions. Unlike
+     * {@link #validate}, a read failure throws, so {@code false} is a definite mismatch.
+     */
+    public static boolean recordsVersions(CairoConfiguration configuration, Path tablePath, int rootLen, int generation, long columnVersion, long metadataVersion) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path manifest = new Path()) {
+            manifest.of(tablePath).trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
+            try (MemoryCMR mem = Vm.getCMRInstance(ff, manifest.$(), FILE_SIZE, MemoryTag.MMAP_TABLE_READER)) {
+                return mem.getLong(40) == columnVersion && mem.getLong(96) == metadataVersion;
+            }
+        }
+    }
+
+    /**
      * Writes each section of a generation that {@link #validateSections} accepted over its live file where the
      * two differ: truncate, copy, fsync. {@code _meta} goes first and its directory entry is synced before the
      * pointers, so they are always interpreted with the metadata of the same cut. {@code _txn} goes before

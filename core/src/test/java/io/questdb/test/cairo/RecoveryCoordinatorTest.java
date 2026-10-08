@@ -1309,6 +1309,82 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     /**
+     * An out-of-process restore put back a backup of a quiet table, taken right after a save point, sequencer
+     * included, but left the newer save point files in place. The live {@code _txn} then equals the older
+     * generation's cut while the newer generation is beyond the restored sequencer: it belongs to the lineage the
+     * restore discarded, so recovery must discard the save point and re-enrol, not take it for a generation its
+     * own fallback rejected. Kept, the stale generation is restored over the new lineage's rows once the
+     * sequencer passes its cut.
+     */
+    @Test
+    public void testRestoreLeavingNewerSavePointOfDiscardedLineageIsDiscarded() throws Exception {
+        org.junit.Assume.assumeFalse("replants files over existing destinations, which Windows forbids", Os.isWindows());
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        try {
+            assertMemoryLeak(() -> {
+                execute("create table oop (ts timestamp, v long) timestamp(ts) partition by day wal");
+                execute("insert into oop values ('2024-09-01T01:00:00.000000Z', 1)");
+                drainWalQueue();
+                final TableToken tt = engine.verifyTableName("oop");
+                try (TableWriter w = getWriter(tt)) {
+                    w.advanceDurableEpoch(1L);
+                }
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                engine.releaseInactive();
+                final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                final int mkDirMode = engine.getConfiguration().getMkDirMode();
+                try (Path table = new Path(); Path backup = new Path(); Path newer = new Path(); Path from = new Path(); Path to = new Path()) {
+                    table.of(engine.getConfiguration().getDbRoot()).concat(tt);
+                    backup.of(engine.getConfiguration().getDbRoot()).concat("oop_backup");
+                    newer.of(engine.getConfiguration().getDbRoot()).concat("oop_newer");
+                    Assert.assertEquals(0, ff.copyRecursive(table, backup, mkDirMode));
+                    for (int i = 2; i < 5; i++) {
+                        execute("insert into oop values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+                    }
+                    drainWalQueue();
+                    try (TableWriter w = getWriter(tt)) {
+                        w.advanceDurableEpoch(2L);
+                    }
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+                    engine.releaseInactive();
+                    Assert.assertEquals(0, ff.rename(table.$(), newer.$()));
+                    Assert.assertEquals(0, ff.copyRecursive(backup, table, mkDirMode));
+                    for (String name : new String[]{TableUtils.SNAPSHOT_FILE_NAME, "_epoch.manifest.0", "_epoch.manifest.1"}) {
+                        to.of(table).concat(name);
+                        ff.removeQuiet(to.$());
+                        Assert.assertTrue(ff.copy(from.of(newer).concat(name).$(), to.$()) >= 0);
+                    }
+                }
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                engine.getTxnScoreboardPool().remove(tt);
+
+                new RecoveryCoordinator(engine).recover();
+                Assert.assertEquals("the restored cut must stay", 1, readTxnSeqTxn(tt));
+                for (int i = 0; i < 3; i++) {
+                    execute("insert into oop values ('2024-09-02T0" + i + ":00:00.000000Z', " + (100 + i) + ")");
+                }
+                drainWalQueue();
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                engine.getTxnScoreboardPool().remove(tt);
+
+                new RecoveryCoordinator(engine).recover();
+                engine.notifyWalTxnRepublisher(tt);
+                drainWalQueue();
+                assertQuery("select v from oop").expectSize().returns("v\n1\n100\n101\n102\n");
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        }
+    }
+
+    /**
      * Finding C2 (invariant pin) — locks the {@code TxReader.unsafeLoadAll} SLOT-SELECTION property that
      * {@code RecoveryCoordinator.epochIsAheadOfLiveTxn}'s C2 assert relies on: {@code unsafeLoadAll} returns
      * the VERSION-SELECTED (latest) A/B slot when it is intact, and ONLY its IMMEDIATE predecessor
