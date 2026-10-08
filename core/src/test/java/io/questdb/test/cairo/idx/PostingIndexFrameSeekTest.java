@@ -31,6 +31,7 @@ import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -578,6 +579,44 @@ public class PostingIndexFrameSeekTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * {@link RowCursor#drainTo} returns the rows {@code hasNext()} and {@code next()} return, in
+     * order, each OR-ed with the row id base, in chunks of random sizes mixed with single
+     * {@code hasNext()}/{@code next()} calls; a short chunk ends the cursor.
+     */
+    private static void assertDrained(String label, RowCursor cursor, LongList expected, long lo, long hi, Rnd rnd) {
+        final long base = 5L << 44;
+        try (DirectLongList sink = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT)) {
+            final int from = lowerBound(expected, lo);
+            final int to = lo > hi ? from : (hi == Long.MAX_VALUE ? expected.size() : lowerBound(expected, hi + 1));
+            int i = from;
+            while (true) {
+                if (rnd.nextInt(8) == 0) {
+                    if (!cursor.hasNext()) {
+                        break;
+                    }
+                    sink.add(base | cursor.next());
+                    continue;
+                }
+                final long max = 1 + rnd.nextInt(rnd.nextBoolean() ? 3 : 300);
+                final long size = sink.size();
+                final long n = cursor.drainTo(sink, base, max);
+                Assert.assertEquals(label + " drained", n, sink.size() - size);
+                if (n < max) {
+                    break;
+                }
+            }
+            for (long k = 0, n = sink.size(); k < n; k++, i++) {
+                Assert.assertTrue(label + " extra row " + ((sink.get(k) & ~base) + lo), i < to);
+                Assert.assertEquals(label + " base", base, sink.get(k) & base);
+                Assert.assertEquals(label + " ordinal " + i, expected.getQuick(i), (sink.get(k) & ~base) + lo);
+            }
+            Assert.assertEquals(label + " rows", to, i);
+        } finally {
+            Misc.free(cursor);
+        }
+    }
+
     private static Object fieldObject(Object instance, String fieldName) throws Exception {
         Class<?> clazz = instance.getClass();
         while (clazz != null) {
@@ -788,6 +827,7 @@ public class PostingIndexFrameSeekTest extends AbstractCairoTest {
                                 final long lo = boundaries.getQuick(f);
                                 final long hi = boundaries.getQuick(f + 1) - 1;
                                 assertFrame(label + " fwd [" + lo + "," + hi + "]", fwd.getCursor(key, lo, hi), expected, lo, hi, true);
+                                assertDrained(label + " fwd-drain [" + lo + "," + hi + "]", fwd.getCursor(key, lo, hi), expected, lo, hi, rnd);
                             }
                             // backward, frames in reverse scan order
                             for (int f = frameCount - 1; f >= 0; f--) {
@@ -809,6 +849,10 @@ public class PostingIndexFrameSeekTest extends AbstractCairoTest {
                                 assertFrame(label + " fwd-inverted [" + (lo + 1) + "," + lo + "]", fwd.getCursor(key, lo + 1, lo), expected, lo + 1, lo, true);
                                 assertFrame(label + " bwd-inverted [" + (lo + 1) + "," + lo + "]", bwd.getCursor(key, lo + 1, lo), expected, lo + 1, lo, false);
                                 assertFrame(label + " fwd-open [" + lo + ",MAX]", fwd.getCursor(key, lo, Long.MAX_VALUE), expected, lo, Long.MAX_VALUE, true);
+                                assertDrained(label + " fwd-open-drain [" + lo + ",MAX]", fwd.getCursor(key, lo, Long.MAX_VALUE), expected, lo, Long.MAX_VALUE, rnd);
+                                if (lo < hi) {
+                                    assertDrained(label + " fwd-inverted-drain [" + hi + "," + lo + "]", fwd.getCursor(key, hi, lo), expected, hi, lo, rnd);
+                                }
                                 assertFrame(label + " bwd-open [" + lo + ",MAX]", bwd.getCursor(key, lo, Long.MAX_VALUE), expected, lo, Long.MAX_VALUE, false);
                                 if (expected.size() > 0) {
                                     final long v = expected.getQuick(rnd.nextInt(expected.size()));
@@ -824,6 +868,8 @@ public class PostingIndexFrameSeekTest extends AbstractCairoTest {
                             assertFrame(label + " fwd-past-open", fwd.getCursor(key, ROW_COUNT, Long.MAX_VALUE), expected, ROW_COUNT, Long.MAX_VALUE, true);
                             assertFrame(label + " bwd-past-open", bwd.getCursor(key, ROW_COUNT, Long.MAX_VALUE), expected, ROW_COUNT, Long.MAX_VALUE, false);
                             assertFrame(label + " fwd-all-open", fwd.getCursor(key, 0, Long.MAX_VALUE), expected, 0, Long.MAX_VALUE, true);
+                            assertDrained(label + " fwd-all-open-drain", fwd.getCursor(key, 0, Long.MAX_VALUE), expected, 0, Long.MAX_VALUE, rnd);
+                            assertDrained(label + " fwd-past-drain", fwd.getCursor(key, ROW_COUNT, ROW_COUNT + 10), expected, ROW_COUNT, ROW_COUNT + 10, rnd);
                             assertFrame(label + " bwd-all-open", bwd.getCursor(key, 0, Long.MAX_VALUE), expected, 0, Long.MAX_VALUE, false);
                         }
                     }

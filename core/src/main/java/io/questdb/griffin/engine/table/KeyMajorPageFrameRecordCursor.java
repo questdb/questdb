@@ -231,11 +231,8 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
             while (true) {
                 final RowCursor cursor = rowCursor;
                 if (cursor != null) {
-                    final long rowIdBase = toFrameRowId(currentFrameIndex, 0);
-                    while (collected < rowLimit && cursor.hasNext()) {
-                        sink.add(rowIdBase | cursor.next());
-                        collected++;
-                    }
+                    // the frame's rows of the key, in bulk where the index can
+                    collected += cursor.drainTo(sink, toFrameRowId(currentFrameIndex, 0), rowLimit - collected);
                     if (collected >= rowLimit) {
                         return COLLECT_ROW_LIMIT;
                     }
