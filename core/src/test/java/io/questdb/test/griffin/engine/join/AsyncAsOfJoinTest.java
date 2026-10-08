@@ -432,6 +432,14 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilteredSlaveTieSeed() throws Exception {
+        // the seed under which Filtered AsOf Join Fast (what asof_dense becomes over a filtered slave)
+        // returned the previous quote for a trade at a tied quote's timestamp; the parallel join must
+        // return the tied quote, as asof_linear does
+        assertSeed(-6594363827363572523L, 6896577435544079398L, AsyncAsOfJoinRecordCursorFactory.WALK_AUTO, false, false, false);
+    }
+
+    @Test
     public void testNative() throws Exception {
         assertFuzz(6, false, false, false);
     }
@@ -459,6 +467,12 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
         final StringSink plan = new StringSink();
         TestUtils.printSql(engine, ctx, "EXPLAIN " + sql, plan);
         TestUtils.assertEquals("QUERY PLAN\n" + expected, plan);
+    }
+
+    static boolean planContains(CairoEngine engine, SqlExecutionContext ctx, String sql, String fragment) throws SqlException {
+        final StringSink plan = new StringSink();
+        TestUtils.printSql(engine, ctx, "EXPLAIN " + sql, plan);
+        return Chars.contains(plan, fragment);
     }
 
     static void assertPlanContains(CairoEngine engine, SqlExecutionContext ctx, String sql, String expected) throws SqlException {
@@ -568,29 +582,30 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
     private void assertFuzz(int seeds, boolean parquetSlave, boolean parquetMaster, boolean columnTops) throws Exception {
         final Rnd seedRnd = TestUtils.generateRandom(LOG);
         for (int s = 0; s < seeds; s++) {
-            final long s0 = seedRnd.nextLong();
-            final long s1 = seedRnd.nextLong();
             // the walk and the span scan forced, then the automatic choice between them
-            final int walkMode = WALK_MODES[s % WALK_MODES.length];
-            LOG.info().$("seed [s0=").$(s0).$(", s1=").$(s1).$(", walkMode=").$(walkMode).I$();
-            AsyncAsOfJoinRecordCursorFactory.WALK_MODE = walkMode;
-            assertMemoryLeak(() -> {
-                final WorkerPool pool = new TestWorkerPool(4);
-                TestUtils.execute(
-                        pool,
-                        (engine, compiler, ctx) -> {
-                            final Rnd rnd = new Rnd(s0, s1);
-                            ctx.setRandom(new Rnd(s0, s1));
-                            engine.execute("DROP TABLE IF EXISTS quotes", ctx);
-                            engine.execute("DROP TABLE IF EXISTS trades", ctx);
-                            createTables(engine, ctx, rnd, parquetSlave, parquetMaster, columnTops);
-                            assertQueries(engine, ctx, rnd, columnTops);
-                        },
-                        configuration,
-                        LOG
-                );
-            });
+            assertSeed(seedRnd.nextLong(), seedRnd.nextLong(), WALK_MODES[s % WALK_MODES.length], parquetSlave, parquetMaster, columnTops);
         }
+    }
+
+    private void assertSeed(long s0, long s1, int walkMode, boolean parquetSlave, boolean parquetMaster, boolean columnTops) throws Exception {
+        LOG.info().$("seed [s0=").$(s0).$(", s1=").$(s1).$(", walkMode=").$(walkMode).I$();
+        AsyncAsOfJoinRecordCursorFactory.WALK_MODE = walkMode;
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, ctx) -> {
+                        final Rnd rnd = new Rnd(s0, s1);
+                        ctx.setRandom(new Rnd(s0, s1));
+                        engine.execute("DROP TABLE IF EXISTS quotes", ctx);
+                        engine.execute("DROP TABLE IF EXISTS trades", ctx);
+                        createTables(engine, ctx, rnd, parquetSlave, parquetMaster, columnTops);
+                        assertQueries(engine, ctx, rnd, columnTops);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     private void assertQueries(CairoEngine engine, SqlExecutionContext ctx, Rnd rnd, boolean columnTops) throws SqlException {
@@ -617,7 +632,12 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
                 assertParallel(engine, ctx, parallel, true);
                 for (String hint : SERIAL_HINTS) {
                     final String serial = "SELECT /*+ " + hint + "(t q) */" + body;
-                    TestUtils.assertSqlCursors(engine, ctx, serial, parallel, LOG);
+                    // asof_dense is not honoured over a filtered slave: the plan is then Filtered AsOf Join
+                    // Fast, which misses a tied slave row at the master timestamp in some layouts (see
+                    // parallel-asof-REPORT.md); asof_linear is the oracle there
+                    if (!hint.equals("asof_dense") || planContains(engine, ctx, serial, "AsOf Join Dense")) {
+                        TestUtils.assertSqlCursors(engine, ctx, serial, parallel, LOG);
+                    }
                 }
                 // LIMIT over the join
                 TestUtils.assertSqlCursors(
