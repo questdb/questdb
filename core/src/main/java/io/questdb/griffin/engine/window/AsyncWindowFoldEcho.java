@@ -25,26 +25,38 @@
 
 package io.questdb.griffin.engine.window;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
 import io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory;
+import io.questdb.std.Misc;
 
 /**
- * A worker's stand-in for {@code sum(x) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)}
- * of a single key, see {@link AsyncWindowSplitPlan#OP_FOLD}: it outputs each row's argument as it
- * is, and the query's thread folds the running sum over the task's rows, from the value the sum had
- * before them, with the serial function's own arithmetic. A carry added to sums computed from
- * scratch would add the same values in another order; the fold adds them in the serial order, so
- * the sums are the serial ones, bit for bit.
+ * A worker's stand-in for a window function the query's thread computes itself over the worker's
+ * rows, in order: {@code sum(x) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)} of a
+ * single key, see {@link AsyncWindowSplitPlan#OP_FOLD}, or a bounded frame's DOUBLE {@code avg} or
+ * {@code sum}, see {@link AsyncWindowSplitPlan#OP_REPLAY}. It outputs each row's argument as it
+ * is, and the query's thread computes the function over them, from the state the rows before them
+ * left, with the serial function's own arithmetic. A carry added to sums computed from scratch,
+ * or a frame rebuilt from warm-up rows, would add the same values in another order; the fold and
+ * the replay add them in the serial order, so the values are the serial ones, bit for bit.
  */
 public class AsyncWindowFoldEcho extends SumDoubleWindowFunctionFactory.SumOverUnboundedRowsFrameFunction {
+    private final BaseWindowFunction function;
     private double value;
 
     /**
-     * @param arg the argument of the sum this function stands in for, which it takes over
+     * @param function the worker's copy of the function this one stands in for, whose argument
+     *                 it reads; it owns the copy, and frees it, argument included, on close
      */
-    public AsyncWindowFoldEcho(Function arg) {
-        super(arg);
+    public AsyncWindowFoldEcho(BaseWindowFunction function) {
+        super(function.getWindowArgument());
+        this.function = function;
+    }
+
+    @Override
+    public void close() {
+        // the argument is the function's, which frees it
+        Misc.free(function);
     }
 
     @Override

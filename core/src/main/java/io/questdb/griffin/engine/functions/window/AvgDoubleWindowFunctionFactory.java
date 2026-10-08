@@ -2172,7 +2172,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
     // Handles avg() over ([order by o] rows between y and z); there's no partition by.
     // Removable cumulative aggregation.
-    static class AvgOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDoubleFunction {
+    static class AvgOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDoubleFunction, ReplayableWindowFunction {
         private final MemoryARW buffer;
         private final int bufferSize;
         private final boolean frameIncludesCurrentValue;
@@ -2210,8 +2210,21 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void computeNext(Record record) {
-            double d = arg.getDouble(record);
+            replayNext(arg.getDouble(record));
+        }
 
+        @Override
+        public double getReplayedValue() {
+            return getDouble(null);
+        }
+
+        @Override
+        public boolean isReplayable() {
+            return true;
+        }
+
+        @Override
+        public void replayNext(double d) {
             //compute value using top frame element (that could be current or previous row)
             double hiValue = d;
             if (frameLoBounded && !frameIncludesCurrentValue) {

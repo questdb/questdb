@@ -50,9 +50,22 @@ import io.questdb.std.Numbers;
  *     continues a key computes it from scratch, and the query's thread combines each of its rows
  *     with the value the key had at the end of the previous task before returning them.</li>
  * </ul>
- * Results equal the serial window's, except that a sum or an average of floating-point values
- * may differ in its last bits: the split adds the same values in a different order, as parallel
- * GROUP BY does. Integer, count, min, max, first, last, lag and row_number results are exact.
+ * Results equal the serial window's bit for bit, with one exception: a running DOUBLE sum under
+ * PARTITION BY ({@link #OP_ADD}) whose key a split spreads over tasks may differ in its last bits,
+ * since the carry adds the same values in a different order, as parallel GROUP BY does. A sum of
+ * whole numbers is exact either way, and the planner proves which are (see
+ * {@code SqlCodeGenerator.isNonNegativeValue}). Everything else is exact by construction:
+ * <ul>
+ *     <li>integer, count, min, max, first, last, lag and row_number results, which do not depend
+ *     on the order of additions;</li>
+ *     <li>a running DOUBLE sum of a single key, which the query's thread folds in order
+ *     ({@link #OP_FOLD});</li>
+ *     <li>a bounded frame's DOUBLE {@code avg} or {@code sum} of a single key, which the query's
+ *     thread replays with the serial function itself ({@link #OP_REPLAY}): the serial function's
+ *     running sum carries the rounding of the key's whole history, which warm-up rows cannot
+ *     rebuild. Over several keys such a frame keeps its keys whole, unless its argument is a
+ *     whole number.</li>
+ * </ul>
  */
 public class AsyncWindowSplitPlan implements Plannable {
     public static final int MODE_NONE = 0;
@@ -68,6 +81,14 @@ public class AsyncWindowSplitPlan implements Plannable {
     public static final int OP_FOLD = 4;
     public static final int OP_MAX = 2;
     public static final int OP_MIN = 1;
+    /**
+     * A bounded frame's DOUBLE avg or sum of a single key (see
+     * {@link io.questdb.griffin.engine.functions.window.ReplayableWindowFunction}) whose workers
+     * output each row's argument (see {@link AsyncWindowFoldEcho}) and whose query thread computes
+     * the frame over them, in order, with its own copy of the function, which also computed the
+     * rows before them: exact. Needs no warm-up rows.
+     */
+    public static final int OP_REPLAY = 5;
     private final int mode;
     // MODE_PREFIX: the output columns to combine, how, and their column types
     private final IntList prefixColumns;
@@ -93,7 +114,7 @@ public class AsyncWindowSplitPlan implements Plannable {
      * an INT widened. A NULL on either side yields the other.
      */
     public static long combine(int op, int columnType, long carry, long local) {
-        assert op != OP_FOLD : "a fold is not combined";
+        assert op != OP_FOLD && op != OP_REPLAY : "a fold is not combined";
         if (op == OP_FIRST) {
             return carry;
         }
@@ -101,14 +122,20 @@ public class AsyncWindowSplitPlan implements Plannable {
             case ColumnType.DOUBLE: {
                 final double c = Double.longBitsToDouble(carry);
                 final double l = Double.longBitsToDouble(local);
-                if (Numbers.isNull(c)) {
+                // NULL is NaN alone: a sum that overflowed to an infinity is a value
+                if (Double.isNaN(c)) {
                     return local;
                 }
-                if (Numbers.isNull(l)) {
+                if (Double.isNaN(l)) {
                     return carry;
                 }
                 // a DOUBLE is only ever added: its min and max are not split, see the planner
                 assert op == OP_ADD;
+                // A running sum skips infinite arguments, so one that overflowed stays where it
+                // went: serially, adding the next part's finite values leaves it there.
+                if (Double.isInfinite(c)) {
+                    return carry;
+                }
                 final double result = c + l;
                 return Double.doubleToRawLongBits(result);
             }
@@ -141,12 +168,40 @@ public class AsyncWindowSplitPlan implements Plannable {
     }
 
     /**
-     * Whether a column is folded, see {@link #OP_FOLD}: every task's rows need the query thread's
-     * pass, also of a key the task starts.
+     * Whether an op is computed by the query's thread over the workers' stand-ins, see
+     * {@link AsyncWindowFoldEcho}, rather than combined with a carry.
+     */
+    public static boolean isFold(int op) {
+        return op == OP_FOLD || op == OP_REPLAY;
+    }
+
+    /**
+     * Whether a column is folded or replayed, see {@link #OP_FOLD} and {@link #OP_REPLAY}: every
+     * task's rows need the query thread's pass, also of a key the task starts, and the workers'
+     * copies of the column output its stand-in, which no step may read.
      */
     public boolean hasFold() {
         for (int i = 0, n = prefixOps.size(); i < n; i++) {
-            if (prefixOps.getQuick(i) == OP_FOLD) {
+            if (isFold(prefixOps.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasOp(int op) {
+        for (int i = 0, n = prefixOps.size(); i < n; i++) {
+            if (prefixOps.getQuick(i) == op) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // whether a column combines a running value, folded or carried
+    private boolean hasRunningCarry() {
+        for (int i = 0, n = prefixOps.size(); i < n; i++) {
+            if (prefixOps.getQuick(i) != OP_REPLAY) {
                 return true;
             }
         }
@@ -199,11 +254,23 @@ public class AsyncWindowSplitPlan implements Plannable {
         switch (mode) {
             case MODE_WARMUP -> {
                 sink.val("warmup ").val(warmupRows).val(" rows");
-                if (prefixColumns.size() > 0) {
-                    sink.val(", running carry");
+                if (hasRunningCarry()) {
+                    sink.val(hasOp(OP_FOLD) ? ", running carry, folded" : ", running carry");
+                }
+                if (hasOp(OP_REPLAY)) {
+                    sink.val(", frame replayed");
                 }
             }
-            case MODE_PREFIX -> sink.val(hasFold() ? "running carry, folded" : "running carry");
+            case MODE_PREFIX -> {
+                if (hasRunningCarry()) {
+                    sink.val(hasOp(OP_FOLD) ? "running carry, folded" : "running carry");
+                    if (hasOp(OP_REPLAY)) {
+                        sink.val(", frame replayed");
+                    }
+                } else {
+                    sink.val("frame replayed");
+                }
+            }
             default -> sink.val("none");
         }
     }

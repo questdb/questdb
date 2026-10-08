@@ -183,7 +183,7 @@ public class WindowChainTest extends AbstractCairoTest {
                             + "Async Window workers: 1\n"
                             + "  functions: [avg(price) over ( rows between 19 preceding and current row)]\n"
                             + "  keyShards: sym\n"
-                            + "  keySplit: warmup 19 rows\n"
+                            + "  keySplit: frame replayed\n"
                             + "    FilterOnValues symbolOrder: asc\n"
                             + "      keyMajor: true\n"
                             + "        Cursor-order scan\n"
@@ -804,6 +804,125 @@ public class WindowChainTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testInexactDoublesBitExact() throws Exception {
+        assertMemoryLeak(() -> assertInexactDoubles(engine, sqlExecutionContext));
+    }
+
+    @Test
+    public void testInexactDoublesBitExactOnWorkerPool() throws Exception {
+        assertMemoryLeak(() -> inPool(this::assertInexactDoubles));
+    }
+
+    /**
+     * Doubles no sum of which is exact, so that adding them in another order shows: random
+     * fractions, spikes of 1e9, pairs of +-1e16 that cancel, -0.0, NULLs, tiny magnitudes; a
+     * column with infinities and sums that overflow; and an INT. Every window over them must match
+     * the serial one bit for bit, but the running DOUBLE sums a carry adds under PARTITION BY,
+     * within the bound of their data.
+     */
+    private void assertInexactDoubles(CairoEngine engine, SqlExecutionContext ctx) throws Exception {
+        final int rows = 6_000;
+        engine.execute(
+                "create table d (time timestamp, sym symbol index type " + indexType + ", v double, x double, i int)" +
+                        " timestamp(time) partition by DAY",
+                ctx
+        );
+        engine.execute(
+                "insert into d select" +
+                        " ((x / 2) * " + (3 * 86_400_000_000L / rows) + "L)::timestamp," +
+                        " case when x % 5 < 2 then 'BIG' when x % 13 = 0 then null else 'K' || (x % 10) end," +
+                        " case when x % 37 = 0 then null when x % 31 = 0 then -0.0 when x % 29 = 0 then 1e16 when x % 29 = 1 then -1e16" +
+                        " when x % 23 = 0 then 1e-300 when x % 13 = 0 then 1e9 + rnd_double() else rnd_double() * 1000.0 / 7.0 - 50.0 end," +
+                        " case when x % 97 = 0 then cast('Infinity' as double) when x % 89 = 0 then cast('-Infinity' as double)" +
+                        " when x % 83 = 0 then 1e308 else rnd_double() / 3.0 end," +
+                        " (x % 1000 - 500)::int" +
+                        " from long_sequence(" + rows + ")",
+                ctx
+        );
+        engine.execute("create table u as (select * from d) timestamp(time) partition by DAY", ctx);
+        // n * 2^-52 * the sum of the magnitudes: the bound of a sum's rounding in any order
+        final double tolerance = rows * 0x1p-52 * (rows * 1e16);
+        final String big = "FROM d WHERE sym = 'BIG'";
+        final String[] singleKey = {
+                // a bounded frame's avg and sum, replayed (idx 48)
+                "SELECT time, avg(v) OVER (ORDER BY time ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) a " + big,
+                "SELECT time, sum(v) OVER (ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) a " + big,
+                "SELECT time, sum(v) OVER (ORDER BY time ROWS BETWEEN 5 PRECEDING AND 2 PRECEDING) a " + big,
+                "SELECT time, avg(x) OVER (ORDER BY time ROWS BETWEEN 7 PRECEDING AND CURRENT ROW) a, sum(x) OVER (ORDER BY time ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) s " + big,
+                // replayed next to warm-up rows
+                "SELECT time, avg(v) OVER (ORDER BY time ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) a, lag(v) OVER (ORDER BY time) l " + big,
+                // a running sum, folded (idx 52)
+                "SELECT time, sum(v) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s " + big,
+                "SELECT time, sum(x) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s " + big,
+                // a running sum chained over a window and a projection, folded
+                "SELECT time, l1, sum(l1) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM (SELECT time, l + 1 l1 FROM (SELECT time, lag(v) OVER (ORDER BY time) l " + big + "))",
+                // warm-up rows rebuild these exactly
+                "SELECT time, min(v) OVER (ORDER BY time ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) mn, max(v) OVER (ORDER BY time ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) mx " + big,
+                "SELECT time, first_value(v) OVER (ORDER BY time ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) f, count(v) OVER (ORDER BY time ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) c " + big,
+                "SELECT time, avg(i) OVER (ORDER BY time ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) a, sum(i) OVER (ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) s " + big,
+                // a GROUP BY over runs whose groups span tasks: its sums add in walk order
+                "WITH ch AS (SELECT time, v, CASE WHEN v > lag(v) OVER (ORDER BY time) THEN 1 ELSE 0 END AS up " + big + ")," +
+                        " runs AS (SELECT time, v, sum(up) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS g FROM ch)" +
+                        " SELECT g, count() c, sum(v) s, avg(v) a, first(v) f, last(v) l, min(v) mn, max(v) mx FROM runs ORDER BY g",
+        };
+        for (String query : singleKey) {
+            assertMatchesSerial(engine, ctx, query, null);
+        }
+        // the plans split the key, so the values are the fold's, the replay's and the warm-up's
+        assertSplitOp(engine, ctx, singleKey[0], AsyncWindowSplitPlan.OP_REPLAY);
+        assertSplitOp(engine, ctx, singleKey[4], AsyncWindowSplitPlan.OP_REPLAY);
+        assertSplitOp(engine, ctx, singleKey[5], AsyncWindowSplitPlan.OP_FOLD);
+        assertSplitOp(engine, ctx, singleKey[7], AsyncWindowSplitPlan.OP_FOLD);
+        for (String table : new String[]{"d", "u"}) {
+            final String[] manyKeys = {
+                    // a bounded frame of DOUBLE over several keys keeps its keys whole
+                    "SELECT sym, time, a FROM (SELECT sym, time, avg(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) a FROM " + table + ") ORDER BY sym, time, a",
+                    "SELECT sym, time, a, l FROM (SELECT sym, time, sum(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) a, lag(v) OVER (PARTITION BY sym ORDER BY time) l FROM " + table + " WHERE sym IN ('BIG', 'K1', 'K2')) ORDER BY sym, time, a, l",
+                    "SELECT sym, time, mn, mx FROM (SELECT sym, time, min(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) mn, max(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) mx FROM " + table + ") ORDER BY sym, time, mn, mx",
+                    "SELECT sym, time, l FROM (SELECT sym, time, lag(v) OVER (PARTITION BY sym ORDER BY time) l FROM " + table + ") WHERE l < 0 ORDER BY sym, time, l",
+            };
+            for (String query : manyKeys) {
+                assertMatchesSerial(engine, ctx, query, null);
+            }
+            // the one documented exception: a running DOUBLE sum under PARTITION BY
+            assertMatchesSerial(
+                    engine,
+                    ctx,
+                    "SELECT sym, time, s FROM (SELECT sym, time, sum(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM " + table + " WHERE sym IN ('BIG', 'K1', 'K2')) ORDER BY sym, time",
+                    null,
+                    tolerance
+            );
+            // a sum that overflowed stays infinite, also across a carry
+            assertMatchesSerial(
+                    engine,
+                    ctx,
+                    "SELECT sym, time, s FROM (SELECT sym, time, sum(x) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM " + table + " WHERE sym IN ('BIG', 'K1', 'K2')) ORDER BY sym, time",
+                    null,
+                    tolerance
+            );
+        }
+        // slices of the whole table, a running sum folded
+        assertMatchesSerial(engine, ctx, "SELECT time, sum(v) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM u WHERE i > 0", null);
+        assertMatchesSerial(engine, ctx, "SELECT time, sum(x) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM u", null);
+        engine.execute("drop table d", ctx);
+        engine.execute("drop table u", ctx);
+    }
+
+    private void assertSplitOp(CairoEngine engine, SqlExecutionContext ctx, String query, int op) throws Exception {
+        ctx.setParallelWindowEnabled(true);
+        try (RecordCursorFactory factory = engine.select(query, ctx)) {
+            final AsyncWindowSplitPlan plan = findAsyncFactory(factory).getSplitPlan();
+            boolean found = false;
+            for (int i = 0, n = plan.getPrefixCount(); i < n; i++) {
+                found |= plan.getPrefixOp(i) == op;
+            }
+            Assert.assertTrue(query, found);
+        } finally {
+            ctx.setParallelWindowEnabled(false);
+        }
+    }
+
     private void assertStepsOverFold() throws Exception {
         execute("create table t (time timestamp, sym symbol index type " + indexType + ", size double) timestamp(time) partition by DAY");
         execute("insert into t select (x * 1_000_000_000L)::timestamp, case when x % 5 = 0 then 'Z' else 'A' end, (x % 9)::double from long_sequence(300)");
@@ -874,16 +993,41 @@ public class WindowChainTest extends AbstractCairoTest {
     }
 
     private static void assertRowsMatch(String query, RecordCursorFactory factory, String expected, String actual) {
+        assertRowsMatch(query, factory, expected, actual, 0);
+    }
+
+    /**
+     * Compares every value bit for bit, but for the one documented exception: a running DOUBLE
+     * sum combined with a carry (OP_ADD) may differ from the serial sum by the rounding of adding
+     * its values in another order, at most {@code tolerance}, in its own columns and nowhere else.
+     * A test passes the bound of its data, n * 2^-52 * the sum of the values' magnitudes, or 0
+     * when no such sum may differ at all.
+     */
+    private static void assertRowsMatch(String query, RecordCursorFactory factory, String expected, String actual, double tolerance) {
         final AsyncWindowRecordCursorFactory async = findAsyncFactoryOrNull(factory);
-        if (async == null || !mayDifferInLastBits(async.getSplitPlan())) {
+        final RecordMetadata metadata = factory.getMetadata();
+        final boolean[] mayDiffer = new boolean[metadata.getColumnCount()];
+        boolean any = false;
+        if (async != null && tolerance > 0) {
+            final AsyncWindowSplitPlan plan = async.getSplitPlan();
+            for (int i = 0, n = plan.getPrefixCount(); i < n; i++) {
+                if (plan.getPrefixOp(i) == AsyncWindowSplitPlan.OP_ADD && ColumnType.tagOf(plan.getPrefixType(i)) == ColumnType.DOUBLE) {
+                    // the carried column, by its name, wherever the output puts it
+                    final int column = metadata.getColumnIndexQuiet(async.getMetadata().getColumnName(plan.getPrefixColumn(i)));
+                    if (column > -1) {
+                        mayDiffer[column] = true;
+                        any = true;
+                    }
+                }
+            }
+        }
+        if (!any) {
             TestUtils.assertEquals(query, expected, actual);
             return;
         }
-        // a split key: sums and averages of DOUBLE may differ in their last bits
         final String[] e = expected.split("\n");
         final String[] a = actual.split("\n");
         Assert.assertEquals(query, e.length, a.length);
-        final RecordMetadata metadata = factory.getMetadata();
         for (int i = 0; i < e.length; i++) {
             if (e[i].equals(a[i])) {
                 continue;
@@ -896,27 +1040,12 @@ public class WindowChainTest extends AbstractCairoTest {
                     continue;
                 }
                 final String message = query + " row " + i + " column " + c + ": expected " + ev[c] + " but was " + av[c];
-                Assert.assertEquals(message, ColumnType.DOUBLE, ColumnType.tagOf(metadata.getColumnType(c)));
+                Assert.assertTrue(message, mayDiffer[c]);
                 final double x = Double.longBitsToDouble(Long.parseLong(ev[c]));
                 final double y = Double.longBitsToDouble(Long.parseLong(av[c]));
-                Assert.assertTrue(message, Math.abs(x - y) <= 1e-12 * Math.max(1.0, Math.abs(x)));
+                Assert.assertTrue(message, Math.abs(x - y) <= tolerance);
             }
         }
-    }
-
-    // The documented exception: warm-up rows rebuild a frame's sum in another order, and a carry
-    // is added to a DOUBLE sum computed from scratch. A fold (OP_FOLD) and every integer
-    // combination are exact.
-    private static boolean mayDifferInLastBits(AsyncWindowSplitPlan plan) {
-        if (plan.getMode() == AsyncWindowSplitPlan.MODE_WARMUP) {
-            return true;
-        }
-        for (int i = 0, n = plan.getPrefixCount(); i < n; i++) {
-            if (plan.getPrefixOp(i) == AsyncWindowSplitPlan.OP_ADD && ColumnType.tagOf(plan.getPrefixType(i)) == ColumnType.DOUBLE) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static void assertSlotsReleased(RecordCursorFactory factory) {
@@ -982,6 +1111,15 @@ public class WindowChainTest extends AbstractCairoTest {
      *                  Async Window at all, null for any plan
      */
     private long assertMatchesSerial(CairoEngine engine, SqlExecutionContext ctx, String query, Integer lastStage) throws Exception {
+        return assertMatchesSerial(engine, ctx, query, lastStage, 0);
+    }
+
+    /**
+     * {@link #assertMatchesSerial(CairoEngine, SqlExecutionContext, String, Integer)}, letting the
+     * running DOUBLE sums a carry adds to differ by at most {@code tolerance}, see
+     * {@link #assertRowsMatch(String, RecordCursorFactory, String, String, double)}.
+     */
+    private long assertMatchesSerial(CairoEngine engine, SqlExecutionContext ctx, String query, Integer lastStage, double tolerance) throws Exception {
         final String expected = serial(engine, ctx, query);
         ctx.setParallelWindowEnabled(true);
         try (RecordCursorFactory factory = engine.select(query, ctx)) {
@@ -998,9 +1136,9 @@ public class WindowChainTest extends AbstractCairoTest {
             }
             for (int pass = 0; pass < 2; pass++) {
                 try (RecordCursor cursor = factory.getCursor(ctx)) {
-                    assertRowsMatch(query, factory, expected, rawRows(cursor, factory.getMetadata()));
+                    assertRowsMatch(query, factory, expected, rawRows(cursor, factory.getMetadata()), tolerance);
                     cursor.toTop();
-                    assertRowsMatch(query, factory, expected, rawRows(cursor, factory.getMetadata()));
+                    assertRowsMatch(query, factory, expected, rawRows(cursor, factory.getMetadata()), tolerance);
                 }
             }
             if (async == null) {

@@ -1185,6 +1185,13 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
          * The record a row is output from, positioned by {@link #computeNext} or
          * {@link #streamRow}.
          */
+        /**
+         * The window's own function of an output column, before any step.
+         */
+        Function getFunction(int columnIndex) {
+            return functions.getQuick(columnIndex);
+        }
+
         Record getOutputRecord() {
             return outputRecord;
         }

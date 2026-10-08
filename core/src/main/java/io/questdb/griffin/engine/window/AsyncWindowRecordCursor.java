@@ -43,6 +43,7 @@ import io.questdb.cairo.sql.async.UnorderedPageFrameReducer;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.window.ReplayableWindowFunction;
 import io.questdb.griffin.engine.table.KeyMajorPageFrameRecordCursor;
 import io.questdb.griffin.engine.table.SelectedRecord;
 import io.questdb.std.DirectLongList;
@@ -115,6 +116,8 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     // OP_FOLD: each folded column's running sum and whether a value was counted, see applyCarry()
     private final boolean[] foldCounted;
     private final double[] foldSums;
+    // OP_REPLAY: each replayed column's function, the query thread's own, see applyCarry()
+    private final ReplayableWindowFunction[] replayFunctions;
     private final long chainMaxPages;
     private final long chainPageSize;
     private final ColumnTypes columnTypes;
@@ -205,6 +208,13 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         this.carry = new long[splitPlan.getPrefixCount()];
         this.foldSums = new double[splitPlan.getPrefixCount()];
         this.foldCounted = new boolean[splitPlan.getPrefixCount()];
+        this.replayFunctions = new ReplayableWindowFunction[splitPlan.getPrefixCount()];
+        for (int j = 0, n = splitPlan.getPrefixCount(); j < n; j++) {
+            if (splitPlan.getPrefixOp(j) == AsyncWindowSplitPlan.OP_REPLAY) {
+                // the window's own function, which computed the rows before the tasks too
+                replayFunctions[j] = (ReplayableWindowFunction) atom.getSlot(-1).getFunction(splitPlan.getPrefixColumn(j));
+            }
+        }
         this.taskRows = configuration.getSqlParallelWindowTaskRows();
         this.maxKeyRows = Math.max(taskRows, configuration.getSqlParallelWindowMaxKeyRows());
         // the prefix: no more than min.rows, which also gates the parallel plan, see prefix.rows
@@ -612,12 +622,18 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         final RecordChain chain = task.chain;
         final int n = carry.length;
         final boolean continues = task.continuesKey;
-        // OP_FOLD: the running sums, from the key's sum before the task, or from scratch
         for (int j = 0; j < n; j++) {
-            if (splitPlan.getPrefixOp(j) == AsyncWindowSplitPlan.OP_FOLD) {
+            final int op = splitPlan.getPrefixOp(j);
+            if (op == AsyncWindowSplitPlan.OP_FOLD) {
+                // the running sums, from the key's sum before the task, or from scratch
                 final double before = continues ? Double.longBitsToDouble(carry[j]) : Double.NaN;
                 foldSums[j] = Double.isNaN(before) ? 0.0 : before;
                 foldCounted[j] = !Double.isNaN(before);
+            } else if (op == AsyncWindowSplitPlan.OP_REPLAY && !continues) {
+                // A key the task starts: the frame starts afresh. The rows the function computed
+                // before a task that continues the key, on this thread or replayed here, are the
+                // key's rows before the task's, in order: its state is the serial one.
+                replayFunctions[j].toTop();
             }
         }
         long offset = 0;
@@ -634,6 +650,11 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                         foldCounted[j] = true;
                     }
                     Unsafe.putDouble(address, foldCounted[j] ? foldSums[j] : Double.NaN);
+                } else if (op == AsyncWindowSplitPlan.OP_REPLAY) {
+                    // the worker output the row's argument: the function computes the row from it
+                    final ReplayableWindowFunction function = replayFunctions[j];
+                    function.replayNext(Unsafe.getDouble(address));
+                    Unsafe.putDouble(address, function.getReplayedValue());
                 } else if (!continues) {
                     // a key the task starts needs no carry
                     continue;

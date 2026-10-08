@@ -180,6 +180,7 @@ import io.questdb.griffin.engine.functions.memoization.UuidFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.VarcharFunctionMemoizer;
 import io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider;
 import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
+import io.questdb.griffin.engine.functions.window.ReplayableWindowFunction;
 import io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.WholePartitionMinMax;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
@@ -13590,9 +13591,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             for (int i = 0; i < copyCount; i++) {
                 compileStreamingWindowCopy(model, base, baseMetadata, perWorkerFunctions, perWorkerMapStates, executionContext, dropPartitionBy);
-                windowCopies.add(AsyncWindowStage.window(perWorkerFunctions.getQuick(i), perWorkerMapStates.getQuick(i)));
-                perWorkerFunctions.setQuick(i, null);
-                perWorkerMapStates.setQuick(i, null);
             }
         } catch (Throwable th) {
             Misc.freeObjListAndClear(virtualCopies);
@@ -13634,8 +13632,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             next.setColumnOrder(nonDecreasing, nonNegative, nonNull);
             stage++;
         }
-        final AsyncWindowSplitPlan windowPlan = classifyKeySplit(columns, functions, taskRows, singleKey, false);
+        // A single key's running DOUBLE sum is folded, unless its argument is a whole number, whose
+        // sums the carry adds exactly, as a GROUP BY over it needs. A bounded frame of DOUBLE
+        // keeps the key whole: the query's thread replays a frame of the window's own functions
+        // only.
+        final boolean[] exactArgs = new boolean[functions.size()];
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (columns.getQuick(i).isWindowExpression()
+                    && functions.getQuick(i) instanceof BaseWindowFunction windowFunction
+                    && windowFunction.getWindowArgument() != null) {
+                final Function arg = windowFunction.getWindowArgument();
+                exactArgs[i] = isWholeNumberType(arg.getType()) || isNonNegativeValue(arg, next.getNonNegativeColumns(), 0, new boolean[0]);
+            }
+        }
+        final AsyncWindowSplitPlan windowPlan = classifyKeySplit(columns, functions, taskRows, singleKey, singleKey, false, exactArgs);
         split = split.thenWindow(windowPlan, stage);
+        // the workers of a folded sum output its argument, see AsyncWindowFoldEcho
+        swapInFoldEchoes(windowPlan, perWorkerFunctions);
+        for (int i = 0; i < copyCount; i++) {
+            windowCopies.add(AsyncWindowStage.window(perWorkerFunctions.getQuick(i), perWorkerMapStates.getQuick(i)));
+            perWorkerFunctions.setQuick(i, null);
+            perWorkerMapStates.setQuick(i, null);
+        }
         final boolean[] nonDecreasing = new boolean[functions.size()];
         final boolean[] nonNegative = new boolean[nonDecreasing.length];
         final boolean[] nonNull = new boolean[nonDecreasing.length];
@@ -13942,7 +13960,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return null;
         }
         final long taskRows = Math.max(1, configuration.getSqlParallelWindowTaskRows());
-        final AsyncWindowSplitPlan splitPlan = classifyKeySplit(columns, functions, taskRows, true, true);
+        // slices are running aggregates only: a bounded frame has no slice to replay over
+        final AsyncWindowSplitPlan splitPlan = classifyKeySplit(columns, functions, taskRows, true, true, false, null);
         if (splitPlan.getMode() != AsyncWindowSplitPlan.MODE_PREFIX) {
             return null;
         }
@@ -13996,18 +14015,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw th;
         }
         // the workers of a folded sum output its argument, see AsyncWindowFoldEcho
-        for (int p = 0, pn = splitPlan.getPrefixCount(); p < pn; p++) {
-            if (splitPlan.getPrefixOp(p) == AsyncWindowSplitPlan.OP_FOLD) {
-                final int column = splitPlan.getPrefixColumn(p);
-                for (int c = 0; c < copyCount; c++) {
-                    final ObjList<Function> copy = perWorkerFunctions.getQuick(c);
-                    final BaseWindowFunction sum = (BaseWindowFunction) copy.getQuick(column);
-                    final AsyncWindowFoldEcho echo = new AsyncWindowFoldEcho(sum.getWindowArgument());
-                    echo.setColumnIndex(column);
-                    copy.setQuick(column, echo);
-                }
-            }
-        }
+        swapInFoldEchoes(splitPlan, perWorkerFunctions);
         // the filter is the workers' now: take it from the Async Filter, free its JIT parts
         Function ownerFilter = null;
         if (scan != base) {
@@ -14236,21 +14244,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw th;
         }
         // shards never split a key: each holds its keys' state from round to round
-        final AsyncWindowSplitPlan splitPlan = shardMode ? AsyncWindowSplitPlan.NONE : classifyKeySplit(columns, functions, taskRows, singleKey, singleKey);
-        // the workers of a folded sum output its argument, see AsyncWindowFoldEcho
-        for (int p = 0, pn = splitPlan.getPrefixCount(); p < pn; p++) {
-            if (splitPlan.getPrefixOp(p) == AsyncWindowSplitPlan.OP_FOLD) {
-                final int column = splitPlan.getPrefixColumn(p);
-                for (int c = 0, cn = perWorkerFunctions.size(); c < cn; c++) {
-                    final ObjList<Function> copy = perWorkerFunctions.getQuick(c);
-                    final BaseWindowFunction sum = (BaseWindowFunction) copy.getQuick(column);
-                    // the sum holds nothing but its argument, which the stand-in takes over
-                    final AsyncWindowFoldEcho echo = new AsyncWindowFoldEcho(sum.getWindowArgument());
-                    echo.setColumnIndex(column);
-                    copy.setQuick(column, echo);
-                }
-            }
-        }
+        final AsyncWindowSplitPlan splitPlan = shardMode ? AsyncWindowSplitPlan.NONE : classifyKeySplit(columns, functions, taskRows, singleKey, singleKey, singleKey, null);
+        // the workers of a folded or replayed column output its argument, see AsyncWindowFoldEcho
+        swapInFoldEchoes(splitPlan, perWorkerFunctions);
         if (shardMode) {
             // the output comes round by round, shard by shard: in no timestamp order
             factoryMetadata.setTimestampIndex(-1);
@@ -14573,9 +14569,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * {@link AsyncWindowSplitPlan}. Every window function must allow the same kind of split:
      * warm-up rows for a bounded ROWS frame ending at or before the current row (and {@code lag}),
      * or a running carry for an aggregate from UNBOUNDED PRECEDING to the current row (and
-     * {@code row_number}). Anything else, or the two kinds together, keeps keys whole.
+     * {@code row_number}). Anything else, or the two kinds together, keeps keys whole. A folded or
+     * replayed column (see {@link AsyncWindowSplitPlan#OP_FOLD}, {@link AsyncWindowSplitPlan#OP_REPLAY})
+     * goes with either kind: its workers need no state.
+     * <p>
+     * Every split is exact but a running DOUBLE sum under PARTITION BY ({@code OP_ADD}), see
+     * {@link AsyncWindowSplitPlan}. A bounded frame's DOUBLE avg or sum is not rebuilt exactly by
+     * warm-up rows, since the serial function's running sum carries the rounding of the whole key:
+     * it is replayed over a single key, when {@code allowReplay}, and keeps keys whole otherwise,
+     * unless its argument is a whole number.
+     *
+     * @param allowFold   whether a single key's running DOUBLE sum may be folded
+     * @param allowReplay whether a single key's bounded frame may be replayed
+     * @param exactArgs   per output column, whether its window's argument is known to be a whole
+     *                    number, so that adding it is exact in any order; null for none known
      */
-    private static AsyncWindowSplitPlan classifyKeySplit(ObjList<QueryColumn> columns, ObjList<Function> functions, long taskRows, boolean singleKey, boolean allowFold) {
+    private static AsyncWindowSplitPlan classifyKeySplit(
+            ObjList<QueryColumn> columns,
+            ObjList<Function> functions,
+            long taskRows,
+            boolean singleKey,
+            boolean allowFold,
+            boolean allowReplay,
+            boolean @Nullable [] exactArgs
+    ) {
         long warmupRows = -1;
         final IntList prefixColumns = new IntList();
         final IntList prefixOps = new IntList();
@@ -14611,13 +14628,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 prefixOps.add(AsyncWindowSplitPlan.OP_ADD);
                 prefixTypes.add(functions.getQuick(i).getType());
             } else if (rows && lo != Long.MIN_VALUE && lo <= 0 && hi <= 0 && hi >= lo && isFrameFunction(name)) {
+                final boolean isExactArg = exactArgs != null && i < exactArgs.length && exactArgs[i];
+                if (type == ColumnType.DOUBLE
+                        && (Chars.equalsIgnoreCase(name, "avg") || Chars.equalsIgnoreCase(name, "sum"))
+                        && !isExactArg) {
+                    // warm-up rows would rebuild the frame's running sum from the frame alone
+                    if (allowReplay
+                            && ac.getPartitionBy().size() == 0
+                            && functions.getQuick(i) instanceof ReplayableWindowFunction replayable
+                            && replayable.isReplayable()) {
+                        prefixColumns.add(i);
+                        prefixOps.add(AsyncWindowSplitPlan.OP_REPLAY);
+                        prefixTypes.add(functions.getQuick(i).getType());
+                        continue;
+                    }
+                    return AsyncWindowSplitPlan.NONE;
+                }
                 warmupRows = Math.max(warmupRows, -lo);
             } else if (rows && lo == Long.MIN_VALUE && hi == 0) {
                 final int op;
+                final boolean isExactArg = exactArgs != null && i < exactArgs.length && exactArgs[i];
                 if (allowFold
                         && Chars.equalsIgnoreCase(name, "sum")
                         && type == ColumnType.DOUBLE
                         && ac.getPartitionBy().size() == 0
+                        && !isExactArg
                         && functions.getQuick(i).getClass() == SumDoubleWindowFunctionFactory.SumOverUnboundedRowsFrameFunction.class) {
                     // a single key's running DOUBLE sum: folded in order by the query's thread, exact
                     op = AsyncWindowSplitPlan.OP_FOLD;
@@ -14650,9 +14685,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return AsyncWindowSplitPlan.NONE;
             }
         }
-        if (warmupRows > -1 && prefixColumns.size() > 0) {
-            // a task that continues a key cannot both rebuild it and start it from scratch
-            return AsyncWindowSplitPlan.NONE;
+        if (warmupRows > -1) {
+            for (int p = 0, n = prefixOps.size(); p < n; p++) {
+                if (!AsyncWindowSplitPlan.isFold(prefixOps.getQuick(p))) {
+                    // a task that continues a key cannot both rebuild it and start it from scratch
+                    return AsyncWindowSplitPlan.NONE;
+                }
+            }
         }
         if (warmupRows > -1) {
             // warm-up rows come from the previous task, which holds about taskRows of them
@@ -14663,6 +14702,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return prefixColumns.size() > 0
                 ? new AsyncWindowSplitPlan(AsyncWindowSplitPlan.MODE_PREFIX, 0, prefixColumns, prefixOps, prefixTypes)
                 : AsyncWindowSplitPlan.NONE;
+    }
+
+    // Replaces, in every worker copy, each folded or replayed column's function by its stand-in,
+    // which outputs the function's argument; see AsyncWindowFoldEcho. The stand-in owns the copy.
+    private static void swapInFoldEchoes(AsyncWindowSplitPlan splitPlan, ObjList<ObjList<Function>> perWorkerFunctions) {
+        for (int p = 0, pn = splitPlan.getPrefixCount(); p < pn; p++) {
+            if (AsyncWindowSplitPlan.isFold(splitPlan.getPrefixOp(p))) {
+                final int column = splitPlan.getPrefixColumn(p);
+                for (int c = 0, cn = perWorkerFunctions.size(); c < cn; c++) {
+                    final ObjList<Function> copy = perWorkerFunctions.getQuick(c);
+                    final AsyncWindowFoldEcho echo = new AsyncWindowFoldEcho((BaseWindowFunction) copy.getQuick(column));
+                    echo.setColumnIndex(column);
+                    copy.setQuick(column, echo);
+                }
+            }
+        }
+    }
+
+    // Integers of up to 32 bits, whose sums of a frame or a key, in doubles, are exact in any order.
+    private static boolean isWholeNumberType(int type) {
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT -> true;
+            default -> false;
+        };
     }
 
     // Aggregates whose value over a ROWS frame depends on the frame's rows alone.
