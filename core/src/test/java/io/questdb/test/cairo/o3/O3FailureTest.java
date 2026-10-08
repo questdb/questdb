@@ -205,7 +205,8 @@ public class O3FailureTest extends AbstractO3Test {
                     @Override
                     public boolean allocate(long fd, long size) {
                         if (fd == this.fd) {
-                            if (size == Files.ceilPageSize(1480)) {
+                            // the O3 append grows 1970-01-06/ts.d from one page to two
+                            if (size == 2L * Files.PAGE_SIZE) {
                                 this.fd = -1;
                                 return false;
                             }
@@ -1810,14 +1811,18 @@ public class O3FailureTest extends AbstractO3Test {
             SqlExecutionContext executionContext,
             String timestampTypeName
     ) throws SqlException {
-        // create table with roughly 2AM data
+        // 1970-01-06 ends with exactly one page of timestamps, so appending a row to it
+        // makes ts.d cross a page boundary; the data runs until 1970-01-07T08:45
+        final long rowsInPartition = Files.PAGE_SIZE / Long.BYTES;
+        final long step = 10_000_000L;
+        final long partitionEnd = 518_400_000_000L;
         engine.execute(
                 "create atomic table x as (" +
                         "select" +
                         " cast(x as int) i," +
                         " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + "  ts" +
-                        " from long_sequence(500)" +
+                        " timestamp_sequence(" + (partitionEnd - rowsInPartition * step) + "L," + step + "L)::" + timestampTypeName + "  ts" +
+                        " from long_sequence(" + (rowsInPartition + 3_151) + ")" +
                         ") timestamp (ts) partition by DAY",
                 executionContext
         );
@@ -1830,7 +1835,7 @@ public class O3FailureTest extends AbstractO3Test {
             TableWriter.Row row;
             // this row goes into a non-recent partition
             // triggering O3
-            row = w.newRow(driver.fromMicros(518300000000L));
+            row = w.newRow(driver.fromMicros(partitionEnd - step));
             row.putInt(0, 10);
             row.putLong(1, 3500000L);
             row.append();
