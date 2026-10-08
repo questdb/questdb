@@ -40,75 +40,76 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupBySparseHistogram;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
-import io.questdb.std.histogram.org.HdrHistogram.PackedHistogram;
 
-public class MultiApproxPercentileLongPackedGroupByFunction extends ArrayFunction implements UnaryFunction, GroupByFunction {
+/**
+ * approx_percentile(LONG, DOUBLE[] percentiles [, precision]) over an off-heap {@link GroupBySparseHistogram}.
+ * Returns the same arrays as {@link MultiApproxPercentileLongGroupByFunction} and
+ * {@link MultiApproxPercentileLongPackedGroupByFunction}, and runs in parallel GROUP BY: the state is a
+ * pointer in the group by map, and per-worker partials merge exactly. Used when
+ * {@link ApproxPercentileLongSparseGroupByFunction#isEnabled(io.questdb.cairo.CairoConfiguration)}.
+ */
+public class MultiApproxPercentileLongSparseGroupByFunction extends ArrayFunction implements UnaryFunction, GroupByFunction {
     private final Function exprFunc;
-    private ObjList<PackedHistogram> histograms = new ObjList<>();
+    private final GroupBySparseHistogram histogramA;
+    private final GroupBySparseHistogram histogramB;
     private final Function percentileFunc;
     private final int percentilesPos;
-    private final int precision;
-    private int histogramIndex;
-    // a copy that reads the primary's histograms (a shared GROUP BY cursor, JOIN LATERAL)
-    private boolean isShared;
     private DirectArray out;
     private int valueIndex;
 
-    public MultiApproxPercentileLongPackedGroupByFunction(Function exprFunc, Function percentileFunc, int precision, int percentilesPos) {
+    public MultiApproxPercentileLongSparseGroupByFunction(Function exprFunc, Function percentileFunc, int precision, int percentilesPos) {
         assert precision >= 0 && precision <= 5;
         this.exprFunc = exprFunc;
         this.percentileFunc = percentileFunc;
-        this.precision = precision;
         this.percentilesPos = percentilesPos;
         this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+        this.histogramA = new GroupBySparseHistogram(precision);
+        this.histogramB = new GroupBySparseHistogram(precision);
     }
 
     @Override
     public void clear() {
+        histogramA.clear();
+        histogramB.clear();
         if (out != null) {
             out.clear();
         }
-        if (isShared) {
-            return;
-        }
-        histograms.clear();
-        histogramIndex = 0;
     }
 
     @Override
     public void close() {
         Misc.free(exprFunc);
         Misc.free(percentileFunc);
-        Misc.free(out);
+        out = Misc.free(out);
+        histogramA.close();
+        histogramB.close();
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final PackedHistogram histogram;
-        if (histograms.size() <= histogramIndex) {
-            histograms.extendAndSet(histogramIndex, histogram = new PackedHistogram(1, 1000, precision));
-            histogram.setAutoResize(true);
-        } else {
-            histogram = histograms.getQuick(histogramIndex);
-            histogram.reset();
-        }
-
         final long val = exprFunc.getLong(record);
         if (val != Numbers.LONG_NULL) {
-            histogram.recordValue(val);
+            histogramA.of(0).recordValue(val);
+            mapValue.putLong(valueIndex, histogramA.ptr());
+        } else {
+            mapValue.putLong(valueIndex, 0);
         }
-        mapValue.putLong(valueIndex, histogramIndex++);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final PackedHistogram histogram = histograms.getQuick(mapValue.getInt(valueIndex));
         final long val = exprFunc.getLong(record);
         if (val != Numbers.LONG_NULL) {
-            histogram.recordValue(val);
+            final long ptr = mapValue.getLong(valueIndex);
+            histogramA.of(ptr).recordValue(val);
+            final long newPtr = histogramA.ptr();
+            if (newPtr != ptr) {
+                mapValue.putLong(valueIndex, newPtr);
+            }
         }
     }
 
@@ -119,19 +120,11 @@ public class MultiApproxPercentileLongPackedGroupByFunction extends ArrayFunctio
 
     @Override
     public ArrayView getArray(Record rec) {
-        if (histograms.size() == 0) {
-            if (out == null) {
-                out = new DirectArray();
-            }
-            out.ofNull();
-            return out;
+        if (out == null) {
+            out = new DirectArray();
         }
-
-        final PackedHistogram histogram = histograms.getQuick(rec.getInt(valueIndex));
+        final GroupBySparseHistogram histogram = histogramA.of(rec.getLong(valueIndex));
         if (histogram.getTotalCount() == 0) {
-            if (out == null) {
-                out = new DirectArray();
-            }
             out.ofNull();
             return out;
         }
@@ -140,9 +133,6 @@ public class MultiApproxPercentileLongPackedGroupByFunction extends ArrayFunctio
         FlatArrayView view = percentiles.flatView();
         int viewLength = view.length();
 
-        if (out == null) {
-            out = new DirectArray();
-        }
         out.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
         out.setDimLen(0, viewLength);
         out.applyShape();
@@ -178,13 +168,6 @@ public class MultiApproxPercentileLongPackedGroupByFunction extends ArrayFunctio
     }
 
     @Override
-    public void initSharedFrom(GroupByFunction primary) {
-        this.valueIndex = primary.getValueIndex();
-        this.histograms = ((MultiApproxPercentileLongPackedGroupByFunction) primary).histograms;
-        this.isShared = true;
-    }
-
-    @Override
     public void initValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
     }
@@ -211,18 +194,36 @@ public class MultiApproxPercentileLongPackedGroupByFunction extends ArrayFunctio
     }
 
     @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        final long srcPtr = srcValue.getLong(valueIndex);
+        if (srcPtr == 0) {
+            return;
+        }
+        histogramA.of(destValue.getLong(valueIndex));
+        histogramB.of(srcPtr);
+        histogramA.merge(histogramB);
+        destValue.putLong(valueIndex, histogramA.ptr());
+    }
+
+    @Override
+    public void setAllocator(GroupByAllocator allocator) {
+        histogramA.setAllocator(allocator);
+        histogramB.setAllocator(allocator);
+    }
+
+    @Override
     public void setEmpty(MapValue mapValue) {
-        mapValue.putLong(valueIndex, 0L);
+        mapValue.putLong(valueIndex, 0);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+        mapValue.putLong(valueIndex, 0);
     }
 
     @Override
     public boolean supportsParallelism() {
-        return false;
+        return UnaryFunction.super.supportsParallelism() && (percentileFunc.isConstant() || percentileFunc.isRuntimeConstant());
     }
 
     @Override

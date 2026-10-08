@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
@@ -36,31 +37,52 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByHistogram;
+import io.questdb.griffin.engine.groupby.GroupBySparseHistogram;
 import io.questdb.std.Numbers;
 
-public class ApproxPercentileLongGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
+/**
+ * approx_percentile(LONG, percentile, precision) over an off-heap {@link GroupBySparseHistogram}. It returns
+ * the same values as {@link ApproxPercentileLongPackedGroupByFunction} (the histogram records the same
+ * per-index counts and reads the percentile the same way), but its state lives in the group by map as a
+ * pointer, so per-worker partials merge exactly and the function runs in parallel GROUP BY. Used for
+ * precision 3..5 when {@link #isEnabled(CairoConfiguration)}.
+ */
+public class ApproxPercentileLongSparseGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
     private final Function exprFunc;
     private final int funcPosition;
-    private final GroupByHistogram histogramA;
-    private final GroupByHistogram histogramB;
+    private final GroupBySparseHistogram histogramA;
+    private final GroupBySparseHistogram histogramB;
     private final Function percentileFunc;
     private int valueIndex;
 
-    public ApproxPercentileLongGroupByFunction(Function exprFunc, Function percentileFunc, int precision, int funcPosition) {
+    public ApproxPercentileLongSparseGroupByFunction(Function exprFunc, Function percentileFunc, int precision, int funcPosition) {
         this.exprFunc = exprFunc;
         this.percentileFunc = percentileFunc;
         this.funcPosition = funcPosition;
-        // We pre-size the histogram for [1, 1000] range to avoid resizes in some basic use cases
-        // like CPU load percentile or latency in millis.
-        this.histogramA = new GroupByHistogram(precision, 1000);
-        this.histogramB = new GroupByHistogram(precision, 1000);
+        this.histogramA = new GroupBySparseHistogram(precision);
+        this.histogramB = new GroupBySparseHistogram(precision);
+    }
+
+    /**
+     * True when approx_percentile over LONG uses the off-heap parallel functions: the feature key is on and
+     * no per-query memory limit is configured. Under a limit the serial on-heap functions are kept, so the
+     * per-worker partials of a parallel GROUP BY cannot make a query fail that ran within the limit before.
+     */
+    public static boolean isEnabled(CairoConfiguration configuration) {
+        return configuration.isSqlParallelApproxPercentileEnabled() && configuration.getQueryMemoryLimitBytes() <= 0;
     }
 
     @Override
     public void clear() {
         histogramA.clear();
         histogramB.clear();
+    }
+
+    @Override
+    public void close() {
+        BinaryFunction.super.close();
+        histogramA.close();
+        histogramB.close();
     }
 
     @Override
@@ -94,7 +116,7 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
         if (ptr == 0) {
             return Double.NaN;
         }
-        GroupByHistogram histogram = histogramA.of(ptr);
+        GroupBySparseHistogram histogram = histogramA.of(ptr);
         if (histogram.getTotalCount() == 0) {
             return Double.NaN;
         }
@@ -166,13 +188,7 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
             return;
         }
 
-        long destPtr = destValue.getLong(valueIndex);
-        if (destPtr == 0) {
-            destValue.putLong(valueIndex, srcPtr);
-            return;
-        }
-
-        histogramA.of(destPtr);
+        histogramA.of(destValue.getLong(valueIndex));
         histogramB.of(srcPtr);
         histogramA.merge(histogramB);
         destValue.putLong(valueIndex, histogramA.ptr());
@@ -190,7 +206,12 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
     }
 
     @Override
+    public void setEmpty(MapValue mapValue) {
+        mapValue.putLong(valueIndex, 0);
+    }
+
+    @Override
     public boolean supportsParallelism() {
-        return true;
+        return exprFunc.supportsParallelism();
     }
 }

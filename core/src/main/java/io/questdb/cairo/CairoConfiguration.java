@@ -1500,7 +1500,47 @@ public interface CairoConfiguration {
      */
     boolean isSqlParallelGroupByBatchKernelsEnabled();
 
+    /**
+     * When true, a group by sub-query whose rows reach a consumer that only needs their distinct values
+     * (a DISTINCT, or a GROUP BY without aggregates) and that reads only some of its keys groups by those
+     * keys alone. For example, {@code SELECT DISTINCT sym FROM (SELECT ts_bucket, sym, avg(x) ... )} groups
+     * the source by sym only. The distinct values are the same; their order, which is unspecified, may
+     * differ.
+     */
+    default boolean isSqlDistinctGroupByKeyPruningEnabled() {
+        return true;
+    }
+
+    /**
+     * When true, approx_percentile over a LONG argument keeps its HdrHistogram off-heap in the group by
+     * map at every precision, so it runs in parallel GROUP BY and its per-worker partials merge exactly.
+     * When false, precision 3..5 and the array form use the original on-heap histograms and run serially.
+     * The results are the same either way.
+     * <p>
+     * Memory: each group stores only its non-zero counts, in a hash table of 12-byte slots (at most 4/3
+     * slots per distinct counts index, 64 bytes for a group of up to 3), allocated from the GROUP BY
+     * allocator and charged to the query's memory tracker. It grows with the number of distinct
+     * HdrHistogram buckets a group records, never with the span of its values. Parallel execution holds
+     * one partial per worker and group, plus the merged result. When a per-query memory limit is
+     * configured (cairo.query.memory.limit.bytes), the original serial on-heap functions are used instead,
+     * so a query that ran within the limit before does not fail on the per-worker partials.
+     */
+    default boolean isSqlParallelApproxPercentileEnabled() {
+        return true;
+    }
+
     boolean isSqlParallelGroupByEnabled();
+
+    /**
+     * When true, a PIVOT whose source is a plain projection subquery (no aggregates, window functions,
+     * joins, LIMIT, ORDER BY, ...) aggregates the source's rows directly: the projection's expressions are
+     * substituted into the PIVOT's inner GROUP BY, so it runs over the source table as a parallel GROUP BY
+     * instead of serially over a projection. The rows of each pivot cell are the same, so the results are
+     * the same.
+     */
+    default boolean isSqlPivotFuseSourceEnabled() {
+        return true;
+    }
 
     boolean isSqlParallelHashJoinGroupByEnabled();
 

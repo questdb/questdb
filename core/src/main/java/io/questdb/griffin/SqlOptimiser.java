@@ -258,6 +258,8 @@ public class SqlOptimiser implements Mutable {
     private final Path path;
     private final LowerCaseCharSequenceHashSet pivotAliasMap = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceIntHashMap pivotAliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
+    private final LowerCaseCharSequenceIntHashMap pivotFuseAliasMap = new LowerCaseCharSequenceIntHashMap();
+    private final IntList pivotFuseRefCounts = new IntList();
     private final IntHashSet postFilterRemoved = new IntHashSet();
     private final ObjList<IntHashSet> postFilterTableRefs = new ObjList<>();
     private final ObjectPool<QueryColumn> queryColumnPool;
@@ -300,6 +302,9 @@ public class SqlOptimiser implements Mutable {
     // Hash map for O(1) window function deduplication lookup: hash -> list of QueryColumns with that hash
     private final IntObjHashMap<ObjList<QueryColumn>> windowFunctionHashMap = new IntObjHashMap<>();
     private int defaultAliasCount = 0;
+    // set by propagateTopDownColumns0 for the nested model it recurses into: the rows of that model reach a
+    // consumer that only needs their distinct values (see isDistinctKeysConsumer)
+    private boolean distinctKeysOnlyForNested;
     private ObjList<JoinContext> emittedJoinClauses;
     // Index of the SUBSAMPLE mirror scope currently reserving names; 0 outside a wrapper walk.
     private int subsampleNameScopeDepth;
@@ -318,6 +323,10 @@ public class SqlOptimiser implements Mutable {
     private OperatorExpression opAnd;
     private OperatorExpression opGeq;
     private OperatorExpression opLt;
+    private boolean pivotFuseFailed;
+    private IQueryModel pivotFuseProjection;
+    private CharSequence pivotFuseProjectionAlias;
+    private CharSequence pivotFuseSourceAlias;
     private CharSequence tempColumnAlias;
     private IQueryModel tempQueryModel;
 
@@ -529,6 +538,13 @@ public class SqlOptimiser implements Mutable {
         tempCharSequenceHashSet.clear();
         pivotAliasMap.clear();
         pivotAliasSequenceMap.clear();
+        pivotFuseAliasMap.clear();
+        pivotFuseRefCounts.clear();
+        pivotFuseProjection = null;
+        pivotFuseProjectionAlias = null;
+        pivotFuseSourceAlias = null;
+        pivotFuseFailed = false;
+        distinctKeysOnlyForNested = false;
         subsampleNameScopeDepth = 0;
         for (int i = 0, n = subsampleNameScopes.size(); i < n; i++) {
             subsampleNameScopes.getQuick(i).clear();
@@ -8396,6 +8412,8 @@ public class SqlOptimiser implements Mutable {
      * It is not for columns used in distinct, except, intersect, union (even transitively for the latter three!).
      */
     private void propagateTopDownColumns0(IQueryModel model, boolean topLevel, @Nullable IQueryModel papaModel, boolean allowColumnsChange) {
+        final boolean distinctKeysOnly = distinctKeysOnlyForNested;
+        distinctKeysOnlyForNested = false;
         if (!model.isOptimisable()) {
             return;
         }
@@ -8521,7 +8539,7 @@ public class SqlOptimiser implements Mutable {
         // model's own WHERE/HAVING and ORDER BY literals have been emitted, to also cover a HAVING-style
         // filter that references only an aggregate alias (its literals are the sole top-down contributor,
         // so an empty list here would skip retention). For top level models the list is empty -> no-op.
-        retainGroupByKeysAsTopDownColumns(model);
+        retainGroupByKeysAsTopDownColumns(model, distinctKeysOnly);
 
         // latest on
         if (model.getLatestBy().size() > 0) {
@@ -8568,7 +8586,7 @@ public class SqlOptimiser implements Mutable {
         // early pass above would have observed an empty list and skipped, letting pruning collapse the
         // keyed group by into a scalar aggregate. addTopDownColumn() dedupes by alias, so re-running is
         // idempotent and leaves the key ordering from the early pass untouched in the common case.
-        retainGroupByKeysAsTopDownColumns(model);
+        retainGroupByKeysAsTopDownColumns(model, distinctKeysOnly);
 
         if (nestedIsFlex && nestedAllowsColumnChange) {
             emitColumnLiteralsTopDown(model.getColumns(), nested);
@@ -8631,7 +8649,10 @@ public class SqlOptimiser implements Mutable {
 
         // go down the nested path
         if (nested != null) {
+            distinctKeysOnlyForNested = configuration.isSqlDistinctGroupByKeyPruningEnabled()
+                    && (isDistinctKeysConsumer(model) || (distinctKeysOnly && isDistinctPreservingPassThrough(model)));
             propagateTopDownColumns0(nested, false, null, nestedAllowsColumnChange);
+            distinctKeysOnlyForNested = false;
         }
 
         final IQueryModel unionModel = model.getUnionModel();
@@ -9923,6 +9944,103 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * True when the model's output depends only on the set of distinct rows it reads: a GROUP BY or
+     * DISTINCT whose columns are all keys (no aggregates), with no LIMIT. Duplicates and row order in its
+     * input change nothing in its output.
+     */
+    private boolean isDistinctKeysConsumer(IQueryModel model) {
+        final int type = model.getSelectModelType();
+        if ((type != IQueryModel.SELECT_MODEL_GROUP_BY && type != IQueryModel.SELECT_MODEL_DISTINCT)
+                || model.getLimitLo() != null
+                || model.getLimitHi() != null
+                || model.getSampleBy() != null
+                || model.getSampleByFill().size() > 0
+                || model.getUnionModel() != null) {
+            return false;
+        }
+        final ObjList<QueryColumn> columns = model.getColumns();
+        if (columns.size() == 0) {
+            return false;
+        }
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn qc = columns.getQuick(i);
+            if (qc.isWindowExpression() || hasGroupByFunc(sqlNodeStack, functionParser.getFunctionFactoryCache(), qc.getAst())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * True when the set of distinct rows the model returns depends only on the set of distinct rows it
+     * reads: a row-wise projection or filter over one model, no window function, LIMIT, join, union,
+     * LATEST ON or SAMPLE BY.
+     */
+    private boolean isDistinctPreservingPassThrough(IQueryModel model) {
+        final int type = model.getSelectModelType();
+        if ((type != IQueryModel.SELECT_MODEL_NONE && type != IQueryModel.SELECT_MODEL_CHOOSE && type != IQueryModel.SELECT_MODEL_VIRTUAL)
+                || model.getJoinModels().size() > 1
+                || model.getUnionModel() != null
+                || model.getLimitLo() != null
+                || model.getLimitHi() != null
+                || model.getLatestBy().size() > 0
+                || model.getSampleBy() != null
+                || model.getTableNameExpr() != null) {
+            return false;
+        }
+        final ObjList<QueryColumn> columns = model.getColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (columns.getQuick(i).isWindowExpression()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Keeps every grouping key of a group by sub-query in its projection, so pruning cannot collapse the
+     * keyed group by into a scalar aggregate or merge groups an aggregate or a duplicate-sensitive consumer
+     * would tell apart. The exception: the rows reach a consumer that only needs their distinct values
+     * (a DISTINCT, or a GROUP BY without aggregates, through row-wise models), and the parent selects
+     * only keys of this group by. Then the distinct values of the selected keys over the groups are the
+     * distinct values of the selected keys over the rows, so the keys nothing reads are dropped and the
+     * group by runs on the selected keys alone (TAQ idx 29: {@code SELECT DISTINCT sym FROM a} over a
+     * {@code GROUP BY minute, sym} groups by sym only).
+     */
+    private void retainGroupByKeysAsTopDownColumns(IQueryModel model, boolean distinctKeysOnly) {
+        if (distinctKeysOnly && canDropUnreadGroupByKeys(model)) {
+            return;
+        }
+        retainGroupByKeysAsTopDownColumns(model);
+    }
+
+    private boolean canDropUnreadGroupByKeys(IQueryModel model) {
+        if (model.getSelectModelType() != IQueryModel.SELECT_MODEL_GROUP_BY
+                // another reader (the outer side of a JOIN LATERAL) may read the keys this consumer does not
+                || model.hasSharedRefs()
+                || model.getLimitLo() != null
+                || model.getLimitHi() != null
+                || model.getSampleBy() != null
+                || model.getSampleByFill().size() > 0
+                || model.getUnionModel() != null
+                || model.getWhereClause() != null
+                || model.getGroupBy().size() > 0) {
+            return false;
+        }
+        final ObjList<QueryColumn> topDown = model.getTopDownColumns();
+        if (topDown.size() == 0) {
+            return false;
+        }
+        for (int i = 0, n = topDown.size(); i < n; i++) {
+            final QueryColumn qc = topDown.getQuick(i);
+            if (qc.isWindowExpression() || hasGroupByFunc(sqlNodeStack, functionParser.getFunctionFactoryCache(), qc.getAst())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     // Adds every non-aggregate grouping key of a GROUP BY model to its top-down column list, so that
     // top-down column pruning cannot drop the keys that define the grouping. Runs only when the model
     // already has top-down columns, i.e. when it is a sub-query whose projection will be pruned; for a
@@ -10920,6 +11038,258 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Substitutes the projection subquery a PIVOT reads into the PIVOT's inner GROUP BY, the plan a hand
+     * rewrite gets by moving the GROUP BY into the subquery. The inner model reads
+     * {@code source -> projection -> from}, where source is the {@code SELECT * FROM (subquery) [WHERE ...]}
+     * model the PIVOT clause follows and projection is the subquery's select list. The returned model
+     * has the inner model's columns and the source's WHERE (which holds the pushed-down pivot IN filter),
+     * each with the projection's expressions in place of the references to them, and reads the
+     * projection's FROM directly. Rows, groups and aggregate arguments are the same, so every pivot cell
+     * aggregates the same values; only the plan changes (the GROUP BY can now run in parallel).
+     * <p>
+     * Returns null, leaving the PIVOT as it is, unless the source only filters, the projection only
+     * computes row-wise expressions over a FROM without joins (no aggregates, window or cursor functions,
+     * sub-queries, wildcards, table-qualified columns, DISTINCT, joins, LIMIT, ORDER BY, LATEST ON, SAMPLE BY, unions or designated timestamp
+     * clauses), every reference resolves to a projected column, every projected column is referenced, and
+     * no non-trivial projected expression is referenced more than once (so nothing is evaluated more
+     * often than before).
+     */
+    private IQueryModel fusePivotSource(IQueryModel innerModel) throws SqlException {
+        final IQueryModel source = innerModel.getNestedModel();
+        if (!isPlainPivotPassThrough(source) || source.getBottomUpColumns().size() > 0 || source.isCteModel()) {
+            return null;
+        }
+        final IQueryModel projection = source.getNestedModel();
+        if (!isPlainPivotPassThrough(projection) || projection.getBottomUpColumns().size() == 0 || projection.getWhereClause() != null) {
+            return null;
+        }
+        final IQueryModel from = projection.getNestedModel();
+        if (!isPlainPivotFuseFrom(from)) {
+            // the filter pushed below the projection must mean what it meant above it: only a table,
+            // with nothing (SAMPLE BY, FILL, LIMIT, ...) a later rewrite could put between the filter and
+            // the rows
+            return null;
+        }
+
+        final ObjList<QueryColumn> projected = projection.getBottomUpColumns();
+        pivotFuseAliasMap.clear();
+        pivotFuseRefCounts.clear();
+        for (int i = 0, n = projected.size(); i < n; i++) {
+            final QueryColumn qc = projected.getQuick(i);
+            final CharSequence alias = qc.getAlias();
+            if (alias == null || qc.isWindowExpression() || !isRowWiseExpression(qc.getAst())) {
+                return null;
+            }
+            final CharSequence name = unquote(alias);
+            if (pivotFuseAliasMap.keyIndex(name) < 0) {
+                // two projected columns with the same name: the reference would be ambiguous
+                return null;
+            }
+            pivotFuseAliasMap.put(name, i);
+            pivotFuseRefCounts.add(0);
+        }
+        for (int i = 0, n = projected.size(); i < n; i++) {
+            if (referencesOtherProjectedAlias(projected.getQuick(i).getAst(), i, projected)) {
+                // bid * 2 AS b2x, b2x + 1 AS b3: b2x resolves to the projected alias, which the FROM the
+                // substituted expression moves to does not have
+                return null;
+            }
+        }
+
+        pivotFuseSourceAlias = source.getAlias() != null ? unquote(source.getAlias().token) : null;
+        pivotFuseProjectionAlias = projection.getAlias() != null ? unquote(projection.getAlias().token) : null;
+        pivotFuseProjection = projection;
+        pivotFuseFailed = false;
+
+        final IQueryModel fused = queryModelPool.next();
+        final ObjList<QueryColumn> columns = innerModel.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn qc = columns.getQuick(i);
+            final ExpressionNode ast = substitutePivotSourceRefs(ExpressionNode.deepClone(expressionNodePool, qc.getAst()));
+            if (pivotFuseFailed) {
+                return null;
+            }
+            fused.addBottomUpColumn(queryColumnPool.next().of(qc.getAlias(), ast));
+        }
+        ExpressionNode where = null;
+        if (source.getWhereClause() != null) {
+            where = substitutePivotSourceRefs(ExpressionNode.deepClone(expressionNodePool, source.getWhereClause()));
+            if (pivotFuseFailed) {
+                return null;
+            }
+        }
+        for (int i = 0, n = pivotFuseRefCounts.size(); i < n; i++) {
+            final int refCount = pivotFuseRefCounts.getQuick(i);
+            if (refCount == 0) {
+                // an unreferenced projected column would no longer be validated (an invalid column in it
+                // is an error today)
+                return null;
+            }
+            if (refCount > 1) {
+                final int type = projected.getQuick(i).getAst().type;
+                if (type != LITERAL && type != CONSTANT) {
+                    // evaluating the expression once per reference could change what a non-deterministic
+                    // expression returns; keep it in the projection
+                    return null;
+                }
+            }
+        }
+
+        // Hints reach the projection's FROM the same way they did through the bypassed models: from the
+        // source and the projection, unless the projection is a CTE, which keeps its own hints only.
+        if (projection.isCteModel()) {
+            fused.setIsCteModel(true);
+        } else {
+            fused.copyHints(source.getHints());
+        }
+        fused.copyHints(projection.getHints());
+        if (where != null) {
+            // the filter sits on a pass-through model over the FROM, as it sat on the source model, and
+            // is pushed down into the FROM from there
+            final IQueryModel filter = queryModelPool.next();
+            filter.setWhereClause(where);
+            filter.setNestedModel(from);
+            fused.setNestedModel(filter);
+        } else {
+            fused.setNestedModel(from);
+        }
+        return fused;
+    }
+
+    // True for a plain table: no clause that a filter pushed onto its rows could end up above, or that a
+    // later rewrite (SAMPLE BY, FILL) could put between the filter and the rows.
+    private static boolean isPlainPivotFuseFrom(IQueryModel model) {
+        return model != null
+                && model.getTableNameExpr() != null
+                && model.getNestedModel() == null
+                && model.getBottomUpColumns().size() == 0
+                && model.getJoinModels().size() == 1
+                && model.getUnionModel() == null
+                && model.getGroupBy().size() == 0
+                && model.getOrderBy().size() == 0
+                && model.getLatestBy().size() == 0
+                && model.getSampleBy() == null
+                && model.getSampleByFill().size() == 0
+                && model.getSubsample() == null
+                && model.getLimitLo() == null
+                && model.getLimitHi() == null
+                && !model.isDistinct();
+    }
+
+    private boolean isPlainPivotPassThrough(IQueryModel model) {
+        return model != null
+                && model.isOptimisable()
+                && model.getTableNameExpr() == null
+                && model.getNestedModel() != null
+                && model.getJoinModels().size() == 1
+                && model.getUnionModel() == null
+                && model.getGroupBy().size() == 0
+                && model.getOrderBy().size() == 0
+                && model.getLatestBy().size() == 0
+                && model.getSampleBy() == null
+                && model.getSubsample() == null
+                && model.getLimitLo() == null
+                && model.getLimitHi() == null
+                && model.getTimestamp() == null
+                && !model.isDistinct()
+                && !model.isPivot()
+                && model.getPivotForColumns().size() == 0;
+    }
+
+    // True when the expression computes one value per row from its row: no aggregate, window or cursor
+    // function, no sub-query and no wildcard.
+    private boolean isRowWiseExpression(ExpressionNode node) {
+        if (node == null) {
+            return true;
+        }
+        if (node.type == ExpressionNode.QUERY || node.queryModel != null || node.windowExpression != null) {
+            return false;
+        }
+        if (node.type == LITERAL && (Chars.endsWith(node.token, '*') || Chars.indexOfLastUnquoted(node.token, '.') > -1)) {
+            // a wildcard, or a column qualified by a table alias of the FROM: the alias does not resolve
+            // from the model the expression moves to
+            return false;
+        }
+        if (node.type == FUNCTION) {
+            final FunctionFactoryCache cache = functionParser.getFunctionFactoryCache();
+            if (cache.isGroupBy(node.token) || cache.isWindow(node.token) || cache.isCursor(node.token)) {
+                return false;
+            }
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (!isRowWiseExpression(node.args.getQuick(i))) {
+                return false;
+            }
+        }
+        return isRowWiseExpression(node.lhs) && isRowWiseExpression(node.rhs);
+    }
+
+    // True when the expression of projected column self reads another projected column's alias, other
+    // than a column projected as itself (bid AS bid names the same value either way).
+    private boolean referencesOtherProjectedAlias(ExpressionNode node, int self, ObjList<QueryColumn> projected) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == LITERAL) {
+            final int index = pivotFuseAliasMap.get(unquote(node.token));
+            if (index < 0 || index == self) {
+                return false;
+            }
+            final ExpressionNode other = projected.getQuick(index).getAst();
+            return other.type != LITERAL || !Chars.equalsIgnoreCase(unquote(other.token), unquote(node.token));
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (referencesOtherProjectedAlias(node.args.getQuick(i), self, projected)) {
+                return true;
+            }
+        }
+        return referencesOtherProjectedAlias(node.lhs, self, projected) || referencesOtherProjectedAlias(node.rhs, self, projected);
+    }
+
+    // Replaces, in place in a cloned tree, each reference to a projected column with a clone of the
+    // projected expression. Sets pivotFuseFailed on a reference it cannot resolve or a node it does
+    // not know how to move.
+    private ExpressionNode substitutePivotSourceRefs(ExpressionNode node) {
+        if (node == null || pivotFuseFailed) {
+            return node;
+        }
+        if (node.type == ExpressionNode.QUERY || node.queryModel != null || node.windowExpression != null) {
+            pivotFuseFailed = true;
+            return node;
+        }
+        if (node.type == LITERAL) {
+            if (Chars.equals(node.token, '*')) {
+                // count(*)
+                return node;
+            }
+            CharSequence name = node.token;
+            final int dot = Chars.indexOfLastUnquoted(name, '.');
+            if (dot > -1) {
+                final CharSequence prefix = unquote(name.subSequence(0, dot));
+                if (!Chars.equalsIgnoreCaseNc(prefix, pivotFuseSourceAlias) && !Chars.equalsIgnoreCaseNc(prefix, pivotFuseProjectionAlias)) {
+                    pivotFuseFailed = true;
+                    return node;
+                }
+                name = name.subSequence(dot + 1, name.length());
+            }
+            final int index = pivotFuseAliasMap.get(unquote(name));
+            if (index < 0) {
+                pivotFuseFailed = true;
+                return node;
+            }
+            pivotFuseRefCounts.increment(index);
+            // the clone keeps the projected expression's positions, so an error in it is reported where it was
+            return ExpressionNode.deepClone(expressionNodePool, pivotFuseProjection.getBottomUpColumns().getQuick(index).getAst());
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            node.args.setQuick(i, substitutePivotSourceRefs(node.args.getQuick(i)));
+        }
+        node.lhs = substitutePivotSourceRefs(node.lhs);
+        node.rhs = substitutePivotSourceRefs(node.rhs);
+        return node;
+    }
+
     private IQueryModel rewritePivot(IQueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (model == null || !model.isOptimisable()) {
             return model;
@@ -10962,6 +11332,17 @@ public class SqlOptimiser implements Mutable {
             // Creates one column per combination of (FOR values × aggregates).
             // Uses first_not_null() to pick the matching aggregate value, or sum() for count aggregates.
             addPivotColumnsToOuterModel(totalCombinations, model, outerModel);
+
+            // Step 6: when the source is a plain projection subquery, aggregate its rows directly. The
+            // projection's expressions replace the references to them in the inner GROUP BY, so the
+            // GROUP BY sits on the source's FROM and runs as a parallel GROUP BY, instead of serially
+            // over the projection. Each pivot cell still aggregates exactly the same rows.
+            if (configuration.isSqlPivotFuseSourceEnabled()) {
+                final IQueryModel fused = fusePivotSource(innerModel);
+                if (fused != null) {
+                    emptyModel.setNestedModel(fused);
+                }
+            }
 
             emptyModel2.moveLimitFrom(model);
             emptyModel2.moveOrderByFrom(model);
