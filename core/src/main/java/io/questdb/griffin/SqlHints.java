@@ -37,6 +37,7 @@ public final class SqlHints {
     public static final String ASOF_LINEAR_HINT = "asof_linear";
     public static final String ASOF_MEMOIZED_DRIVEBY_HINT = "asof_memoized_driveby";
     public static final String ASOF_MEMOIZED_HINT = "asof_memoized";
+    public static final String ASOF_PARALLEL_HINT = "asof_parallel";
     public static final String ENABLE_PRE_TOUCH_HINT = "enable_pre_touch";
     public static final String FORCE_USE_COVERING_HINT = "force_use_covering";
     public static final char HINTS_PARAMS_DELIMITER = ' ';
@@ -91,6 +92,14 @@ public final class SqlHints {
             @Nullable CharSequence tableNameB
     ) {
         return hasHintWithParams(queryModel, ASOF_MEMOIZED_HINT, tableNameA, tableNameB);
+    }
+
+    public static boolean hasAsOfParallelHint(
+            @NotNull IQueryModel queryModel,
+            @Nullable CharSequence tableNameA,
+            @Nullable CharSequence tableNameB
+    ) {
+        return hasHintWithParams(queryModel, ASOF_PARALLEL_HINT, tableNameA, tableNameB);
     }
 
     // checks enable column pre-touch hint for parallel filters

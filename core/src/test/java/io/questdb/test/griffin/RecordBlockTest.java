@@ -123,6 +123,35 @@ public class RecordBlockTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsyncAsOfJoinOffersFrameRows() throws Exception {
+        // many master page frames and slave time frames
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 16);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 64);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 16);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 64);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                createAllTypes(engine, ctx);
+                // trades keyed like at.s, some keys never quoted, NULL keys, trades before any quote
+                engine.execute("create table tr as (select (case when x % 23 = 0 then null else 'k' || (x % 60) end)::symbol s, " +
+                        "(x * 330000000 - 300000000)::timestamp ts, x from long_sequence(2200)) timestamp(ts) partition by DAY", ctx);
+                final Rnd rnd = TestUtils.generateRandom(LOG);
+                final String all = "select /*+ asof_parallel(tr at) */ tr.ts, tr.s, tr.x, at.* from tr asof join at on (s)";
+                final String filtered = "select /*+ asof_parallel(tr at) */ tr.ts, tr.x, at.l, at.s, at.db, at.v, at.dc64 from tr asof join at on (s) where tr.x % 3 = 0";
+                final String tolerance = "select /*+ asof_parallel(tr at) */ tr.ts, at.i, at.f, at.ts, at.s2 from tr asof join at on (s) tolerance 2h";
+                for (String query : new String[]{all, filtered, tolerance}) {
+                    io.questdb.test.griffin.engine.join.AsyncAsOfJoinTest.assertParallel(engine, ctx, query, true);
+                    for (int k = 0; k < 3; k++) {
+                        Assert.assertTrue(query, assertBlocksMatchRows(engine, ctx, query, rnd) > 0);
+                        Assert.assertTrue(query, assertBlocksMatchRows(engine, ctx, query + " limit 3, 250", rnd) > 0);
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
     public void testAsyncFilterOffersSelectedRows() throws Exception {
         assertMemoryLeak(() -> {
             createAllTypes();

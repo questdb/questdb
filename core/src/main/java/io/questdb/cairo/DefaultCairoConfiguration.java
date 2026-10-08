@@ -1975,6 +1975,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelAsOfJoinEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlParallelWindowKeyRunsEnabled() {
         return true;
     }

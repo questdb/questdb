@@ -596,6 +596,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelTopKEnabled;
     private final boolean sqlParallelWindowEnabled;
     private final boolean sqlParallelWindowJoinEnabled;
+    private final boolean sqlParallelAsOfJoinEnabled;
     private final boolean sqlParallelWindowChainEnabled;
     private final boolean sqlParallelWindowShardEnabled;
     private final boolean sqlParallelWindowKeyRunsEnabled;
@@ -2447,6 +2448,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlHorizonJoinMaxOffsets = getInt(properties, env, PropertyKey.CAIRO_SQL_HORIZON_JOIN_MAX_OFFSETS, 10_000);
             this.sqlParallelHorizonJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelWindowJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, defaultParallelSqlEnabled);
+            this.sqlParallelAsOfJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_ASOF_JOIN_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelWindowEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelWindowKeyRunsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_KEY_RUNS_ENABLED, true);
             this.sqlParallelWindowChainEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_CHAIN_ENABLED, true);
@@ -6085,6 +6087,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParallelWindowJoinEnabled() {
             return sqlParallelWindowJoinEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelAsOfJoinEnabled() {
+            return sqlParallelAsOfJoinEnabled;
         }
 
         @Override

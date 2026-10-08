@@ -2000,6 +2000,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelAsOfJoinEnabled() {
+        return getDelegate().isSqlParallelAsOfJoinEnabled();
+    }
+
+    @Override
     public boolean isSqlParallelWindowKeyRunsEnabled() {
         return getDelegate().isSqlParallelWindowKeyRunsEnabled();
     }

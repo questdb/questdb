@@ -1540,6 +1540,13 @@ public interface CairoConfiguration {
     boolean isSqlParallelWindowJoinEnabled();
 
     /**
+     * Whether a keyed ASOF JOIN on one SYMBOL column may join the master's page frames in parallel
+     * (Async AsOf Join). It runs on the parallel window join machinery, so it also needs that
+     * enabled for the execution context.
+     */
+    boolean isSqlParallelAsOfJoinEnabled();
+
+    /**
      * Whether a parallel window task whose window functions are all partitioned by the scan's key
      * alone computes each key as a run, with the partition's state held in the functions rather
      * than in their maps. Read when the query is compiled; EXPLAIN shows it as {@code keyRuns}.
