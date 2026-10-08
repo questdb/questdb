@@ -24,16 +24,7 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
-import io.questdb.std.Long256;
-
 public class CastLong256ToTimestampFunctionFactory extends CastLongToTimestampFunctionFactory {
-    /**
-     * Not called yet: the NULL wrappers of {@code cast(LONG256 AS TIMESTAMP)} will call it.
-     */
-    public static long value(Long256 operand) {
-        return operand.getLong0();
-    }
-
     @Override
     public String getSignature() {
         return "cast(Hn)";

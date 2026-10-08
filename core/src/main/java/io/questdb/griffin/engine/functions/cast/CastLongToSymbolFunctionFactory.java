@@ -44,19 +44,10 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 public class CastLongToSymbolFunctionFactory implements FunctionFactory {
-
-    /**
-     * Appends {@code operand} like {@code put(long)}, except that it prints LONG_MIN as a number
-     * where {@code put(long)} prints null. The function tests NULL before it calls this method.
-     */
-    public static void value(CharSink<?> sink, long operand) {
-        Numbers.append(sink, operand, false);
-    }
 
     @Override
     public String getSignature() {
@@ -103,38 +94,38 @@ public class CastLongToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final long val = arg.getLong(rec);
-            if (val == Numbers.LONG_NULL) {
+            final long value = arg.getLong(rec);
+            if (value == Numbers.LONG_NULL) {
                 return SymbolTable.VALUE_IS_NULL;
             }
 
-            final int keyIndex = symbolTableShortcut.keyIndex(val);
+            final int keyIndex = symbolTableShortcut.keyIndex(value);
             if (keyIndex < 0) {
                 return symbolTableShortcut.valueAt(keyIndex) - 1;
             }
 
-            symbolTableShortcut.putAt(keyIndex, val, next);
+            symbolTableShortcut.putAt(keyIndex, value, next);
             sink.clear();
-            value(sink, val);
+            sink.put(value);
             symbols.add(Chars.toString(sink));
             return next++ - 1;
         }
 
         @Override
         public CharSequence getSymbol(Record rec) {
-            final long val = arg.getLong(rec);
-            if (val == Numbers.LONG_NULL) {
+            final long value = arg.getLong(rec);
+            if (value == Numbers.LONG_NULL) {
                 return null;
             }
 
-            final int keyIndex = symbolTableShortcut.keyIndex(val);
+            final int keyIndex = symbolTableShortcut.keyIndex(value);
             if (keyIndex < 0) {
                 return symbols.getQuick(symbolTableShortcut.valueAt(keyIndex));
             }
 
-            symbolTableShortcut.putAt(keyIndex, val, next++);
+            symbolTableShortcut.putAt(keyIndex, value, next++);
             sink.clear();
-            value(sink, val);
+            sink.put(value);
             final String str = Chars.toString(sink);
             symbols.add(str);
             return str;

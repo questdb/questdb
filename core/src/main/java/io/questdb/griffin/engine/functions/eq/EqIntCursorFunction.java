@@ -52,7 +52,7 @@ class EqIntCursorFunction extends AbstractScalarCursorFunction {
 
     @Override
     public boolean getBool(Record rec) {
-        return negated != EqIntCursorFunctionFactory.value(leftFunc.getInt(rec), value);
+        return negated != (leftFunc.getInt(rec) == value);
     }
 
     @Override

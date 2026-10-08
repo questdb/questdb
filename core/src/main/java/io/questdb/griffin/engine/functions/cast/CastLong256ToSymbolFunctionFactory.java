@@ -24,18 +24,7 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
-import io.questdb.std.Long256;
-import io.questdb.std.Numbers;
-import io.questdb.std.str.CharSink;
-
 public class CastLong256ToSymbolFunctionFactory extends CastLongToSymbolFunctionFactory {
-    /**
-     * Not called yet: the NULL wrappers of {@code cast(LONG256 AS SYMBOL)} will call it.
-     */
-    public static void value(CharSink<?> sink, Long256 operand) {
-        Numbers.append(sink, operand.getLong0(), false);
-    }
-
     @Override
     public String getSignature() {
         return "cast(Hk)";

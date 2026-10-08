@@ -35,13 +35,6 @@ import io.questdb.std.ObjList;
 // second arg is contained within or equals first arg
 public class NegContainsEqIPv4VarcharFunctionFactory implements FunctionFactory {
 
-    /**
-     * Not called yet: the NULL wrappers of {@code >>=(VARCHAR, IPv4)} will call it.
-     */
-    public static boolean value(int ipv4, int subnet, int netmask) {
-        return (ipv4 & netmask) == subnet;
-    }
-
     @Override
     public String getSignature() {
         return ">>=(ØX)";

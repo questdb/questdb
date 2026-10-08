@@ -39,16 +39,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
  */
 public class GtDoubleCursorFunctionFactory extends AbstractDoubleCursorFunctionFactory {
 
-    /**
-     * Whether {@code left} orders after {@code right}: {@link LtDoubleVVFunctionFactory#value} with
-     * the operands swapped, so NaN orders after every other value. {@code GtDoubleCursorFunction}
-     * does not call this method: its own comparison skips the tolerance test on rows that the plain
-     * {@code >} settles, and this body would need a NaN test on every row.
-     */
-    public static boolean value(double left, double right) {
-        return LtDoubleVVFunctionFactory.value(right, left);
-    }
-
     @Override
     public String getSignature() {
         return ">(DC)";

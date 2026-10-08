@@ -42,10 +42,6 @@ import io.questdb.std.Transient;
 public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "dot_product";
 
-    public static double value(double sum, double element, double scalar) {
-        return sum + element * scalar;
-    }
-
     @Override
     public String getSignature() {
         return FUNCTION_NAME + "(D[]D)";
@@ -86,19 +82,19 @@ public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFa
             if (Numbers.isNull(scalarValue)) {
                 return Double.NaN;
             }
-            double sum = 0d;
+            double value = 0d;
 
             if (arr.isVanilla()) {
                 FlatArrayView flatView = arr.flatView();
                 for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {
                     double v = flatView.getDoubleAtAbsIndex(i);
                     if (Numbers.isFinite(v)) {
-                        sum = value(sum, v, scalarValue);
+                        value += v * scalarValue;
                     }
                 }
-                return sum;
+                return value;
             }
-            return calculateRecursive(arr, 0, 0, scalarValue, sum);
+            return calculateRecursive(arr, 0, 0, scalarValue, value);
         }
 
         @Override
@@ -129,7 +125,7 @@ public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFa
                 for (int i = 0; i < count; i++) {
                     double v = view.getDouble(flatIndex);
                     if (Numbers.isFinite(v)) {
-                        sum = value(sum, v, scalarValue);
+                        sum += v * scalarValue;
                     }
                     flatIndex += stride;
                 }

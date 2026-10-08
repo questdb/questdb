@@ -35,13 +35,6 @@ import io.questdb.std.ObjList;
 
 public class CastDoubleToTimestampFunctionFactory implements FunctionFactory {
 
-    /**
-     * Undefined outside the LONG range: the function gives NULL there, as for a NULL operand.
-     */
-    public static long value(double operand) {
-        return (long) operand;
-    }
-
     @Override
     public String getSignature() {
         return "cast(Dn)";
@@ -66,8 +59,8 @@ public class CastDoubleToTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            final double val = arg.getDouble(rec);
-            return Numbers.isNull(val) || val > Long.MAX_VALUE || val < Long.MIN_VALUE ? Numbers.LONG_NULL : value(val);
+            final double value = arg.getDouble(rec);
+            return Numbers.isNull(value) || value > Long.MAX_VALUE || value < Long.MIN_VALUE ? Numbers.LONG_NULL : (long) value;
         }
     }
 }

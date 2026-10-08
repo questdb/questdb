@@ -64,58 +64,6 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
     // Approximate meters per degree of latitude (constant everywhere on Earth)
     private static final double METERS_PER_DEG_LAT = 111_320.0;
 
-    /**
-     * Whether the point lies within {@code radius} meters of the center; a negative radius holds no
-     * point. Throws a CairoException at the argument's position for a coordinate out of range. The
-     * longitude difference scales by the cosine of the center latitude. {@code
-     * ConstCenterGeoWithinRadiusLatLonFunction} computes that cosine and the squared radius once at
-     * setup and does not call this method.
-     */
-    public static boolean value(
-            double lat,
-            double lon,
-            double centerLat,
-            double centerLon,
-            double radius,
-            int latPos,
-            int lonPos,
-            int centerLatPos,
-            int centerLonPos
-    ) {
-        if (radius < 0) {
-            return false;
-        }
-
-        // Validate center latitude
-        if (centerLat < -90.0 || centerLat > 90.0) {
-            throw CairoException.nonCritical().position(centerLatPos)
-                    .put("latitude must be between -90 and 90 [value=").put(centerLat).put(']');
-        }
-
-        // Validate center longitude
-        if (centerLon < -180.0 || centerLon > 180.0) {
-            throw CairoException.nonCritical().position(centerLonPos)
-                    .put("longitude must be between -180 and 180 [value=").put(centerLon).put(']');
-        }
-
-        // Validate point latitude
-        if (lat < -90.0 || lat > 90.0) {
-            throw CairoException.nonCritical().position(latPos)
-                    .put("latitude must be between -90 and 90 [value=").put(lat).put(']');
-        }
-
-        // Validate point longitude
-        if (lon < -180.0 || lon > 180.0) {
-            throw CairoException.nonCritical().position(lonPos)
-                    .put("longitude must be between -180 and 180 [value=").put(lon).put(']');
-        }
-
-        final double cosLat = Math.cos(Math.toRadians(centerLat));
-        final double metersPerDegLon = METERS_PER_DEG_LAT * cosLat;
-
-        return isWithinRadius(lat, lon, centerLat, centerLon, metersPerDegLon, radius * radius);
-    }
-
     @Override
     public String getSignature() {
         return "geo_within_radius_latlon(DDDDD)";
@@ -433,7 +381,35 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
             if (Numbers.isNull(centerLat) || Numbers.isNull(centerLon) || Numbers.isNull(lat) || Numbers.isNull(lon)) {
                 return false;
             }
-            return value(lat, lon, centerLat, centerLon, radius, latPos, lonPos, centerLatPos, centerLonPos);
+
+            // Validate center latitude
+            if (centerLat < -90.0 || centerLat > 90.0) {
+                throw CairoException.nonCritical().position(centerLatPos)
+                        .put("latitude must be between -90 and 90 [value=").put(centerLat).put(']');
+            }
+
+            // Validate center longitude
+            if (centerLon < -180.0 || centerLon > 180.0) {
+                throw CairoException.nonCritical().position(centerLonPos)
+                        .put("longitude must be between -180 and 180 [value=").put(centerLon).put(']');
+            }
+
+            // Validate point latitude
+            if (lat < -90.0 || lat > 90.0) {
+                throw CairoException.nonCritical().position(latPos)
+                        .put("latitude must be between -90 and 90 [value=").put(lat).put(']');
+            }
+
+            // Validate point longitude
+            if (lon < -180.0 || lon > 180.0) {
+                throw CairoException.nonCritical().position(lonPos)
+                        .put("longitude must be between -180 and 180 [value=").put(lon).put(']');
+            }
+
+            final double cosLat = Math.cos(Math.toRadians(centerLat));
+            final double metersPerDegLon = METERS_PER_DEG_LAT * cosLat;
+
+            return isWithinRadius(lat, lon, centerLat, centerLon, metersPerDegLon, radius * radius);
         }
 
         @Override

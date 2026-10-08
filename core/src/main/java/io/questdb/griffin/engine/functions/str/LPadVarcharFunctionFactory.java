@@ -43,22 +43,6 @@ public class LPadVarcharFunctionFactory implements FunctionFactory {
 
     private static final String SIGNATURE = "lpad(ØI)";
 
-    /**
-     * Undefined for a negative length: the function gives NULL there, as for a NULL operand. The
-     * function also rejects a length above its buffer limit before it calls this method.
-     */
-    public static void value(Utf8StringSink sink, Utf8Sequence str, int len) {
-        final int length = Utf8s.validateUtf8(str);
-        if (len > length) {
-            for (int i = 0; i < (len - length); i++) {
-                sink.put(' ');
-            }
-            sink.put(str);
-        } else {
-            Utf8s.strCpy(str, 0, len, sink);
-        }
-    }
-
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -131,7 +115,16 @@ public class LPadVarcharFunctionFactory implements FunctionFactory {
                             .put(", requiredLength=").put(len).put(']');
                 }
                 sink.clear();
-                value(sink, str, len);
+
+                final int length = Utf8s.validateUtf8(str);
+                if (len > length) {
+                    for (int i = 0; i < (len - length); i++) {
+                        sink.put(' ');
+                    }
+                    sink.put(str);
+                } else {
+                    Utf8s.strCpy(str, 0, len, sink);
+                }
                 return sink;
             }
             return null;

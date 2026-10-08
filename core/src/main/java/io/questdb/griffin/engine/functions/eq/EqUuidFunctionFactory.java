@@ -38,10 +38,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public final class EqUuidFunctionFactory implements FunctionFactory {
-    public static boolean value(long leftLo, long leftHi, long rightLo, long rightHi) {
-        return leftHi == rightHi && leftLo == rightLo;
-    }
-
     @Override
     public String getSignature() {
         return "=(ZZ)";
@@ -103,7 +99,7 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             long hi = arg.getLong128Hi(rec);
             long lo = arg.getLong128Lo(rec);
-            return negated != value(lo, hi, loConstant, hiConstant);
+            return negated != (hi == hiConstant && lo == loConstant);
         }
 
         @Override
@@ -127,7 +123,7 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
             final long leftLo = left.getLong128Lo(rec);
             final long rightHi = right.getLong128Hi(rec);
             final long rightLo = right.getLong128Lo(rec);
-            return negated != value(leftLo, leftHi, rightLo, rightHi);
+            return negated != (leftHi == rightHi && leftLo == rightLo);
         }
     }
 }

@@ -33,13 +33,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CastFloatToDoubleFunctionFactory implements FunctionFactory {
-    /**
-     * Not called yet: the NULL wrappers of {@code cast(FLOAT AS DOUBLE)} will call it.
-     */
-    public static double value(float operand) {
-        return operand;
-    }
-
     @Override
     public String getSignature() {
         return "cast(Fd)";

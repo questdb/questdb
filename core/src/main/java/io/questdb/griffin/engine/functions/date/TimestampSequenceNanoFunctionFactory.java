@@ -38,13 +38,6 @@ public class TimestampSequenceNanoFunctionFactory implements FunctionFactory {
     private static final String NAME = "timestamp_sequence_ns";
     private static final String SIGNATURE = NAME + "(NL)";
 
-    /**
-     * Not called yet: the NULL wrappers of {@code timestamp_sequence_ns(TIMESTAMP, LONG)} will call it.
-     */
-    public static long value(long timestamp, long increment) {
-        return timestamp + increment;
-    }
-
     @Override
     public String getSignature() {
         return SIGNATURE;

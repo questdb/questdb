@@ -38,19 +38,6 @@ import io.questdb.std.Long256Impl;
 import io.questdb.std.ObjList;
 
 public class LtLong256FunctionFactory implements FunctionFactory {
-    public static boolean value(Long256 left, Long256 right) {
-        if (left.getLong3() != right.getLong3()) {
-            return Long.compareUnsigned(left.getLong3(), right.getLong3()) < 0;
-        }
-        if (left.getLong2() != right.getLong2()) {
-            return Long.compareUnsigned(left.getLong2(), right.getLong2()) < 0;
-        }
-        if (left.getLong1() != right.getLong1()) {
-            return Long.compareUnsigned(left.getLong1(), right.getLong1()) < 0;
-        }
-        return Long.compareUnsigned(left.getLong0(), right.getLong0()) < 0;
-    }
-
     @Override
     public String getSignature() {
         return "<(HH)";
@@ -83,7 +70,16 @@ public class LtLong256FunctionFactory implements FunctionFactory {
             if (lv.equals(Long256Impl.NULL_LONG256) || rv.equals(Long256Impl.NULL_LONG256)) {
                 return false;
             }
-            return negated != value(lv, rv);
+            if (lv.getLong3() != rv.getLong3()) {
+                return negated == (Long.compareUnsigned(lv.getLong3(), rv.getLong3()) > 0);
+            }
+            if (lv.getLong2() != rv.getLong2()) {
+                return negated == (Long.compareUnsigned(lv.getLong2(), rv.getLong2()) > 0);
+            }
+            if (lv.getLong1() != rv.getLong1()) {
+                return negated == (Long.compareUnsigned(lv.getLong1(), rv.getLong1()) > 0);
+            }
+            return negated == (Long.compareUnsigned(lv.getLong0(), rv.getLong0()) >= 0);
         }
 
         @Override

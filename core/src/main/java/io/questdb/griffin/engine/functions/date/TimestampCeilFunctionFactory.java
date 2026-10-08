@@ -43,10 +43,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.CommonUtils;
 
 public class TimestampCeilFunctionFactory implements FunctionFactory {
-    public static long value(TimestampDriver.TimestampCeilMethod ceil, long timestamp) {
-        return ceil.ceil(timestamp);
-    }
-
     @Override
     public String getSignature() {
         return "timestamp_ceil(sN)";
@@ -100,7 +96,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
         @Override
         public final long getTimestamp(Record rec) {
             long ts = arg.getTimestamp(rec);
-            return ts == Numbers.LONG_NULL ? Numbers.LONG_NULL : value(ceil, ts);
+            return ts == Numbers.LONG_NULL ? Numbers.LONG_NULL : ceil.ceil(ts);
         }
 
         @Override

@@ -47,10 +47,6 @@ import io.questdb.std.Transient;
 
 public final class InIPv4FunctionFactory implements FunctionFactory {
 
-    public static boolean value(LongHashSet set, int key) {
-        return set.contains(key);
-    }
-
     @Override
     public String getSignature() {
         return "in(Xv)";
@@ -165,7 +161,7 @@ public final class InIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return value(set, arg.getIPv4(rec));
+            return set.contains(arg.getIPv4(rec));
         }
 
         @Override
@@ -206,7 +202,7 @@ public final class InIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return value(set, keyFunc.getIPv4(rec));
+            return set.contains(keyFunc.getIPv4(rec));
         }
 
         @Override

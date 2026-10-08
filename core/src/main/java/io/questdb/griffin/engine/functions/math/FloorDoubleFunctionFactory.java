@@ -36,10 +36,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class FloorDoubleFunctionFactory implements FunctionFactory {
-    public static double value(double operand) {
-        return Math.floor(operand);
-    }
-
     @Override
     public String getSignature() {
         return "floor(D)";
@@ -64,7 +60,8 @@ public class FloorDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            return value(function.getDouble(rec));
+            double value = function.getDouble(rec);
+            return Math.floor(value);
         }
 
         @Override

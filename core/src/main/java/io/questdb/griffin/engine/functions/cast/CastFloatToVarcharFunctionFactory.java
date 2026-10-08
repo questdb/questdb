@@ -35,16 +35,11 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
 public class CastFloatToVarcharFunctionFactory implements FunctionFactory {
-
-    public static void value(CharSink<?> sink, float operand) {
-        Numbers.append(sink, operand);
-    }
 
     @Override
     public String getSignature() {
@@ -78,10 +73,10 @@ public class CastFloatToVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
-            final float val = arg.getFloat(rec);
-            if (!Numbers.isNull(val)) {
+            final float value = arg.getFloat(rec);
+            if (!Numbers.isNull(value)) {
                 sinkA.clear();
-                value(sinkA, val);
+                sinkA.put(value);
                 return sinkA;
             }
             return null;
@@ -89,10 +84,10 @@ public class CastFloatToVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
-            final float val = arg.getFloat(rec);
-            if (!Numbers.isNull(val)) {
+            final float value = arg.getFloat(rec);
+            if (!Numbers.isNull(value)) {
                 sinkB.clear();
-                value(sinkB, val);
+                sinkB.put(value);
                 return sinkB;
             }
             return null;

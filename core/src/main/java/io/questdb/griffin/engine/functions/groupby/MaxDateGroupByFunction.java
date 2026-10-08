@@ -76,8 +76,7 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
             long rowCount,
             long baseRowId
     ) {
-        // LONG_NULL == Long.MIN_VALUE, so Math.max in MaxDateGroupByFunctionFactory.value() handles
-        // every LONG_NULL combination.
+        // LONG_NULL == Long.MIN_VALUE, so Math.max handles every LONG_NULL combination naturally.
         final long valueColumnOffset = mapValue.getOffset(valueIndex);
         // Fast path: arg is a direct date column with data on the current frame.
         // Zero page address means a column top; fall through to the record-based path.
@@ -88,7 +87,7 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final long value = Unsafe.getLong(argAddr + (rowIndex << 3));
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                Unsafe.putLong(addr, MaxDateGroupByFunctionFactory.value(Unsafe.getLong(addr), value));
+                Unsafe.putLong(addr, Math.max(value, Unsafe.getLong(addr)));
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
@@ -96,7 +95,7 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final long value = arg.getDate(record);
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                Unsafe.putLong(addr, MaxDateGroupByFunctionFactory.value(Unsafe.getLong(addr), value));
+                Unsafe.putLong(addr, Math.max(value, Unsafe.getLong(addr)));
             }
         }
     }

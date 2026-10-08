@@ -38,10 +38,6 @@ import io.questdb.std.ObjList;
 
 public class HourOfDayFunctionFactory implements FunctionFactory {
 
-    public static int value(TimestampDriver driver, long timestamp) {
-        return driver.getHourOfDay(timestamp);
-    }
-
     @Override
     public String getSignature() {
         return "hour(N)";
@@ -71,7 +67,8 @@ public class HourOfDayFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return value(driver, arg.getTimestamp(rec));
+            final long value = arg.getTimestamp(rec);
+            return driver.getHourOfDay(value);
         }
 
         @Override

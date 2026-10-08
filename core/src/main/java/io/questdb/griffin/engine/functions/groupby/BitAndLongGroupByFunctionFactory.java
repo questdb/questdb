@@ -35,10 +35,6 @@ import io.questdb.std.ObjList;
 
 public class BitAndLongGroupByFunctionFactory implements FunctionFactory {
 
-    public static long value(long left, long right) {
-        return left & right;
-    }
-
     @Override
     public String getSignature() {
         return "bit_and(L)";

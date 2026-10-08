@@ -120,10 +120,6 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         SDT_STATE_TYPES.add(ColumnType.DOUBLE); // pendingValue
     }
 
-    public static void value(SwingingDoor door, long index, long timestamp, double point, SwingingDoor.Sink sink) {
-        door.acceptValue(index, timestamp, point, sink);
-    }
-
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -337,14 +333,11 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             long ts = tsArg.getTimestamp(record);
-            double val = arg.getDouble(record);
+            double value = arg.getDouble(record);
             // A row with a NULL timestamp has no position on the time axis, so it can no more
             // join a corridor than a NULL value can; both follow the function's nulls mode.
-            if (Numbers.isNull(val) || ts == Numbers.LONG_NULL) {
-                sd.acceptNull(appendOffset, ignoreNulls, this);
-            } else {
-                value(sd, appendOffset, ts, val, this);
-            }
+            boolean isNull = Numbers.isNull(value) || ts == Numbers.LONG_NULL;
+            sd.accept(appendOffset, ts, value, isNull, ignoreNulls, this);
             appendOffset += RECORD_SIZE;
         }
 
@@ -546,11 +539,8 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
             double v = arg.getDouble(record);
             // A row with a NULL timestamp has no position on the time axis, so it can no more
             // join a corridor than a NULL value can; both follow the function's nulls mode.
-            if (Numbers.isNull(v) || ts == Numbers.LONG_NULL) {
-                scratch.acceptNull(appendOffset, ignoreNulls, this);
-            } else {
-                value(scratch, appendOffset, ts, v, this);
-            }
+            boolean isNull = Numbers.isNull(v) || ts == Numbers.LONG_NULL;
+            scratch.accept(appendOffset, ts, v, isNull, ignoreNulls, this);
             appendOffset += RECORD_SIZE;
 
             // store the mutated state back into this partition's map slot

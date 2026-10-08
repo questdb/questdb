@@ -38,7 +38,6 @@ import io.questdb.griffin.engine.functions.decimal.Decimal128Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
-import io.questdb.std.Decimal64;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -47,39 +46,6 @@ import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
 
 public class CastFloatToDecimalFunctionFactory implements FunctionFactory {
-
-    /**
-     * Undefined for NaN and the infinities, which have no DECIMAL value: the function gives NULL
-     * there, as for a NULL operand. Throws {@link NumericException} where the value does not fit
-     * the target precision; the function reports it as an inconvertible value.
-     */
-    public static void value(Decimal64 decimal, StringSink sink, float operand, int precision, int scale) throws NumericException {
-        sink.clear();
-        Numbers.append(sink, operand);
-        decimal.ofString(sink, 0, sink.length(), precision, scale, false, true);
-    }
-
-    /**
-     * Undefined for NaN and the infinities, which have no DECIMAL value: the function gives NULL
-     * there, as for a NULL operand. Throws {@link NumericException} where the value does not fit
-     * the target precision; the function reports it as an inconvertible value.
-     */
-    public static void value(Decimal128 decimal, StringSink sink, float operand, int precision, int scale) throws NumericException {
-        sink.clear();
-        Numbers.append(sink, operand);
-        decimal.ofString(sink, 0, sink.length(), precision, scale, false, true);
-    }
-
-    /**
-     * Undefined for NaN and the infinities, which have no DECIMAL value: the function gives NULL
-     * there, as for a NULL operand. Throws {@link NumericException} where the value does not fit
-     * the target precision; the function reports it as an inconvertible value.
-     */
-    public static void value(Decimal256 decimal, StringSink sink, float operand, int precision, int scale) throws NumericException {
-        sink.clear();
-        Numbers.append(sink, operand);
-        decimal.ofString(sink, 0, sink.length(), precision, scale, false, true);
-    }
 
     @Override
     public String getSignature() {
@@ -130,8 +96,10 @@ public class CastFloatToDecimalFunctionFactory implements FunctionFactory {
                 decimal.ofRawNull();
                 return;
             }
+            sink.clear();
+            sink.put(f);
             try {
-                value(decimal, sink, f, precision, scale);
+                decimal.ofString(sink, 0, sink.length(), precision, scale, false, true);
             } catch (NumericException e) {
                 throw ImplicitCastException.inconvertibleValue(sink, ColumnType.FLOAT, type).position(position);
             }
@@ -175,8 +143,10 @@ public class CastFloatToDecimalFunctionFactory implements FunctionFactory {
                 decimal.ofRawNull();
                 return;
             }
+            sink.clear();
+            sink.put(f);
             try {
-                value(decimal, sink, f, precision, scale);
+                decimal.ofString(sink, 0, sink.length(), precision, scale, false, true);
             } catch (NumericException e) {
                 throw ImplicitCastException.inconvertibleValue(sink, ColumnType.FLOAT, type).position(position);
             }
@@ -205,8 +175,10 @@ public class CastFloatToDecimalFunctionFactory implements FunctionFactory {
             if (Numbers.isNull(f)) {
                 return false;
             }
+            sink.clear();
+            sink.put(f);
             try {
-                value(decimal, sink, f, precision, scale);
+                decimal.ofString(sink, 0, sink.length(), precision, scale, false, true);
             } catch (NumericException e) {
                 throw ImplicitCastException.inconvertibleValue(sink, ColumnType.FLOAT, type).position(position);
             }

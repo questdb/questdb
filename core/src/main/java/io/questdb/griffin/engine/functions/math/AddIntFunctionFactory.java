@@ -40,10 +40,6 @@ import io.questdb.std.Transient;
 
 public class AddIntFunctionFactory implements FunctionFactory {
 
-    public static int value(int left, int right) {
-        return left + right;
-    }
-
     @Override
     public String getSignature() {
         return "+(II)";
@@ -90,7 +86,7 @@ public class AddIntFunctionFactory implements FunctionFactory {
             if (left == Numbers.INT_NULL || right == Numbers.INT_NULL) {
                 return Numbers.INT_NULL;
             }
-            return value(left, right);
+            return left + right;
         }
 
         @Override

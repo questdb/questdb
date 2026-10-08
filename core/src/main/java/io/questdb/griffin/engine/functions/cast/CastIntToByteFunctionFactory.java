@@ -34,10 +34,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastIntToByteFunctionFactory implements FunctionFactory {
-    public static byte value(int operand) {
-        return (byte) operand;
-    }
-
     @Override
     public String getSignature() {
         return "cast(Ib)";
@@ -55,8 +51,8 @@ public class CastIntToByteFunctionFactory implements FunctionFactory {
 
         @Override
         public byte getByte(Record rec) {
-            final int val = arg.getInt(rec);
-            return val == Numbers.INT_NULL ? 0 : value(val);
+            final int value = arg.getInt(rec);
+            return value == Numbers.INT_NULL ? 0 : (byte) value;
         }
     }
 }

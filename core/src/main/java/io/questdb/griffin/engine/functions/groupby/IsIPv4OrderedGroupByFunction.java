@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class IsIPv4OrderedGroupByFunction extends BooleanFunction implements GroupByFunction, UnaryFunction {
@@ -51,12 +52,13 @@ public class IsIPv4OrderedGroupByFunction extends BooleanFunction implements Gro
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (mapValue.getBool(valueIndex)) {
-            int prev = mapValue.getIPv4(valueIndex + 1);
-            int curr = arg.getIPv4(record);
-            if (!IsIPv4OrderedGroupByFunctionFactory.value(prev, curr)) {
+            long prev = Numbers.ipv4ToLong(mapValue.getIPv4(valueIndex + 1));
+            int currInt = arg.getIPv4(record);
+            long curr = Numbers.ipv4ToLong(currInt);
+            if (curr < prev) {
                 mapValue.putBool(valueIndex, false);
             } else {
-                mapValue.putInt(valueIndex + 1, curr);
+                mapValue.putInt(valueIndex + 1, currInt);
             }
         }
     }

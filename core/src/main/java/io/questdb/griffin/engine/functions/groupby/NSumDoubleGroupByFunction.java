@@ -81,7 +81,7 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
             }
             final long existingCount = mapValue.getLong(valueIndex + 2);
             if (existingCount > 0) {
-                NSumDoubleGroupByFunctionFactory.value(mapValue, valueIndex, mapValue.getDouble(valueIndex), mapValue.getDouble(valueIndex + 1), batchSum);
+                sum(mapValue, batchSum, mapValue.getDouble(valueIndex), mapValue.getDouble(valueIndex + 1));
             } else {
                 mapValue.putDouble(valueIndex, batchSum);
                 mapValue.putDouble(valueIndex + 1, 0.0);
@@ -94,7 +94,7 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
         if (Numbers.isFinite(value)) {
-            NSumDoubleGroupByFunctionFactory.value(mapValue, valueIndex, 0, 0, value);
+            sum(mapValue, value, 0, 0);
             mapValue.putLong(valueIndex + 2, 1);
         } else {
             mapValue.putDouble(valueIndex, 0); // sum = 0
@@ -107,7 +107,7 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
         if (Numbers.isFinite(value)) {
-            NSumDoubleGroupByFunctionFactory.value(mapValue, valueIndex, mapValue.getDouble(valueIndex), mapValue.getDouble(valueIndex + 1), value);
+            sum(mapValue, value, mapValue.getDouble(valueIndex), mapValue.getDouble(valueIndex + 1));
             mapValue.addLong(valueIndex + 2, 1);
         }
     }
@@ -159,7 +159,7 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
             if (destCount > 0) {
                 final double destSum = destValue.getDouble(valueIndex);
                 final double destC = destValue.getDouble(valueIndex + 1);
-                NSumDoubleGroupByFunctionFactory.value(destValue, valueIndex, destSum, destC, srcSum);
+                sum(destValue, srcSum, destSum, destC);
                 destValue.putLong(valueIndex + 2, destCount + srcCount);
             } else {
                 destValue.putDouble(valueIndex, srcSum);
@@ -194,5 +194,16 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("nsum(").val(arg).val(')');
+    }
+
+    private void sum(MapValue mapValue, double value, double sum, double c) {
+        double t = sum + value;
+        if (Math.abs(sum) >= Math.abs(value)) {
+            c += (sum - t) + value;
+        } else {
+            c += (value - t) + sum;
+        }
+        mapValue.putDouble(valueIndex, t);
+        mapValue.putDouble(valueIndex + 1, c);
     }
 }

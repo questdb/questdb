@@ -36,15 +36,6 @@ import io.questdb.std.Transient;
 
 public class DoubleArrayElemMinFunctionFactory implements FunctionFactory {
 
-    /**
-     * The smaller of two values, as {@link Math#min(double, double)}, except that NaN orders after
-     * every other value, so the other operand wins over a NaN. The array_elem_min function does not
-     * call this method: it passes only finite values to its own {@code Math.min}.
-     */
-    public static double value(double min, double element) {
-        return Double.isNaN(element) ? min : Double.isNaN(min) ? element : Math.min(min, element);
-    }
-
     @Override
     public String getSignature() {
         return "array_elem_min(D[]V)";

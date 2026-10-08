@@ -47,10 +47,6 @@ import io.questdb.std.ObjList;
 public class EqLong256StrFunctionFactory implements FunctionFactory {
     private static final FiberLocal<Long256ConstDecoder> DECODER = new FiberLocal<>(Long256ConstDecoder::new);
 
-    public static boolean value(Long256 left, long right0, long right1, long right2, long right3) {
-        return left.getLong0() == right0 && left.getLong1() == right1 && left.getLong2() == right2 && left.getLong3() == right3;
-    }
-
     @Override
     public String getSignature() {
         return "=(HS)";
@@ -118,7 +114,8 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != value(strFunc.getLong256A(rec), constLong0, constLong1, constLong2, constLong3);
+            final Long256 value = strFunc.getLong256A(rec);
+            return negated != (value.getLong0() == constLong0 && value.getLong1() == constLong1 && value.getLong2() == constLong2 && value.getLong3() == constLong3);
         }
 
         @Override
@@ -167,7 +164,8 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != value(long256Func.getLong256A(rec), constLong0, constLong1, constLong2, constLong3);
+            final Long256 value = long256Func.getLong256A(rec);
+            return negated != (value.getLong0() == constLong0 && value.getLong1() == constLong1 && value.getLong2() == constLong2 && value.getLong3() == constLong3);
         }
 
         @Override

@@ -62,7 +62,7 @@ public class AvgIntGroupByFunction extends DoubleFunction implements GroupByFunc
             if (batchCount > 0) {
                 final double prevSum = mapValue.getDouble(valueIndex);
                 if (prevCount > 0) {
-                    mapValue.putDouble(valueIndex, AvgIntGroupByFunctionFactory.value(prevSum, batchSum));
+                    mapValue.putDouble(valueIndex, prevSum + batchSum);
                 } else {
                     mapValue.putDouble(valueIndex, batchSum);
                 }
@@ -192,7 +192,7 @@ public class AvgIntGroupByFunction extends DoubleFunction implements GroupByFunc
             final double destSum = destValue.getDouble(valueIndex);
             final long destCount = destValue.getLong(valueIndex + 1);
             if (destCount > 0) {
-                destValue.putDouble(valueIndex, AvgIntGroupByFunctionFactory.value(destSum, srcSum));
+                destValue.putDouble(valueIndex, destSum + srcSum);
                 destValue.putLong(valueIndex + 1, destCount + srcCount);
             } else {
                 destValue.putDouble(valueIndex, srcSum);
@@ -233,7 +233,7 @@ public class AvgIntGroupByFunction extends DoubleFunction implements GroupByFunc
                 Unsafe.putLong(countAddr, 0);
             }
         } else if (value != Numbers.INT_NULL) {
-            Unsafe.putDouble(sumAddr, AvgIntGroupByFunctionFactory.value(Unsafe.getDouble(sumAddr), value));
+            Unsafe.putDouble(sumAddr, Unsafe.getDouble(sumAddr) + value);
             Unsafe.putLong(countAddr, Unsafe.getLong(countAddr) + 1);
         }
     }

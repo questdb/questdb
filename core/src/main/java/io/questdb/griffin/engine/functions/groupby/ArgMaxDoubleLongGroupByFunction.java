@@ -64,7 +64,7 @@ public class ArgMaxDoubleLongGroupByFunction extends DoubleFunction implements G
             return;
         }
         long maxKey = mapValue.getLong(valueIndex + 1);
-        if (maxKey == Numbers.LONG_NULL || ArgMaxDoubleLongGroupByFunctionFactory.value(maxKey, nextKey)) {
+        if (maxKey == Numbers.LONG_NULL || nextKey > maxKey) {
             mapValue.putDouble(valueIndex, valueArg.getDouble(record));
             mapValue.putLong(valueIndex + 1, nextKey);
         }
@@ -124,7 +124,7 @@ public class ArgMaxDoubleLongGroupByFunction extends DoubleFunction implements G
             return;
         }
         long destMaxKey = destValue.getLong(valueIndex + 1);
-        if (destMaxKey == Numbers.LONG_NULL || ArgMaxDoubleLongGroupByFunctionFactory.value(destMaxKey, srcMaxKey)) {
+        if (destMaxKey == Numbers.LONG_NULL || srcMaxKey > destMaxKey) {
             destValue.putDouble(valueIndex, srcValue.getDouble(valueIndex));
             destValue.putLong(valueIndex + 1, srcMaxKey);
         }

@@ -31,18 +31,9 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class CastLongToStrFunctionFactory implements FunctionFactory {
-    /**
-     * Appends {@code operand} like {@code put(long)}, except that it prints LONG_MIN as a number
-     * where {@code put(long)} prints null. The function tests NULL before it calls this method.
-     */
-    public static void value(CharSink<?> sink, long operand) {
-        Numbers.append(sink, operand, false);
-    }
-
     @Override
     public String getSignature() {
         return "cast(Ls)";
@@ -69,23 +60,23 @@ public class CastLongToStrFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrA(Record rec) {
-            final long val = arg.getLong(rec);
-            if (val == Numbers.LONG_NULL) {
+            final long value = arg.getLong(rec);
+            if (value == Numbers.LONG_NULL) {
                 return null;
             }
             sinkA.clear();
-            value(sinkA, val);
+            sinkA.put(value);
             return sinkA;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            final long val = arg.getLong(rec);
-            if (val == Numbers.LONG_NULL) {
+            final long value = arg.getLong(rec);
+            if (value == Numbers.LONG_NULL) {
                 return null;
             }
             sinkB.clear();
-            value(sinkB, val);
+            sinkB.put(value);
             return sinkB;
         }
     }

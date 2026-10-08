@@ -82,10 +82,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
     private static final String NAME = "ksum";
     private static final String SIGNATURE = NAME + "(D)";
 
-    public static double value(double sum, double delta) {
-        return sum + delta;
-    }
-
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -398,7 +394,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                     count = value.getLong(2) + 1;
                     // Kahan addition
                     double y = d - c;
-                    double t = value(sum, y);
+                    double t = sum + y;
                     c = (t - sum) - y;
                     sum = t;
                 }
@@ -564,7 +560,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                                 double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                                 // Kahan subtraction
                                 double y = -val - c;
-                                double t = value(sum, y);
+                                double t = sum + y;
                                 c = (t - sum) - y;
                                 sum = t;
                                 frameSize--;
@@ -604,7 +600,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             // Kahan addition
                             double y = val - c;
-                            double t = value(sum, y);
+                            double t = sum + y;
                             c = (t - sum) - y;
                             sum = t;
                             frameSize++;
@@ -621,7 +617,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             // Kahan addition
                             double y = val - c;
-                            double t = value(sum, y);
+                            double t = sum + y;
                             c = (t - sum) - y;
                             sum = t;
                             frameSize++;
@@ -839,7 +835,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                     count++;
                     // Kahan addition
                     double y = hiValue - c;
-                    double t = value(sum, y);
+                    double t = sum + y;
                     c = (t - sum) - y;
                     sum = t;
                 }
@@ -856,7 +852,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                     if (Numbers.isFinite(loValue)) {
                         // Kahan subtraction
                         double y = -loValue - c;
-                        double t = value(sum, y);
+                        double t = sum + y;
                         c = (t - sum) - y;
                         sum = t;
                         count--;
@@ -1108,7 +1104,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             // Kahan subtraction
                             double y = -val - c;
-                            double t = value(sum, y);
+                            double t = sum + y;
                             c = (t - sum) - y;
                             sum = t;
                             frameSize--;
@@ -1144,7 +1140,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                         double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         // Kahan addition
                         double y = val - c;
-                        double t = value(sum, y);
+                        double t = sum + y;
                         c = (t - sum) - y;
                         sum = t;
                         frameSize++;
@@ -1161,7 +1157,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                         double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         // Kahan addition
                         double y = val - c;
-                        double t = value(sum, y);
+                        double t = sum + y;
                         c = (t - sum) - y;
                         sum = t;
                         frameSize++;
@@ -1311,7 +1307,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (Numbers.isFinite(hiValue)) {
                 // Kahan addition
                 double y = hiValue - c;
-                double t = value(sum, y);
+                double t = sum + y;
                 c = (t - sum) - y;
                 sum = t;
                 count++;
@@ -1328,7 +1324,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                 if (Numbers.isFinite(loValue)) {
                     // Kahan subtraction
                     double y = -loValue - c;
-                    double t = value(sum, y);
+                    double t = sum + y;
                     c = (t - sum) - y;
                     sum = t;
                     count--;
@@ -1487,7 +1483,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                 final double sum = value.getDouble(windowStateSumSlot);
                 final double c = value.getDouble(windowStateCompensationSlot);
                 final double y = d - c;
-                final double t = value(sum, y);
+                final double t = sum + y;
                 value.putDouble(windowStateCompensationSlot, (t - sum) - y);
                 value.putDouble(windowStateSumSlot, t);
                 value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
@@ -1535,7 +1531,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (Numbers.isFinite(d)) {
                 // Kahan addition
                 double y = d - c;
-                double t = value(sum, y);
+                double t = sum + y;
                 c = (t - sum) - y;
                 sum = t;
                 count++;
@@ -1722,7 +1718,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (Numbers.isFinite(d)) {
                 // Kahan addition
                 double y = d - c;
-                double t = value(sum, y);
+                double t = sum + y;
                 c = (t - sum) - y;
                 sum = t;
                 count++;
@@ -1805,7 +1801,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (Numbers.isFinite(d)) {
                 // Kahan addition
                 double y = d - c;
-                double t = value(sum, y);
+                double t = sum + y;
                 c = (t - sum) - y;
                 sum = t;
                 count++;

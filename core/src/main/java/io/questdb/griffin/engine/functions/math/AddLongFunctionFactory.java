@@ -40,10 +40,6 @@ import io.questdb.std.Transient;
 
 public class AddLongFunctionFactory implements FunctionFactory {
 
-    public static long value(long left, long right) {
-        return left + right;
-    }
-
     @Override
     public String getSignature() {
         return "+(LL)";
@@ -94,7 +90,7 @@ public class AddLongFunctionFactory implements FunctionFactory {
             if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
                 return Numbers.LONG_NULL;
             }
-            return value(l, r);
+            return l + r;
         }
 
         @Override

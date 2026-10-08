@@ -42,14 +42,6 @@ import org.jetbrains.annotations.NotNull;
 
 public class DoubleArrayElemSumGroupByFunctionFactory implements FunctionFactory {
 
-    public static void value(long sumAddr, long compensationAddr, double sum, double element) {
-        double c = Unsafe.getDouble(compensationAddr);
-        double y = element - c;
-        double t = sum + y;
-        Unsafe.putDouble(compensationAddr, (t - sum) - y);
-        Unsafe.putDouble(sumAddr, t);
-    }
-
     @Override
     public String getSignature() {
         return "array_elem_sum(D[])";
@@ -102,7 +94,12 @@ public class DoubleArrayElemSumGroupByFunctionFactory implements FunctionFactory
             long addr = dataPtr + (long) accFi * Double.BYTES;
             double accVal = Unsafe.getDouble(addr);
             if (Numbers.isFinite(accVal)) {
-                value(addr, compensationPtr + (long) accFi * Double.BYTES, accVal, inputVal);
+                long compAddr = compensationPtr + (long) accFi * Double.BYTES;
+                double c = Unsafe.getDouble(compAddr);
+                double y = inputVal - c;
+                double t = accVal + y;
+                Unsafe.putDouble(compAddr, (t - accVal) - y);
+                Unsafe.putDouble(addr, t);
             } else {
                 Unsafe.putDouble(addr, inputVal);
             }
@@ -118,8 +115,13 @@ public class DoubleArrayElemSumGroupByFunctionFactory implements FunctionFactory
             long destAddr = destDataPtr + (long) destFi * Double.BYTES;
             double destVal = Unsafe.getDouble(destAddr);
             if (Numbers.isFinite(destVal)) {
+                long destCompAddr = compensationPtr + (long) destFi * Double.BYTES;
+                double destComp = Unsafe.getDouble(destCompAddr);
                 double srcComp = Unsafe.getDouble(srcCompensationPtr + (long) srcFi * Double.BYTES);
-                value(destAddr, compensationPtr + (long) destFi * Double.BYTES, destVal, srcVal - srcComp);
+                double y = (srcVal - srcComp) - destComp;
+                double t = destVal + y;
+                Unsafe.putDouble(destCompAddr, (t - destVal) - y);
+                Unsafe.putDouble(destAddr, t);
             } else {
                 Unsafe.putDouble(destAddr, srcVal);
                 Unsafe.putDouble(

@@ -39,10 +39,6 @@ import io.questdb.std.ObjList;
  */
 public class BetweenTimestampCursorLoFunctionFactory implements FunctionFactory {
 
-    public static boolean value(long timestamp, long from, long to) {
-        return Math.min(from, to) <= timestamp && timestamp <= Math.max(from, to);
-    }
-
     @Override
     public String getSignature() {
         return "between(NCN)";

@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
@@ -33,14 +32,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class KSumDoubleGroupByFunctionFactory implements FunctionFactory {
-    public static void value(MapValue mapValue, int valueIndex, double operand, double compensation) {
-        final double sum = mapValue.getDouble(valueIndex);
-        final double y = operand - compensation;
-        final double t = sum + y;
-        mapValue.putDouble(valueIndex, t);
-        mapValue.putDouble(valueIndex + 1, t - sum - y);
-    }
-
     @Override
     public String getSignature() {
         return "ksum(D)";

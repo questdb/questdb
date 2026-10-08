@@ -58,19 +58,6 @@ public class WithinBoxFunctionFactory implements FunctionFactory {
     // Threshold for NaN detection: values with (bits & 0x7FFFFFFFFFFFFFFF) > this are NaN
     private static final long INF_BITS = 0x7FF0000000000000L;
 
-    /**
-     * Whether the point lies in the box, inclusive, in the order of {@link Double#compare}: NaN
-     * orders after every other value, an infinity is a value, and -0.0 orders before 0.0. On finite
-     * values it agrees with {@link #isWithinBox}, which the functions call instead because it is
-     * branchless; that test answers any NaN operand as outside.
-     */
-    public static boolean value(double x, double y, double minX, double minY, double maxX, double maxY) {
-        return Double.compare(x, minX) >= 0
-                && Double.compare(x, maxX) <= 0
-                && Double.compare(y, minY) >= 0
-                && Double.compare(y, maxY) <= 0;
-    }
-
     @Override
     public Function newInstance(
             int position,

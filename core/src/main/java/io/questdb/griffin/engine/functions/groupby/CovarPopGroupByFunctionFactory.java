@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
@@ -34,13 +33,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class CovarPopGroupByFunctionFactory implements FunctionFactory {
-
-    /**
-     * Not called yet: the NULL wrappers of {@code covar_pop(DOUBLE, DOUBLE)} will call it.
-     */
-    public static void value(MapValue mapValue, int valueIndex, double y, double x) {
-        CovarSampleGroupByFunctionFactory.value(mapValue, valueIndex, y, x);
-    }
 
     @Override
     public String getSignature() {

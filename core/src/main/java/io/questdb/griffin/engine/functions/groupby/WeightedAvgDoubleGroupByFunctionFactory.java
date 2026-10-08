@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
@@ -34,11 +33,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class WeightedAvgDoubleGroupByFunctionFactory implements FunctionFactory {
-
-    public static void value(MapValue mapValue, int valueIndex, double sample, double weight) {
-        mapValue.addDouble(valueIndex, sample * weight);
-        mapValue.addDouble(valueIndex + 1, weight);
-    }
 
     @Override
     public String getSignature() {

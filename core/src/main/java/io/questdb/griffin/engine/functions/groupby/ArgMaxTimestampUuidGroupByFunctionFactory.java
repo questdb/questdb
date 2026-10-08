@@ -33,14 +33,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class ArgMaxTimestampUuidGroupByFunctionFactory implements FunctionFactory {
-    public static boolean value(long maxKeyLo, long maxKeyHi, long nextKeyLo, long nextKeyHi) {
-        final int cmp = Long.compareUnsigned(nextKeyHi, maxKeyHi);
-        if (cmp != 0) {
-            return cmp > 0;
-        }
-        return Long.compareUnsigned(nextKeyLo, maxKeyLo) > 0;
-    }
-
     @Override
     public String getSignature() {
         return "arg_max(NZ)";

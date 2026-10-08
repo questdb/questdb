@@ -29,22 +29,9 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Util;
 import io.questdb.std.ObjList;
 
 public class SumLong256GroupByFunctionFactory implements FunctionFactory {
-    /**
-     * Adds {@code next} to {@code sum} as 256-bit integers and returns {@code sum}. Unlike {@link
-     * Long256Util#add}, it has no NULL test: {@code SumLong256GroupByFunction} skips a NULL
-     * increment, stores the increment over a NULL sum, and calls this method only when neither
-     * is NULL.
-     */
-    public static Long256 value(Long256 sum, Long256 next) {
-        Long256Util.addValue(sum, next.getLong0(), next.getLong1(), next.getLong2(), next.getLong3());
-        return sum;
-    }
-
     @Override
     public String getSignature() {
         return "sum(H)";

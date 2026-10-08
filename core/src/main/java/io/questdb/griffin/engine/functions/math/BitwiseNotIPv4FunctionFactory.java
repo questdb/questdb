@@ -37,10 +37,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class BitwiseNotIPv4FunctionFactory implements FunctionFactory {
-    public static int value(int operand) {
-        return ~operand;
-    }
-
     @Override
     public String getSignature() {
         return "~(X)";
@@ -72,7 +68,7 @@ public class BitwiseNotIPv4FunctionFactory implements FunctionFactory {
         @Override
         public int getIPv4(Record rec) {
             final int val = value.getIPv4(rec);
-            return val != Numbers.IPv4_NULL ? value(val) : Numbers.IPv4_NULL;
+            return val != Numbers.IPv4_NULL ? ~val : Numbers.IPv4_NULL;
         }
 
         @Override

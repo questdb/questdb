@@ -35,10 +35,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CeilDoubleFunctionFactory implements FunctionFactory {
-    public static double value(double operand) {
-        return Math.ceil(operand);
-    }
-
     @Override
     public String getSignature() {
         return "ceil(D)";
@@ -63,7 +59,8 @@ public class CeilDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            return value(function.getDouble(rec));
+            double value = function.getDouble(rec);
+            return Math.ceil(value);
         }
 
         @Override

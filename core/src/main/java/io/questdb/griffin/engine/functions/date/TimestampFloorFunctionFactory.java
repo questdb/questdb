@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -38,14 +37,6 @@ import io.questdb.std.ObjList;
 
 public class TimestampFloorFunctionFactory implements FunctionFactory {
     public static final String NAME = "timestamp_floor";
-
-    public static long value(TimestampDriver.TimestampFloorMethod floor, long timestamp) {
-        return floor.floor(timestamp);
-    }
-
-    public static long value(TimestampDriver.TimestampFloorWithStrideMethod floor, long timestamp, int stride) {
-        return floor.floor(timestamp, stride);
-    }
 
     @Override
     public String getSignature() {

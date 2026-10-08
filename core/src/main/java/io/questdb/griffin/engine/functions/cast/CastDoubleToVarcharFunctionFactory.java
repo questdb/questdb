@@ -31,16 +31,11 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
 public class CastDoubleToVarcharFunctionFactory implements FunctionFactory {
-
-    public static void value(CharSink<?> sink, double operand) {
-        Numbers.append(sink, operand);
-    }
 
     @Override
     public String getSignature() {
@@ -74,10 +69,10 @@ public class CastDoubleToVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
-            final double val = arg.getDouble(rec);
-            if (Numbers.isFinite(val)) {
+            final double value = arg.getDouble(rec);
+            if (Numbers.isFinite(value)) {
                 sinkA.clear();
-                value(sinkA, val);
+                sinkA.put(value);
                 return sinkA;
             }
             return null;
@@ -85,10 +80,10 @@ public class CastDoubleToVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
-            final double val = arg.getDouble(rec);
-            if (Numbers.isFinite(val)) {
+            final double value = arg.getDouble(rec);
+            if (Numbers.isFinite(value)) {
                 sinkB.clear();
-                value(sinkB, val);
+                sinkB.put(value);
                 return sinkB;
             }
             return null;

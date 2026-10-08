@@ -36,10 +36,6 @@ import io.questdb.std.Transient;
 
 public class DoubleArrayElemMaxFunctionFactory implements FunctionFactory {
 
-    public static double value(double max, double element) {
-        return Math.max(max, element);
-    }
-
     @Override
     public String getSignature() {
         return "array_elem_max(D[]V)";
@@ -67,7 +63,7 @@ public class DoubleArrayElemMaxFunctionFactory implements FunctionFactory {
         @Override
         protected void accumulate(int outIndex, double val) {
             double cur = arrayOut.getDouble(outIndex);
-            arrayOut.putDouble(outIndex, Numbers.isFinite(cur) ? value(cur, val) : val);
+            arrayOut.putDouble(outIndex, Numbers.isFinite(cur) ? Math.max(cur, val) : val);
         }
 
         @Override

@@ -38,10 +38,6 @@ import io.questdb.std.ObjList;
 
 public class MonthOfYearFunctionFactory implements FunctionFactory {
 
-    public static int value(TimestampDriver driver, long timestamp) {
-        return driver.getMonthOfYear(timestamp);
-    }
-
     @Override
     public String getSignature() {
         return "month(N)";
@@ -70,7 +66,8 @@ public class MonthOfYearFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return value(driver, arg.getTimestamp(rec));
+            final long value = arg.getTimestamp(rec);
+            return driver.getMonthOfYear(value);
         }
 
         @Override

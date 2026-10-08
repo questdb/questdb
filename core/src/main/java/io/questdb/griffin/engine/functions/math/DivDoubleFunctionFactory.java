@@ -40,14 +40,6 @@ import io.questdb.std.Transient;
 
 public class DivDoubleFunctionFactory implements FunctionFactory {
 
-    /**
-     * Undefined where the quotient is not finite (a zero divisor, an infinite dividend, or an
-     * overflow): the function gives NULL there, as for a NULL operand.
-     */
-    public static double value(double left, double right) {
-        return left / right;
-    }
-
     @Override
     public String getSignature() {
         return "/(DD)";
@@ -87,7 +79,7 @@ public class DivDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            double d = value(left.getDouble(rec), right.getDouble(rec));
+            double d = left.getDouble(rec) / right.getDouble(rec);
             return Numbers.isFinite(d) ? d : Double.NaN;
         }
 

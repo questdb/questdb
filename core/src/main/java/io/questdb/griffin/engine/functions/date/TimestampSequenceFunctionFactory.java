@@ -44,10 +44,6 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
     private static final String NAME = "timestamp_sequence";
     private static final String SIGNATURE = NAME + "(NL)";
 
-    public static long value(long timestamp, long increment) {
-        return timestamp + increment;
-    }
-
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -91,7 +87,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             final long result = next;
-            next = value(next, longIncrement.getLong(rec));
+            next += longIncrement.getLong(rec);
             return result;
         }
 
@@ -150,8 +146,8 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             final long result = next;
-            next = value(next, longIncrement.getLong(rec));
-            return value(start.getLong(rec), result);
+            next += longIncrement.getLong(rec);
+            return result + start.getLong(rec);
         }
 
         @Override

@@ -82,7 +82,7 @@ public abstract class AbstractRegressionGroupByFunction extends DoubleFunction i
         mapValue.putLong(valueIndex + 5, 0);
 
         if (Numbers.isFinite(y) && Numbers.isFinite(x)) {
-            RegressionSlopeFunctionFactory.value(mapValue, valueIndex, y, x);
+            aggregate(mapValue, y, x);
         }
     }
 
@@ -91,7 +91,7 @@ public abstract class AbstractRegressionGroupByFunction extends DoubleFunction i
         final double y = yFunc.getDouble(record);
         final double x = xFunc.getDouble(record);
         if (Numbers.isFinite(y) && Numbers.isFinite(x)) {
-            RegressionSlopeFunctionFactory.value(mapValue, valueIndex, y, x);
+            aggregate(mapValue, y, x);
         }
     }
 
@@ -207,5 +207,29 @@ public abstract class AbstractRegressionGroupByFunction extends DoubleFunction i
     @Override
     public boolean supportsParallelism() {
         return BinaryFunction.super.supportsParallelism();
+    }
+
+    protected void aggregate(MapValue mapValue, double y, double x) {
+        double meanY = mapValue.getDouble(valueIndex);
+        double sumY = mapValue.getDouble(valueIndex + 1);
+        double meanX = mapValue.getDouble(valueIndex + 2);
+        double sumX = mapValue.getDouble(valueIndex + 3);
+        double sumXY = mapValue.getDouble(valueIndex + 4);
+        long count = mapValue.getLong(valueIndex + 5) + 1;
+
+        double oldMeanY = meanY;
+        meanY += (y - meanY) / count;
+        sumY += (y - meanY) * (y - oldMeanY);
+        double oldMeanX = meanX;
+        meanX += (x - meanX) / count;
+        sumX += (x - meanX) * (x - oldMeanX);
+        sumXY += (y - oldMeanY) * (x - meanX);
+
+        mapValue.putDouble(valueIndex, meanY);
+        mapValue.putDouble(valueIndex + 1, sumY);
+        mapValue.putDouble(valueIndex + 2, meanX);
+        mapValue.putDouble(valueIndex + 3, sumX);
+        mapValue.putDouble(valueIndex + 4, sumXY);
+        mapValue.addLong(valueIndex + 5, 1L);
     }
 }

@@ -34,10 +34,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastDateToIntFunctionFactory implements FunctionFactory {
-    public static int value(long operand) {
-        return (int) operand;
-    }
-
     @Override
     public String getSignature() {
         return "cast(Mi)";
@@ -61,8 +57,8 @@ public class CastDateToIntFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final long date = arg.getDate(rec);
-            return date == Numbers.LONG_NULL ? Numbers.INT_NULL : value(date);
+            final long value = arg.getDate(rec);
+            return value == Numbers.LONG_NULL ? Numbers.INT_NULL : (int) value;
         }
     }
 }

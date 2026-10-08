@@ -35,10 +35,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CeilFloatFunctionFactory implements FunctionFactory {
-    public static float value(float operand) {
-        return (float) Math.ceil(operand);
-    }
-
     @Override
     public String getSignature() {
         return "ceil(F)";
@@ -63,7 +59,8 @@ public class CeilFloatFunctionFactory implements FunctionFactory {
 
         @Override
         public float getFloat(Record rec) {
-            return value(function.getFloat(rec));
+            float value = function.getFloat(rec);
+            return (float) Math.ceil(value);
         }
 
         @Override

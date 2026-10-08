@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
@@ -33,13 +32,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class VwapDoubleGroupByFunctionFactory implements FunctionFactory {
-    public static void value(MapValue mapValue, int valueIndex, double price, double volume) {
-        final double notional = price * volume;
-        mapValue.addDouble(valueIndex + 1, notional);
-        mapValue.addDouble(valueIndex + 2, volume);
-        mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex + 1) / mapValue.getDouble(valueIndex + 2));
-    }
-
     @Override
     public String getSignature() {
         return "vwap(DD)";

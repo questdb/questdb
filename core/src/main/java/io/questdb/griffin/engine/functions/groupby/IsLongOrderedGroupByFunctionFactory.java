@@ -33,10 +33,6 @@ import io.questdb.std.ObjList;
 
 public class IsLongOrderedGroupByFunctionFactory implements FunctionFactory {
 
-    public static boolean value(long prev, long curr) {
-        return prev <= curr;
-    }
-
     @Override
     public String getSignature() {
         return "isOrdered(L)";

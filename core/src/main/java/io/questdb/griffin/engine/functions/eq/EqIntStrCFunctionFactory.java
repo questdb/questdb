@@ -39,10 +39,6 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 public class EqIntStrCFunctionFactory implements FunctionFactory {
-    public static boolean value(int left, int right) {
-        return left == right;
-    }
-
     @Override
     public String getSignature() {
         return "=(Is)";
@@ -82,7 +78,7 @@ public class EqIntStrCFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != value(left.getInt(rec), right);
+            return negated != (left.getInt(rec) == right);
         }
 
         @Override

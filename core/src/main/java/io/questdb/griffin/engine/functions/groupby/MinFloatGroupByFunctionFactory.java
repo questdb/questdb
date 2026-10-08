@@ -32,16 +32,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class MinFloatGroupByFunctionFactory implements FunctionFactory {
-    /**
-     * The lesser of two values: NaN orders after every other value, and of -0.0 and 0.0 the first
-     * stays. {@code MinFloatGroupByFunction} does not call this method: it skips a NaN row,
-     * replaces a NaN or infinite accumulator (FLOAT's NULL), and stores only when the minimum
-     * changes.
-     */
-    public static float value(float min, float next) {
-        return next < min || (min != min && next == next) ? next : min;
-    }
-
     @Override
     public String getSignature() {
         return "min(F)";

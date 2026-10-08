@@ -42,21 +42,6 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 public class SubStringFunctionFactory implements FunctionFactory {
-    /**
-     * Undefined for a negative length: the function rejects it with an error. For a constant start
-     * and length that end before the first character ({@code start + len < 1}) the function gives
-     * NULL without calling this method; for such values read per row it calls this method, which
-     * gives the empty text.
-     */
-    public static void value(StringSink sink, CharSequence str, int start, int len) {
-        final int lo = Math.max(0, start - 1);
-        final int hi = Math.min(str.length(), start + len - 1);
-        if (len == 0 || lo >= hi) {
-            return;
-        }
-        sink.put(str, lo, hi);
-    }
-
     @Override
     public String getSignature() {
         return "substring(SII)";
@@ -183,7 +168,13 @@ public class SubStringFunctionFactory implements FunctionFactory {
             }
 
             sink.clear();
-            value(sink, str, rawStart, len);
+            int start = Math.max(0, rawStart - 1);
+            int end = Math.min(str.length(), rawStart + len - 1);
+            if (len == 0 || start >= end) {
+                return sink;
+            }
+
+            sink.put(str, start, end);
             return sink;
         }
     }

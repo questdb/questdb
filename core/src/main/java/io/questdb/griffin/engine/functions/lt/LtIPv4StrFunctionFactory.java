@@ -41,10 +41,6 @@ import io.questdb.std.ObjList;
 
 public class LtIPv4StrFunctionFactory implements FunctionFactory {
 
-    public static boolean value(int left, int right) {
-        return Numbers.ipv4ToLong(left) < Numbers.ipv4ToLong(right);
-    }
-
     @Override
     public String getSignature() {
         return "<(XS)";
@@ -96,9 +92,7 @@ public class LtIPv4StrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final int l = arg.getIPv4(rec);
-            // two NULLs compare equal (>= true, < false); one NULL makes both false
-            return (l == constIPv4 || (l != Numbers.IPv4_NULL && constIPv4 != Numbers.IPv4_NULL)) && negated != value(l, constIPv4);
+            return Numbers.lessThanIPv4(arg.getIPv4(rec), constIPv4, negated);
         }
 
         @Override
@@ -125,9 +119,7 @@ public class LtIPv4StrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final int l = ipv4Func.getIPv4(rec);
-            // two NULLs compare equal (>= true, < false); one NULL makes both false
-            return (l == constIPv4 || (l != Numbers.IPv4_NULL && constIPv4 != Numbers.IPv4_NULL)) && negated != value(l, constIPv4);
+            return Numbers.lessThanIPv4(ipv4Func.getIPv4(rec), constIPv4, negated);
         }
 
         @Override

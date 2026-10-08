@@ -24,16 +24,7 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.map.MapValue;
-
 public class StdDevGroupByFunctionFactory extends StdDevSampleGroupByFunctionFactory {
-    /**
-     * Not called yet: the NULL wrappers of {@code stddev(DOUBLE)} will call it.
-     */
-    public static void value(MapValue mapValue, int valueIndex, double x) {
-        StdDevSampleGroupByFunctionFactory.value(mapValue, valueIndex, x);
-    }
-
     @Override
     public String getSignature() {
         return "stddev(D)";

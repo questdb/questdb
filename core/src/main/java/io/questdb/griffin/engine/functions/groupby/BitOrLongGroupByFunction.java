@@ -77,7 +77,7 @@ public class BitOrLongGroupByFunction extends LongFunction implements GroupByFun
                 if (value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getLong(addr);
-                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? BitOrLongGroupByFunctionFactory.value(current, value) : value);
+                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? current | value : value);
                 }
             }
         } else {
@@ -88,7 +88,7 @@ public class BitOrLongGroupByFunction extends LongFunction implements GroupByFun
                 if (value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getLong(addr);
-                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? BitOrLongGroupByFunctionFactory.value(current, value) : value);
+                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? current | value : value);
                 }
             }
         }
@@ -100,7 +100,7 @@ public class BitOrLongGroupByFunction extends LongFunction implements GroupByFun
         if (value != Numbers.LONG_NULL) {
             final long current = mapValue.getLong(valueIndex);
             if (current != Numbers.LONG_NULL) {
-                mapValue.putLong(valueIndex, BitOrLongGroupByFunctionFactory.value(current, value));
+                mapValue.putLong(valueIndex, current | value);
             } else {
                 mapValue.putLong(valueIndex, value);
             }
@@ -154,7 +154,7 @@ public class BitOrLongGroupByFunction extends LongFunction implements GroupByFun
         if (srcVal != Numbers.LONG_NULL) {
             final long destVal = destValue.getLong(valueIndex);
             if (destVal != Numbers.LONG_NULL) {
-                destValue.putLong(valueIndex, BitOrLongGroupByFunctionFactory.value(destVal, srcVal));
+                destValue.putLong(valueIndex, destVal | srcVal);
             } else {
                 destValue.putLong(valueIndex, srcVal);
             }

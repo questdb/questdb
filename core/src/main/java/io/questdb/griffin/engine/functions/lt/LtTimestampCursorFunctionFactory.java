@@ -48,10 +48,6 @@ import io.questdb.std.str.Utf8Sequence;
 
 public class LtTimestampCursorFunctionFactory implements FunctionFactory {
 
-    public static boolean value(long left, long right) {
-        return left < right;
-    }
-
     @Override
     public String getSignature() {
         return "<(NC)";
@@ -122,9 +118,11 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final long l = driver.from(leftFunc.getTimestamp(rec), leftTimestampType);
-            // two NULLs compare equal (>= true, < false); one NULL makes both false
-            return (l == epoch || (l != Numbers.LONG_NULL && epoch != Numbers.LONG_NULL)) && negated != value(l, epoch);
+            return Numbers.lessThan(
+                    driver.from(leftFunc.getTimestamp(rec), leftTimestampType),
+                    epoch,
+                    negated
+            );
         }
     }
 
@@ -148,9 +146,11 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final long l = leftFunc.getTimestamp(rec);
-            // two NULLs compare equal (>= true, < false); one NULL makes both false
-            return (l == epoch || (l != Numbers.LONG_NULL && epoch != Numbers.LONG_NULL)) && negated != value(l, epoch);
+            return Numbers.lessThan(
+                    leftFunc.getTimestamp(rec),
+                    epoch,
+                    negated
+            );
         }
 
         @Override
@@ -237,9 +237,11 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final long l = leftFunc.getTimestamp(rec);
-            // two NULLs compare equal (>= true, < false); one NULL makes both false
-            return (l == epoch || (l != Numbers.LONG_NULL && epoch != Numbers.LONG_NULL)) && negated != value(l, epoch);
+            return Numbers.lessThan(
+                    leftFunc.getTimestamp(rec),
+                    epoch,
+                    negated
+            );
         }
 
         @Override
@@ -321,9 +323,11 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final long l = leftFunc.getTimestamp(rec);
-            // two NULLs compare equal (>= true, < false); one NULL makes both false
-            return (l == epoch || (l != Numbers.LONG_NULL && epoch != Numbers.LONG_NULL)) && negated != value(l, epoch);
+            return Numbers.lessThan(
+                    leftFunc.getTimestamp(rec),
+                    epoch,
+                    negated
+            );
         }
 
         @Override

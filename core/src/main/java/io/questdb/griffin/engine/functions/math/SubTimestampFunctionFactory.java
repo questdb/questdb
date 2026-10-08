@@ -38,10 +38,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class SubTimestampFunctionFactory implements FunctionFactory {
-    public static long value(long left, long right) {
-        return left - right;
-    }
-
     @Override
     public String getSignature() {
         return "-(Nl)";
@@ -87,7 +83,7 @@ public class SubTimestampFunctionFactory implements FunctionFactory {
             long r = right.getLong(rec);
 
             if (l != Numbers.LONG_NULL && r != Numbers.LONG_NULL) {
-                return value(l, r);
+                return l - r;
             }
 
             return Numbers.LONG_NULL;

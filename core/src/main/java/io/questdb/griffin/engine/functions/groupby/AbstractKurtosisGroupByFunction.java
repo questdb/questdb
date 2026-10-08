@@ -63,7 +63,7 @@ public abstract class AbstractKurtosisGroupByFunction extends DoubleFunction imp
         mapValue.putDouble(valueIndex + 3, 0);
         mapValue.putLong(valueIndex + 4, 0);
         if (Numbers.isFinite(d)) {
-            KurtosisSampleGroupByFunctionFactory.value(mapValue, valueIndex, d);
+            aggregate(mapValue, d);
         }
     }
 
@@ -71,7 +71,7 @@ public abstract class AbstractKurtosisGroupByFunction extends DoubleFunction imp
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double d = arg.getDouble(record);
         if (Numbers.isFinite(d)) {
-            KurtosisSampleGroupByFunctionFactory.value(mapValue, valueIndex, d);
+            aggregate(mapValue, d);
         }
     }
 
@@ -178,5 +178,31 @@ public abstract class AbstractKurtosisGroupByFunction extends DoubleFunction imp
     @Override
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
+    }
+
+    protected void aggregate(MapValue mapValue, double value) {
+        double mean = mapValue.getDouble(valueIndex);
+        double m2 = mapValue.getDouble(valueIndex + 1);
+        double m3 = mapValue.getDouble(valueIndex + 2);
+        double m4 = mapValue.getDouble(valueIndex + 3);
+        long n = mapValue.getLong(valueIndex + 4) + 1;
+
+        double nd = n;
+        double delta = value - mean;
+        double deltaN = delta / nd;
+        double deltaN2 = deltaN * deltaN;
+        double term1 = delta * deltaN * (nd - 1);
+
+        // Update order matters: M4 reads the old M2 and M3, M3 reads the old M2.
+        double newM4 = m4 + term1 * deltaN2 * (nd * nd - 3 * nd + 3) + 6 * deltaN2 * m2 - 4 * deltaN * m3;
+        double newM3 = m3 + term1 * deltaN * (nd - 2) - 3 * deltaN * m2;
+        double newM2 = m2 + term1;
+        double newMean = mean + deltaN;
+
+        mapValue.putDouble(valueIndex, newMean);
+        mapValue.putDouble(valueIndex + 1, newM2);
+        mapValue.putDouble(valueIndex + 2, newM3);
+        mapValue.putDouble(valueIndex + 3, newM4);
+        mapValue.putLong(valueIndex + 4, n);
     }
 }

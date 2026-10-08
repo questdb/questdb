@@ -33,14 +33,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public final class CastUuidToStrFunctionFactory implements FunctionFactory {
-
-    public static void value(CharSink<?> sink, long lo, long hi) {
-        Numbers.appendUuid(lo, hi, sink);
-    }
 
     @Override
     public String getSignature() {
@@ -72,25 +67,13 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrA(Record rec) {
             sinkA.clear();
-            final long lo = arg.getLong128Lo(rec);
-            final long hi = arg.getLong128Hi(rec);
-            if (Uuid.isNull(lo, hi)) {
-                return null;
-            }
-            value(sinkA, lo, hi);
-            return sinkA;
+            return SqlUtil.implicitCastUuidAsStr(arg.getLong128Lo(rec), arg.getLong128Hi(rec), sinkA) ? sinkA : null;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
             sinkB.clear();
-            final long lo = arg.getLong128Lo(rec);
-            final long hi = arg.getLong128Hi(rec);
-            if (Uuid.isNull(lo, hi)) {
-                return null;
-            }
-            value(sinkB, lo, hi);
-            return sinkB;
+            return SqlUtil.implicitCastUuidAsStr(arg.getLong128Lo(rec), arg.getLong128Hi(rec), sinkB) ? sinkB : null;
         }
 
         @Override

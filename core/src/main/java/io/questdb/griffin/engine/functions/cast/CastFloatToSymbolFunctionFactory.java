@@ -37,7 +37,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class CastFloatToSymbolFunctionFactory implements FunctionFactory {
@@ -45,10 +44,6 @@ public class CastFloatToSymbolFunctionFactory implements FunctionFactory {
     // row collide with the empty slot. floatToIntBits canonicalises NaN to 0x7FC00000,
     // so 0x7FC00001 is a key it can never produce.
     private static final int NO_KEY_SENTINEL = 0x7FC00001;
-
-    public static void value(CharSink<?> sink, float operand) {
-        Numbers.append(sink, operand);
-    }
 
     @Override
     public String getSignature() {
@@ -101,7 +96,7 @@ public class CastFloatToSymbolFunctionFactory implements FunctionFactory {
         protected String symbolOf(int key) {
             // The shortcut keys on the raw bits, so render the float they encode.
             sink.clear();
-            value(sink, Float.intBitsToFloat(key));
+            sink.put(Float.intBitsToFloat(key));
             return Chars.toString(sink);
         }
     }

@@ -37,10 +37,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class LtIPv4FunctionFactory implements FunctionFactory {
-    public static boolean value(int left, int right) {
-        return Numbers.ipv4ToLong(left) < Numbers.ipv4ToLong(right);
-    }
-
     @Override
     public String getSignature() {
         return "<(XX)";
@@ -73,10 +69,7 @@ public class LtIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final int l = left.getIPv4(rec);
-            final int r = right.getIPv4(rec);
-            // two NULLs compare equal (>= true, < false); one NULL makes both false
-            return (l == r || (l != Numbers.IPv4_NULL && r != Numbers.IPv4_NULL)) && negated != value(l, r);
+            return Numbers.lessThanIPv4(left.getIPv4(rec), right.getIPv4(rec), negated);
         }
 
         @Override

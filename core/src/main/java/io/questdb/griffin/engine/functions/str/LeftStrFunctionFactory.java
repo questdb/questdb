@@ -43,10 +43,6 @@ import org.jetbrains.annotations.Nullable;
 
 public class LeftStrFunctionFactory implements FunctionFactory {
 
-    public static void value(StringSink sink, CharSequence str, int count) {
-        sink.put(str, 0, getPos(str.length(), count));
-    }
-
     @Override
     public String getSignature() {
         return "left(SI)";
@@ -127,8 +123,10 @@ public class LeftStrFunctionFactory implements FunctionFactory {
         private StringSink getStr0(Record rec, StringSink sink) {
             CharSequence str = strFunc.getStrA(rec);
             if (str != null) {
+                final int len = str.length();
+                final int pos = getPos(len);
                 sink.clear();
-                value(sink, str, count);
+                sink.put(str, 0, pos);
                 return sink;
             }
             return null;
@@ -191,8 +189,10 @@ public class LeftStrFunctionFactory implements FunctionFactory {
             final CharSequence str = strFunc.getStrA(rec);
             final int count = countFunc.getInt(rec);
             if (str != null && count != Numbers.INT_NULL) {
+                final int len = str.length();
+                final int pos = getPos(len, count);
                 sink.clear();
-                value(sink, str, count);
+                sink.put(str, 0, pos);
                 return sink;
             }
             return null;

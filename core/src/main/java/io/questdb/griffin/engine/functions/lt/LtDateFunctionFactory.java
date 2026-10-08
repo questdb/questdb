@@ -37,10 +37,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class LtDateFunctionFactory implements FunctionFactory {
-    public static boolean value(long left, long right) {
-        return left < right;
-    }
-
     @Override
     public String getSignature() {
         return "<(MM)";
@@ -67,10 +63,11 @@ public class LtDateFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final long l = left.getDate(rec);
-            final long r = right.getDate(rec);
-            // two NULLs compare equal (>= true, < false); one NULL makes both false
-            return (l == r || (l != Numbers.LONG_NULL && r != Numbers.LONG_NULL)) && negated != value(l, r);
+            return Numbers.lessThan(
+                    this.left.getDate(rec),
+                    this.right.getDate(rec),
+                    negated
+            );
         }
 
         @Override

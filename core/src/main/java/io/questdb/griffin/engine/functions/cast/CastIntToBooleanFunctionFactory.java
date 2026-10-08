@@ -34,10 +34,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastIntToBooleanFunctionFactory implements FunctionFactory {
-    public static boolean value(int operand) {
-        return operand != 0;
-    }
-
     @Override
     public String getSignature() {
         return "cast(It)";
@@ -56,7 +52,7 @@ public class CastIntToBooleanFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             int i = arg.getInt(rec);
-            return i != Numbers.INT_NULL && value(i);
+            return i != Numbers.INT_NULL && i != 0;
         }
     }
 }

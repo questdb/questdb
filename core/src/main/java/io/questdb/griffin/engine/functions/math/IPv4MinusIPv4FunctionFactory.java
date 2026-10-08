@@ -37,10 +37,6 @@ import io.questdb.std.ObjList;
 
 public class IPv4MinusIPv4FunctionFactory implements FunctionFactory {
 
-    public static long value(int left, int right) {
-        return Numbers.ipv4ToLong(left) - Numbers.ipv4ToLong(right);
-    }
-
     @Override
     public String getSignature() {
         return "-(XX)";
@@ -73,10 +69,10 @@ public class IPv4MinusIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            final int l = left.getIPv4(rec);
-            final int r = right.getIPv4(rec);
+            final long l = Numbers.ipv4ToLong(left.getIPv4(rec));
+            final long r = Numbers.ipv4ToLong(right.getIPv4(rec));
 
-            return l != Numbers.IPv4_NULL && r != Numbers.IPv4_NULL ? value(l, r) : Numbers.LONG_NULL;
+            return l != Numbers.IPv4_NULL && r != Numbers.IPv4_NULL ? (l - r) : Numbers.LONG_NULL;
         }
 
         @Override

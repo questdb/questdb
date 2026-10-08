@@ -34,10 +34,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastDateToByteFunctionFactory implements FunctionFactory {
-    public static byte value(long operand) {
-        return (byte) operand;
-    }
-
     @Override
     public String getSignature() {
         return "cast(Mb)";
@@ -55,8 +51,8 @@ public class CastDateToByteFunctionFactory implements FunctionFactory {
 
         @Override
         public byte getByte(Record rec) {
-            final long date = arg.getDate(rec);
-            return date != Numbers.LONG_NULL ? value(date) : 0;
+            final long value = arg.getDate(rec);
+            return value != Numbers.LONG_NULL ? (byte) value : 0;
         }
     }
 }

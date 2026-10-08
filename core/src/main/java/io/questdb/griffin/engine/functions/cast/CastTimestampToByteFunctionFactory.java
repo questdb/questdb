@@ -34,10 +34,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastTimestampToByteFunctionFactory implements FunctionFactory {
-    public static byte value(long operand) {
-        return (byte) operand;
-    }
-
     @Override
     public String getSignature() {
         return "cast(Nb)";
@@ -55,8 +51,8 @@ public class CastTimestampToByteFunctionFactory implements FunctionFactory {
 
         @Override
         public byte getByte(Record rec) {
-            final long timestamp = arg.getTimestamp(rec);
-            return timestamp != Numbers.LONG_NULL ? value(timestamp) : 0;
+            final long value = arg.getTimestamp(rec);
+            return value != Numbers.LONG_NULL ? (byte) value : 0;
         }
     }
 }

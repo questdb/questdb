@@ -36,10 +36,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class SignIntFunctionFactory implements FunctionFactory {
-    public static int value(int operand) {
-        return Integer.signum(operand);
-    }
-
     @Override
     public String getSignature() {
         return "sign(I)";
@@ -70,7 +66,7 @@ public class SignIntFunctionFactory implements FunctionFactory {
                 return Numbers.INT_NULL;
             }
 
-            return value(val);
+            return Integer.signum(val);
         }
 
         @Override

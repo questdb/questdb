@@ -34,13 +34,6 @@ import io.questdb.std.ObjList;
 
 public class CastLongToTimestampFunctionFactory implements FunctionFactory {
 
-    /**
-     * Not called yet: the NULL wrappers of {@code cast(LONG AS TIMESTAMP)} will call it.
-     */
-    public static long value(long operand) {
-        return operand;
-    }
-
     @Override
     public String getSignature() {
         return "cast(Ln)";

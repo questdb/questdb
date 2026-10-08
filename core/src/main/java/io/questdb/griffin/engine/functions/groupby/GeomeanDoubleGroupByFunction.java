@@ -69,7 +69,7 @@ public class GeomeanDoubleGroupByFunction extends DoubleFunction implements Grou
             mapValue.putLong(valueIndex + 1, 1L);
         } else {
             // Valid positive value
-            mapValue.putDouble(valueIndex, GeomeanDoubleGroupByFunctionFactory.value(d));
+            mapValue.putDouble(valueIndex, Math.log(d));
             mapValue.putLong(valueIndex + 1, 1L);
         }
     }
@@ -88,7 +88,7 @@ public class GeomeanDoubleGroupByFunction extends DoubleFunction implements Grou
         } else {
             // Valid positive value: add ln(d) to sum
             // If sumLn is already NaN, adding to it will keep it NaN
-            mapValue.addDouble(valueIndex, GeomeanDoubleGroupByFunctionFactory.value(d));
+            mapValue.addDouble(valueIndex, Math.log(d));
             mapValue.addLong(valueIndex + 1, 1L);
         }
     }
@@ -110,7 +110,7 @@ public class GeomeanDoubleGroupByFunction extends DoubleFunction implements Grou
             // Invalid value was encountered
             return Double.NaN;
         }
-        return GeomeanDoubleGroupByFunctionFactory.finish(sumLn, count);
+        return Math.exp(sumLn / count);
     }
 
     @Override
@@ -171,7 +171,7 @@ public class GeomeanDoubleGroupByFunction extends DoubleFunction implements Grou
         if (value <= 0) {
             mapValue.putDouble(valueIndex, Double.NaN);
         } else {
-            mapValue.putDouble(valueIndex, GeomeanDoubleGroupByFunctionFactory.value(value));
+            mapValue.putDouble(valueIndex, Math.log(value));
         }
         mapValue.putLong(valueIndex + 1, 1);
     }

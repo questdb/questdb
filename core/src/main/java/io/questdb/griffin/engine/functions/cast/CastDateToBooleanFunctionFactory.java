@@ -34,10 +34,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastDateToBooleanFunctionFactory implements FunctionFactory {
-    public static boolean value(long operand) {
-        return operand != 0;
-    }
-
     @Override
     public String getSignature() {
         return "cast(Mt)";
@@ -56,7 +52,7 @@ public class CastDateToBooleanFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             long date = arg.getDate(rec);
-            return date != Numbers.LONG_NULL && value(date);
+            return date != Numbers.LONG_NULL && date != 0;
         }
     }
 }

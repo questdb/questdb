@@ -40,10 +40,6 @@ import io.questdb.std.ObjList;
 
 public class LtTimestampFunctionFactory implements FunctionFactory {
 
-    public static boolean value(long left, long right) {
-        return left < right;
-    }
-
     @Override
     public String getSignature() {
         return "<(NN)";
@@ -86,10 +82,11 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final long l = leftFunc.getTimestamp(rec);
-            final long r = rightFunc.getTimestamp(rec);
-            // two NULLs compare equal (>= true, < false); one NULL makes both false
-            return (l == r || (l != Numbers.LONG_NULL && r != Numbers.LONG_NULL)) && negated != value(l, r);
+            return Numbers.lessThan(
+                    leftFunc.getTimestamp(rec),
+                    rightFunc.getTimestamp(rec),
+                    negated
+            );
         }
 
         @Override
@@ -129,10 +126,11 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final long l = driver.from(leftFunc.getTimestamp(rec), toTimestampType);
-            final long r = rightFunc.getTimestamp(rec);
-            // two NULLs compare equal (>= true, < false); one NULL makes both false
-            return (l == r || (l != Numbers.LONG_NULL && r != Numbers.LONG_NULL)) && negated != value(l, r);
+            return Numbers.lessThan(
+                    driver.from(leftFunc.getTimestamp(rec), toTimestampType),
+                    rightFunc.getTimestamp(rec),
+                    negated
+            );
         }
 
         @Override
@@ -172,10 +170,11 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final long l = leftFunc.getTimestamp(rec);
-            final long r = driver.from(rightFunc.getTimestamp(rec), toTimestampType);
-            // two NULLs compare equal (>= true, < false); one NULL makes both false
-            return (l == r || (l != Numbers.LONG_NULL && r != Numbers.LONG_NULL)) && negated != value(l, r);
+            return Numbers.lessThan(
+                    leftFunc.getTimestamp(rec),
+                    driver.from(rightFunc.getTimestamp(rec), toTimestampType),
+                    negated
+            );
         }
 
         @Override

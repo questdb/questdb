@@ -34,13 +34,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastFloatToByteFunctionFactory implements FunctionFactory {
-    /**
-     * Undefined outside the BYTE range: the function gives 0 there, as for a NULL operand.
-     */
-    public static byte value(float operand) {
-        return (byte) operand;
-    }
-
     @Override
     public String getSignature() {
         return "cast(Fb)";
@@ -58,8 +51,8 @@ public class CastFloatToByteFunctionFactory implements FunctionFactory {
 
         @Override
         public byte getByte(Record rec) {
-            final float val = arg.getFloat(rec);
-            return Numbers.isNull(val) || val > Byte.MAX_VALUE || val < Byte.MIN_VALUE ? 0 : value(val);
+            final float value = arg.getFloat(rec);
+            return Numbers.isNull(value) || value > Byte.MAX_VALUE || value < Byte.MIN_VALUE ? 0 : (byte) value;
         }
     }
 }

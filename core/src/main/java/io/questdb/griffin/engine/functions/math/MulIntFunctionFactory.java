@@ -39,10 +39,6 @@ import io.questdb.std.Transient;
 
 public class MulIntFunctionFactory implements FunctionFactory {
 
-    public static int value(int left, int right) {
-        return left * right;
-    }
-
     @Override
     public String getSignature() {
         return "*(II)";
@@ -88,7 +84,7 @@ public class MulIntFunctionFactory implements FunctionFactory {
             if (l == Numbers.INT_NULL || r == Numbers.INT_NULL) {
                 return Numbers.INT_NULL;
             }
-            return value(l, r);
+            return l * r;
         }
 
         @Override

@@ -77,7 +77,7 @@ public class BitXorLongGroupByFunction extends LongFunction implements GroupByFu
                 if (value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getLong(addr);
-                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? BitXorLongGroupByFunctionFactory.value(current, value) : value);
+                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? current ^ value : value);
                 }
             }
         } else {
@@ -88,7 +88,7 @@ public class BitXorLongGroupByFunction extends LongFunction implements GroupByFu
                 if (value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getLong(addr);
-                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? BitXorLongGroupByFunctionFactory.value(current, value) : value);
+                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? current ^ value : value);
                 }
             }
         }
@@ -100,7 +100,7 @@ public class BitXorLongGroupByFunction extends LongFunction implements GroupByFu
         if (value != Numbers.LONG_NULL) {
             final long current = mapValue.getLong(valueIndex);
             if (current != Numbers.LONG_NULL) {
-                mapValue.putLong(valueIndex, BitXorLongGroupByFunctionFactory.value(current, value));
+                mapValue.putLong(valueIndex, current ^ value);
             } else {
                 mapValue.putLong(valueIndex, value);
             }
@@ -154,7 +154,7 @@ public class BitXorLongGroupByFunction extends LongFunction implements GroupByFu
         if (srcVal != Numbers.LONG_NULL) {
             final long destVal = destValue.getLong(valueIndex);
             if (destVal != Numbers.LONG_NULL) {
-                destValue.putLong(valueIndex, BitXorLongGroupByFunctionFactory.value(destVal, srcVal));
+                destValue.putLong(valueIndex, destVal ^ srcVal);
             } else {
                 destValue.putLong(valueIndex, srcVal);
             }

@@ -38,10 +38,6 @@ import io.questdb.std.ObjList;
 
 public class MicrosOfMillsFunctionFactory implements FunctionFactory {
 
-    public static int value(TimestampDriver driver, long timestamp) {
-        return driver.getMicrosOfMilli(timestamp);
-    }
-
     @Override
     public String getSignature() {
         return "micros(N)";
@@ -70,7 +66,8 @@ public class MicrosOfMillsFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return value(timestampDriver, arg.getTimestamp(rec));
+            final long value = arg.getTimestamp(rec);
+            return timestampDriver.getMicrosOfMilli(value);
         }
 
         @Override

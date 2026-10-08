@@ -33,13 +33,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CastLongToDoubleFunctionFactory implements FunctionFactory {
-    /**
-     * Not called yet: the NULL wrappers of {@code cast(LONG AS DOUBLE)} will call it.
-     */
-    public static double value(long operand) {
-        return operand;
-    }
-
     @Override
     public String getSignature() {
         return "cast(Ld)";

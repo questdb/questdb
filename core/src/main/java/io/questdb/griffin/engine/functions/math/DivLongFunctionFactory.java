@@ -40,13 +40,6 @@ import io.questdb.std.Transient;
 
 public class DivLongFunctionFactory implements FunctionFactory {
 
-    /**
-     * Undefined for a zero divisor: the function gives NULL there, as for a NULL operand.
-     */
-    public static long value(long left, long right) {
-        return left / right;
-    }
-
     @Override
     public String getSignature() {
         return "/(LL)";
@@ -97,7 +90,7 @@ public class DivLongFunctionFactory implements FunctionFactory {
             if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL || r == 0) {
                 return Numbers.LONG_NULL;
             }
-            return value(l, r);
+            return l / r;
         }
 
         @Override

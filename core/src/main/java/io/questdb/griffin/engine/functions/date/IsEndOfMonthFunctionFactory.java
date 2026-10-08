@@ -39,10 +39,6 @@ import io.questdb.std.ObjList;
 
 public class IsEndOfMonthFunctionFactory implements FunctionFactory {
 
-    public static boolean value(TimestampDriver driver, long timestamp) {
-        return driver.getDayOfMonth(timestamp) == driver.getDaysPerMonth(timestamp);
-    }
-
     @Override
     public String getSignature() {
         return "is_end_of_month(N)";
@@ -77,11 +73,11 @@ public class IsEndOfMonthFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final long timestamp = arg.getTimestamp(rec);
-            if (timestamp == Numbers.LONG_NULL) {
+            final long value = arg.getTimestamp(rec);
+            if (value == Numbers.LONG_NULL) {
                 return false;
             }
-            return value(driver, timestamp);
+            return driver.getDayOfMonth(value) == driver.getDaysPerMonth(value);
         }
 
         @Override

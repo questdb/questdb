@@ -24,16 +24,7 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.map.MapValue;
-
 public class WeightedStdDevGroupByFunctionFactory extends WeightedStdDevReliabilityGroupByFunctionFactory {
-    /**
-     * Not called yet: the NULL wrappers of {@code weighted_stddev(DOUBLE, DOUBLE)} will call it.
-     */
-    public static void value(MapValue mapValue, int valueIndex, double sample, double weight) {
-        WeightedStdDevReliabilityGroupByFunctionFactory.value(mapValue, valueIndex, sample, weight);
-    }
-
     @Override
     public String getSignature() {
         return "weighted_stddev(DD)";

@@ -68,7 +68,7 @@ public class ArgMinTimestampUuidGroupByFunction extends TimestampFunction implem
         }
         long minKeyLo = mapValue.getLong128Lo(valueIndex + 1);
         long minKeyHi = mapValue.getLong128Hi(valueIndex + 1);
-        if (isNullUuid(minKeyLo, minKeyHi) || ArgMinTimestampUuidGroupByFunctionFactory.value(minKeyLo, minKeyHi, nextKeyLo, nextKeyHi)) {
+        if (isNullUuid(minKeyLo, minKeyHi) || compareUuids(nextKeyLo, nextKeyHi, minKeyLo, minKeyHi) < 0) {
             mapValue.putLong(valueIndex, valueArg.getTimestamp(record));
             mapValue.putLong128(valueIndex + 1, nextKeyLo, nextKeyHi);
         }
@@ -130,7 +130,7 @@ public class ArgMinTimestampUuidGroupByFunction extends TimestampFunction implem
         }
         long destMinKeyLo = destValue.getLong128Lo(valueIndex + 1);
         long destMinKeyHi = destValue.getLong128Hi(valueIndex + 1);
-        if (isNullUuid(destMinKeyLo, destMinKeyHi) || ArgMinTimestampUuidGroupByFunctionFactory.value(destMinKeyLo, destMinKeyHi, srcMinKeyLo, srcMinKeyHi)) {
+        if (isNullUuid(destMinKeyLo, destMinKeyHi) || compareUuids(srcMinKeyLo, srcMinKeyHi, destMinKeyLo, destMinKeyHi) < 0) {
             destValue.putLong(valueIndex, srcValue.getLong(valueIndex));
             destValue.putLong128(valueIndex + 1, srcMinKeyLo, srcMinKeyHi);
         }
@@ -145,6 +145,14 @@ public class ArgMinTimestampUuidGroupByFunction extends TimestampFunction implem
     @Override
     public boolean supportsParallelism() {
         return BinaryFunction.super.supportsParallelism();
+    }
+
+    private static int compareUuids(long lo1, long hi1, long lo2, long hi2) {
+        int cmp = Long.compareUnsigned(hi1, hi2);
+        if (cmp != 0) {
+            return cmp;
+        }
+        return Long.compareUnsigned(lo1, lo2);
     }
 
     private static boolean isNullUuid(long lo, long hi) {

@@ -35,10 +35,6 @@ import io.questdb.std.ObjList;
 
 public class BitXorLongGroupByFunctionFactory implements FunctionFactory {
 
-    public static long value(long left, long right) {
-        return left ^ right;
-    }
-
     @Override
     public String getSignature() {
         return "bit_xor(L)";

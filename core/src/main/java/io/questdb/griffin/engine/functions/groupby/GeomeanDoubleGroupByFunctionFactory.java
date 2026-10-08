@@ -36,20 +36,6 @@ import io.questdb.std.Transient;
 
 public class GeomeanDoubleGroupByFunctionFactory implements FunctionFactory {
 
-    /**
-     * Undefined for a zero or negative operand: the function gives NULL for the group there.
-     */
-    public static double value(double operand) {
-        return Math.log(operand);
-    }
-
-    /**
-     * Undefined for a zero count (an empty group): the function gives NULL there.
-     */
-    public static double finish(double sumLn, long count) {
-        return Math.exp(sumLn / count);
-    }
-
     @Override
     public String getSignature() {
         return "geomean(D)";

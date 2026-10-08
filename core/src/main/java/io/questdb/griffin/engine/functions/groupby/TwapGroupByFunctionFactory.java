@@ -32,10 +32,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class TwapGroupByFunctionFactory implements FunctionFactory {
-    public static double value(double weightedSum, double price, long timestamp, long nextTimestamp) {
-        return weightedSum + price * (nextTimestamp - timestamp);
-    }
-
     @Override
     public String getSignature() {
         return "twap(DN)";

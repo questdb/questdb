@@ -35,10 +35,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class NegFloatFunctionFactory implements FunctionFactory {
-    public static float value(float operand) {
-        return -operand;
-    }
-
     @Override
     public String getSignature() {
         return "-(F)";
@@ -63,7 +59,7 @@ public class NegFloatFunctionFactory implements FunctionFactory {
 
         @Override
         public float getFloat(Record rec) {
-            return value(arg.getFloat(rec));
+            return -arg.getFloat(rec);
         }
 
         @Override

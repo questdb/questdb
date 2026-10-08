@@ -46,9 +46,7 @@ class GtLongCursorFunction extends AbstractScalarCursorFunction {
 
     @Override
     public boolean getBool(Record rec) {
-        final long l = leftFunc.getLong(rec);
-        // two NULLs compare equal (<= true, > false); one NULL makes both false
-        return (l == value || (l != Numbers.LONG_NULL && value != Numbers.LONG_NULL)) && negated != GtLongCursorFunctionFactory.value(l, value);
+        return Numbers.lessThan(value, leftFunc.getLong(rec), negated);
     }
 
     @Override

@@ -44,15 +44,10 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 public class CastDateToSymbolFunctionFactory implements FunctionFactory {
-
-    public static void value(CharSink<?> sink, long operand) {
-        Numbers.append(sink, operand, false);
-    }
 
     @Override
     public String getSignature() {
@@ -99,38 +94,38 @@ public class CastDateToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final long date = arg.getDate(rec);
-            if (date == Numbers.LONG_NULL) {
+            final long value = arg.getDate(rec);
+            if (value == Numbers.LONG_NULL) {
                 return SymbolTable.VALUE_IS_NULL;
             }
 
-            final int keyIndex = symbolTableShortcut.keyIndex(date);
+            final int keyIndex = symbolTableShortcut.keyIndex(value);
             if (keyIndex < 0) {
                 return symbolTableShortcut.valueAt(keyIndex) - 1;
             }
 
-            symbolTableShortcut.putAt(keyIndex, date, next);
+            symbolTableShortcut.putAt(keyIndex, value, next);
             sink.clear();
-            value(sink, date);
+            sink.put(value);
             symbols.add(Chars.toString(sink));
             return next++ - 1;
         }
 
         @Override
         public CharSequence getSymbol(Record rec) {
-            final long date = arg.getDate(rec);
-            if (date == Numbers.LONG_NULL) {
+            final long value = arg.getDate(rec);
+            if (value == Numbers.LONG_NULL) {
                 return null;
             }
 
-            final int keyIndex = symbolTableShortcut.keyIndex(date);
+            final int keyIndex = symbolTableShortcut.keyIndex(value);
             if (keyIndex < 0) {
                 return symbols.getQuick(symbolTableShortcut.valueAt(keyIndex));
             }
 
-            symbolTableShortcut.putAt(keyIndex, date, next++);
+            symbolTableShortcut.putAt(keyIndex, value, next++);
             sink.clear();
-            value(sink, date);
+            sink.put(value);
             final String str = Chars.toString(sink);
             symbols.add(str);
             return str;

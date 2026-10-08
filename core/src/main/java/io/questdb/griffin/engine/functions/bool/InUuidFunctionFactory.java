@@ -49,10 +49,6 @@ import org.jetbrains.annotations.NotNull;
 
 public final class InUuidFunctionFactory implements FunctionFactory {
 
-    public static boolean value(LongLongHashSet set, long keyLo, long keyHi) {
-        return set.contains(keyLo, keyHi);
-    }
-
     @Override
     public String getSignature() {
         return "in(Zv)";
@@ -191,7 +187,7 @@ public final class InUuidFunctionFactory implements FunctionFactory {
             if (Uuid.isNull(lo, hi)) {
                 return set.hasNull();
             }
-            return value(set, lo, hi);
+            return set.contains(lo, hi);
         }
 
         @Override
@@ -230,7 +226,7 @@ public final class InUuidFunctionFactory implements FunctionFactory {
             if (Uuid.isNull(lo, hi)) {
                 return set.hasNull();
             }
-            return value(set, lo, hi);
+            return set.contains(lo, hi);
         }
 
         @Override

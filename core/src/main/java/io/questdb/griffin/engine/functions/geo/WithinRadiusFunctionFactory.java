@@ -57,20 +57,6 @@ public class WithinRadiusFunctionFactory implements FunctionFactory {
     // Threshold for NaN detection: values with (bits & 0x7FFFFFFFFFFFFFFF) > this are NaN
     private static final long INF_BITS = 0x7FF0000000000000L;
 
-    /**
-     * Whether the point lies within {@code radius} of the center, inclusive; a negative radius
-     * holds no point. {@link #isWithinRadius} subtracts the squared distance from the squared
-     * radius, and a NaN difference (from a NaN operand, or from infinities that cancel) counts as
-     * outside. {@code ConstRadiusGeoWithinRadiusFunction} squares the constant radius once at setup
-     * and calls {@link #isWithinRadius} directly.
-     */
-    public static boolean value(double x, double y, double centerX, double centerY, double radius) {
-        if (radius < 0) {
-            return false;
-        }
-        return isWithinRadius(x, y, centerX, centerY, radius * radius);
-    }
-
     @Override
     public String getSignature() {
         return "within_radius(DDDDD)";
@@ -303,12 +289,12 @@ public class WithinRadiusFunctionFactory implements FunctionFactory {
             if (radius < 0) {
                 return false;
             }
-            return value(
+            return isWithinRadius(
                     xFunc.getDouble(rec),
                     yFunc.getDouble(rec),
                     centerXFunc.getDouble(rec),
                     centerYFunc.getDouble(rec),
-                    radius
+                    radius * radius
             );
         }
 

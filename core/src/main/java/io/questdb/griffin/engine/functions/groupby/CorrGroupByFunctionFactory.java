@@ -41,30 +41,6 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class CorrGroupByFunctionFactory implements FunctionFactory {
-    public static void value(MapValue mapValue, int valueIndex, double y, double x) {
-        double meanY = mapValue.getDouble(valueIndex);
-        double sumY = mapValue.getDouble(valueIndex + 1);
-        double meanX = mapValue.getDouble(valueIndex + 2);
-        double sumX = mapValue.getDouble(valueIndex + 3);
-        double sumXY = mapValue.getDouble(valueIndex + 4);
-        long count = mapValue.getLong(valueIndex + 5) + 1;
-
-        double oldMeanY = meanY;
-        meanY += (y - meanY) / count;
-        sumY += (y - meanY) * (y - oldMeanY);
-        double oldMeanX = meanX;
-        meanX += (x - meanX) / count;
-        sumX += (x - meanX) * (x - oldMeanX);
-        sumXY += (y - oldMeanY) * (x - meanX);
-
-        mapValue.putDouble(valueIndex, meanY);
-        mapValue.putDouble(valueIndex + 1, sumY);
-        mapValue.putDouble(valueIndex + 2, meanX);
-        mapValue.putDouble(valueIndex + 3, sumX);
-        mapValue.putDouble(valueIndex + 4, sumXY);
-        mapValue.addLong(valueIndex + 5, 1L);
-    }
-
     @Override
     public String getSignature() {
         return "corr(DD)";
@@ -109,7 +85,7 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
             mapValue.putLong(valueIndex + 5, 0);
 
             if (Numbers.isFinite(y) && Numbers.isFinite(x)) {
-                value(mapValue, valueIndex, y, x);
+                aggregate(mapValue, y, x);
             }
         }
 
@@ -118,7 +94,7 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
             final double y = yFunc.getDouble(record);
             final double x = xFunc.getDouble(record);
             if (Numbers.isFinite(y) && Numbers.isFinite(x)) {
-                value(mapValue, valueIndex, y, x);
+                aggregate(mapValue, y, x);
             }
         }
 
@@ -241,6 +217,31 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
         @Override
         public boolean supportsParallelism() {
             return BinaryFunction.super.supportsParallelism();
+        }
+
+        // mean_x, sum_x, mean_y, sum_y, sum_xy
+        protected void aggregate(MapValue mapValue, double y, double x) {
+            double meanY = mapValue.getDouble(valueIndex);
+            double sumY = mapValue.getDouble(valueIndex + 1);
+            double meanX = mapValue.getDouble(valueIndex + 2);
+            double sumX = mapValue.getDouble(valueIndex + 3);
+            double sumXY = mapValue.getDouble(valueIndex + 4);
+            long count = mapValue.getLong(valueIndex + 5) + 1;
+
+            double oldMeanY = meanY;
+            meanY += (y - meanY) / count;
+            sumY += (y - meanY) * (y - oldMeanY);
+            double oldMeanX = meanX;
+            meanX += (x - meanX) / count;
+            sumX += (x - meanX) * (x - oldMeanX);
+            sumXY += (y - oldMeanY) * (x - meanX);
+
+            mapValue.putDouble(valueIndex, meanY);
+            mapValue.putDouble(valueIndex + 1, sumY);
+            mapValue.putDouble(valueIndex + 2, meanX);
+            mapValue.putDouble(valueIndex + 3, sumX);
+            mapValue.putDouble(valueIndex + 4, sumXY);
+            mapValue.addLong(valueIndex + 5, 1L);
         }
     }
 }

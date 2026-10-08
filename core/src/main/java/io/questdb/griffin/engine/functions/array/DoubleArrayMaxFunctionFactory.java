@@ -41,16 +41,6 @@ import io.questdb.std.Transient;
 public class DoubleArrayMaxFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "array_max";
 
-    /**
-     * The larger of two values; a tie keeps {@code max}, so of -0.0 and 0.0 the first stays, as in
-     * {@code FlatArrayView.maxDouble}. NaN orders after every other value, so a NaN operand wins.
-     * The array_max function does not call this method: it skips non-finite elements first and
-     * compares with {@code v > max}.
-     */
-    public static double value(double max, double element) {
-        return element <= max || Double.isNaN(max) ? max : element;
-    }
-
     @Override
     public String getSignature() {
         return FUNCTION_NAME + "(D[])";

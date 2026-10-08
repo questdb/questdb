@@ -40,36 +40,28 @@ public class Long256Util {
                     Numbers.LONG_NULL
             );
         } else {
-            addValue(dst, v0, v1, v2, v3);
+            // The sum will overflow if both top bits are set (x & y) or if one of them
+            // is (x | y), and a carry from the lower place happened. If such a carry
+            // happens, the top bit will be 1 + 0 + 1 = 0 (& ~sum).
+            long carry = 0;
+            final long l0 = v0 + dst.getLong0() + carry;
+            carry = ((v0 & dst.getLong0()) | ((v0 | dst.getLong0()) & ~l0)) >>> 63;
+
+            final long l1 = v1 + dst.getLong1() + carry;
+            carry = ((v1 & dst.getLong1()) | ((v1 | dst.getLong1()) & ~l1)) >>> 63;
+
+            final long l2 = v2 + dst.getLong2() + carry;
+            carry = ((v2 & dst.getLong2()) | ((v2 | dst.getLong2()) & ~l2)) >>> 63;
+
+            final long l3 = v3 + dst.getLong3() + carry;
+            //carry = ((v3 & dst.getLong3()) | ((v3 | dst.getLong3()) & ~l3)) >>> 63;
+
+            dst.setAll(l0, l1, l2, l3);
         }
     }
 
     public static void add(Long256 acc, Long256 incr) {
         add(acc, incr.getLong0(), incr.getLong1(), incr.getLong2(), incr.getLong3());
-    }
-
-    /**
-     * Adds the increment to {@code dst} over all 256 bits, without {@link #add}'s NULL test: an
-     * increment that holds the NULL pattern is a value here.
-     */
-    public static void addValue(Long256 dst, long v0, long v1, long v2, long v3) {
-        // The sum will overflow if both top bits are set (x & y) or if one of them
-        // is (x | y), and a carry from the lower place happened. If such a carry
-        // happens, the top bit will be 1 + 0 + 1 = 0 (& ~sum).
-        long carry = 0;
-        final long l0 = v0 + dst.getLong0() + carry;
-        carry = ((v0 & dst.getLong0()) | ((v0 | dst.getLong0()) & ~l0)) >>> 63;
-
-        final long l1 = v1 + dst.getLong1() + carry;
-        carry = ((v1 & dst.getLong1()) | ((v1 | dst.getLong1()) & ~l1)) >>> 63;
-
-        final long l2 = v2 + dst.getLong2() + carry;
-        carry = ((v2 & dst.getLong2()) | ((v2 | dst.getLong2()) & ~l2)) >>> 63;
-
-        final long l3 = v3 + dst.getLong3() + carry;
-        //carry = ((v3 & dst.getLong3()) | ((v3 | dst.getLong3()) & ~l3)) >>> 63;
-
-        dst.setAll(l0, l1, l2, l3);
     }
 
     // this method is used by byte-code generator

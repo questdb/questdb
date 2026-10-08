@@ -47,10 +47,6 @@ import io.questdb.std.Transient;
 
 public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
 
-    public static double value(double sum, double left, double right) {
-        return sum + left * right;
-    }
-
     @Override
     public String getSignature() {
         return "matmul(D[]D[])";
@@ -152,7 +148,7 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
                     for (int commonDim = 0; commonDim < commonDimLen; commonDim++) {
                         int leftFlatIndex = leftStride0 * rowOut + leftStride1 * commonDim;
                         int rightFlatIndex = rightStride0 * commonDim + rightStride1 * colOut;
-                        sum = value(sum, left.getDouble(leftFlatIndex), right.getDouble(rightFlatIndex));
+                        sum += left.getDouble(leftFlatIndex) * right.getDouble(rightFlatIndex);
                     }
                     memOut.putDouble(sum);
                 }

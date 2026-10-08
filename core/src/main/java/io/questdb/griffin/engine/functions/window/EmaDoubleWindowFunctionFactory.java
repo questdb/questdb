@@ -84,10 +84,6 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     private static final int MODE_PERIOD = 1;
     private static final int MODE_TIME_WEIGHTED = 2;
 
-    public static double value(double ema, double next, double alpha) {
-        return alpha * next + (1 - alpha) * ema;
-    }
-
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -344,7 +340,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     double newEma;
                     if (hasValue == 1 && Numbers.isFinite(prevEma)) {
                         // EMA = alpha * value + (1 - alpha) * prevEMA
-                        newEma = value(prevEma, d, alpha);
+                        newEma = alpha * d + (1 - alpha) * prevEma;
                     } else {
                         // First valid value
                         newEma = d;
@@ -582,7 +578,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             alpha = 1.0 - Math.exp(-(double) dt / tau);
                         }
                         // EMA = alpha * value + (1 - alpha) * prevEMA
-                        newEma = value(prevEma, d, alpha);
+                        newEma = alpha * d + (1 - alpha) * prevEma;
                     } else {
                         // First valid value
                         newEma = d;
@@ -739,7 +735,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (Numbers.isFinite(d)) {
                 if (hasValue && Numbers.isFinite(ema)) {
                     // EMA = alpha * value + (1 - alpha) * prevEMA
-                    ema = value(ema, d, alpha);
+                    ema = alpha * d + (1 - alpha) * ema;
                 } else {
                     // First valid value
                     ema = d;
@@ -834,7 +830,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         alpha = 1.0 - Math.exp(-(double) dt / tau);
                     }
                     // EMA = alpha * value + (1 - alpha) * prevEMA
-                    ema = value(ema, d, alpha);
+                    ema = alpha * d + (1 - alpha) * ema;
                 } else {
                     // First valid value
                     ema = d;

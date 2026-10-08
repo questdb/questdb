@@ -29,14 +29,9 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class IsIPv4OrderedGroupByFunctionFactory implements FunctionFactory {
-
-    public static boolean value(int prev, int curr) {
-        return Numbers.ipv4ToLong(prev) <= Numbers.ipv4ToLong(curr);
-    }
 
     @Override
     public String getSignature() {

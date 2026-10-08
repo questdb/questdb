@@ -42,7 +42,34 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 
 public class SplitPartFunctionFactory implements FunctionFactory {
-    public static void value(Utf16Sink sink, CharSequence str, CharSequence delimiter, int index) {
+    @Override
+    public String getSignature() {
+        return "split_part(SSI)";
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        final Function strFunc = args.getQuick(0);
+        final Function delimiterFunc = args.getQuick(1);
+        final Function indexFunc = args.getQuick(2);
+        final int indexPosition = argPositions.getQuick(2);
+
+        if (indexFunc.isConstant()) {
+            int index = indexFunc.getInt(null);
+            if (index == Numbers.INT_NULL) {
+                return StrConstant.NULL;
+            } else if (index == 0) {
+                throw SqlException.$(indexPosition, "field position must not be zero");
+            } else {
+                return new SplitPartConstIndexFunction(strFunc, delimiterFunc, indexFunc, indexPosition, index);
+            }
+        } else if (!indexFunc.isRuntimeConstant()) {
+            throw SqlException.$(indexPosition, "index must be either a constant expression or a placeholder");
+        }
+        return new SplitPartFunction(strFunc, delimiterFunc, indexFunc, indexPosition);
+    }
+
+    private static void splitToSink(Utf16Sink sink, int index, CharSequence str, CharSequence delimiter) {
         if (index == 0) {
             return;
         }
@@ -83,33 +110,6 @@ public class SplitPartFunctionFactory implements FunctionFactory {
         }
 
         sink.put(str, start, end);
-    }
-
-    @Override
-    public String getSignature() {
-        return "split_part(SSI)";
-    }
-
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final Function strFunc = args.getQuick(0);
-        final Function delimiterFunc = args.getQuick(1);
-        final Function indexFunc = args.getQuick(2);
-        final int indexPosition = argPositions.getQuick(2);
-
-        if (indexFunc.isConstant()) {
-            int index = indexFunc.getInt(null);
-            if (index == Numbers.INT_NULL) {
-                return StrConstant.NULL;
-            } else if (index == 0) {
-                throw SqlException.$(indexPosition, "field position must not be zero");
-            } else {
-                return new SplitPartConstIndexFunction(strFunc, delimiterFunc, indexFunc, indexPosition, index);
-            }
-        } else if (!indexFunc.isRuntimeConstant()) {
-            throw SqlException.$(indexPosition, "index must be either a constant expression or a placeholder");
-        }
-        return new SplitPartFunction(strFunc, delimiterFunc, indexFunc, indexPosition);
     }
 
     private static abstract class AbstractSplitPartFunction extends StrFunction implements TernaryFunction {
@@ -181,7 +181,7 @@ public class SplitPartFunctionFactory implements FunctionFactory {
             if (str == null || delimiter == null || index == Numbers.INT_NULL) {
                 return null;
             }
-            value(sink, str, delimiter, index);
+            splitToSink(sink, index, str, delimiter);
             return sink;
         }
 

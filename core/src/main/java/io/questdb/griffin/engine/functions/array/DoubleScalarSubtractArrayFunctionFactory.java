@@ -45,10 +45,6 @@ import io.questdb.std.Transient;
 public class DoubleScalarSubtractArrayFunctionFactory implements FunctionFactory {
     private static final String OPERATOR_NAME = "-";
 
-    public static double value(double scalar, double element) {
-        return scalar - element;
-    }
-
     @Override
     public String getSignature() {
         return OPERATOR_NAME + "(DD[])";
@@ -99,7 +95,7 @@ public class DoubleScalarSubtractArrayFunctionFactory implements FunctionFactory
             if (arr.isVanilla()) {
                 FlatArrayView flatView = arr.flatView();
                 for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {
-                    memory.putDouble(value(scalarValue, flatView.getDoubleAtAbsIndex(i)));
+                    memory.putDouble(scalarValue - flatView.getDoubleAtAbsIndex(i));
                 }
             } else {
                 calculateRecursive(arr, 0, 0, scalarValue, memory);
@@ -145,7 +141,7 @@ public class DoubleScalarSubtractArrayFunctionFactory implements FunctionFactory
             final boolean atDeepestDim = dim == view.getDimCount() - 1;
             if (atDeepestDim) {
                 for (int i = 0; i < count; i++) {
-                    memOut.putDouble(value(scalarValue, view.getDouble(flatIndex)));
+                    memOut.putDouble(scalarValue - view.getDouble(flatIndex));
                     flatIndex += stride;
                 }
             } else {

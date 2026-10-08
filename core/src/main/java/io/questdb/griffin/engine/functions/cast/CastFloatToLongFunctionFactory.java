@@ -34,13 +34,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastFloatToLongFunctionFactory implements FunctionFactory {
-    /**
-     * Undefined outside the LONG range: the function gives NULL there, as for a NULL operand.
-     */
-    public static long value(float operand) {
-        return (long) operand;
-    }
-
     @Override
     public String getSignature() {
         return "cast(Fl)";
@@ -64,8 +57,8 @@ public class CastFloatToLongFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            final float val = arg.getFloat(rec);
-            return Numbers.isNull(val) || val > Long.MAX_VALUE || val < Long.MIN_VALUE ? Numbers.LONG_NULL : value(val);
+            final float value = arg.getFloat(rec);
+            return Numbers.isNull(value) || value > Long.MAX_VALUE || value < Long.MIN_VALUE ? Numbers.LONG_NULL : (long) value;
         }
     }
 }

@@ -73,10 +73,6 @@ public class TestTimestampDriftFactory implements FunctionFactory {
     public static final AtomicLong STEP = new AtomicLong();
     private static final String NAME = "test_timestamp_drift";
 
-    public static long value(long timestamp, long step, long opens) {
-        return timestamp + step * opens;
-    }
-
     @Override
     public String getSignature() {
         return NAME + "(N)";
@@ -118,7 +114,7 @@ public class TestTimestampDriftFactory implements FunctionFactory {
             if (base == Numbers.LONG_NULL) {
                 return base;
             }
-            return value(base, STEP.get(), OPENS.getAndIncrement());
+            return base + STEP.get() * OPENS.getAndIncrement();
         }
 
         @Override

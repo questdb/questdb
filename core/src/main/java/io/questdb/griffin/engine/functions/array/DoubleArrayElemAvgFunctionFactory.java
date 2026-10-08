@@ -36,17 +36,6 @@ import io.questdb.std.Transient;
 
 public class DoubleArrayElemAvgFunctionFactory implements FunctionFactory {
 
-    /**
-     * Not called yet: the NULL wrappers of {@code array_elem_avg(DOUBLE[], ...)} will call it.
-     */
-    public static double value(double sum, double element) {
-        return DoubleArrayElemSumFunctionFactory.value(sum, element);
-    }
-
-    public static double finish(double sum, int count) {
-        return sum / count;
-    }
-
     @Override
     public String getSignature() {
         return "array_elem_avg(D[]V)";
@@ -99,7 +88,7 @@ public class DoubleArrayElemAvgFunctionFactory implements FunctionFactory {
             for (int i = 0; i < totalFlatLen; i++) {
                 int c = counts.getQuick(i);
                 if (c > 0) {
-                    arrayOut.putDouble(i, finish(arrayOut.getDouble(i), c));
+                    arrayOut.putDouble(i, arrayOut.getDouble(i) / c);
                 }
             }
         }

@@ -32,10 +32,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class SumFloatGroupByFunctionFactory implements FunctionFactory {
-    public static float value(float sum, float next) {
-        return sum + next;
-    }
-
     @Override
     public String getSignature() {
         return "sum(F)";

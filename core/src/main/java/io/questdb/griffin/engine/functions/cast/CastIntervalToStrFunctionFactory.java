@@ -35,14 +35,9 @@ import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class CastIntervalToStrFunctionFactory implements FunctionFactory {
-
-    public static void value(CharSink<?> sink, Interval interval, int intervalType) {
-        interval.toSink(sink, intervalType);
-    }
 
     @Override
     public String getSignature() {
@@ -80,10 +75,10 @@ public class CastIntervalToStrFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrA(Record rec) {
-            final Interval interval = arg.getInterval(rec);
-            if (!Interval.NULL.equals(interval)) {
+            final Interval value = arg.getInterval(rec);
+            if (!Interval.NULL.equals(value)) {
                 sinkA.clear();
-                value(sinkA, interval, arg.getType());
+                value.toSink(sinkA, arg.getType());
                 return sinkA;
             }
             return null;
@@ -91,10 +86,10 @@ public class CastIntervalToStrFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrB(Record rec) {
-            final Interval interval = arg.getInterval(rec);
-            if (!Interval.NULL.equals(interval)) {
+            final Interval value = arg.getInterval(rec);
+            if (!Interval.NULL.equals(value)) {
                 sinkB.clear();
-                value(sinkB, interval, arg.getType());
+                value.toSink(sinkB, arg.getType());
                 return sinkB;
             }
             return null;

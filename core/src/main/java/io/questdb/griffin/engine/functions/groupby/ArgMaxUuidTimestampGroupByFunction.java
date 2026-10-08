@@ -64,7 +64,7 @@ public class ArgMaxUuidTimestampGroupByFunction extends UuidFunction implements 
             return;
         }
         long maxKey = mapValue.getLong(valueIndex + 1);
-        if (maxKey == Numbers.LONG_NULL || ArgMaxUuidTimestampGroupByFunctionFactory.value(maxKey, nextKey)) {
+        if (maxKey == Numbers.LONG_NULL || nextKey > maxKey) {
             mapValue.putLong128(valueIndex, valueArg.getLong128Lo(record), valueArg.getLong128Hi(record));
             mapValue.putLong(valueIndex + 1, nextKey);
         }
@@ -129,7 +129,7 @@ public class ArgMaxUuidTimestampGroupByFunction extends UuidFunction implements 
             return;
         }
         long destMaxKey = destValue.getLong(valueIndex + 1);
-        if (destMaxKey == Numbers.LONG_NULL || ArgMaxUuidTimestampGroupByFunctionFactory.value(destMaxKey, srcMaxKey)) {
+        if (destMaxKey == Numbers.LONG_NULL || srcMaxKey > destMaxKey) {
             destValue.putLong128(valueIndex, srcValue.getLong128Lo(valueIndex), srcValue.getLong128Hi(valueIndex));
             destValue.putLong(valueIndex + 1, srcMaxKey);
         }

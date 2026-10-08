@@ -51,15 +51,6 @@ public class MinLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
     private static final String SIGNATURE = NAME + "(L)";
 
     /**
-     * The lower of the two values, as {@link #LESS_THAN} chooses. The window functions do not call
-     * this method: their classes, shared with {@code max}, take the comparator, store a value only
-     * when it wins and order their sliding-frame deques by it.
-     */
-    public static long value(long min, long next) {
-        return next < min ? next : min;
-    }
-
-    /**
      * Returns the textual signature that identifies this window function.
      *
      * @return the function signature, "min(L)"

@@ -33,13 +33,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CastDateToLongFunctionFactory implements FunctionFactory {
-    /**
-     * Not called yet: the NULL wrappers of {@code cast(DATE AS LONG)} will call it.
-     */
-    public static long value(long operand) {
-        return operand;
-    }
-
     @Override
     public String getSignature() {
         return "cast(Ml)";

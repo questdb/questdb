@@ -35,10 +35,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class PowDoubleFunctionFactory implements FunctionFactory {
-    public static double value(double base, double exponent) {
-        return Math.pow(base, exponent);
-    }
-
     @Override
     public String getSignature() {
         return "power(DD)";
@@ -67,7 +63,7 @@ public class PowDoubleFunctionFactory implements FunctionFactory {
         public double getDouble(Record rec) {
             double l = left.getDouble(rec);
             double r = right.getDouble(rec);
-            return value(l, r);
+            return Math.pow(l, r);
         }
 
         @Override

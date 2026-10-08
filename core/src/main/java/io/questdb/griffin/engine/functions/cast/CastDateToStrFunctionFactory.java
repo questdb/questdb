@@ -31,21 +31,9 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
-import io.questdb.std.datetime.DateLocaleFactory;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class CastDateToStrFunctionFactory implements FunctionFactory {
-    /**
-     * Formats {@code operand} as an ISO date, like {@link CharSink#putISODateMillis} without its
-     * NULL test (that method prints nothing for {@code LONG_NULL}). The function tests NULL before
-     * it calls this method.
-     */
-    public static void value(CharSink<?> sink, long operand) {
-        DateFormatUtils.UTC_FORMAT.format(operand, DateLocaleFactory.EN_LOCALE, "Z", sink);
-    }
-
     @Override
     public String getSignature() {
         return "cast(Ms)";
@@ -72,23 +60,23 @@ public class CastDateToStrFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrA(Record rec) {
-            final long date = arg.getDate(rec);
-            if (date == Numbers.LONG_NULL) {
+            final long value = arg.getDate(rec);
+            if (value == Numbers.LONG_NULL) {
                 return null;
             }
             sinkA.clear();
-            value(sinkA, date);
+            sinkA.putISODateMillis(value);
             return sinkA;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            final long date = arg.getDate(rec);
-            if (date == Numbers.LONG_NULL) {
+            final long value = arg.getDate(rec);
+            if (value == Numbers.LONG_NULL) {
                 return null;
             }
             sinkB.clear();
-            value(sinkB, date);
+            sinkB.putISODateMillis(value);
             return sinkB;
         }
     }

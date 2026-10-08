@@ -338,7 +338,7 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
         if (Numbers.isFinite(cur)) {
             double c = compensation.getQuick(outIndex);
             double y = val - c;
-            double t = DoubleArrayElemSumFunctionFactory.value(cur, y);
+            double t = cur + y;
             compensation.setQuick(outIndex, (t - cur) - y);
             arrayOut.putDouble(outIndex, t);
         } else {

@@ -66,10 +66,6 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     private static final ArrayColumnTypes SUM_COLUMN_TYPES;
     private static final ArrayColumnTypes SUM_COLUMN_TYPES_LV;
 
-    public static double value(double sum, double delta) {
-        return sum + delta;
-    }
-
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -611,11 +607,11 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public void accumulateWindowState(Record record, MapValue mapValue) {
+        public void accumulateWindowState(Record record, MapValue value) {
             final double d = arg.getDouble(record);
             if (Numbers.isFinite(d)) {
-                mapValue.putDouble(windowStateSumSlot, value(mapValue.getDouble(windowStateSumSlot), d));
-                mapValue.putLong(windowStateNonNullCountSlot, mapValue.getLong(windowStateNonNullCountSlot) + 1);
+                value.putDouble(windowStateSumSlot, value.getDouble(windowStateSumSlot) + d);
+                value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
             }
         }
 
@@ -647,7 +643,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
             double d = arg.getDouble(record);
             if (Numbers.isFinite(d)) {
-                sum = value(sum, d);
+                sum += d;
                 count++;
             }
 
@@ -818,7 +814,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void computeNext(Record record) {
             double d = arg.getDouble(record);
             if (Numbers.isFinite(d)) {
-                sum = value(sum, d);
+                sum += d;
                 count++;
             }
 
@@ -897,7 +893,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             double d = arg.getDouble(record);
             if (Numbers.isFinite(d)) {
-                sum = value(sum, d);
+                sum += d;
                 count++;
             }
         }

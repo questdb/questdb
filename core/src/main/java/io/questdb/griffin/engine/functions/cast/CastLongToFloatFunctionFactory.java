@@ -33,13 +33,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CastLongToFloatFunctionFactory implements FunctionFactory {
-    /**
-     * Not called yet: the NULL wrappers of {@code cast(LONG AS FLOAT)} will call it.
-     */
-    public static float value(long operand) {
-        return operand;
-    }
-
     @Override
     public String getSignature() {
         return "cast(Lf)";

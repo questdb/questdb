@@ -42,21 +42,6 @@ public class RPadFunctionFactory implements FunctionFactory {
 
     private static final String SIGNATURE = "rpad(SI)";
 
-    /**
-     * Undefined for a negative length: the function gives NULL there, as for a NULL operand. The
-     * function also rejects a length above its buffer limit before it calls this method.
-     */
-    public static void value(StringSink sink, CharSequence str, int len) {
-        if (len > str.length()) {
-            sink.put(str);
-            for (int i = 0; i < (len - str.length()); i++) {
-                sink.put(' ');
-            }
-        } else {
-            sink.put(str, str.length() - len, str.length());
-        }
-    }
-
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -140,7 +125,14 @@ public class RPadFunctionFactory implements FunctionFactory {
                             .put(", requiredLength=").put(len).put(']');
                 }
                 sink.clear();
-                value(sink, str, len);
+                if (len > str.length()) {
+                    sink.put(str);
+                    for (int i = 0; i < (len - str.length()); i++) {
+                        sink.put(' ');
+                    }
+                } else {
+                    sink.put(str, str.length() - len, str.length());
+                }
                 return sink;
             }
             return null;

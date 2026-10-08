@@ -53,7 +53,7 @@ class EqLongCursorFunction extends AbstractScalarCursorFunction {
 
     @Override
     public boolean getBool(Record rec) {
-        return negated != EqLongCursorFunctionFactory.value(leftFunc.getLong(rec), value);
+        return negated != (leftFunc.getLong(rec) == value);
     }
 
     @Override

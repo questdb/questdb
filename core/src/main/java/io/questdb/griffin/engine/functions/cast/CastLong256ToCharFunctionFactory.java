@@ -24,16 +24,7 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
-import io.questdb.std.Long256;
-
 public class CastLong256ToCharFunctionFactory extends CastLongToCharFunctionFactory {
-    /**
-     * Not called yet: the NULL wrappers of {@code cast(LONG256 AS CHAR)} will call it.
-     */
-    public static char value(Long256 operand) {
-        return (char) operand.getLong0();
-    }
-
     @Override
     public String getSignature() {
         return "cast(Ha)";

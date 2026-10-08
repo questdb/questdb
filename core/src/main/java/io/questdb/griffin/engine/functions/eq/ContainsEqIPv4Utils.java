@@ -105,7 +105,7 @@ public class ContainsEqIPv4Utils {
 
         @Override
         public boolean getBool(Record rec) {
-            return ContainsEqIPv4StrFunctionFactory.value(arg.getIPv4(rec), subnet, netmask);
+            return (arg.getIPv4(rec) & netmask) == subnet;
         }
 
         @Override
@@ -130,7 +130,7 @@ public class ContainsEqIPv4Utils {
 
         @Override
         public boolean getBool(Record rec) {
-            return subnet != IPv4_NULL && ContainsEqIPv4StrFunctionFactory.value(ipv4Func.getIPv4(rec), subnet, netmask);
+            return subnet != IPv4_NULL && (ipv4Func.getIPv4(rec) & netmask) == subnet;
         }
 
         @Override
@@ -198,7 +198,7 @@ public class ContainsEqIPv4Utils {
                 return false;
             }
 
-            return ContainsEqIPv4StrFunctionFactory.value(ipv4Func.getIPv4(rec), subnet, netmask);
+            return (ipv4Func.getIPv4(rec) & netmask) == subnet;
         }
 
         @Override
@@ -245,7 +245,7 @@ public class ContainsEqIPv4Utils {
                 return false;
             }
 
-            return ContainsEqIPv4VarcharFunctionFactory.value(ipv4Func.getIPv4(rec), subnet, netmask);
+            return (ipv4Func.getIPv4(rec) & netmask) == subnet;
         }
 
         @Override

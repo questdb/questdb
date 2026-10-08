@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
@@ -33,17 +32,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class NSumDoubleGroupByFunctionFactory implements FunctionFactory {
-    public static void value(MapValue mapValue, int valueIndex, double sum, double c, double next) {
-        double t = sum + next;
-        if (Math.abs(sum) >= Math.abs(next)) {
-            c += (sum - t) + next;
-        } else {
-            c += (next - t) + sum;
-        }
-        mapValue.putDouble(valueIndex, t);
-        mapValue.putDouble(valueIndex + 1, c);
-    }
-
     @Override
     public String getSignature() {
         return "nsum(D)";

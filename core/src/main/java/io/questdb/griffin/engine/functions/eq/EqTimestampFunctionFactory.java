@@ -40,10 +40,6 @@ import io.questdb.std.ObjList;
 
 public class EqTimestampFunctionFactory implements FunctionFactory {
 
-    public static boolean value(long left, long right) {
-        return left == right;
-    }
-
     @Override
     public String getSignature() {
         return "=(NN)";
@@ -160,7 +156,7 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != value(left.getTimestamp(rec), right.getTimestamp(rec));
+            return negated != (left.getTimestamp(rec) == right.getTimestamp(rec));
         }
     }
 
@@ -174,7 +170,7 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != value(this.value, right.getTimestamp(rec));
+            return negated != (value == right.getTimestamp(rec));
         }
     }
 
@@ -189,7 +185,7 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != value(leftValue, rightValue);
+            return negated != (leftValue == rightValue);
         }
 
         @Override
@@ -213,7 +209,7 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != value(leftValue, rightValue);
+            return negated != (leftValue == rightValue);
         }
 
         @Override
@@ -236,7 +232,7 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != value(driver.from(left.getTimestamp(rec), fromTimestampType), right.getTimestamp(rec));
+            return negated != (driver.from(left.getTimestamp(rec), fromTimestampType) == right.getTimestamp(rec));
         }
     }
 
@@ -255,7 +251,7 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != value(leftValue, rightValue);
+            return negated != (leftValue == rightValue);
         }
 
         @Override
@@ -279,7 +275,7 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != value(driver.from(left.getTimestamp(rec), fromTimestampType), rightValue);
+            return negated != (driver.from(left.getTimestamp(rec), fromTimestampType) == rightValue);
         }
     }
 
@@ -296,7 +292,7 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != value(driver.from(left.getTimestamp(rec), fromTimestampType), rightValue);
+            return negated != (driver.from(left.getTimestamp(rec), fromTimestampType) == rightValue);
         }
 
         @Override
@@ -319,7 +315,7 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != value(this.value, right.getTimestamp(rec));
+            return negated != (value == right.getTimestamp(rec));
         }
 
         @Override
@@ -339,7 +335,7 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != value(leftValue, rightValue);
+            return negated != (leftValue == rightValue);
         }
 
         @Override
@@ -359,7 +355,7 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != value(this.value, right.getTimestamp(rec));
+            return negated != (value == right.getTimestamp(rec));
         }
 
         @Override

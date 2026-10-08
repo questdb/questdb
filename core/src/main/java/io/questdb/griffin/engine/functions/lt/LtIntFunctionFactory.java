@@ -37,10 +37,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class LtIntFunctionFactory implements FunctionFactory {
-    public static boolean value(int left, int right) {
-        return left < right;
-    }
-
     @Override
     public String getSignature() {
         return "<(II)";
@@ -73,10 +69,11 @@ public class LtIntFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final int l = left.getInt(rec);
-            final int r = right.getInt(rec);
-            // two NULLs compare equal (>= true, < false); one NULL makes both false
-            return (l == r || (l != Numbers.INT_NULL && r != Numbers.INT_NULL)) && negated != value(l, r);
+            return Numbers.lessThan(
+                    left.getInt(rec),
+                    right.getInt(rec),
+                    negated
+            );
         }
 
         @Override

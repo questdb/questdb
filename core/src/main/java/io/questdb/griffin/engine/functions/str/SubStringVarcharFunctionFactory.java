@@ -24,16 +24,7 @@
 
 package io.questdb.griffin.engine.functions.str;
 
-import io.questdb.std.str.StringSink;
-
 public class SubStringVarcharFunctionFactory extends SubStringFunctionFactory {
-    /**
-     * Not called yet: the NULL wrappers of {@code substring(VARCHAR, INT, INT)} will call it.
-     */
-    public static void value(StringSink sink, CharSequence str, int start, int len) {
-        SubStringFunctionFactory.value(sink, str, start, len);
-    }
-
     @Override
     public String getSignature() {
         return "substring(ØII)";

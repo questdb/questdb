@@ -36,10 +36,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class SignLongFunctionFactory implements FunctionFactory {
-    public static long value(long operand) {
-        return Long.signum(operand);
-    }
-
     @Override
     public String getSignature() {
         return "sign(L)";
@@ -69,7 +65,7 @@ public class SignLongFunctionFactory implements FunctionFactory {
             if (val == Numbers.LONG_NULL) {
                 return Numbers.LONG_NULL;
             }
-            return value(val);
+            return Long.signum(val);
         }
 
         @Override

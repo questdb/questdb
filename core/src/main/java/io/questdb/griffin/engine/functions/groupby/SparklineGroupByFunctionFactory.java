@@ -33,15 +33,6 @@ import io.questdb.std.ObjList;
 
 public class SparklineGroupByFunctionFactory implements FunctionFactory {
 
-    public static int value(double element, double min, double range, int levels) {
-        if (range == 0.0) {
-            return levels - 1;
-        }
-        double clamped = Math.max(min, Math.min(min + range, element));
-        int idx = (int) ((clamped - min) / range * (levels - 1));
-        return Math.min(idx, levels - 1);
-    }
-
     @Override
     public String getSignature() {
         return "sparkline(D)";

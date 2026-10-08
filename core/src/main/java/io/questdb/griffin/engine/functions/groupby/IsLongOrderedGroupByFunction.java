@@ -53,7 +53,7 @@ public class IsLongOrderedGroupByFunction extends BooleanFunction implements Gro
         if (mapValue.getBool(valueIndex)) {
             long prev = mapValue.getLong(valueIndex + 1);
             long curr = arg.getLong(record);
-            if (!IsLongOrderedGroupByFunctionFactory.value(prev, curr)) {
+            if (curr < prev) {
                 mapValue.putBool(valueIndex, false);
             } else {
                 mapValue.putLong(valueIndex + 1, curr);

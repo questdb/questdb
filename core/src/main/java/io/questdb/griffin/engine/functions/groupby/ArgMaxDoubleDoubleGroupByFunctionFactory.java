@@ -32,15 +32,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class ArgMaxDoubleDoubleGroupByFunctionFactory implements FunctionFactory {
-    /**
-     * Whether {@code nextKey} orders after {@code maxKey}: NaN orders after every other value, and
-     * -0.0 equals 0.0, so the first key seen stays. {@code ArgMaxDoubleDoubleGroupByFunction} does
-     * not call this method: it skips NULL keys first, and the NaN test here would cost every row.
-     */
-    public static boolean value(double maxKey, double nextKey) {
-        return nextKey > maxKey || (Double.isNaN(nextKey) && !Double.isNaN(maxKey));
-    }
-
     @Override
     public String getSignature() {
         return "arg_max(DD)";

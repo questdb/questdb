@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.Long256Util;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
@@ -111,7 +112,8 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
         if (!value.equals(Long256Impl.NULL_LONG256)) {
             final Long256 sum = mapValue.getLong256A(valueIndex);
             if (!sum.equals(Long256Impl.NULL_LONG256)) {
-                mapValue.putLong256(valueIndex, SumLong256GroupByFunctionFactory.value(sum, value));
+                Long256Util.add(sum, value);
+                mapValue.putLong256(valueIndex, sum);
             } else {
                 mapValue.putLong256(valueIndex, value);
             }

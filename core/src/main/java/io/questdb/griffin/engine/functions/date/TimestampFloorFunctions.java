@@ -66,7 +66,7 @@ final class TimestampFloorFunctions {
         @Override
         public final long getTimestamp(Record rec) {
             long ts = arg.getTimestamp(rec);
-            return ts == Numbers.LONG_NULL ? Numbers.LONG_NULL : TimestampFloorFunctionFactory.value(floor, ts);
+            return ts == Numbers.LONG_NULL ? Numbers.LONG_NULL : floor.floor(ts);
         }
 
         @Override
@@ -163,7 +163,7 @@ final class TimestampFloorFunctions {
         @Override
         public final long getTimestamp(Record rec) {
             long ts = arg.getTimestamp(rec);
-            return ts == Numbers.LONG_NULL ? Numbers.LONG_NULL : TimestampFloorFunctionFactory.value(floor, ts, stride);
+            return ts == Numbers.LONG_NULL ? Numbers.LONG_NULL : floor.floor(ts, stride);
         }
 
         @Override

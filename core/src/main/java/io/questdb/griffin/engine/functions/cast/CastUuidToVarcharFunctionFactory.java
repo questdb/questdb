@@ -33,19 +33,12 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.Uuid;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
 public final class CastUuidToVarcharFunctionFactory implements FunctionFactory {
-
-    public static void value(CharSink<?> sink, long lo, long hi) {
-        Numbers.appendUuid(lo, hi, sink);
-    }
 
     @Override
     public String getSignature() {
@@ -83,25 +76,13 @@ public final class CastUuidToVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
             sinkA.clear();
-            final long lo = arg.getLong128Lo(rec);
-            final long hi = arg.getLong128Hi(rec);
-            if (Uuid.isNull(lo, hi)) {
-                return null;
-            }
-            value(sinkA, lo, hi);
-            return sinkA;
+            return SqlUtil.implicitCastUuidAsStr(arg.getLong128Lo(rec), arg.getLong128Hi(rec), sinkA) ? sinkA : null;
         }
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
             sinkB.clear();
-            final long lo = arg.getLong128Lo(rec);
-            final long hi = arg.getLong128Hi(rec);
-            if (Uuid.isNull(lo, hi)) {
-                return null;
-            }
-            value(sinkB, lo, hi);
-            return sinkB;
+            return SqlUtil.implicitCastUuidAsStr(arg.getLong128Lo(rec), arg.getLong128Hi(rec), sinkB) ? sinkB : null;
         }
     }
 }

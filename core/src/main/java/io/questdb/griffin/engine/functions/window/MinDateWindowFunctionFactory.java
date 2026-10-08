@@ -39,15 +39,6 @@ import io.questdb.std.ObjList;
 public class MinDateWindowFunctionFactory extends AbstractWindowFunctionFactory {
     private static final String SIGNATURE = MinTimestampWindowFunctionFactory.NAME + "(M)";
 
-    /**
-     * The earlier of the two dates, as {@link MinTimestampWindowFunctionFactory#LESS_THAN} chooses.
-     * The window functions do not call this method: their classes, shared with {@code max}, take
-     * the comparator, store a value only when it wins and order their sliding-frame deques by it.
-     */
-    public static long value(long min, long next) {
-        return next < min ? next : min;
-    }
-
     @Override
     public String getSignature() {
         return SIGNATURE;

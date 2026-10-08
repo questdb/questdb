@@ -41,28 +41,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
  */
 public class GtIntCursorFunctionFactory extends AbstractIntCursorFunctionFactory {
 
-    /**
-     * Whether {@code left} orders after {@code right}: {@link LtDoubleVVFunctionFactory#value} with
-     * the operands swapped, so NaN orders after every other value. {@code GtDoubleCursorFunction}
-     * does not call this method: its own comparison skips the tolerance test on rows that the plain
-     * {@code >} settles, and this body would need a NaN test on every row.
-     */
-    public static boolean value(double left, double right) {
-        return LtDoubleVVFunctionFactory.value(right, left);
-    }
-
-    public static boolean value(int left, int right) {
-        return left > right;
-    }
-
-    /**
-     * Not called: for a LONG cursor value {@code >(INT, CURSOR)} compares through
-     * {@link GtLongCursorFunctionFactory#value(long, long)}.
-     */
-    public static boolean value(long left, long right) {
-        return left > right;
-    }
-
     @Override
     public String getSignature() {
         return ">(IC)";

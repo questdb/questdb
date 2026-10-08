@@ -31,20 +31,9 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class CastIntToStrFunctionFactory implements FunctionFactory {
-    /**
-     * Prints {@code operand} in decimal, INT_NULL included: the body widens to long because {@link
-     * Numbers#append(CharSink, int)} prints INT_NULL as null. The function does not call this
-     * method: it returns NULL for INT_NULL and prints other values in the int form, which gives the
-     * same digits.
-     */
-    public static void value(CharSink<?> sink, int operand) {
-        Numbers.append(sink, operand, false);
-    }
-
     @Override
     public String getSignature() {
         return "cast(Is)";

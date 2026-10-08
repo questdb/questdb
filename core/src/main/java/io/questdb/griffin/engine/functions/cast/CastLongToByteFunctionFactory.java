@@ -34,10 +34,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastLongToByteFunctionFactory implements FunctionFactory {
-    public static byte value(long operand) {
-        return (byte) operand;
-    }
-
     @Override
     public String getSignature() {
         return "cast(Lb)";
@@ -55,8 +51,8 @@ public class CastLongToByteFunctionFactory implements FunctionFactory {
 
         @Override
         public byte getByte(Record rec) {
-            final long val = arg.getLong(rec);
-            return val != Numbers.LONG_NULL ? value(val) : 0;
+            final long value = arg.getLong(rec);
+            return value != Numbers.LONG_NULL ? (byte) value : 0;
         }
     }
 }

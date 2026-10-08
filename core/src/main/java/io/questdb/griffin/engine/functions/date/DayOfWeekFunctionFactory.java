@@ -38,10 +38,6 @@ import io.questdb.std.ObjList;
 
 public class DayOfWeekFunctionFactory implements FunctionFactory {
 
-    public static int value(TimestampDriver driver, long timestamp) {
-        return driver.getDayOfWeek(timestamp);
-    }
-
     @Override
     public String getSignature() {
         return "day_of_week(N)";
@@ -70,7 +66,8 @@ public class DayOfWeekFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return value(driver, arg.getTimestamp(rec));
+            final long value = arg.getTimestamp(rec);
+            return driver.getDayOfWeek(value);
         }
 
         @Override

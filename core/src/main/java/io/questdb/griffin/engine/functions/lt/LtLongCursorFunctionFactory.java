@@ -43,20 +43,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
  */
 public class LtLongCursorFunctionFactory extends AbstractLongCursorFunctionFactory {
 
-    /**
-     * Whether {@code left} orders before {@code right}, as {@link LtDoubleVVFunctionFactory#value}
-     * orders them: NaN orders after every other value. {@code LtDoubleCursorFunction} does not call
-     * this method: its own comparison skips the tolerance test on rows that the plain {@code <}
-     * settles, and this body would need a NaN test on every row.
-     */
-    public static boolean value(double left, double right) {
-        return LtDoubleVVFunctionFactory.value(left, right);
-    }
-
-    public static boolean value(long left, long right) {
-        return left < right;
-    }
-
     @Override
     public String getSignature() {
         return "<(LC)";

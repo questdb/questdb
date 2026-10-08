@@ -37,10 +37,6 @@ import io.questdb.std.ObjList;
  * Factory for the abs() function on int type.
  */
 public class AbsIntFunctionFactory implements FunctionFactory {
-    public static int value(int operand) {
-        return Math.abs(operand);
-    }
-
     @Override
     public String getSignature() {
         return "abs(I)";
@@ -70,7 +66,8 @@ public class AbsIntFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return value(arg.getInt(rec));
+            int value = arg.getInt(rec);
+            return Math.abs(value);
         }
 
         @Override

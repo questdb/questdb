@@ -38,10 +38,6 @@ import io.questdb.std.ObjList;
 
 public class MillisOfSecondFunctionFactory implements FunctionFactory {
 
-    public static int value(TimestampDriver driver, long timestamp) {
-        return driver.getMillisOfSecond(timestamp);
-    }
-
     @Override
     public String getSignature() {
         return "millis(N)";
@@ -70,7 +66,8 @@ public class MillisOfSecondFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return value(timestampDriver, arg.getTimestamp(rec));
+            final long value = arg.getTimestamp(rec);
+            return timestampDriver.getMillisOfSecond(value);
         }
 
         @Override

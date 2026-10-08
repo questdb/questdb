@@ -32,17 +32,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
-/**
- * Creates the functions of one signature.
- * <p>
- * A factory whose argument is a fixed-width type with a reserved NULL value (LONG's {@code
- * LONG_MIN}, DOUBLE's NaN) declares its computation as a static {@code value(...)} method: plain
- * values in, a plain value out, no NULL test, and a defined result for every value the type can
- * hold, the reserved one included. The function classes test their operands for NULL themselves;
- * some call {@code value(...)}, others keep an inline computation of their own. {@code
- * NullPolicyRuleListerTest} lists the factories in scope with the reason for each one without such
- * a method, and fails for a factory in scope that has neither.
- */
 public interface FunctionFactory {
     default int getExecutionRequirements() {
         return SqlExecutionRequirements.NONE;

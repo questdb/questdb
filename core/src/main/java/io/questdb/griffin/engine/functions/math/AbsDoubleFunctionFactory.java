@@ -38,10 +38,6 @@ import io.questdb.std.ObjList;
  * Factory for the abs() function on double type.
  */
 public class AbsDoubleFunctionFactory implements FunctionFactory {
-    public static double value(double operand) {
-        return Math.abs(operand);
-    }
-
     @Override
     public String getSignature() {
         return "abs(D)";
@@ -66,7 +62,8 @@ public class AbsDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            return value(function.getDouble(rec));
+            double value = function.getDouble(rec);
+            return Math.abs(value);
         }
 
         @Override

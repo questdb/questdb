@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -36,28 +35,6 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class SkewnessSampleGroupByFunctionFactory implements FunctionFactory {
-    public static void value(MapValue mapValue, int valueIndex, double x) {
-        double mean = mapValue.getDouble(valueIndex);
-        double m2 = mapValue.getDouble(valueIndex + 1);
-        double m3 = mapValue.getDouble(valueIndex + 2);
-        long n = mapValue.getLong(valueIndex + 3) + 1;
-
-        double nd = n;
-        double delta = x - mean;
-        double deltaN = delta / nd;
-        double term1 = delta * deltaN * (nd - 1);
-
-        // Update order matters: M3 reads the old M2.
-        double newM3 = m3 + term1 * deltaN * (nd - 2) - 3 * deltaN * m2;
-        double newM2 = m2 + term1;
-        double newMean = mean + deltaN;
-
-        mapValue.putDouble(valueIndex, newMean);
-        mapValue.putDouble(valueIndex + 1, newM2);
-        mapValue.putDouble(valueIndex + 2, newM3);
-        mapValue.putLong(valueIndex + 3, n);
-    }
-
     @Override
     public String getSignature() {
         return "skewness_samp(D)";

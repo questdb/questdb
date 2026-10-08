@@ -61,55 +61,6 @@ public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
     // Approximate meters per degree of latitude (constant everywhere on Earth)
     private static final double METERS_PER_DEG = 111_320.0;
 
-    /**
-     * Planar distance in meters, with the longitude difference scaled by the cosine of the midpoint
-     * latitude. Throws a CairoException at the argument's position for a coordinate out of range.
-     * {@code ConstPoint1GeoDistanceFunction} scales by the first point's latitude instead, computed
-     * once at setup, so its results can differ from this method's.
-     */
-    public static double value(
-            double lat1,
-            double lon1,
-            double lat2,
-            double lon2,
-            int lat1Pos,
-            int lon1Pos,
-            int lat2Pos,
-            int lon2Pos
-    ) {
-        // Validate lat1
-        if (lat1 < -90.0 || lat1 > 90.0) {
-            throw CairoException.nonCritical().position(lat1Pos)
-                    .put("latitude must be between -90 and 90 [value=").put(lat1).put(']');
-        }
-
-        // Validate lon1
-        if (lon1 < -180.0 || lon1 > 180.0) {
-            throw CairoException.nonCritical().position(lon1Pos)
-                    .put("longitude must be between -180 and 180 [value=").put(lon1).put(']');
-        }
-
-        // Validate lat2
-        if (lat2 < -90.0 || lat2 > 90.0) {
-            throw CairoException.nonCritical().position(lat2Pos)
-                    .put("latitude must be between -90 and 90 [value=").put(lat2).put(']');
-        }
-
-        // Validate lon2
-        if (lon2 < -180.0 || lon2 > 180.0) {
-            throw CairoException.nonCritical().position(lon2Pos)
-                    .put("longitude must be between -180 and 180 [value=").put(lon2).put(']');
-        }
-
-        // Use midpoint latitude for the cosLat calculation
-        final double midLatRad = Math.toRadians((lat1 + lat2) * 0.5);
-        final double metersPerDegLon = METERS_PER_DEG * Math.cos(midLatRad);
-
-        final double dx = (lon2 - lon1) * metersPerDegLon;
-        final double dy = (lat2 - lat1) * METERS_PER_DEG;
-        return Math.sqrt(dx * dx + dy * dy);
-    }
-
     @Override
     public String getSignature() {
         return "geo_distance_meters(DDDD)";
@@ -384,7 +335,38 @@ public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
             if (Numbers.isNull(lat1) || Numbers.isNull(lon1) || Numbers.isNull(lat2) || Numbers.isNull(lon2)) {
                 return Double.NaN;
             }
-            return value(lat1, lon1, lat2, lon2, lat1Pos, lon1Pos, lat2Pos, lon2Pos);
+
+            // Validate lat1
+            if (lat1 < -90.0 || lat1 > 90.0) {
+                throw CairoException.nonCritical().position(lat1Pos)
+                        .put("latitude must be between -90 and 90 [value=").put(lat1).put(']');
+            }
+
+            // Validate lon1
+            if (lon1 < -180.0 || lon1 > 180.0) {
+                throw CairoException.nonCritical().position(lon1Pos)
+                        .put("longitude must be between -180 and 180 [value=").put(lon1).put(']');
+            }
+
+            // Validate lat2
+            if (lat2 < -90.0 || lat2 > 90.0) {
+                throw CairoException.nonCritical().position(lat2Pos)
+                        .put("latitude must be between -90 and 90 [value=").put(lat2).put(']');
+            }
+
+            // Validate lon2
+            if (lon2 < -180.0 || lon2 > 180.0) {
+                throw CairoException.nonCritical().position(lon2Pos)
+                        .put("longitude must be between -180 and 180 [value=").put(lon2).put(']');
+            }
+
+            // Use midpoint latitude for the cosLat calculation
+            final double midLatRad = Math.toRadians((lat1 + lat2) * 0.5);
+            final double metersPerDegLon = METERS_PER_DEG * Math.cos(midLatRad);
+
+            final double dx = (lon2 - lon1) * metersPerDegLon;
+            final double dy = (lat2 - lat1) * METERS_PER_DEG;
+            return Math.sqrt(dx * dx + dy * dy);
         }
 
         @Override

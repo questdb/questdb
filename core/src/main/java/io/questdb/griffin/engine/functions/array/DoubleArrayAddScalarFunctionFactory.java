@@ -44,10 +44,6 @@ import io.questdb.std.ObjList;
 public class DoubleArrayAddScalarFunctionFactory implements FunctionFactory {
     private static final String OPERATOR_NAME = "+";
 
-    public static double value(double element, double scalar) {
-        return element + scalar;
-    }
-
     @Override
     public String getSignature() {
         return OPERATOR_NAME + "(D[]D)";
@@ -101,7 +97,7 @@ public class DoubleArrayAddScalarFunctionFactory implements FunctionFactory {
             if (arr.isVanilla()) {
                 FlatArrayView flatView = arr.flatView();
                 for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {
-                    memory.putDouble(value(flatView.getDoubleAtAbsIndex(i), scalarValue));
+                    memory.putDouble(flatView.getDoubleAtAbsIndex(i) + scalarValue);
                 }
             } else {
                 calculateRecursive(arr, 0, 0, scalarValue, memory);
@@ -147,7 +143,7 @@ public class DoubleArrayAddScalarFunctionFactory implements FunctionFactory {
             final boolean atDeepestDim = dim == view.getDimCount() - 1;
             if (atDeepestDim) {
                 for (int i = 0; i < count; i++) {
-                    memOut.putDouble(value(view.getDouble(flatIndex), scalarValue));
+                    memOut.putDouble(scalarValue + view.getDouble(flatIndex));
                     flatIndex += stride;
                 }
             } else {

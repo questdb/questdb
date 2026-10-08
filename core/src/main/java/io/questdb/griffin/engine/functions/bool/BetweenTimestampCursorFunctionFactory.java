@@ -61,13 +61,6 @@ import io.questdb.std.str.Utf8Sequence;
  */
 public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
 
-    /**
-     * Not called: {@code between(TIMESTAMP, CURSOR, CURSOR)} keeps its own comparison.
-     */
-    public static boolean value(long timestamp, long from, long to) {
-        return Math.min(from, to) <= timestamp && timestamp <= Math.max(from, to);
-    }
-
     @Override
     public String getSignature() {
         return "between(NCC)";
@@ -286,15 +279,15 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
             if (hiEpoch == Numbers.LONG_NULL) {
                 return false;
             }
-            final long timestamp = arg.getTimestamp(rec);
-            if (timestamp == Numbers.LONG_NULL) {
+            final long value = arg.getTimestamp(rec);
+            if (value == Numbers.LONG_NULL) {
                 return false;
             }
             final long loTs = driver.from(loFunc.getTimestamp(rec), loValueType);
             if (loTs == Numbers.LONG_NULL) {
                 return false;
             }
-            return BetweenTimestampCursorHiFunctionFactory.value(timestamp, loTs, hiEpoch);
+            return Math.min(loTs, hiEpoch) <= value && value <= Math.max(loTs, hiEpoch);
         }
 
         @Override
@@ -383,15 +376,15 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
             if (loEpoch == Numbers.LONG_NULL) {
                 return false;
             }
-            final long timestamp = arg.getTimestamp(rec);
-            if (timestamp == Numbers.LONG_NULL) {
+            final long value = arg.getTimestamp(rec);
+            if (value == Numbers.LONG_NULL) {
                 return false;
             }
             final long hiTs = driver.from(hiFunc.getTimestamp(rec), hiValueType);
             if (hiTs == Numbers.LONG_NULL) {
                 return false;
             }
-            return BetweenTimestampCursorLoFunctionFactory.value(timestamp, loEpoch, hiTs);
+            return Math.min(loEpoch, hiTs) <= value && value <= Math.max(loEpoch, hiTs);
         }
 
         @Override

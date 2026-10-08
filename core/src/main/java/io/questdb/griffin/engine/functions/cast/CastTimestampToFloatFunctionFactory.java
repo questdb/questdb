@@ -33,13 +33,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CastTimestampToFloatFunctionFactory implements FunctionFactory {
-    /**
-     * Not called yet: the NULL wrappers of {@code cast(TIMESTAMP AS FLOAT)} will call it.
-     */
-    public static float value(long operand) {
-        return (float) operand;
-    }
-
     @Override
     public String getSignature() {
         return "cast(Nf)";

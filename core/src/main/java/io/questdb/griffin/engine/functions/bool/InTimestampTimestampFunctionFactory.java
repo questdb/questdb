@@ -55,14 +55,6 @@ import static io.questdb.griffin.model.IntervalUtils.isInIntervals;
 
 public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
-    public static boolean value(long key, long element) {
-        return key == element;
-    }
-
-    public static boolean value(LongList intervals, long key) {
-        return isInIntervals(intervals, key);
-    }
-
     @Override
     public String getSignature() {
         return "in(NV)";
@@ -241,7 +233,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != value(intervals, left.getTimestamp(rec));
+            return negated != isInIntervals(intervals, left.getTimestamp(rec));
         }
 
         @Override
@@ -290,7 +282,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != value(intervals, left.getTimestamp(rec));
+            return negated != isInIntervals(intervals, left.getTimestamp(rec));
         }
 
         @Override
@@ -335,7 +327,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             } catch (SqlException e) {
                 return negated;
             }
-            return negated != value(intervals, ts);
+            return negated != isInIntervals(intervals, ts);
         }
 
         @Override
@@ -415,7 +407,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             long ts = args.getQuick(0).getTimestamp(rec);
             for (int i = 0, n = timestampValues.size(); i < n; i++) {
                 long val = timestampValues.getQuick(i);
-                if (value(ts, val)) {
+                if (val == ts) {
                     return !negated;
                 }
             }
@@ -473,7 +465,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             final long ts = left.getTimestamp(rec);
-            return ts == Numbers.LONG_NULL ? negated : negated != value(intervals, ts);
+            return ts == Numbers.LONG_NULL ? negated : negated != isInIntervals(intervals, ts);
         }
 
         @Override
@@ -554,7 +546,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                     case ColumnType.VARCHAR -> parseFloorOrDie(driver, func.getVarcharA(rec));
                     default -> val;
                 };
-                if (value(ts, val)) {
+                if (val == ts) {
                     return !negated;
                 }
             }

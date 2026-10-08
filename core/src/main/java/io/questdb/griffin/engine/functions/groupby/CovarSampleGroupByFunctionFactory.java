@@ -37,23 +37,6 @@ import org.jetbrains.annotations.NotNull;
 
 public class CovarSampleGroupByFunctionFactory implements FunctionFactory {
 
-    public static void value(MapValue mapValue, int valueIndex, double y, double x) {
-        double meanY = mapValue.getDouble(valueIndex);
-        double meanX = mapValue.getDouble(valueIndex + 1);
-        double sumXY = mapValue.getDouble(valueIndex + 2);
-        long count = mapValue.getLong(valueIndex + 3) + 1;
-
-        double oldMeanY = meanY;
-        meanY += (y - meanY) / count;
-        meanX += (x - meanX) / count;
-        sumXY += (y - oldMeanY) * (x - meanX);
-
-        mapValue.putDouble(valueIndex, meanY);
-        mapValue.putDouble(valueIndex + 1, meanX);
-        mapValue.putDouble(valueIndex + 2, sumXY);
-        mapValue.addLong(valueIndex + 3, 1L);
-    }
-
     @Override
     public String getSignature() {
         return "covar_samp(DD)";

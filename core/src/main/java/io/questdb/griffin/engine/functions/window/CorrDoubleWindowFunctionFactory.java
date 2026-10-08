@@ -26,34 +26,6 @@ package io.questdb.griffin.engine.functions.window;
 
 public class CorrDoubleWindowFunctionFactory extends AbstractBivariateStatWindowFunctionFactory {
 
-    /**
-     * Not called yet: the NULL wrappers of {@code corr(DOUBLE, DOUBLE)} will call it.
-     */
-    public static double value(double sum, double delta) {
-        return AbstractBivariateStatWindowFunctionFactory.value(sum, delta);
-    }
-
-    /**
-     * Not called yet: the NULL wrappers of {@code corr(DOUBLE, DOUBLE)} will call it.
-     */
-    public static double accumulateProduct(double sum, double x, double y) {
-        return AbstractBivariateStatWindowFunctionFactory.accumulateProduct(sum, x, y);
-    }
-
-    /**
-     * Not called yet: the NULL wrappers of {@code corr(DOUBLE, DOUBLE)} will call it.
-     */
-    public static double advanceMean(double mean, double next, long count) {
-        return AbstractBivariateStatWindowFunctionFactory.advanceMean(mean, next, count);
-    }
-
-    /**
-     * Not called yet: the NULL wrappers of {@code corr(DOUBLE, DOUBLE)} will call it.
-     */
-    public static double advanceComoment(double comoment, double x, double meanX, double y, double oldMeanY) {
-        return AbstractBivariateStatWindowFunctionFactory.advanceComoment(comoment, x, meanX, y, oldMeanY);
-    }
-
     @Override
     public String getSignature() {
         return "corr(DD)";

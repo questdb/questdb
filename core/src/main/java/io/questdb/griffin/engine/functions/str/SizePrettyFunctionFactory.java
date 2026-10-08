@@ -35,7 +35,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
@@ -49,7 +48,8 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
     // B, KiB, MiB, GiB, TiB, PiB, EiB, ZiB (this last is out of range for a long)
     private static final char[] SCALE = {'B', 'K', 'M', 'G', 'T', 'P', 'E', 'Z'};
 
-    public static void value(CharSink<?> sink, long size) {
+    public static void toSizePretty(StringSink sink, long size) {
+        sink.clear();
         int z = Numbers.msb(size) / 10;
         long scale = 1L << z * 10; // 1024 times z (z is index in SCALE)
         float value = (float) size / scale;
@@ -58,11 +58,6 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
         if (z > 0) {
             sink.put("iB");
         }
-    }
-
-    public static void toSizePretty(StringSink sink, long size) {
-        sink.clear();
-        value(sink, size);
     }
 
     public static String toSizePretty(long size) {

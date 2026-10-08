@@ -48,12 +48,6 @@ import io.questdb.std.datetime.TimeZoneRules;
 
 public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory {
 
-    public static long value(TimestampDriver.TimestampAddMethod add, long timestamp, int stride, TimeZoneRules timeZoneRules) {
-        long offset = timeZoneRules.getOffset(timestamp);
-        long localTimestamp = add.add(timestamp + offset, stride);
-        return localTimestamp - timeZoneRules.getLocalOffset(localTimestamp);
-    }
-
     @Override
     public String getSignature() {
         return "dateadd(AINS)";
@@ -125,7 +119,9 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.LONG_NULL;
         }
-        return value(periodAddFunction, timestamp, stride, timeZoneRules);
+        long offset = timeZoneRules.getOffset(timestamp);
+        long localTimestamp = periodAddFunction.add(timestamp + offset, stride);
+        return localTimestamp - timeZoneRules.getLocalOffset(localTimestamp);
     }
 
     private static class TimestampAddConstConstVarConst extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {

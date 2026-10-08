@@ -44,14 +44,6 @@ import org.jetbrains.annotations.Nullable;
 
 public class LeftVarcharFunctionFactory implements FunctionFactory {
 
-    /**
-     * {@code length} is the text's length in characters. Undefined for invalid UTF-8: the
-     * function gives NULL there, as for a NULL operand.
-     */
-    public static void value(Utf8StringSink sink, Utf8Sequence varchar, int length, int count) {
-        Utf8s.strCpy(varchar, 0, getCharPos(length, count), sink);
-    }
-
     @Override
     public String getSignature() {
         return "left(ØI)";
@@ -118,17 +110,22 @@ public class LeftVarcharFunctionFactory implements FunctionFactory {
             sink.val("left(").val(varcharFunc).val(',').val(count).val(')');
         }
 
+        private int getCharPos(int len) {
+            return LeftVarcharFunctionFactory.getCharPos(len, count);
+        }
+
         @Nullable
         private Utf8StringSink getVarchar0(Record rec, Utf8StringSink sink) {
-            Utf8Sequence varchar = varcharFunc.getVarcharA(rec);
-            if (varchar != null) {
-                final int len = Utf8s.validateUtf8(varchar);
+            Utf8Sequence value = varcharFunc.getVarcharA(rec);
+            if (value != null) {
+                final int len = Utf8s.validateUtf8(value);
                 if (len == -1) {
                     // Invalid UTF-8.
                     return null;
                 }
+                final int charHi = getCharPos(len);
                 sink.clear();
-                value(sink, varchar, len, count);
+                Utf8s.strCpy(value, 0, charHi, sink);
                 return sink;
             }
             return null;
@@ -178,16 +175,17 @@ public class LeftVarcharFunctionFactory implements FunctionFactory {
 
         @Nullable
         private Utf8StringSink getVarchar0(Record rec, Utf8StringSink sink) {
-            final Utf8Sequence varchar = varcharFunc.getVarcharA(rec);
+            final Utf8Sequence value = varcharFunc.getVarcharA(rec);
             final int count = countFunc.getInt(rec);
-            if (varchar != null && count != Numbers.INT_NULL) {
-                final int len = Utf8s.validateUtf8(varchar);
+            if (value != null && count != Numbers.INT_NULL) {
+                final int len = Utf8s.validateUtf8(value);
                 if (len == -1) {
                     // Invalid UTF-8.
                     return null;
                 }
+                final int charHi = getCharPos(len, count);
                 sink.clear();
-                value(sink, varchar, len, count);
+                Utf8s.strCpy(value, 0, charHi, sink);
                 return sink;
             }
             return null;

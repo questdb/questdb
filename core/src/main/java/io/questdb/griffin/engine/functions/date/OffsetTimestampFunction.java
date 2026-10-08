@@ -49,7 +49,7 @@ class OffsetTimestampFunction extends TimestampFunction implements UnaryFunction
 
     @Override
     public long getTimestamp(Record rec) {
-        return ToTimezoneTimestampFunctionFactory.value(timestamp.getTimestamp(rec), offset);
+        return timestamp.getTimestamp(rec) + offset;
     }
 
     @Override

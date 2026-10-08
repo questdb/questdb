@@ -43,15 +43,6 @@ public class RoundUpDoubleFunctionFactory implements FunctionFactory {
     private static final String SYMBOL = "round_up";
     private static final String SIGNATURE = SYMBOL + "(DI)";
 
-    /**
-     * Undefined for NaN and the infinities, which the function returns unchanged before it reads
-     * the scale, and for a scale out of range, where {@link Numbers#roundUp} throws: the function
-     * gives NULL there, as for a NULL operand.
-     */
-    public static double value(double operand, int scale) throws NumericException {
-        return Numbers.roundUp(operand, scale);
-    }
-
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -97,7 +88,7 @@ public class RoundUpDoubleFunctionFactory implements FunctionFactory {
             }
 
             try {
-                return value(l, r);
+                return Numbers.roundUp(l, r);
             } catch (NumericException e) {
                 return Double.NaN;
             }

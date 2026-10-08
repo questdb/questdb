@@ -81,15 +81,6 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
     private static final String SIGNATURE = NAME + "(L)";
 
     /**
-     * The greater of the two values, as {@link #GREATER_THAN} chooses. The window functions do not
-     * call this method: their classes, shared with {@code min}, take the comparator, store a value
-     * only when it wins and order their sliding-frame deques by it.
-     */
-    public static long value(long max, long next) {
-        return next > max ? next : max;
-    }
-
-    /**
      * Returns the SQL function signature for this factory.
      *
      * @return the signature string ("max(N)")

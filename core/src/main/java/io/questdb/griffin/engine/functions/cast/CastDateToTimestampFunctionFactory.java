@@ -25,24 +25,14 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastDateToTimestampFunctionFactory implements FunctionFactory {
-
-    /**
-     * Scales a date to the timestamp unit of {@code driver}, like {@link TimestampDriver#fromDate}
-     * without its NULL test. The function tests NULL before it calls this method.
-     */
-    public static long value(TimestampDriver driver, long operand) {
-        return driver.fromMillis(operand);
-    }
 
     @Override
     public String getSignature() {
@@ -69,8 +59,8 @@ public class CastDateToTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            final long date = arg.getDate(rec);
-            return date != Numbers.LONG_NULL ? value(timestampDriver, date) : Numbers.LONG_NULL;
+            final long value = arg.getDate(rec);
+            return timestampDriver.fromDate(value);
         }
     }
 }

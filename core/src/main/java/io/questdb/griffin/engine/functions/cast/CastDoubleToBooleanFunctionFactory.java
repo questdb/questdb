@@ -34,10 +34,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastDoubleToBooleanFunctionFactory implements FunctionFactory {
-    public static boolean value(double operand) {
-        return Math.signum(operand) != 0;
-    }
-
     @Override
     public String getSignature() {
         return "cast(Dt)";
@@ -56,7 +52,7 @@ public class CastDoubleToBooleanFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             double dbl = arg.getDouble(rec);
-            return !Numbers.isNull(dbl) && value(dbl);
+            return !Numbers.isNull(dbl) && Math.signum(dbl) != 0;
         }
     }
 }

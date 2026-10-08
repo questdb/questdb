@@ -32,10 +32,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class ArgMaxCharLongGroupByFunctionFactory implements FunctionFactory {
-    public static boolean value(long maxKey, long nextKey) {
-        return nextKey > maxKey;
-    }
-
     @Override
     public String getSignature() {
         return "arg_max(AL)";

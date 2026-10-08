@@ -38,10 +38,6 @@ public class AcosDoubleFunctionFactory implements FunctionFactory {
 
     private static final String SYMBOL = "acos";
 
-    public static double value(double operand) {
-        return StrictMath.acos(operand);
-    }
-
     @Override
     public String getSignature() {
         return SYMBOL + "(D)";
@@ -71,7 +67,7 @@ public class AcosDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            return value(x.getDouble(rec));
+            return StrictMath.acos(x.getDouble(rec));
         }
 
         @Override

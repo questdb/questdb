@@ -37,10 +37,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class NegLongFunctionFactory implements FunctionFactory {
-    public static long value(long operand) {
-        return -operand;
-    }
-
     @Override
     public String getSignature() {
         return "-(L)";
@@ -65,8 +61,8 @@ public class NegLongFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            final long val = arg.getLong(rec);
-            return val != Numbers.LONG_NULL ? value(val) : Numbers.LONG_NULL;
+            final long value = arg.getLong(rec);
+            return value != Numbers.LONG_NULL ? -value : Numbers.LONG_NULL;
         }
 
         @Override

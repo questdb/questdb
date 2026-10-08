@@ -86,7 +86,7 @@ public class ArgMaxVarcharTimestampGroupByFunction extends VarcharFunction imple
             return;
         }
         long maxKey = mapValue.getLong(valueIndex);
-        if (maxKey == Numbers.LONG_NULL || ArgMaxVarcharTimestampGroupByFunctionFactory.value(maxKey, nextKey)) {
+        if (maxKey == Numbers.LONG_NULL || nextKey > maxKey) {
             mapValue.putLong(valueIndex, nextKey);
             final Utf8Sequence val = valueArg.getVarcharA(record);
             if (val == null) {
@@ -170,7 +170,7 @@ public class ArgMaxVarcharTimestampGroupByFunction extends VarcharFunction imple
             return;
         }
         long destMaxKey = destValue.getLong(valueIndex);
-        if (destMaxKey == Numbers.LONG_NULL || ArgMaxVarcharTimestampGroupByFunctionFactory.value(destMaxKey, srcMaxKey)) {
+        if (destMaxKey == Numbers.LONG_NULL || srcMaxKey > destMaxKey) {
             destValue.putLong(valueIndex, srcMaxKey);
             destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
             destValue.putBool(valueIndex + 2, srcValue.getBool(valueIndex + 2));

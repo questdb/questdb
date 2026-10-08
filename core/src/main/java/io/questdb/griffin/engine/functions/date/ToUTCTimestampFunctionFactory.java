@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -50,22 +49,6 @@ import org.jetbrains.annotations.NotNull;
 
 public class ToUTCTimestampFunctionFactory implements FunctionFactory {
     public static final String NAME = "to_utc";
-
-    public static long value(long timestamp, long tzOffset) {
-        return timestamp - tzOffset;
-    }
-
-    public static long value(TimeZoneRules tzRules, long timestamp) {
-        return timestamp - tzRules.getLocalOffset(timestamp);
-    }
-
-    /**
-     * Throws {@link NumericException} for a timezone the locale does not know: the function
-     * returns the timestamp unchanged there.
-     */
-    public static long value(TimestampDriver driver, long timestamp, CharSequence timezone) throws NumericException {
-        return driver.toUTC(timestamp, DateLocaleFactory.EN_LOCALE, timezone);
-    }
 
     @Override
     public String getSignature() {
@@ -150,7 +133,9 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            return value(tzRules, timestampFunc.getTimestamp(rec));
+            final long timestamp = timestampFunc.getTimestamp(rec);
+            final long offset = tzRules.getLocalOffset(timestamp);
+            return timestamp - offset;
         }
 
         @Override
@@ -194,7 +179,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
             final long timestampValue = timestampFunc.getTimestamp(rec);
             try {
                 final CharSequence tz = timezoneFunc.getStrA(rec);
-                return tz != null ? value(timestampDriver, timestampValue, tz) : timestampValue;
+                return tz != null ? timestampDriver.toUTC(timestampValue, DateLocaleFactory.EN_LOCALE, tz) : timestampValue;
             } catch (NumericException e) {
                 return timestampValue;
             }
@@ -234,9 +219,10 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             final long timestamp = timestampFunc.getTimestamp(rec);
             if (tzRules != null) {
-                return value(tzRules, timestamp);
+                final long offset = tzRules.getLocalOffset(timestamp);
+                return timestamp - offset;
             }
-            return value(timestamp, tzOffset);
+            return timestamp - tzOffset;
         }
 
         @Override

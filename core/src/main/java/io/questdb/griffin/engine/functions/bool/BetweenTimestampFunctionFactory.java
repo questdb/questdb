@@ -43,10 +43,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class BetweenTimestampFunctionFactory implements FunctionFactory {
-    public static boolean value(long timestamp, long from, long to) {
-        return Math.min(from, to) <= timestamp && timestamp <= Math.max(from, to);
-    }
-
     @Override
     public String getSignature() {
         return "between(NNN)";
@@ -75,7 +71,15 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
                 // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
                 throw PhysicalDescriptor.noFamilyArm(driver.getTypeName(), "between");
             }
-            return newRawTimestampFunction(arg, fromFn, toFn, fromType, toType);
+            if (fromFn.isConstant() && toFn.isConstant()) {
+                long fromFnTimestamp = fromFn.getTimestamp(null);
+                long toFnTimestamp = toFn.getTimestamp(null);
+                if (fromFnTimestamp == Numbers.LONG_NULL || toFnTimestamp == Numbers.LONG_NULL) {
+                    return BooleanConstant.FALSE;
+                }
+                return new ConstFunc(arg, fromFnTimestamp, toFnTimestamp);
+            }
+            return new VarBetweenFunction(arg, fromFn, toFn, null, fromType, toType);
         }
 
 
@@ -103,19 +107,6 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    // the operand is compared as it reads through getTimestamp, with no conversion
-    private static Function newRawTimestampFunction(Function arg, Function fromFn, Function toFn, int fromType, int toType) {
-        if (fromFn.isConstant() && toFn.isConstant()) {
-            long fromFnTimestamp = fromFn.getTimestamp(null);
-            long toFnTimestamp = toFn.getTimestamp(null);
-            if (fromFnTimestamp == Numbers.LONG_NULL || toFnTimestamp == Numbers.LONG_NULL) {
-                return BooleanConstant.FALSE;
-            }
-            return new ConstFunc(arg, fromFnTimestamp, toFnTimestamp);
-        }
-        return new VarBetweenFunction(arg, fromFn, toFn, null, fromType, toType);
-    }
-
     private static class BothConvertFunction extends VarBetweenFunction {
         public BothConvertFunction(Function left, Function from, Function to, TimestampDriver driver, int fromType, int toType) {
             super(left, from, to, driver, fromType, toType);
@@ -123,8 +114,8 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long timestamp = arg.getTimestamp(rec);
-            if (timestamp == Numbers.LONG_NULL) {
+            long value = arg.getTimestamp(rec);
+            if (value == Numbers.LONG_NULL) {
                 return false;
             }
             long fromTs = driver.from(from.getTimestamp(rec), fromType);
@@ -137,7 +128,7 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
                 return false;
             }
 
-            return value(timestamp, fromTs, toTs);
+            return Math.min(fromTs, toTs) <= value && value <= Math.max(fromTs, toTs);
         }
     }
 
@@ -178,8 +169,8 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long timestamp = arg.getTimestamp(rec);
-            if (timestamp == Numbers.LONG_NULL) {
+            long value = arg.getTimestamp(rec);
+            if (value == Numbers.LONG_NULL) {
                 return false;
             }
             long fromTs = driver.from(from.getTimestamp(rec), fromType);
@@ -192,7 +183,7 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
                 return false;
             }
 
-            return value(timestamp, fromTs, toTs);
+            return Math.min(fromTs, toTs) <= value && value <= Math.max(fromTs, toTs);
         }
     }
 
@@ -203,8 +194,8 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long timestamp = arg.getTimestamp(rec);
-            if (timestamp == Numbers.LONG_NULL) {
+            long value = arg.getTimestamp(rec);
+            if (value == Numbers.LONG_NULL) {
                 return false;
             }
             long fromTs = from.getTimestamp(rec);
@@ -217,7 +208,7 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
                 return false;
             }
 
-            return value(timestamp, fromTs, toTs);
+            return Math.min(fromTs, toTs) <= value && value <= Math.max(fromTs, toTs);
         }
     }
 
@@ -240,8 +231,8 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long timestamp = arg.getTimestamp(rec);
-            if (timestamp == Numbers.LONG_NULL) {
+            long value = arg.getTimestamp(rec);
+            if (value == Numbers.LONG_NULL) {
                 return false;
             }
 
@@ -255,7 +246,7 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
                 return false;
             }
 
-            return value(timestamp, fromTs, toTs);
+            return Math.min(fromTs, toTs) <= value && value <= Math.max(fromTs, toTs);
         }
 
         @Override

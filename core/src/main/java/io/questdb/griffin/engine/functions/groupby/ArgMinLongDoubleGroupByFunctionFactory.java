@@ -32,15 +32,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class ArgMinLongDoubleGroupByFunctionFactory implements FunctionFactory {
-    /**
-     * Whether {@code nextKey} orders before {@code minKey}: NaN orders after every other value, and
-     * -0.0 equals 0.0, so the first key seen stays. {@code ArgMinLongDoubleGroupByFunction} does
-     * not call this method: it skips NULL keys first, and the NaN test here would cost every row.
-     */
-    public static boolean value(double minKey, double nextKey) {
-        return nextKey < minKey || (Double.isNaN(minKey) && !Double.isNaN(nextKey));
-    }
-
     @Override
     public String getSignature() {
         return "arg_min(LD)";

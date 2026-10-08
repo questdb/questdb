@@ -32,14 +32,14 @@ public class FinanceUtils {
         if (Numbers.isNull(bid) || Numbers.isNull(ask)) {
             return Double.NaN;
         }
-        return MidPriceFunctionFactory.value(bid, ask);
+        return ((ask + bid) / 2.0);
     }
 
     public static double spread(double bid, double ask) {
         if (Numbers.isNull(bid) || Numbers.isNull(ask)) {
             return Double.NaN;
         } else {
-            return SpreadFunctionFactory.value(bid, ask);
+            return (ask - bid);
         }
     }
 

@@ -36,10 +36,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class NegDoubleFunctionFactory implements FunctionFactory {
-    public static double value(double operand) {
-        return -operand;
-    }
-
     @Override
     public String getSignature() {
         return "-(D)";
@@ -64,7 +60,7 @@ public class NegDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            return value(arg.getDouble(rec));
+            return -arg.getDouble(rec);
         }
 
         @Override

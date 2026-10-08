@@ -39,10 +39,6 @@ public class DegreesDoubleFunctionFactory implements FunctionFactory {
 
     public static final String SYMBOL = "degrees";
 
-    public static double value(double operand) {
-        return Math.toDegrees(operand);
-    }
-
     @Override
     public String getSignature() {
         return SYMBOL + "(D)";
@@ -57,7 +53,7 @@ public class DegreesDoubleFunctionFactory implements FunctionFactory {
     ) {
         Function angleRad = args.getQuick(0);
         if (angleRad.isConstant()) {
-            return new DoubleConstant(value(angleRad.getDouble(null)));
+            return new DoubleConstant(Math.toDegrees(angleRad.getDouble(null)));
         }
         return new FromRadians(args.getQuick(0));
     }
@@ -76,7 +72,7 @@ public class DegreesDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            return value(function.getDouble(rec));
+            return Math.toDegrees(function.getDouble(rec));
         }
 
         @Override
