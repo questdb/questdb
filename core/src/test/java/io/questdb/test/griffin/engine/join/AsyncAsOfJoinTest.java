@@ -402,6 +402,36 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSmallMasterAutoChoice() throws Exception {
+        // a master small against the slave by the rows its intervals select keeps a serial plan, the
+        // slave filtered on its key or not; the same master without the interval takes the parallel join
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, ctx) -> {
+                        engine.execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        engine.execute("INSERT INTO quotes SELECT '2024-01-01'::timestamp + x * 100_000L, 's' || (x % 20000), x FROM long_sequence(200000)", ctx);
+                        engine.execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        engine.execute("INSERT INTO trades SELECT '2024-01-01'::timestamp + x * 100_000L + 1, 's' || (x % 20000), x FROM long_sequence(200000)", ctx);
+                        for (String slave : new String[]{"quotes q", "(SELECT * FROM quotes WHERE sym != 's5') q"}) {
+                            final String join = "SELECT t.ts, t.sym, q.bid FROM trades t ASOF JOIN " + slave + " ON (sym)";
+                            assertParallel(engine, ctx, join + " WHERE t.ts IN '2024-01-01T03:00:00.000001'", false);
+                            // a minute (0.3% of the slave) is small, an hour (18%) is not
+                            assertParallel(engine, ctx, join + " WHERE t.ts IN '2024-01-01T03:00'", false);
+                            assertParallel(engine, ctx, join + " WHERE t.ts IN '2024-01-01T03'", true);
+                            assertParallel(engine, ctx, join, true);
+                            // the hint still applies
+                            assertParallel(engine, ctx, join.replace("SELECT", "SELECT /*+ asof_parallel(t q) */") + " WHERE t.ts IN '2024-01-01T03:00:00.000001'", true);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testMixedTimestampTypes() throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4);

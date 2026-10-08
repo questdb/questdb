@@ -533,6 +533,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> sumConstructors = new IntObjHashMap<>();
     public static boolean ALLOW_FUNCTION_MEMOIZATION = true;
     private final ArrayColumnTypes arrayColumnTypes = new ArrayColumnTypes();
+    // the plan-time row estimates of the ASOF JOIN being compiled, each read once
+    private final AsOfJoinRowEstimates asOfJoinRowEstimates = new AsOfJoinRowEstimates();
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final CairoConfiguration configuration;
     private final boolean enableJitDebug;
@@ -779,6 +781,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             whereClauseParsers.remove(MAX_RETAINED_WHERE_CLAUSE_PARSERS, whereClauseParsers.size() - 1);
         }
         whereClauseParserDepth = 0;
+        // drop the references to the factories of the last ASOF JOIN compiled
+        asOfJoinRowEstimates.of(null, null, null);
         groupByBaseModel = null;
         symbolEstimator.clear();
         intListPool.clear();
@@ -6893,11 +6897,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // algorithm picked for its old size. The rows are the same either way.
     private @Nullable String asOfAutoSmallMasterReason(
             IQueryModel model,
-            RecordCursorFactory master,
-            RecordCursorFactory slave,
             RecordMetadata slaveMetadata,
-            int slaveSymbolColumnIndex,
-            SqlExecutionContext executionContext
+            int slaveSymbolColumnIndex
     ) {
         if (!configuration.isSqlAsOfAutoAlgoEnabled()) {
             return null;
@@ -6909,10 +6910,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final int bp;
         if (isSlaveIndexed) {
             // a slave written as a subquery is a projection over its table
-            slaveN = estimateRowCount(slave, executionContext);
+            slaveN = asOfJoinRowEstimates.getSlaveRows();
             // The index path costs one lookup per master row, so it is sized by the
             // rows the master returns: the rows its intervals select, not its table.
-            effMaster = capByLimit(estimateRowCount(master, executionContext), masterLimit);
+            effMaster = capByLimit(asOfJoinRowEstimates.getMasterRows(), masterLimit);
             bp = IndexType.isPosting(slaveMetadata.getColumnIndexType(slaveSymbolColumnIndex))
                     ? configuration.getSqlAsOfIndexPostingMaxMasterBp()
                     : configuration.getSqlAsOfIndexMaxMasterBp();
@@ -6921,14 +6922,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // depends on how far back each key's predecessor lies, not on the master row
             // count alone, and a time-sliced or symbol-filtered master is where it loses
             // to Dense.
-            slaveN = estimateBaseRowCount(slave, executionContext);
-            effMaster = capByLimit(estimateBaseRowCount(master, executionContext), masterLimit);
+            slaveN = asOfJoinRowEstimates.getSlaveTableRows();
+            effMaster = capByLimit(asOfJoinRowEstimates.getMasterTableRows(), masterLimit);
             bp = configuration.getSqlAsOfIndexMaxMasterBp();
         }
         if (slaveN > 0 && effMaster >= 0 && effMaster * 10000L <= slaveN * (long) bp) {
             return "auto:master~" + effMaster + " slave~" + slaveN + " bp<=" + bp;
         }
         return null;
+    }
+
+    // The automatic choice of Async AsOf Join declines a master that is small against the slave:
+    // its per-open setup and per-frame prevailing lookups are not repaid, and the serial plans read
+    // only the slave rows near the master's. Sized by the rows the master's intervals select (an
+    // interval-pruned master over a big table is small) against the slave's rows, with the #7423
+    // threshold of the unindexed slave; filtered slaves included (the slave's table rows bound it).
+    private boolean isParallelAsOfMasterSmall(IQueryModel model) {
+        final long masterLimit = masterLimitOrMinus1(model.getJoinModels().getQuick(0));
+        final long effMaster = capByLimit(asOfJoinRowEstimates.getMasterRows(), masterLimit);
+        final long slaveN = asOfJoinRowEstimates.getSlaveRows();
+        return slaveN > 0 && effMaster >= 0 && effMaster * 10000L <= slaveN * (long) configuration.getSqlAsOfIndexMaxMasterBp();
     }
 
     // A keyed ASOF JOIN on one SYMBOL column whose master gives page frames (a table scan, possibly
@@ -7034,8 +7047,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // one worker: the per-frame span setup and prevailing lookups are not repaid
                 return null;
             }
-            if (!isSlaveSteal && asOfAutoSmallMasterReason(model, master, slave, slaveMetadata, slaveKeyIndex, executionContext) != null) {
+            if (!isSlaveSteal && asOfAutoSmallMasterReason(model, slaveMetadata, slaveKeyIndex) != null) {
                 // a confidently small master: the index or memoized scan
+                return null;
+            }
+            if (isParallelAsOfMasterSmall(model)) {
+                // a master small against the slave, by the rows its intervals select, whatever the
+                // slave's filter: the serial plan, which reads only the slave rows near the master's
                 return null;
             }
             selectReason = "auto";
@@ -7172,6 +7190,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int joinColumnSplit = masterMetadata.getColumnCount();
                 JoinContext slaveContext = slaveModel.getJoinContext();
                 if (!hasLinearHint) {
+                    asOfJoinRowEstimates.of(master, slave, executionContext);
                     final RecordCursorFactory parallelJoin = generateParallelAsOfJoin(
                             model,
                             master,
@@ -7287,7 +7306,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // indexed (O(master lookups) vs Dense O(slave scan)), otherwise memoized (fast on
                             // sparse/illiquid symbols, dense-ts-cliff guarded). Unknown estimate -> fall
                             // through to Dense (do no harm).
-                            final String autoSmallMaster = asOfAutoSmallMasterReason(model, master, slave, slaveMetadata, slaveSymbolColumnIndex, executionContext);
+                            final String autoSmallMaster = asOfAutoSmallMasterReason(model, slaveMetadata, slaveSymbolColumnIndex);
                             if (autoSmallMaster != null) {
                                 if (slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex)) {
                                     return new AsOfJoinIndexedRecordCursorFactory(
@@ -19166,6 +19185,62 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     @FunctionalInterface
     interface ModelOperator {
         void operate(ObjectPool<ExpressionNode> pool, IQueryModel model);
+    }
+
+    /**
+     * The plan-time row estimates of an ASOF JOIN's two sides (see {@link #estimateRowCount} and
+     * {@link #estimateBaseRowCount}), each computed on first use and kept for the join being
+     * compiled: the parallel choice and the serial #7423 choice read the same estimates, which
+     * open table readers to count rows.
+     */
+    private class AsOfJoinRowEstimates {
+        private static final long UNKNOWN = Long.MIN_VALUE;
+        private SqlExecutionContext executionContext;
+        private RecordCursorFactory master;
+        private long masterRows;
+        private long masterTableRows;
+        private RecordCursorFactory slave;
+        private long slaveRows;
+        private long slaveTableRows;
+
+        // the rows the master returns: the rows its intervals select, else its table's
+        long getMasterRows() {
+            if (masterRows == UNKNOWN) {
+                masterRows = estimateRowCount(master, executionContext);
+            }
+            return masterRows;
+        }
+
+        long getMasterTableRows() {
+            if (masterTableRows == UNKNOWN) {
+                masterTableRows = estimateBaseRowCount(master, executionContext);
+            }
+            return masterTableRows;
+        }
+
+        long getSlaveRows() {
+            if (slaveRows == UNKNOWN) {
+                slaveRows = estimateRowCount(slave, executionContext);
+            }
+            return slaveRows;
+        }
+
+        long getSlaveTableRows() {
+            if (slaveTableRows == UNKNOWN) {
+                slaveTableRows = estimateBaseRowCount(slave, executionContext);
+            }
+            return slaveTableRows;
+        }
+
+        void of(RecordCursorFactory master, RecordCursorFactory slave, SqlExecutionContext executionContext) {
+            this.master = master;
+            this.slave = slave;
+            this.executionContext = executionContext;
+            masterRows = UNKNOWN;
+            masterTableRows = UNKNOWN;
+            slaveRows = UNKNOWN;
+            slaveTableRows = UNKNOWN;
+        }
     }
 
     /**
