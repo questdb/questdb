@@ -52,6 +52,9 @@ public class MultiApproxPercentileLongGroupByDefaultFunctionFactory implements F
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
+        if (configuration.isSqlParallelApproxPercentileEnabled()) {
+            return new MultiApproxPercentileLongPagedGroupByFunction(args.getQuick(0), args.getQuick(1), DEFAULT_PRECISION, argPositions.getQuick(1));
+        }
         return new MultiApproxPercentileLongGroupByFunction(args.getQuick(0), args.getQuick(1), DEFAULT_PRECISION, argPositions.getQuick(1));
     }
 }

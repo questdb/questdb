@@ -1950,8 +1950,23 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlDistinctGroupByKeyPruningEnabled() {
+        return getDelegate().isSqlDistinctGroupByKeyPruningEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelApproxPercentileEnabled() {
+        return getDelegate().isSqlParallelApproxPercentileEnabled();
+    }
+
+    @Override
     public boolean isSqlParallelGroupByEnabled() {
         return getDelegate().isSqlParallelGroupByEnabled();
+    }
+
+    @Override
+    public boolean isSqlPivotFuseSourceEnabled() {
+        return getDelegate().isSqlPivotFuseSourceEnabled();
     }
 
     @Override

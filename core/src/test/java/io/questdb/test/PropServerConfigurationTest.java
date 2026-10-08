@@ -326,6 +326,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(16_384, configuration.getCairoConfiguration().getSqlParallelWindowPrefixRows());
         Assert.assertEquals(2_097_152, configuration.getCairoConfiguration().getSqlParallelWindowRoundRows());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelGroupByEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelApproxPercentileEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlPivotFuseSourceEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlDistinctGroupByKeyPruningEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelHashJoinGroupByEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelHashJoinProbeEnabled());
         Assert.assertEquals(256 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByRightJoinMaxBuildSize());
@@ -3407,6 +3410,9 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isSqlParallelWindowShardEnabled());
         Assert.assertEquals(4096, configuration.getSqlParallelWindowPrefixRows());
         Assert.assertFalse(configuration.isSqlParallelGroupByEnabled());
+        Assert.assertFalse(configuration.isSqlParallelApproxPercentileEnabled());
+        Assert.assertFalse(configuration.isSqlPivotFuseSourceEnabled());
+        Assert.assertFalse(configuration.isSqlDistinctGroupByKeyPruningEnabled());
         Assert.assertFalse(configuration.isSqlParallelReadParquetEnabled());
         Assert.assertEquals(128L * Numbers.SIZE_1MB, configuration.getSqlParquetCacheMemorySize());
         Assert.assertFalse(configuration.isSqlOrderBySortEnabled());

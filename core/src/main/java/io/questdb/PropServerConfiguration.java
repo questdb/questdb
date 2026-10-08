@@ -611,6 +611,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlParquetCacheMemorySize;
     private final boolean sqlParquetRowGroupPruningEnabled;
     private final int sqlPivotForColumnPoolCapacity;
+    private final boolean sqlDistinctGroupByKeyPruningEnabled;
+    private final boolean sqlParallelApproxPercentileEnabled;
+    private final boolean sqlPivotFuseSourceEnabled;
     private final int sqlPivotMaxProducedColumns;
     private final int sqlQueryRegistryPoolSize;
     private final int sqlRenameTableModelPoolCapacity;
@@ -1777,6 +1780,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlWindowColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY, sqlWindowColumnPoolCapacity);
             this.sqlPivotForColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_PIVOT_COLUMN_POOL_CAPACITY, 8);
             this.sqlPivotMaxProducedColumns = getInt(properties, env, PropertyKey.CAIRO_SQL_PIVOT_MAX_PRODUCED_COLUMNS, 5_000);
+            this.sqlPivotFuseSourceEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PIVOT_FUSE_SOURCE_ENABLED, true);
+            this.sqlDistinctGroupByKeyPruningEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_DISTINCT_GROUPBY_KEY_PRUNING_ENABLED, true);
+            this.sqlParallelApproxPercentileEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_APPROX_PERCENTILE_ENABLED, true);
             this.sqlCreateTableModelBatchSize = getLong(properties, env, PropertyKey.CAIRO_SQL_CREATE_TABLE_MODEL_BATCH_SIZE, 1_000_000);
             this.sqlCreateTableColumnModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_CREATE_TABLE_COLUMN_MODEL_POOL_CAPACITY, 16);
             this.sqlRenameTableModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY, 16);
@@ -6013,8 +6019,23 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isSqlDistinctGroupByKeyPruningEnabled() {
+            return sqlDistinctGroupByKeyPruningEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelApproxPercentileEnabled() {
+            return sqlParallelApproxPercentileEnabled;
+        }
+
+        @Override
         public boolean isSqlParallelGroupByEnabled() {
             return sqlParallelGroupByEnabled;
+        }
+
+        @Override
+        public boolean isSqlPivotFuseSourceEnabled() {
+            return sqlPivotFuseSourceEnabled;
         }
 
         @Override

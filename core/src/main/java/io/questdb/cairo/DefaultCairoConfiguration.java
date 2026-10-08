@@ -1930,7 +1930,22 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlDistinctGroupByKeyPruningEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelApproxPercentileEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlParallelGroupByEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlPivotFuseSourceEnabled() {
         return true;
     }
 
