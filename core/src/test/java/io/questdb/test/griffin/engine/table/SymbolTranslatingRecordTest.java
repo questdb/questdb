@@ -40,6 +40,8 @@ import io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCursorFact
 import io.questdb.griffin.engine.join.HashOuterJoinFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom;
+import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
@@ -78,8 +80,13 @@ import java.util.Collection;
  * in pages rather than in a hash map, so the caches must take much less memory than hash maps
  * with the same entries.
  * <p>
- * The caches are the only execution-time user of {@link MemoryTag#NATIVE_JOIN_MAP}, so the
- * tag's counter measures them precisely.
+ * The caches are the only execution-time user of {@link MemoryTag#NATIVE_JOIN_MAP} in these
+ * joins, so the tag's counter measures them precisely.
+ * <p>
+ * When enabled, {@link AsyncHashJoinGroupByRecordCursorFactory} takes the INNER, LEFT and RIGHT
+ * hash join aggregates, so the hash join tests switch it off. It translates SYMBOL keys through
+ * a cache of its own, one INT per probe symbol key whatever the capacity above, and keeps its
+ * hash table under the same tag, so its test counts the hash table's bytes next to the cache's.
  */
 @RunWith(Parameterized.class)
 public class SymbolTranslatingRecordTest extends AbstractCairoTest {
@@ -110,6 +117,49 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
         if (isCacheCapped) {
             setProperty(PropertyKey.CAIRO_SQL_JOIN_SYMBOL_TRANSLATION_CACHE_CAPACITY, CAPPED_CACHE_CAPACITY);
         }
+    }
+
+    @Test
+    public void testAsyncHashJoinGroupByReleasesCacheOnCursorClose() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables(engine, sqlExecutionContext);
+            final boolean isHashJoinGroupByEnabled = sqlExecutionContext.isParallelHashJoinGroupByEnabled();
+            sqlExecutionContext.setParallelHashJoinGroupByEnabled(true);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                // INNER and LEFT joins probe the master table, whose sym column holds 20,000 symbols.
+                assertFusedCacheReleased(
+                        compiler,
+                        "SELECT count(), count(s.price), sum(s.price) FROM master m JOIN slave s ON (sym)",
+                        """
+                                count\tcount1\tsum
+                                10000\t10000\t4.9995E7
+                                """,
+                        MASTER_SYMBOL_COUNT
+                );
+                assertFusedCacheReleased(
+                        compiler,
+                        "SELECT count(), count(s.price), sum(s.price) FROM master m LEFT JOIN slave s ON (sym)",
+                        """
+                                count\tcount1\tsum
+                                20000\t10000\t4.9995E7
+                                """,
+                        MASTER_SYMBOL_COUNT
+                );
+                // A RIGHT join swaps the inputs and probes the slave table, whose sym column holds 10,000 symbols.
+                // FULL joins stay on the hash join factories, which testHashJoinsReleaseCachesOnCursorClose() covers.
+                assertFusedCacheReleased(
+                        compiler,
+                        "SELECT count(), count(m.val), sum(s.price) FROM master m RIGHT JOIN slave s ON (sym)",
+                        """
+                                count\tcount1\tsum
+                                10000\t10000\t4.9995E7
+                                """,
+                        SLAVE_SYMBOL_COUNT
+                );
+            } finally {
+                sqlExecutionContext.setParallelHashJoinGroupByEnabled(isHashJoinGroupByEnabled);
+            }
+        });
     }
 
     @Test
@@ -420,74 +470,124 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
         }
     }
 
+    // probeSymbolCount is the size of the probe input's symbol dictionary, which sizes the fused factory's cache
+    private void assertFusedCacheReleased(
+            SqlCompiler compiler,
+            String query,
+            String expected,
+            int probeSymbolCount
+    ) throws Exception {
+        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            AsyncHashJoinGroupByAtom atom = null;
+            for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+                if (f instanceof AsyncHashJoinGroupByRecordCursorFactory fused) {
+                    atom = fused.getAtom();
+                }
+            }
+            // guards against a silent reroute to a factory that the test does not target
+            Assert.assertNotNull("expected AsyncHashJoinGroupByRecordCursorFactory in the factory tree: " + query, atom);
+            final long cacheSize = (long) probeSymbolCount * Integer.BYTES;
+            final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP);
+            // The second execution checks that the closed cache reopens.
+            for (int i = 0; i < 2; i++) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    // getCursor() runs the build and then opens the cache. The probe starts on the first
+                    // hasNext() and may copy the build's payload under the same tag, so the counter holds
+                    // exactly the build and the cache here.
+                    Assert.assertEquals(
+                            query,
+                            atom.getFrozenBuild().getSizeInBytes() + cacheSize,
+                            Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP) - baseline
+                    );
+                    // a scalar aggregate returns one row
+                    Assert.assertTrue(query, cursor.hasNext());
+                    Assert.assertFalse(query, cursor.hasNext());
+                }
+                Assert.assertEquals(query, baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP));
+            }
+            // the reopened cache translates the probe keys as the first one did
+            assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns(expected);
+            Assert.assertEquals(query, baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP));
+        }
+    }
+
     private void assertHashJoins(
             SqlCompiler compiler,
             Class<? extends RecordCursorFactory> innerJoinFactory,
             Class<? extends RecordCursorFactory> outerJoinFactory,
             Class<? extends RecordCursorFactory> filteredOuterJoinFactory
     ) throws Exception {
-        // INNER JOIN: only the master symbols present in the slave table match
-        assertCachesReleased(
-                compiler,
-                sqlExecutionContext,
-                "SELECT count(), count(s.price), sum(s.price) FROM master m JOIN slave s ON (sym)",
-                """
-                        count\tcount1\tsum
-                        10000\t10000\t4.9995E7
-                        """,
-                innerJoinFactory
-        );
-        assertCachesReleased(
-                compiler,
-                sqlExecutionContext,
-                "SELECT count(), count(s.price), sum(s.price) FROM master m LEFT JOIN slave s ON (sym)",
-                """
-                        count\tcount1\tsum
-                        20000\t10000\t4.9995E7
-                        """,
-                outerJoinFactory
-        );
-        assertCachesReleased(
-                compiler,
-                sqlExecutionContext,
-                "SELECT count(), count(m.val), sum(s.price) FROM master m RIGHT JOIN slave s ON (sym)",
-                """
-                        count\tcount1\tsum
-                        10000\t10000\t4.9995E7
-                        """,
-                outerJoinFactory
-        );
-        assertCachesReleased(
-                compiler,
-                sqlExecutionContext,
-                "SELECT count(), count(s.price), sum(s.price) FROM master m FULL JOIN slave s ON (sym)",
-                """
-                        count\tcount1\tsum
-                        20000\t10000\t4.9995E7
-                        """,
-                outerJoinFactory
-        );
-        // extra join condition routes to the filtered hash outer join factories
-        assertCachesReleased(
-                compiler,
-                sqlExecutionContext,
-                "SELECT count(), count(s.price), sum(s.price) FROM master m LEFT JOIN slave s ON m.sym = s.sym AND s.price < m.val",
-                """
-                        count\tcount1\tsum
-                        20000\t10000\t4.9995E7
-                        """,
-                filteredOuterJoinFactory
-        );
-        assertCachesReleased(
-                compiler,
-                sqlExecutionContext,
-                "SELECT count(), count(s.price), sum(s.price) FROM master m FULL JOIN slave s ON m.sym = s.sym AND s.price < m.val",
-                """
-                        count\tcount1\tsum
-                        20000\t10000\t4.9995E7
-                        """,
-                filteredOuterJoinFactory
-        );
+        // The fused hash join GROUP BY factory takes the INNER, LEFT and RIGHT aggregates below when it is
+        // enabled, so the test switches it off to keep the hash join factories whose caches it measures.
+        // testAsyncHashJoinGroupByReleasesCacheOnCursorClose() covers the fused factory.
+        final boolean isHashJoinGroupByEnabled = sqlExecutionContext.isParallelHashJoinGroupByEnabled();
+        sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
+        try {
+            // INNER JOIN: only the master symbols present in the slave table match
+            assertCachesReleased(
+                    compiler,
+                    sqlExecutionContext,
+                    "SELECT count(), count(s.price), sum(s.price) FROM master m JOIN slave s ON (sym)",
+                    """
+                            count\tcount1\tsum
+                            10000\t10000\t4.9995E7
+                            """,
+                    innerJoinFactory
+            );
+            assertCachesReleased(
+                    compiler,
+                    sqlExecutionContext,
+                    "SELECT count(), count(s.price), sum(s.price) FROM master m LEFT JOIN slave s ON (sym)",
+                    """
+                            count\tcount1\tsum
+                            20000\t10000\t4.9995E7
+                            """,
+                    outerJoinFactory
+            );
+            assertCachesReleased(
+                    compiler,
+                    sqlExecutionContext,
+                    "SELECT count(), count(m.val), sum(s.price) FROM master m RIGHT JOIN slave s ON (sym)",
+                    """
+                            count\tcount1\tsum
+                            10000\t10000\t4.9995E7
+                            """,
+                    outerJoinFactory
+            );
+            assertCachesReleased(
+                    compiler,
+                    sqlExecutionContext,
+                    "SELECT count(), count(s.price), sum(s.price) FROM master m FULL JOIN slave s ON (sym)",
+                    """
+                            count\tcount1\tsum
+                            20000\t10000\t4.9995E7
+                            """,
+                    outerJoinFactory
+            );
+            // extra join condition routes to the filtered hash outer join factories
+            assertCachesReleased(
+                    compiler,
+                    sqlExecutionContext,
+                    "SELECT count(), count(s.price), sum(s.price) FROM master m LEFT JOIN slave s ON m.sym = s.sym AND s.price < m.val",
+                    """
+                            count\tcount1\tsum
+                            20000\t10000\t4.9995E7
+                            """,
+                    filteredOuterJoinFactory
+            );
+            assertCachesReleased(
+                    compiler,
+                    sqlExecutionContext,
+                    "SELECT count(), count(s.price), sum(s.price) FROM master m FULL JOIN slave s ON m.sym = s.sym AND s.price < m.val",
+                    """
+                            count\tcount1\tsum
+                            20000\t10000\t4.9995E7
+                            """,
+                    filteredOuterJoinFactory
+            );
+        } finally {
+            sqlExecutionContext.setParallelHashJoinGroupByEnabled(isHashJoinGroupByEnabled);
+        }
     }
 
     private void assertHorizonJoins(
