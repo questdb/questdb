@@ -992,6 +992,51 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterMatViewSetExpireCheckGivesUpWhenReadStaysStale() throws Exception {
+        // The retry is bounded: when the view's version changes before every cursor open, the ALTER fails
+        // after maxRecompileAttempts retries and the current policy stays in force.
+        assertMemoryLeak(() -> {
+            createPolicedViewBase();
+            final String sql = "ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v < max(v) OVER (PARTITION BY k)";
+            final AtomicInteger checkBorrows = new AtomicInteger();
+            try {
+                alterMatViewWithStaleCheck(sql, Integer.MAX_VALUE, checkBorrows);
+                Assert.fail("the check must give up");
+            } catch (SqlException e) {
+                assertEquals(sql.indexOf("v < max"), e.getPosition());
+                TestUtils.assertEquals(
+                        "too many cached query plan cannot be used because table schema has changed [table=mv]",
+                        e.getFlyweightMessage()
+                );
+            }
+            assertEquals("two borrows per attempt", 2 * (configuration.getMaxSqlRecompileAttempts() + 1), checkBorrows.get());
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT k, v FROM mv ORDER BY k").noLeakCheck().returns("k\tv\nB\t9.0\n");
+        });
+    }
+
+    @Test
+    public void testAlterMatViewSetExpireCheckRetriesStaleRead() throws Exception {
+        // A change to the view that applies between the check's code generation and its cursor open, such as
+        // ADD INDEX or another SET EXPIRE, fails the open with TableReferenceOutOfDateException. The check
+        // runs again against the view's new version, and the ALTER succeeds.
+        assertMemoryLeak(() -> {
+            createPolicedViewBase();
+            final AtomicInteger checkBorrows = new AtomicInteger();
+            alterMatViewWithStaleCheck(
+                    "ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v < max(v) OVER (PARTITION BY k)",
+                    1,
+                    checkBorrows
+            );
+            assertEquals("a stale attempt, then a clean one", 4, checkBorrows.get());
+            drainWalAndMatViewQueues();
+            // Each key holds a single row, its own maximum, so the window policy keeps A, which the replaced
+            // policy hid.
+            assertQuery("SELECT k, v FROM mv ORDER BY k").noLeakCheck().returns("k\tv\nA\t1.0\nB\t9.0\n");
+        });
+    }
+
+    @Test
     public void testCreateMatViewRetryBuildsTheSameViewAsOnePass() throws Exception {
         // Each pass of the CREATE loop writes column metadata, indexes, partitioning and the stored SQL into
         // the same create operation, so a retry must build exactly the view a single pass builds.
@@ -3014,6 +3059,34 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             assertQuery(sql).timestamp(timestampColumn).noRandomAccess().noLeakCheck().returns(expected);
         } else {
             assertQuery(sql).noLeakCheck().returns(expected);
+        }
+    }
+
+    // Compiles and runs an ALTER ... SET EXPIRE ROWS, counting in checkBorrows the readers the policy check
+    // borrows for the view. Each attempt of the check borrows one to generate the probe's factory and one to
+    // open its cursor. The first staleOpens cursor opens fail with TableReferenceOutOfDateException, as they do
+    // when a change to the view applies between the two. The ALTER goes through compile() rather than
+    // engine.execute(), which retries that exception on its own and would hide a check that does not.
+    private static void alterMatViewWithStaleCheck(String sql, int staleOpens, AtomicInteger checkBorrows) throws Exception {
+        try (
+                SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1) {
+                    @Override
+                    public TableReader getReader(TableToken tableToken, long version) {
+                        // Only the check reads the view without its policy, so the token matches only inside it.
+                        if (tableToken.equals(getExpiryRawReadTable())) {
+                            final int borrow = checkBorrows.incrementAndGet();
+                            if (borrow % 2 == 0 && borrow / 2 <= staleOpens) {
+                                throw TableReferenceOutOfDateException.of(tableToken.getTableName());
+                            }
+                        }
+                        return super.getReader(tableToken, version);
+                    }
+                }.with(AllowAllSecurityContext.INSTANCE);
+                SqlCompiler compiler = engine.getSqlCompiler()
+        ) {
+            try (OperationFuture future = compiler.compile(sql, context).execute(context, null, false)) {
+                future.await();
+            }
         }
     }
 
