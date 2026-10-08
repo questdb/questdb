@@ -211,7 +211,7 @@ final class PartitionFrameWindowContext implements QuietCloseable {
         }
 
         private void addView(
-                int writer,
+                int columnId,
                 int type,
                 long dataAddress,
                 long dataSize,
@@ -219,7 +219,7 @@ final class PartitionFrameWindowContext implements QuietCloseable {
                 long auxSize,
                 long top
         ) {
-            views.add(writer);
+            views.add(columnId);
             views.add(type);
             views.add(dataAddress);
             views.add(dataSize);
@@ -238,9 +238,9 @@ final class PartitionFrameWindowContext implements QuietCloseable {
             views.clear();
         }
 
-        private static int findParquetColumn(ParquetDecoder decoder, int writer) {
+        private static int findParquetColumn(ParquetDecoder decoder, int columnId) {
             for (int column = 0, n = decoder.getColumnCount(); column < n; column++) {
-                if (decoder.getColumnId(column) == writer) {
+                if (decoder.getColumnId(column) == columnId) {
                     return column;
                 }
             }
@@ -266,11 +266,11 @@ final class PartitionFrameWindowContext implements QuietCloseable {
             final ColumnMapping mapping = addressCache.getColumnMapping();
             final int columnOffset = addressCache.toColumnOffset(frameIndex);
             for (long i = 0, n = requiredColumns.size(); i < n; i += 2) {
-                final int writer = requiredColumns.get(i);
+                final int columnId = requiredColumns.get(i);
                 final int type = requiredColumns.get(i + 1);
-                if (writer == mapping.getTimestampWriterIndex()) {
+                if (columnId == mapping.getTimestampWriterIndex()) {
                     addView(
-                            writer,
+                            columnId,
                             type,
                             addressCache.getDesignatedTimestampPageAddress(frameIndex),
                             addressCache.getDesignatedTimestampPageSize(frameIndex),
@@ -282,14 +282,14 @@ final class PartitionFrameWindowContext implements QuietCloseable {
                 }
                 int queryColumn = -1;
                 for (int q = 0, columnCount = mapping.getColumnCount(); q < columnCount; q++) {
-                    if (mapping.getWriterIndex(q) == writer) {
+                    if (mapping.getOriginalWriterIndex(q) == columnId) {
                         queryColumn = q;
                         break;
                     }
                 }
                 if (queryColumn >= 0) {
                     addView(
-                            writer,
+                            columnId,
                             type,
                             addressCache.getPageAddresses().get(columnOffset + queryColumn),
                             addressCache.getPageSizes().get(columnOffset + queryColumn),
@@ -328,8 +328,8 @@ final class PartitionFrameWindowContext implements QuietCloseable {
                 return;
             }
             for (long i = 0, n = requiredColumns.size(); i < n; i += 2) {
-                final int writer = requiredColumns.get(i);
-                final int parquetColumn = findParquetColumn(parquetDecoder, writer);
+                final int columnId = requiredColumns.get(i);
+                final int parquetColumn = findParquetColumn(parquetDecoder, columnId);
                 if (parquetColumn >= 0) {
                     parquetColumns.add(parquetColumn);
                     parquetColumns.add(requiredColumns.get(i + 1));
@@ -358,14 +358,13 @@ final class PartitionFrameWindowContext implements QuietCloseable {
                 throw th;
             }
             for (int slot = 0; slot < count; slot++) {
-                final int parquetColumn = parquetColumns.get(2L * slot);
-                final int writer = parquetDecoder.getColumnId(parquetColumn);
+                final int columnId = parquetDecoder.getColumnId(parquetColumns.get(2L * slot));
                 final int type = parquetColumns.get(2L * slot + 1);
                 final long dataSize = parquetBuffers.getChunkDataSize(slot);
                 final long auxSize = parquetBuffers.getChunkAuxSize(slot);
-                if (dataSize != 0 || auxSize != 0 || writer == addressCache.getColumnMapping().getTimestampWriterIndex()) {
+                if (dataSize != 0 || auxSize != 0 || columnId == addressCache.getColumnMapping().getTimestampWriterIndex()) {
                     addView(
-                            writer,
+                            columnId,
                             type,
                             parquetBuffers.getChunkDataPtr(slot),
                             dataSize,
@@ -420,17 +419,17 @@ final class PartitionFrameWindowContext implements QuietCloseable {
             Misc.free(requiredColumns);
         }
 
-        private void addRequiredColumn(int writer, int type) {
-            if (writer < 0 || type <= 0) {
+        private void addRequiredColumn(int columnId, int type) {
+            if (columnId < 0 || type <= 0) {
                 return;
             }
             final int normalizedType = normalizeType(type);
             for (long i = 0, n = requiredColumns.size(); i < n; i += 2) {
-                if (requiredColumns.get(i) == writer) {
+                if (requiredColumns.get(i) == columnId) {
                     return;
                 }
             }
-            requiredColumns.add(writer);
+            requiredColumns.add(columnId);
             requiredColumns.add(normalizedType);
         }
 
@@ -444,15 +443,15 @@ final class PartitionFrameWindowContext implements QuietCloseable {
                     columnMapping.getTimestampType()
             );
             for (long i = 2, n = requiredColumns.size(); i < n; i += 2) {
-                final int writer = requiredColumns.get(i);
+                final int columnId = requiredColumns.get(i);
                 final int type = requiredColumns.get(i + 1);
                 long j = i - 2;
-                while (j >= 0 && requiredColumns.get(j) > writer) {
+                while (j >= 0 && requiredColumns.get(j) > columnId) {
                     requiredColumns.set(j + 2, requiredColumns.get(j));
                     requiredColumns.set(j + 3, requiredColumns.get(j + 1));
                     j -= 2;
                 }
-                requiredColumns.set(j + 2, writer);
+                requiredColumns.set(j + 2, columnId);
                 requiredColumns.set(j + 3, type);
             }
         }
@@ -503,16 +502,16 @@ final class PartitionFrameWindowContext implements QuietCloseable {
                     if (primaryColumnIndexes.contains(i)) {
                         continue;
                     }
-                    final int writer = columnMapping.getWriterIndex(i);
+                    final int columnId = columnMapping.getOriginalWriterIndex(i);
                     boolean isPresent = false;
                     for (long p = remainingStart, m = candidatePairs.size(); p < m; p += 2) {
-                        if (candidatePairs.get(p) == writer) {
+                        if (candidatePairs.get(p) == columnId) {
                             isPresent = true;
                             break;
                         }
                     }
                     if (!isPresent) {
-                        candidatePairs.add(writer);
+                        candidatePairs.add(columnId);
                         candidatePairs.add(normalizeType(columnTypes.getQuick(i)));
                     }
                 }

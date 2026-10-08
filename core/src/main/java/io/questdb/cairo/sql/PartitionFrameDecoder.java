@@ -79,9 +79,10 @@ public interface PartitionFrameDecoder extends DecodeResourceReleaser, QuietClos
     /**
      * Prepare exactly one native window cursor from the fixed descriptors. Has
      * replace semantics: closes any existing cursor and opens a new one. The
-     * projection pairs are one contiguous {@code [writerIndex, columnType]}
+     * projection pairs are one contiguous {@code [columnId, columnType]}
      * array whose first {@code primaryColumnCount} entries are the primary
-     * projection and the rest the remaining projection.
+     * projection and the rest the remaining projection. Each column ID is the
+     * original writer index, preserved across type changes.
      */
     void prepareWindow(
             int windowIndex,

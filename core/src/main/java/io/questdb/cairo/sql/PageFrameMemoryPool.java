@@ -1333,7 +1333,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     private void prepareDecodeProjection(int frameIndex, @Nullable IntHashSet columnIndexes, boolean isInclude) {
-        // A custom (cold-delta) frame addresses the base by writer index and materializes through the
+        // A custom (cold-delta) frame addresses the base by stable column ID and materializes through the
         // partition frame decoder; a plain parquet frame goes through the file decoder and may carry a
         // lazy ALTER COLUMN TYPE conversion. The two never mix in one frame.
         final boolean customFrame = addressCache.getPartitionFrameState(frameIndex) != 0;
@@ -1417,10 +1417,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     private void resolveCustomFrameColumn(int i, ColumnMapping columnMapping) {
-        // Custom (cold-delta) frames address the base by writer index and decode straight to the
+        // Custom (cold-delta) frames use the original writer index as a stable column ID and decode to the
         // current column type: a delta-active partition freezes its physical type and rejects
         // ALTER COLUMN TYPE, so no lazy source->target conversion is pending here.
-        final int decoderColumn = columnMapping.getWriterIndex(i);
+        final int decoderColumn = columnMapping.getOriginalWriterIndex(i);
         if (decoderColumn < 0) {
             return;
         }
