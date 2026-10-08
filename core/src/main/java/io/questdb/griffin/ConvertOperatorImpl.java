@@ -352,6 +352,11 @@ public class ConvertOperatorImpl implements Closeable {
                                     openColumnsRW(columnName, partitionTimestamp, columnIndex, newType, pathTrimToLen);
                                     dstFixFd = this.fixedFd;
                                     dstVarFd = this.varFd;
+                                    if (tableWriter.getEffectiveCommitMode() == CommitMode.SYNC) {
+                                        // The new column files exist now. Make their names durable; the
+                                        // conversion task fsyncs their data. Both precede the ALTER's commit.
+                                        TableUtils.fsyncDirDurable(ff, path.trimTo(pathTrimToLen).$());
+                                    }
 
                                     LOG.info().$("converting column [at=").$safe(path.trimTo(pathTrimToLen))
                                             .$(", column=").$safe(columnName)

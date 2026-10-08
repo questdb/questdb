@@ -1912,6 +1912,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long partitionRowCount = getPartitionSize(partitionIndex);
             copyOrRebuildColumnIndexes(partitionTimestamp, getTxn(), partitionRowCount);
             zeroColumnTopsAfterParquetRewrite(partitionTimestamp, partitionRowCount, false);
+            fsyncConvertedPartitionDir(partitionTimestamp);
 
             columnVersionWriter.commit();
             // used to update txn and bump recordStructureVersion
@@ -2037,6 +2038,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             LOG.info().$("restoring index files after parquet decode [path=").$substr(pathRootSize, other).I$();
             restoreIndexFilesAfterParquetToNative(partitionTimestamp, partitionNameTxn, newPartitionDirLen, parquetRowCount);
+            fsyncConvertedPartitionDir(partitionTimestamp);
 
             // used to update txn and bump recordStructureVersion
             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, parquetRowCount);
@@ -8258,6 +8260,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Under SYNC, makes the partition directory that a parquet conversion has just created and filled survive
+     * a power loss before the commit that publishes it: the column, parquet and index files in it, then its
+     * own entry in the table directory. Runs after the index files are copied or restored, which is the last
+     * write into the directory. A failed barrier is a data-sync failure, as in {@link #openPartition}.
+     */
+    private void fsyncConvertedPartitionDir(long partitionTimestamp) {
+        if (effectiveCommitMode == CommitMode.SYNC) {
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
+            try {
+                fsyncPartitionDirEntries(other, other.size());
+            } catch (CairoException e) {
+                if (e.isDataSyncFailure()) {
+                    distressed = true;
+                    engine.handleDataSyncFailure(e);
+                }
+                throw e;
+            }
+        }
+    }
+
+    /**
      * Makes the partition that {@link #openPartition} has just opened survive a power loss under SYNC, before a
      * commit publishes it: the column and index files in the partition directory, then the partition directory
      * in the table directory. The column data itself becomes durable at the commit.
@@ -8269,13 +8292,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * the later ones when recovery replays the WAL; on a non-WAL table it is NOSYNC-grade. ASYNC and NOSYNC make
      * no power-loss promise. An ADAPTIVE table that is not enrolled yet applies at SYNC grade, and so takes them.
      */
-    private void fsyncPartitionDirEntries(int partitionDirLen) {
+    private void fsyncPartitionDirEntries(Path partitionPath, int partitionDirLen) {
         if (dirFsyncPath == null) {
             dirFsyncPath = new Path();
         }
-        // Works on a copy: $() writes a NUL at the end of the sequence, and `path` must keep its partition
-        // separator for every caller that extends it again.
-        dirFsyncPath.of(path).trimTo(partitionDirLen);
+        // Works on a copy: $() writes a NUL at the end of the sequence, and the caller's path must keep its
+        // partition separator for every caller that extends it again.
+        dirFsyncPath.of(partitionPath).trimTo(partitionDirLen);
         TableUtils.fsyncDirDurable(ff, dirFsyncPath.$());
         TableUtils.fsyncDirDurable(ff, dirFsyncPath.trimTo(pathSize).$());
     }
@@ -10535,7 +10558,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (effectiveCommitMode == CommitMode.SYNC) {
                 // After the loop, not after mkdirs: a directory fsync persists only the entries that
                 // exist when it runs, and the loop is what creates the column and index files.
-                fsyncPartitionDirEntries(plen);
+                fsyncPartitionDirEntries(path, plen);
             }
 
             LOG.info().$("switched partition [path=").$substr(pathRootSize, path)

@@ -68,7 +68,9 @@ import java.util.stream.Stream;
  *   directory twice, under SYNC and ADAPTIVE only.</li>
  *   <li>A schema change that rewrites data (ALTER COLUMN TYPE, CONVERT PARTITION) fsyncs the files it writes
  *   under SYNC and ADAPTIVE only, except what ADAPTIVE rebuilds from the WAL; ASYNC keeps only the parquet
- *   metadata and partition directory fsyncs it always had.</li>
+ *   metadata and partition directory fsyncs it always had. SYNC also fsyncs the directories that name the new
+ *   files: each partition directory ALTER COLUMN TYPE writes into, and the partition directory CONVERT
+ *   PARTITION creates, then the table directory.</li>
  * </ul>
  * The crash tests that prove these are enough are in {@code DirectoryBarrierCrashTest}.
  */
@@ -229,31 +231,42 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
                 // The apply job takes a save point for an adaptive WAL table, which fsyncs more files.
                 final boolean exact = "x".equals(table) || !"adaptive".equals(commitMode);
 
-                // The converted column file of each of the three partitions, under SYNC and ADAPTIVE.
+                final String tableDir = tableDir(table);
+
+                // The converted column file of each of the three partitions, under SYNC and ADAPTIVE; under SYNC
+                // also the three partition directories. The table directory twice is the _meta swap.
                 ff.clear();
                 execute("ALTER TABLE " + table + " ALTER COLUMN v TYPE DOUBLE");
                 drainWalQueue();
                 if (exact) {
                     Assert.assertEquals("alter column type" + ff.dump(), durable ? 3 : 0, ff.countOther());
+                    Assert.assertEquals("alter column type" + ff.dump(), isSync ? 3 : 0, ff.countChildren(tableDir));
+                    Assert.assertEquals("alter column type" + ff.dump(), durable ? 2 : 0, ff.count(tableDir));
                 }
 
-                // data.parquet under SYNC and ADAPTIVE; _pm and the partition directory in every mode but NOSYNC.
+                // data.parquet under SYNC and ADAPTIVE; _pm and the partition directory in every mode but NOSYNC;
+                // under SYNC the partition directory again, after its index files, and the table directory.
                 ff.clear();
                 execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
                 drainWalQueue();
                 if (exact) {
                     Assert.assertEquals("convert to parquet" + ff.dump(), (durable ? 1 : 0) + (isNoSync ? 0 : 1), ff.countOther());
-                    Assert.assertEquals("convert to parquet" + ff.dump(), isNoSync ? 0 : 1, ff.total());
+                    Assert.assertEquals("convert to parquet" + ff.dump(), (isNoSync ? 0 : 1) + (isSync ? 1 : 0), ff.countChildren(tableDir));
+                    Assert.assertEquals("convert to parquet" + ff.dump(), isSync ? 1 : 0, ff.count(tableDir));
+                    Assert.assertEquals("convert to parquet" + ff.dump(), (isNoSync ? 0 : 1) + (isSync ? 2 : 0), ff.total());
                 }
 
                 // The three column files under SYNC only, ADAPTIVE replays the conversion; the partition directory
-                // under SYNC and ADAPTIVE.
+                // under SYNC and ADAPTIVE; under SYNC the partition directory again, after its index files, and
+                // the table directory.
                 ff.clear();
                 execute("ALTER TABLE " + table + " CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
                 drainWalQueue();
                 if (exact) {
                     Assert.assertEquals("convert to native" + ff.dump(), isSync ? 3 : 0, ff.countOther());
-                    Assert.assertEquals("convert to native" + ff.dump(), durable ? 1 : 0, ff.total());
+                    Assert.assertEquals("convert to native" + ff.dump(), (durable ? 1 : 0) + (isSync ? 1 : 0), ff.countChildren(tableDir));
+                    Assert.assertEquals("convert to native" + ff.dump(), isSync ? 1 : 0, ff.count(tableDir));
+                    Assert.assertEquals("convert to native" + ff.dump(), (durable ? 1 : 0) + (isSync ? 2 : 0), ff.total());
                 }
             }
             assertQuery("SELECT sum(v) FROM w").noRandomAccess().expectSize().returns("sum\n6.0\n");
