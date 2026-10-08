@@ -67,8 +67,9 @@ import java.util.Collection;
  * projections, windows, filters and GROUP BY over the Async Window as steps its workers compute.
  * <p>
  * Every query runs with the parallel window switched off, which is the serial plan, and on; the
- * two must agree bit for bit, except the sums and averages of a plan that splits a key over tasks,
- * which may differ in their last bits, as documented for the parallel window. The tests also check
+ * two must agree bit for bit, with the one exception documented for the parallel window: a running
+ * DOUBLE sum under PARTITION BY that a carry adds over a key split across tasks, which may differ by
+ * the rounding of adding its values in another order, in its own column. The tests also check
  * the plan they mean to test: the steps, the key-major scans, and that the sort over the GROUP BY
  * is elided where the groups come out in its order.
  */
@@ -974,6 +975,8 @@ public class WindowChainTest extends AbstractCairoTest {
                     {"SELECT time, lp, sum(x) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM (SELECT time, lp, CASE WHEN ex IN (SELECT ex FROM trade WHERE sym = 'K1' AND ex = 'T') THEN 1 ELSE 0 END x FROM " + lagged + ")", "then: project"},
                     {"SELECT time, lp FROM " + lagged + " WHERE rnd_int(1, 2, 0) > 0", "then: filter"},
                     {"SELECT time, lp FROM " + lagged + " WHERE lp < (SELECT max(price) FROM trade)", "then: filter"},
+                    // an aggregate whose state is not fixed-size, see GroupByFunction.isFixedSizeState()
+                    {"SELECT g, count_distinct(ex) n FROM (SELECT time, ex, sum(f) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) g FROM (SELECT time, ex, CASE WHEN price > lp THEN 1 ELSE 0 END f FROM " + lagged + ")) ORDER BY g", "then: group by"},
                     {"SELECT g, count() n, sum(rnd_int(1, 2, 0) * 0 + 1) c FROM (SELECT time, sum(f) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) g FROM (SELECT time, CASE WHEN price > lp THEN 1 ELSE 0 END f FROM " + lagged + ")) ORDER BY g", "then: group by"},
                     // a slice's filter, which its workers would apply
                     {"SELECT time, sum(size) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM trade WHERE ex = 'T' AND rnd_int(1, 2, 0) > 0", "rowSlices"},

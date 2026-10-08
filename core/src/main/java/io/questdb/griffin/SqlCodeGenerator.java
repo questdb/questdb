@@ -14534,9 +14534,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final boolean byWalkKey = partitionBy.size() == 0
                     ? singleKey
                     : partitionBy.size() == 1
-                    && partitionBy.getQuick(0).type == LITERAL
-                    && keyIndex > -1
-                    && SqlUtil.getColumnIndexQuiet(baseMetadata, partitionBy.getQuick(0).token) == keyIndex;
+                      && partitionBy.getQuick(0).type == LITERAL
+                      && keyIndex > -1
+                      && SqlUtil.getColumnIndexQuiet(baseMetadata, partitionBy.getQuick(0).token) == keyIndex;
             nonDecreasing[i] = known && byWalkKey;
             nonNegative[i] = known;
             nonNull[i] = knownNonNull;
