@@ -347,8 +347,8 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         return done;
     }
 
-    // A row above the committed txn names a file of a timeline the rewind abandoned: no reader can pick its chain
-    // entry, so checking readers up to the committed txn is enough.
+    // Readers open at the committed txn or later, so checking readers up to it is enough. Whether the file is still
+    // needed at the committed txn is for the pin and the live chain head check.
     private long readCommittedTxn(TableToken token, PostingSealPurgeTask task) {
         if (txReader == null) {
             txReader = new TxReader(ff);

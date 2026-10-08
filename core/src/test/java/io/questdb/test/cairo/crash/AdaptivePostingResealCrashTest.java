@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.RecoveryCoordinator;
@@ -90,15 +91,23 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
     // The instance runs each mode after the kill (ADAPTIVE is the control), for two starts with no write between.
     // The first start recovers and pins the table, and the pin holds the rows that end above the save point; the WAL
     // apply in another mode leaves adaptive and drops the pin. The held rows stay in the purge log, so the second
-    // start replays them again, now with no pin.
+    // start replays them again, now with no pin, also when that second start runs in ADAPTIVE.
     @Test
     public void testPurgeLogReplayAfterKillKeepsReadersOpen() throws Exception {
         setUpAdaptive();
         runWithCrashFacade(() -> {
             final StringBuilder failures = new StringBuilder();
-            for (String mode : new String[]{"adaptive", "nosync", "async", "sync"}) {
+            // The modes of the two starts after the kill.
+            for (String[] modes : new String[][]{
+                    {"adaptive", "adaptive"},
+                    {"nosync", "nosync"},
+                    {"async", "async"},
+                    {"sync", "sync"},
+                    {"nosync", "adaptive"}
+            }) {
                 node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-                final String table = "t_" + mode;
+                final String name = modes[0] + ", then " + modes[1];
+                final String table = "t_" + modes[0] + "_" + modes[1];
                 execute("CREATE TABLE " + table + " (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (v), v LONG) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)");
                 execute("INSERT INTO " + table + " VALUES " + row(DAY1 + 10 * HOUR, 0) + ", " + row(DAY1 + DAY + 10 * HOUR, 1));
@@ -122,11 +131,17 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                 }
                 kill(token);
                 // Recovery follows the table's enrolment, not the instance mode, so the mode can change after it.
-                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
+                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, modes[0]);
                 for (int start = 1; start <= 2; start++) {
                     if (start == 2) {
+                        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, modes[1]);
                         kill(token);
+                        // Only the control stays adaptive through the first start, so only it is pinned again.
+                        final boolean control = "adaptive".equals(modes[0]);
+                        Assert.assertEquals(name + ": pinned at start 2", control,
+                                engine.getTableSequencerAPI().getTxnTracker(token).getPinnedEpochTxn() > -1);
                     }
+                    Assert.assertEquals(name, CommitMode.fromString(modes[start - 1]), engine.getConfiguration().getCommitMode());
                     // A start builds the purge job, which replays the open rows of its log, before any WAL apply.
                     try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
                         engine.notifyWalTxnRepublisher(token);
@@ -149,7 +164,7 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                                     .returns("count\tsum\n" + count + "\t" + sum + "\n");
                         }
                     } catch (Throwable th) {
-                        failures.append(mode).append(", start ").append(start).append(": ").append(th.getMessage()).append('\n');
+                        failures.append(name).append(", start ").append(start).append(": ").append(th.getMessage()).append('\n');
                         break;
                     }
                 }
