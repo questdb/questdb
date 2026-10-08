@@ -62,9 +62,10 @@ import org.jetbrains.annotations.TestOnly;
 
 /**
  * The cursor of an {@link AsyncWindowRecordCursorFactory} over a plain scan of a whole table, a
- * window partitioned by a symbol column that no index serves, or whose index walk would read each
- * key's rows scattered over the table. The keys are hashed into shards, one per worker slot, each
- * slot keeping the functions' state of its own keys from one round to the next. A round takes the
+ * window partitioned by a symbol column that no index serves (an indexed one is walked key by key
+ * instead, see {@link AsyncWindowRecordCursor}, which needs no partition maps). The keys are hashed
+ * into shards, one per worker slot, each slot keeping the functions' state of its own keys from one
+ * round to the next. A round takes the
  * next page frames, about {@code cairo.sql.parallel.window.round.rows} rows, and every shard's task
  * reads all of them in table order, computing the window, and the steps after it, for the rows of
  * its own keys only. Every key's rows are thus computed in table order, by one slot, exactly as
@@ -166,11 +167,13 @@ public class AsyncWindowShardCursor implements RecordCursor {
     }
 
     /**
-     * The shard of a key: its symbol key, mixed, modulo the shard count.
+     * The shard of a key: its symbol key, mixed, scaled to the shard count.
      */
     static int shardOf(int key, int shardCount) {
-        final long mixed = (key * 0x9E3779B97F4A7C15L) >>> 33;
-        return (int) (mixed % shardCount);
+        // Fibonacci hashing spreads consecutive keys, and the high half of the product of the hash
+        // and the shard count maps it onto the shards without a division
+        final long mixed = (key * 0x9E3779B9L) & 0xFFFFFFFFL;
+        return (int) ((mixed * shardCount) >>> 32);
     }
 
     @Override

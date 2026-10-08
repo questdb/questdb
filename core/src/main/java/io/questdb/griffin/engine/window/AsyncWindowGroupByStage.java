@@ -38,6 +38,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -86,6 +88,9 @@ public class AsyncWindowGroupByStage extends AsyncWindowStage {
     private boolean isGroupOpen;
     private boolean isOpen;
     private long rowId;
+    // calls the aggregates' computeFirst/computeNext through generated, monomorphic call sites, as
+    // the serial GROUP BY does; null to call them in a loop
+    private GroupByFunctionsUpdater updater;
 
     /**
      * @param projection       the GROUP BY's output functions, compiled against the serial map
@@ -251,6 +256,14 @@ public class AsyncWindowGroupByStage extends AsyncWindowStage {
     }
 
     /**
+     * Calls the aggregates through an updater of a class
+     * {@link GroupByFunctionsUpdaterFactory#getInstanceClass} generated for their count.
+     */
+    public void setUpdaterClass(Class<? extends GroupByFunctionsUpdater> updaterClass) {
+        this.updater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, groupByFunctions);
+    }
+
+    /**
      * The layout of the step's input rows, which the chains of a task's head rows hold, see
      * {@link #beginHeadCapture}.
      */
@@ -352,8 +365,12 @@ public class AsyncWindowGroupByStage extends AsyncWindowStage {
             }
             if (same) {
                 final SimpleMapValue value = currentValue;
-                for (int i = 0; i < groupByFunctionsCount; i++) {
-                    groupByFunctions.getQuick(i).computeNext(value, record, rowId);
+                if (updater != null) {
+                    updater.updateExisting(value, record, rowId);
+                } else {
+                    for (int i = 0; i < groupByFunctionsCount; i++) {
+                        groupByFunctions.getQuick(i).computeNext(value, record, rowId);
+                    }
                 }
                 rowId++;
                 return false;
@@ -437,8 +454,12 @@ public class AsyncWindowGroupByStage extends AsyncWindowStage {
         }
         final SimpleMapValue value = currentValue;
         value.clear();
-        for (int i = 0; i < groupByFunctionsCount; i++) {
-            groupByFunctions.getQuick(i).computeFirst(value, record, rowId);
+        if (updater != null) {
+            updater.updateNew(value, record, rowId);
+        } else {
+            for (int i = 0; i < groupByFunctionsCount; i++) {
+                groupByFunctions.getQuick(i).computeFirst(value, record, rowId);
+            }
         }
         rowId++;
         isGroupOpen = true;

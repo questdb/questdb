@@ -185,6 +185,8 @@ import io.questdb.griffin.engine.functions.window.WholePartitionMinMax;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.MapSymbolColumn;
@@ -369,6 +371,7 @@ import io.questdb.griffin.engine.window.AsyncWindowStage;
 import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowMapGroups;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
+import io.questdb.griffin.engine.window.KeyRunWindowFunction;
 import io.questdb.griffin.engine.window.LiveViewCheckpointFunctionCompiler;
 import io.questdb.griffin.engine.window.WindowAccumulatorPlan;
 import io.questdb.griffin.engine.window.WindowAccumulatorPlanBuilder;
@@ -592,6 +595,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private IQueryModel groupByBaseModel;
     // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
     // Tracks the last model with non-empty ORDER BY as we descend through nested models
+    // the PARTITION BY of a worker's copy compiled without it, see compileStreamingWindowCopy()
+    private static final ObjList<ExpressionNode> NO_PARTITION_BY = new ObjList<>();
     private static final int REORDER_DENIED = 0;
     private static final int REORDER_PERMITTED = 1;
     private static final int REORDER_PERMITTED_UNDER_GROUP_BY = 2;
@@ -13512,6 +13517,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         final long taskRows = Math.max(1, configuration.getSqlParallelWindowTaskRows());
         final int copyCount = async.getWorkerSlotCount();
+        // a key-major scan's workers start every window afresh at each key: no partition maps
+        boolean dropPartitionBy = !async.isShardMode() && !singleKey && configuration.isSqlParallelWindowKeyRunsEnabled();
+        for (int i = 0, n = columns.size(); i < n && dropPartitionBy; i++) {
+            final QueryColumn qc = columns.getQuick(i);
+            if (qc.isWindowExpression() && ((WindowExpression) qc).getPartitionBy().size() != 1) {
+                dropPartitionBy = false;
+            }
+        }
         final ObjList<AsyncWindowStage> virtualCopies = new ObjList<>(copyCount);
         final ObjList<AsyncWindowStage> windowCopies = new ObjList<>(copyCount);
         final ObjList<ObjList<Function>> perWorkerFunctions = new ObjList<>(copyCount);
@@ -13529,7 +13542,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
             for (int i = 0; i < copyCount; i++) {
-                compileStreamingWindowCopy(model, base, baseMetadata, perWorkerFunctions, perWorkerMapStates, executionContext);
+                compileStreamingWindowCopy(model, base, baseMetadata, perWorkerFunctions, perWorkerMapStates, executionContext, dropPartitionBy);
                 windowCopies.add(AsyncWindowStage.window(perWorkerFunctions.getQuick(i), perWorkerMapStates.getQuick(i)));
                 perWorkerFunctions.setQuick(i, null);
                 perWorkerMapStates.setQuick(i, null);
@@ -13580,6 +13593,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         next.setChainColumns(singleKey, findColumnFunction(functions, keyOutput), findColumnFunction(functions, timestampOutput));
         next.setChainSplit(split);
         next.setColumnOrder(nonDecreasing, nonNegative);
+        if (dropPartitionBy) {
+            ((AsyncWindowAtom) next.getAtom()).setKeyStartReset(true);
+        }
         return next;
     }
 
@@ -13681,6 +13697,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final RecordMetadata baseMetadata = async.getMetadata();
         final int valueCount = valueTypes.getColumnCount();
         final int copyCount = async.getWorkerSlotCount();
+        final Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, groupByFunctions.size());
         final ObjList<AsyncWindowStage> copies = new ObjList<>(copyCount);
         try {
             for (int c = 0; c < copyCount; c++) {
@@ -13723,6 +13740,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 final AsyncWindowGroupByStage copy = new AsyncWindowGroupByStage(copyProjection, copyAggregates, keyColumns, keyColumnTypes, copyValueTypes.getColumnCount());
                 copies.add(copy);
+                copy.setUpdaterClass(updaterClass);
                 if (copyValueTypes.getColumnCount() != valueCount || copyAggregates.size() != groupByFunctions.size()
                         || copyProjection.size() != projection.size()) {
                     Misc.freeObjListAndClear(copies);
@@ -13782,6 +13800,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final long taskRows = Math.max(1, configuration.getSqlParallelWindowTaskRows());
         final AsyncWindowGroupByStage ownerStage = new AsyncWindowGroupByStage(projection, groupByFunctions, keyColumns, keyColumnTypes, valueCount);
         ownerStage.setHeadLayout(GenericRecordMetadata.copyOf(baseMetadata), headSink);
+        ownerStage.setUpdaterClass(updaterClass);
         final AsyncWindowRecordCursorFactory next = async.withStage(
                 ownerStage,
                 copies,
@@ -14126,9 +14145,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final int copyCount = (int) Math.min(workerCount, (rounds - 1) * ((roundRows + taskRows - 1) / taskRows));
         final ObjList<ObjList<Function>> perWorkerFunctions = new ObjList<>(copyCount);
         final ObjList<ObjList<WindowMapState>> perWorkerMapStates = new ObjList<>(copyCount);
+        // a key-major scan's workers compute a key at a time: without key runs, their copies need
+        // no partition maps, see compileStreamingWindowCopy()
+        final boolean dropPartitionBy = !shardMode
+                && !singleKey
+                && partitionedByKeyOnly
+                && configuration.isSqlParallelWindowKeyRunsEnabled()
+                && !isKeyRunEligible(functions);
         try {
             for (int i = 0; i < copyCount; i++) {
-                compileStreamingWindowCopy(model, base, baseMetadata, perWorkerFunctions, perWorkerMapStates, executionContext);
+                compileStreamingWindowCopy(model, base, baseMetadata, perWorkerFunctions, perWorkerMapStates, executionContext, dropPartitionBy);
             }
         } catch (Throwable th) {
             for (int i = 0, n = perWorkerFunctions.size(); i < n; i++) {
@@ -14186,6 +14212,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
         factory.setChainSplit(AsyncWindowChainSplit.of(splitPlan));
         factory.setKeyOrderAscending(!shardMode && keyMajorScan.isKeyMajorAscending());
+        if (dropPartitionBy) {
+            ((AsyncWindowAtom) factory.getAtom()).setKeyStartReset(true);
+        }
         final boolean[] nonDecreasing = new boolean[functions.size()];
         final boolean[] nonNegative = new boolean[functions.size()];
         windowColumnOrder(columns, functions, null, null, nonDecreasing, nonNegative);
@@ -14319,6 +14348,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             nonDecreasing[i] = known;
             nonNegative[i] = known;
         }
+    }
+
+    // Whether the workers would compute key runs (KeyRunWindowFunction) over these functions,
+    // which keep each key's state in fields already: every window function supports them, and
+    // every other column is a column of the scan.
+    private static boolean isKeyRunEligible(ObjList<Function> functions) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final Function function = functions.getQuick(i);
+            if (function instanceof WindowFunction) {
+                if (!(function instanceof KeyRunWindowFunction kf) || !kf.isKeyRunSupported()) {
+                    return false;
+                }
+            } else if (!(function instanceof ColumnFunction)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // The index of the first function that reads the base column itself, -1 when none does.
@@ -14496,6 +14542,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ObjList<ObjList<WindowMapState>> perWorkerMapStates,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        compileStreamingWindowCopy(model, base, baseMetadata, perWorkerFunctions, perWorkerMapStates, executionContext, false);
+    }
+
+    /**
+     * {@link #compileStreamingWindowCopy}, optionally without the PARTITION BY: for a worker that
+     * computes a key-major scan's keys one run after another and starts the functions afresh at
+     * each key (see {@code AsyncWindowAtom.setKeyStartReset}), the partition maps' per-row lookups
+     * buy nothing. Only when every function is partitioned by the scan's key alone.
+     */
+    private void compileStreamingWindowCopy(
+            IQueryModel model,
+            RecordCursorFactory base,
+            RecordMetadata baseMetadata,
+            ObjList<ObjList<Function>> perWorkerFunctions,
+            ObjList<ObjList<WindowMapState>> perWorkerMapStates,
+            SqlExecutionContext executionContext,
+            boolean dropPartitionBy
+    ) throws SqlException {
         final ObjList<QueryColumn> columns = model.getColumns();
         final int columnCount = columns.size();
         final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
@@ -14513,7 +14577,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 final WindowExpression ac = (WindowExpression) qc;
                 final ExpressionNode ast = qc.getAst();
-                final int psz = ac.getPartitionBy().size();
+                final int psz = dropPartitionBy ? 0 : ac.getPartitionBy().size();
                 VirtualRecord partitionByRecord = null;
                 RecordSink partitionBySink = null;
                 if (psz > 0) {
@@ -14584,7 +14648,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     partitionByFunctions = null;
                     windowMapSpecs.extendAndSet(i, WindowMapSpec.of(
                             executionContext.getWindowContext(),
-                            ac.getPartitionBy(),
+                            dropPartitionBy ? NO_PARTITION_BY : ac.getPartitionBy(),
                             ac.getOrderBy(),
                             ac.getOrderByDirection(),
                             dismissOrder,
@@ -16568,7 +16632,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (reader == null
                 || request == null
                 || request.keyColumn == null
-                || request.shardScan
                 || !isKeyMajorWindowRequested(model, request.keyColumn, true, reader)
                 || model.isForceBackwardScan()
                 || executionContext.isTimestampRequired()
@@ -16907,7 +16970,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 everyPartitioned ? keyColumn : null,
                 permission != REORDER_DENIED,
                 // no GROUP BY needs each key's rows together: a whole table may be sharded by hash
-                permission == REORDER_PERMITTED
+                permission == REORDER_PERMITTED && configuration.isSqlParallelWindowShardEnabled()
         );
     }
 
@@ -18345,8 +18408,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final boolean allowReorder;
         // the column every window is partitioned by, or null when some window is not partitioned
         final CharSequence keyColumn;
-        // whether a whole table may keep its plain scan, whose keys the workers shard by hash (see
-        // AsyncWindowShardCursor): rows of one key are then not together, which a GROUP BY needs
+        // whether a whole table without an index on the key may keep its plain scan, whose keys the
+        // workers shard by hash (see AsyncWindowShardCursor): rows of one key are then not
+        // together, which a GROUP BY needs; an indexed key is walked key by key instead
         final boolean shardScan;
         final IQueryModel tableModel;
 

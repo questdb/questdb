@@ -350,6 +350,18 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
     }
 
     /**
+     * Makes the worker slots start their window functions afresh at every key of a task: their
+     * copies were compiled without the PARTITION BY, which a key-major scan's runs of one key at a
+     * time make redundant, see {@code SqlCodeGenerator.compileStreamingWindowCopy}. The query
+     * thread's own copy keeps its partitions: it streams keys one after another without tasks.
+     */
+    public void setKeyStartReset(boolean keyStartReset) {
+        for (int i = 1, n = slots.size(); i < n; i++) {
+            slots.getQuick(i).resetAtKeyStarts = keyStartReset;
+        }
+    }
+
+    /**
      * Steps the rows go through after the window functions.
      */
     public int getStageCount() {
@@ -432,6 +444,8 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         private Function prefilter;
         // rows the last computeSlice() output
         private long sliceRowCount;
+        // the window functions start afresh at each key of a task, see setKeyStartReset()
+        private boolean resetAtKeyStarts;
         private int stageCount;
         private final PageFrameRowToucher toucher = new PageFrameRowToucher();
         private final VirtualRecord virtualRecord;
@@ -714,6 +728,9 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             }
             final long secondKeyStart = keyStarts.size() > 1 ? keyStarts.getQuick(1) : Long.MAX_VALUE;
             final int resetStage = resetStage();
+            final int keyStartCount = keyStarts.size();
+            int keyStartIndex = 1;
+            long nextKeyStart = resetAtKeyStarts ? secondKeyStart : Long.MAX_VALUE;
             // the record moves to other frames, so a stream on this slot positions it again
             streamFrameIndex = -1;
             chain.rewind(rows.size() - emitFrom);
@@ -756,6 +773,14 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 for (int j = 0; j < n; j++) {
                     record.setRowIndex(batch[j]);
                     final long index = batchLo + j;
+                    if (index == nextKeyStart) {
+                        // equal starts are keys without rows
+                        do {
+                            keyStartIndex++;
+                            nextKeyStart = keyStartIndex < keyStartCount ? keyStarts.getQuick(keyStartIndex) : Long.MAX_VALUE;
+                        } while (nextKeyStart == index);
+                        resetWindows();
+                    }
                     if (index == emitFrom) {
                         if (emitFrom > 0 && resetStage > -1) {
                             // The warm-up rows rebuilt the stages before the carry stage; its
@@ -789,6 +814,21 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 prevOffset = chain.put(outputRecord, prevOffset);
             }
             return prevOffset;
+        }
+
+        // A new key's first row: every window function starts afresh, see setKeyStartReset(). A
+        // GROUP BY step keeps its open group, which the key column ends by itself.
+        private void resetWindows() {
+            GroupByUtils.toTop(functions);
+            for (int i = 0; i < mapStatesCount; i++) {
+                mapStates.getQuick(i).clear();
+            }
+            for (int i = 0; i < stageCount; i++) {
+                final AsyncWindowStage stage = stages.getQuick(i);
+                if (stage.getKind() == AsyncWindowStage.KIND_WINDOW) {
+                    stage.toTop();
+                }
+            }
         }
 
         /**
