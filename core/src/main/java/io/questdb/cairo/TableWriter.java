@@ -7475,9 +7475,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // this, so when the memories still describe the partition's current
                         // version, the close trims the whole append pages the writer
                         // pre-allocated; left in place, they stay on disk until the partition is
-                        // rewritten. The trim size comes from _txn, not from the append memories,
-                        // as in the split branch of o3ConsumePartitionUpdateSink: a stale memory
-                        // offset cannot cut committed rows.
+                        // rewritten. The trim size comes from the writer's partition size, not from
+                        // the append memories, so a stale memory offset cannot cut committed rows.
+                        //
+                        // The trim also keeps the WAL lag rows. The writer stores lag in this
+                        // partition's files after its rows, and until commit00 writes _txn, the
+                        // _txn on disk can still list them as lag: an apply job that ejected or
+                        // stopped persisted them through commitSeqTxn. A restart after a crash in
+                        // that window reads the lag back from these files, so a trim to the
+                        // partition size alone would replay the cut rows as zeros.
+                        // processWalCommitFinishApply resets the lag count only after this method
+                        // returns, so the partition size plus the lag count covers every row the
+                        // _txn on disk can reference. Non-WAL tables keep no lag, their lag count
+                        // is always 0.
                         //
                         // _txn describes the open files only while it lists this partition as
                         // native under the name txn openPartition used. Otherwise the memories
@@ -7491,7 +7501,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         if (openPartitionRawIndex > -1
                                 && !txWriter.isPartitionParquetByRawIndex(openPartitionRawIndex)
                                 && txWriter.getPartitionNameTxnByRawIndex(openPartitionRawIndex) == lastOpenPartitionTxnName) {
-                            closeActivePartition(txWriter.getPartitionSizeByRawIndex(openPartitionRawIndex));
+                            closeActivePartition(txWriter.getPartitionSizeByRawIndex(openPartitionRawIndex) + txWriter.getLagRowCount());
                         } else {
                             closeActivePartition(false);
                         }
@@ -11801,6 +11811,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             finishO3Commit(initialPartitionTimestampHi);
         }
         txWriter.setLagOrdered(true);
+        // Reset the lag count only after finishO3Commit: its parquet-transition trim keeps the lag
+        // rows that the _txn on disk can still reference, and reads their count from txWriter.
         txWriter.setLagRowCount((int) walLagRowCount);
     }
 

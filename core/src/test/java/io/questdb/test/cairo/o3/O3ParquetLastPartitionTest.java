@@ -25,17 +25,23 @@
 package io.questdb.test.cairo.o3;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -101,6 +107,63 @@ public class O3ParquetLastPartitionTest extends AbstractCairoTest {
             drainWalQueue();
 
             appendDay2ThenDay1AndCloseWriter();
+        });
+    }
+
+    @Test
+    public void testParquetLastTransitionCrashKeepsPersistedWalLag() throws Exception {
+        final CrashImageFilesFacade ff = new CrashImageFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            // the apply job ejects after every transaction, and the ejection persists the WAL lag in _txn
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+            execute("CREATE TABLE x (ts TIMESTAMP, a LONG) TIMESTAMP(ts) PARTITION BY DAY WAL WITH maxUncommittedRows=50");
+            final TableToken token = engine.verifyTableName("x");
+            ff.of(token);
+            execute("INSERT INTO x VALUES ('2022-02-25', 1)");
+            drainWalQueue();
+            execute("ALTER TABLE x SET FORMAT PARQUET");
+            drainWalQueue();
+
+            // the second insert sorts before the first, so the first insert's 1,000 day 2 rows go to
+            // WAL lag, which the writer stores in native day 1's files after its only row
+            execute("INSERT INTO x SELECT timestamp_sequence('2022-02-26T01:00:00', 1_000_000L), x FROM long_sequence(1_000)");
+            execute("INSERT INTO x VALUES ('2022-02-26', -1)");
+            tickWalQueue(1);
+            Assert.assertEquals("_txn does not persist the WAL lag", 1_000, persistedLagRowCount("x"));
+
+            // The second insert merges the lag into a parquet day 2, which replaces native day 1 as the
+            // last partition. The facade copies the table directory once this commit has written its
+            // data, before it writes _txn.
+            ff.arm("2022-02-26");
+            tickWalQueue(1);
+            Assert.assertTrue("crash image was not taken", ff.isImageTaken());
+
+            // stop the process and restart it from the crash image
+            releaseInactive(engine);
+            ff.restoreImage();
+            Assert.assertEquals("crash image must predate the _txn commit", 1_000, persistedLagRowCount("x"));
+            engine.notifyWalTxnCommitted(token);
+            drainWalQueue();
+            Assert.assertFalse("re-apply suspended the table", engine.getTableSequencerAPI().isSuspended(token));
+
+            // the restarted apply reads the lag back from day 1's files, so no row may be lost or zeroed
+            assertQuery("SELECT count(), sum(a), min(a), max(a) FROM x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum\tmin\tmax
+                            1002\t500500\t-1\t1000
+                            """);
+            // the last lag rows sat beyond the first page of day 1's files
+            assertQuery("SELECT ts, a FROM x WHERE ts >= '2022-02-26T01:16:38'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ta
+                            2022-02-26T01:16:38.000000Z\t999
+                            2022-02-26T01:16:39.000000Z\t1000
+                            """);
         });
     }
 
@@ -216,6 +279,113 @@ public class O3ParquetLastPartitionTest extends AbstractCairoTest {
             final long length = ff.length(TableUtils.dFile(path, columnName, columnNameTxn));
             LOG.info().$("column file [path=").$(path).$(", length=").$(length).I$();
             return length;
+        }
+    }
+
+    private static int persistedLagRowCount(String tableName) {
+        final TableToken token = engine.verifyTableName(tableName);
+        try (TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade()); Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.TXN_FILE_NAME);
+            txReader.ofRO(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+            txReader.unsafeLoadAll();
+            return txReader.getLagRowCount();
+        }
+    }
+
+    /**
+     * Emulates a process stop between the data write of a WAL apply commit and its _txn commit.
+     * processWalCommit closes the WAL segment column files in its finally block, after
+     * processWalCommitFinishApply has written the data and before commit00 writes _txn. The first
+     * such close after the commit has created the armed partition directory copies the table
+     * directory aside, and {@link #restoreImage()} replaces the table directory with that copy.
+     */
+    private static class CrashImageFilesFacade extends TestFilesFacadeImpl {
+        private final LongHashSet walColumnFds = new LongHashSet();
+        private String imageDir;
+        private volatile boolean isArmed;
+        private volatile boolean isImageTaken;
+        private volatile boolean isPartitionDirCreated;
+        private String partitionDirMarker;
+        private String tableDirName;
+        private String walDirMarker;
+
+        @Override
+        public boolean close(long fd) {
+            final boolean isWalColumn;
+            synchronized (walColumnFds) {
+                isWalColumn = walColumnFds.remove(fd) > -1;
+            }
+            if (isWalColumn && isArmed && isPartitionDirCreated && !isImageTaken) {
+                isImageTaken = takeImage();
+            }
+            return super.close(fd);
+        }
+
+        @Override
+        public int mkdirs(Path path, int mode) {
+            if (isArmed && Utf8s.containsAscii(path, partitionDirMarker)) {
+                isPartitionDirCreated = true;
+            }
+            return super.mkdirs(path, mode);
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            return trackWalColumn(name, super.openRO(name));
+        }
+
+        @Override
+        public long openRONoCache(LPSZ name) {
+            return trackWalColumn(name, super.openRONoCache(name));
+        }
+
+        void arm(String partitionDirName) {
+            partitionDirMarker = tableDirName + Files.SEPARATOR + partitionDirName;
+            imageDir = temp.getRoot().getAbsolutePath() + Files.SEPARATOR + "crash_image";
+            try (Path image = new Path()) {
+                image.of(imageDir);
+                if (exists(image.$())) {
+                    Assert.assertTrue(rmdir(image));
+                }
+            }
+            isArmed = true;
+        }
+
+        boolean isImageTaken() {
+            return isImageTaken;
+        }
+
+        void of(TableToken token) {
+            tableDirName = token.getDirName();
+            walDirMarker = tableDirName + Files.SEPARATOR + WalUtils.WAL_NAME_BASE;
+        }
+
+        void restoreImage() {
+            isArmed = false;
+            try (Path table = new Path(); Path image = new Path()) {
+                table.of(configuration.getDbRoot()).concat(tableDirName);
+                image.of(imageDir);
+                Assert.assertTrue(rmdir(table));
+                Assert.assertEquals(0, copyRecursive(image, table, configuration.getMkDirMode()));
+                Assert.assertTrue(rmdir(image));
+            }
+        }
+
+        private boolean takeImage() {
+            try (Path table = new Path(); Path image = new Path()) {
+                table.of(configuration.getDbRoot()).concat(tableDirName);
+                image.of(imageDir);
+                return copyRecursive(table, image, configuration.getMkDirMode()) == 0;
+            }
+        }
+
+        private long trackWalColumn(LPSZ name, long fd) {
+            if (fd > -1 && walDirMarker != null && Utf8s.containsAscii(name, walDirMarker) && Utf8s.endsWithAscii(name, ".d")) {
+                synchronized (walColumnFds) {
+                    walColumnFds.add(fd);
+                }
+            }
+            return fd;
         }
     }
 }
