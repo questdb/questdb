@@ -29,7 +29,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 
-public final class SortPlan extends UnaryPlan {
+public final class SortPlan extends ForwardingPlan {
     public static final ObjectFactory<SortPlan> FACTORY = SortPlan::new;
     private final IntList columnIds = new IntList();
     private final ObjList<SortDirection> directions = new ObjList<>();
@@ -50,14 +50,15 @@ public final class SortPlan extends UnaryPlan {
     }
 
     /**
-     * Sets the output to the input's columns. The sorted rows are ordered by the first key, so it is
-     * the designated timestamp when it is a timestamp; otherwise the output has none.
+     * The sorted rows are ordered by the first key, so it is the designated timestamp when it is a timestamp;
+     * otherwise the output has none, as it has while the keys are not yet set against this input (the verifier
+     * rejects a key the input does not list).
      */
-    public void deriveOutput() {
-        final OutputSchema output = getOutput();
-        output.copyFrom(getInput().getOutput());
-        final int firstIndex = output.getColumnIndexById(columnIds.getQuick(0));
-        output.setTimestampIndex(ColumnType.isTimestamp(output.getColumnType(firstIndex)) ? firstIndex : -1);
+    @Override
+    public int derivedTimestampIndex() {
+        final OutputSchema input = getInput().getOutput();
+        final int firstIndex = columnIds.size() > 0 ? input.getColumnIndexById(columnIds.getQuick(0)) : -1;
+        return firstIndex >= 0 && ColumnType.isTimestamp(input.getColumnType(firstIndex)) ? firstIndex : -1;
     }
 
     public IntList getColumnIds() {

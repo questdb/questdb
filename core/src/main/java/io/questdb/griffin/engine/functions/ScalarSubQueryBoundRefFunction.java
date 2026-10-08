@@ -91,10 +91,10 @@ public final class ScalarSubQueryBoundRefFunction extends TimestampFunction {
     // materialized-view guard in FunctionParser. Bridging the two makes the enclosing comparison
     // operator inherit the fail-safe true, so the guard rejects DDL that compiled on master - and
     // ADD INDEX on the sub-query's table flips the hint under a live view, failing its refresh
-    // recompile and invalidating it cluster-wide. Genuinely non-deterministic bounds never reach
-    // this reader: they are rejected while the sub-query body is generated (FunctionParser guard)
-    // and they fail isStableWithinExecution(), so no holder is installed (IntervalExtractor). See
-    // CursorFunction for the same polarity note on the direct path.
+    // recompile and invalidating it cluster-wide. In a materialized view a genuinely
+    // non-deterministic bound never reaches this reader: the FunctionParser guard rejects it while
+    // the sub-query body is generated. See CursorFunction for the same polarity note on the direct
+    // path.
 
     @Override
     public boolean isRuntimeConstant() {

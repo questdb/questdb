@@ -32,6 +32,8 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Base for timestamp_floor_utc() and timestamp_floor() with a constant named time zone.
@@ -150,6 +152,12 @@ abstract class TimestampFloorUtcBucketCachingFunction extends TimestampFunction 
         // floor to the same result. A transition within the bucket splits it into two ranges.
         cacheBucket(isNearLastMiss, timestamp, Math.max(lo, tzSegmentLo), Math.min(lo + bucketWidth, tzSegmentHi), result);
         return result;
+    }
+
+    @TestOnly
+    void toCacheState(CharSink<?> sink) {
+        sink.put(cachedLo).put(';').put(cachedHi).put(';').put(cachedResult).put(';').put(lastMissTimestamp).put(';')
+                .put(tzSegmentLo).put(';').put(tzSegmentHi).put(';').put(tzSegmentOffset);
     }
 
     /**

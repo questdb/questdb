@@ -39,7 +39,6 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -54,7 +53,6 @@ import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
-import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.groupby.vect.AvgDoubleVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.AvgIntVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.AvgLongVectorAggregateFunction;
@@ -107,7 +105,6 @@ import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.DeferredErrorExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
@@ -128,8 +125,10 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
 
 import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
@@ -153,6 +152,7 @@ final class AggregateFactoryGenerator {
     private final ObjList<HorizonJoinKeys> horizonKeys = new ObjList<>();
     private final IntList horizonMasterSymbols;
     private final IntList horizonSlaveSymbols;
+    private final ObjectPool<SortPlan> sorts;
 
     AggregateFactoryGenerator(
             CairoConfiguration configuration,
@@ -161,7 +161,8 @@ final class AggregateFactoryGenerator {
             OutputSchema emptySchema,
             EntityColumnFilter entityColumnFilter,
             IntList horizonMasterSymbols,
-            IntList horizonSlaveSymbols
+            IntList horizonSlaveSymbols,
+            ObjectPool<SortPlan> sorts
     ) {
         this.codeGenerator = codeGenerator;
         this.configuration = configuration;
@@ -170,6 +171,7 @@ final class AggregateFactoryGenerator {
         this.entityColumnFilter = entityColumnFilter;
         this.horizonMasterSymbols = horizonMasterSymbols;
         this.horizonSlaveSymbols = horizonSlaveSymbols;
+        this.sorts = sorts;
     }
 
     private static void assemble(
@@ -229,30 +231,6 @@ final class AggregateFactoryGenerator {
         }
     }
 
-    private static long evalHorizonTimeValue(CharSequence token, int position, TimestampDriver timestampDriver) throws SqlException {
-        int unitIndex = TimestampSamplerFactory.findIntervalEndIndex(token, position);
-        if (unitIndex == -1) {
-            // Unitless zero (e.g. "0")
-            return 0;
-        }
-        char unit = token.charAt(unitIndex);
-        long value = TimestampSamplerFactory.parseInterval(token, unitIndex, position);
-        try {
-            return switch (unit) {
-                case 'n' -> timestampDriver.fromNanos(value);
-                case 'U' -> timestampDriver.fromMicros(value);
-                case 'T' -> timestampDriver.fromMillis(value);
-                case 's' -> timestampDriver.fromSeconds(value);
-                case 'm' -> timestampDriver.fromMinutes(Math.toIntExact(value));
-                case 'h' -> timestampDriver.fromHours(Math.toIntExact(value));
-                case 'd' -> timestampDriver.fromDays(Math.toIntExact(value));
-                default -> throw SqlException.$(position, "unsupported HORIZON time unit [unit=").put(unit).put(']');
-            };
-        } catch (ArithmeticException e) {
-            throw SqlException.$(position, "HORIZON time value overflow");
-        }
-    }
-
     private static boolean isThreadSafe(ObjList<? extends Function> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).isThreadSafe()) {
@@ -281,22 +259,6 @@ final class AggregateFactoryGenerator {
         }
         metadata.setTimestampIndex(output.getTimestampIndex());
         return metadata;
-    }
-
-    /**
-     * Raises, once the input is built, the error of the grouping's failed key or aggregate written first.
-     */
-    private static void raiseDeferredKeys(AggregatePlan aggregate) throws SqlException {
-        DeferredErrorExpression first = null;
-        for (int i = 0, n = aggregate.getGroupingExpressions().size(); i < n; i++) {
-            if (aggregate.getGroupingExpressions().getQuick(i) instanceof DeferredErrorExpression deferred
-                    && (first == null || deferred.getPosition() < first.getPosition())) {
-                first = deferred;
-            }
-        }
-        if (first != null) {
-            throw first.raise();
-        }
     }
 
     private static void sharedRecordFunctions(
@@ -493,9 +455,12 @@ final class AggregateFactoryGenerator {
             final ObjList<GroupByFunction> aggregates = new ObjList<>(plan.getAggregates().size());
             keyFunctions = new ObjList<>(plan.getGroupingExpressions().size());
             recordFunctions = new ObjList<>(plan.getOutput().getColumnCount());
-            final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-            final ListColumnFilter columnFilter = new ListColumnFilter();
+            final ArrayColumnTypes keyTypes = frame.keyTypes;
+            final ArrayColumnTypes valueTypes = frame.valueTypes;
+            final ListColumnFilter columnFilter = frame.listColumnFilterA;
+            keyTypes.clear();
+            valueTypes.clear();
+            columnFilter.clear();
             assemble(plan, base.getMetadata(), timestampIndex, SqlCodeGenerator.isBaseTimestampAscending(base, timestampIndex),
                     instantiator, executionContext, aggregates, keyFunctions, recordFunctions, keyTypes, valueTypes, columnFilter);
             final GenericRecordMetadata metadata = metadata(plan, base.getMetadata(), recordFunctions);
@@ -665,11 +630,7 @@ final class AggregateFactoryGenerator {
             keys.slaveColumns.add(slaveIndex + 1);
             final int masterType = masterMetadata.getColumnType(masterIndex);
             final int slaveType = slaveMetadata.getColumnType(slaveIndex);
-            if (masterType != slaveType
-                    && !(isSymbolOrStringOrVarchar(masterType) && isSymbolOrStringOrVarchar(slaveType))
-                    && !(isTimestamp(masterType) && isTimestamp(slaveType))) {
-                throw SqlException.$(step.getKeyPositions().getQuick(i), "join column type mismatch");
-            }
+            assert JoinBinder.isJoinKeyTypeCompatible(masterType, slaveType);
             if (ColumnType.isVarchar(slaveType) || ColumnType.isVarchar(masterType)) {
                 keys.types.add(ColumnType.VARCHAR);
                 if (ColumnType.isVarchar(slaveType)) {
@@ -712,46 +673,6 @@ final class AggregateFactoryGenerator {
         keys.slaveSinkClass = RecordSinkFactory.getInstanceClass(configuration, asm, slaveMetadata, keys.slaveColumns, null, null,
                 keys.slaveSymbolAsString, keys.slaveStringAsVarchar, keys.slaveTimestampAsNanos);
         return keys;
-    }
-
-    private long[] horizonOffsets(HorizonJoinPlan plan, int timestampType) throws SqlException {
-        final TimestampDriver driver = getTimestampDriver(timestampType);
-        final ObjList<CharSequence> tokens = plan.getOffsets();
-        final IntList positions = plan.getOffsetPositions();
-        final int maxOffsets = configuration.getSqlHorizonJoinMaxOffsets();
-        if (plan.getMode() == HorizonJoinPlan.MODE_RANGE) {
-            final long from = evalHorizonTimeValue(tokens.getQuick(0), positions.getQuick(0), driver);
-            final long to = evalHorizonTimeValue(tokens.getQuick(1), positions.getQuick(1), driver);
-            final long step = evalHorizonTimeValue(tokens.getQuick(2), positions.getQuick(2), driver);
-            if (step <= 0) {
-                throw SqlException.position(positions.getQuick(2)).put("STEP must be positive");
-            }
-            if (from > to) {
-                throw SqlException.position(positions.getQuick(0)).put("FROM must be less than or equal to TO");
-            }
-            final long count = (to - from) / step + 1;
-            if (count > maxOffsets) {
-                throw SqlException.position(positions.getQuick(0)).put("RANGE generates too many offsets [count=").put(count)
-                        .put(", max=").put(maxOffsets).put(']');
-            }
-            final long[] offsets = new long[(int) count];
-            for (int i = 0; i < count; i++) {
-                offsets[i] = from + i * step;
-            }
-            return offsets;
-        }
-        if (tokens.size() > maxOffsets) {
-            throw SqlException.position(plan.getHorizonPosition()).put("LIST has too many offsets [count=").put(tokens.size())
-                    .put(", max=").put(maxOffsets).put(']');
-        }
-        final long[] offsets = new long[tokens.size()];
-        for (int i = 0, n = tokens.size(); i < n; i++) {
-            offsets[i] = evalHorizonTimeValue(tokens.getQuick(i), positions.getQuick(i), driver);
-            if (i > 0 && offsets[i] <= offsets[i - 1]) {
-                throw SqlException.position(positions.getQuick(i)).put("LIST offsets must be monotonically increasing");
-            }
-        }
-        return offsets;
     }
 
     private boolean isVectorizable(AggregatePlan plan, RecordCursorFactory base, SqlExecutionContext executionContext) {
@@ -808,11 +729,11 @@ final class AggregateFactoryGenerator {
     }
 
     // Advises a GROUP BY input of the order of its column keys.
-    private SortPlan remapKeyOrderAdvice(GenerationFrame frame, AggregatePlan aggregate, SortPlan advice) {
+    private SortPlan remapKeyOrderAdvice(AggregatePlan aggregate, SortPlan advice) {
         if (advice == null) {
             return null;
         }
-        final SortPlan mapped = frame.sorts.next().of(aggregate.getInput(), advice.getPosition());
+        final SortPlan mapped = sorts.next().of(aggregate.getInput(), advice.getPosition());
         for (int i = 0, n = advice.getColumnIds().size(); i < n; i++) {
             final int index = aggregate.getOutput().getColumnIndexById(advice.getColumnIds().getQuick(i));
             if (index < 0 || index >= aggregate.getGroupingExpressions().size()
@@ -1135,13 +1056,7 @@ final class AggregateFactoryGenerator {
         final boolean isTimestampDeclared = shared == null && SqlCodeGenerator.isTimestampDeclarationOnly(input);
         final RecordCursorFactory base = shared != null ? shared : codeGenerator.generate(frame, isTimestampDeclared ? input.inputAt(0) : input,
                 executionContext, inputOrderId, inputOrderId < 0 ? RecordCursorFactory.SCAN_DIRECTION_OTHER : requiredScanDirection,
-                remapKeyOrderAdvice(frame, aggregate, orderAdvice), null, inputMnemonic);
-        try {
-            raiseDeferredKeys(aggregate);
-        } catch (Throwable th) {
-            Misc.free(base, th);
-            throw th;
-        }
+                remapKeyOrderAdvice(aggregate, orderAdvice), null, inputMnemonic);
         final int timestampIndex = isTimestampDeclared ? input.getOutput().getTimestampIndex() : base.getMetadata().getTimestampIndex();
         return generate(frame, aggregate, base, timestampIndex, frame.functionInstantiator, sharedConsumerCount(frame, aggregate), executionContext);
     }
@@ -1290,9 +1205,12 @@ final class AggregateFactoryGenerator {
             final ObjList<GroupByFunction> aggregates = new ObjList<>(plan.getAggregates().size());
             keyFunctions = new ObjList<>(plan.getGroupingExpressions().size());
             recordFunctions = new ObjList<>(plan.getOutput().getColumnCount());
-            final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-            final ListColumnFilter columnFilter = new ListColumnFilter();
+            final ArrayColumnTypes keyTypes = frame.keyTypes;
+            final ArrayColumnTypes valueTypes = frame.valueTypes;
+            final ListColumnFilter columnFilter = frame.listColumnFilterA;
+            keyTypes.clear();
+            valueTypes.clear();
+            columnFilter.clear();
             assemble(plan, innerMetadata, masterMetadata.getTimestampIndex(), false, instantiator, executionContext,
                     aggregates, keyFunctions, recordFunctions, keyTypes, valueTypes, columnFilter);
             final GenericRecordMetadata metadata = metadata(plan, innerMetadata, recordFunctions);
@@ -1397,7 +1315,7 @@ final class AggregateFactoryGenerator {
             for (int s = 0; s < slaveCount; s++) {
                 final RecordCursorFactory slave = slaves.getQuick(s);
                 final int position = steps.getQuick(s).getPosition();
-                JoinFactoryGenerator.validateBothTimestamps(position, masterMetadata, slave.getMetadata());
+                assert masterMetadata.getTimestampIndex() >= 0 && slave.getMetadata().getTimestampIndex() >= 0;
                 JoinFactoryGenerator.validateBothTimestampOrders(master, slave, position);
                 if (!slave.supportsTimeFrameCursor()) {
                     throw SqlException.position(position).put("right-hand side of HORIZON JOIN can only be a table with an optional filter");
@@ -1406,7 +1324,11 @@ final class AggregateFactoryGenerator {
             if (!isParallel && !master.recordCursorSupportsRandomAccess()) {
                 throw SqlException.position(steps.getQuick(0).getPosition()).put("left-hand side of HORIZON JOIN can only be a table with an optional filter");
             }
-            final long[] offsets = horizonOffsets(plan, masterMetadata.getTimestampType());
+            final LongList offsetValues = plan.getOffsetValues();
+            final long[] offsets = new long[offsetValues.size()];
+            for (int i = 0, n = offsets.length; i < n; i++) {
+                offsets[i] = offsetValues.getQuick(i);
+            }
             final int masterTimestampIndex = masterMetadata.getTimestampIndex();
             final int masterColumnCount = masterMetadata.getColumnCount();
             final int[] columnSources = new int[innerMetadata.getColumnCount()];
@@ -1533,6 +1455,8 @@ final class AggregateFactoryGenerator {
                 Misc.free(master, th);
             }
             throw th;
+        } finally {
+            horizonKeys.clear();
         }
     }
 

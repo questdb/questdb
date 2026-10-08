@@ -605,22 +605,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        if (symbolFunction != null && !symbolFunction.isStableWithinExecution()
-                || latestByFilter != null && !latestByFilter.isStableWithinExecution()) {
-            return false;
-        }
-        if (keyValueFuncs != null) {
-            for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
-                if (!keyValueFuncs.getQuick(i).isStableWithinExecution()) {
-                    return false;
-                }
-            }
-        }
-        return dfcFactory.isStableWithinExecution() && (backup == null || backup.isStableWithinExecution());
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

@@ -142,16 +142,6 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
         return SCAN_DIRECTION_OTHER;
     }
 
-    @Override
-    public boolean isStableWithinExecution() {
-        for (int i = 0, n = keyExcludedValueFunctions.size(); i < n; i++) {
-            if (!keyExcludedValueFunctions.getQuick(i).isStableWithinExecution()) {
-                return false;
-            }
-        }
-        return (filter == null || filter.isStableWithinExecution()) && partitionFrameCursorFactory.isStableWithinExecution();
-    }
-
     public void recalculateIncludedValues(PageFrameCursor pageFrameCursor) {
         cursorFactoriesIdx[0] = cursorFactories.size();
         excludedKeys.clear();

@@ -33,7 +33,6 @@ import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
-import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
@@ -45,7 +44,6 @@ import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
-import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
@@ -100,7 +98,7 @@ final class DecorrelationPass implements Mutable {
      */
     DecorrelationPass(
             OptimiserContext context,
-            BindContext planNodes,
+            PlanNodePools planNodes,
             CharacterStore characterStore,
             ObjList<BoundExpression> callArguments,
             ObjList<BoundExpression> tmpConjuncts,
@@ -115,10 +113,10 @@ final class DecorrelationPass implements Mutable {
         liftedConjuncts = tmpConjuncts;
         ctx = new DecorrelationContext(context, planNodes, characterStore, callArguments, tmpIndexes, tmpValues, tmpKeys, tmpPlans,
                 tmpSchema);
-        domains = new DecorrelationDomains(context, ctx, tmpSteps);
-        keys = new CorrelationKeys(context, ctx);
-        compensation = new ScalarCompensation(context, ctx, domains, tmpConjuncts);
-        rewriter = new CorrelatedChainRewriter(context, ctx, keys, compensation);
+        domains = new DecorrelationDomains(ctx, tmpSteps);
+        keys = new CorrelationKeys(ctx);
+        compensation = new ScalarCompensation(ctx, domains, tmpConjuncts);
+        rewriter = new CorrelatedChainRewriter(ctx, keys, compensation);
     }
 
     @Override
@@ -364,16 +362,11 @@ final class DecorrelationPass implements Mutable {
             final OutputSchema masterScope = step.getMasterScope();
             masterScope.clear();
             for (int i = 0; i < prefix; i++) {
-                addColumn(masterScope, output, i);
+                masterScope.addColumnFrom(output, i);
             }
             final OutputSchema scope = step.getScope();
             scope.copyFrom(masterScope);
-            final OutputSchema slave = step.getSlave().getOutput();
-            for (int i = 0, n = slave.getColumnCount(); i < n; i++) {
-                scope.add(slave.getColumnId(i), slave.getColumnName(i), slave.getColumnType(i), slave.getMetadata(i), slave.isVisible(i),
-                        step.getSlaveAlias());
-                scope.setSymbolTableStatic(scope.getColumnCount() - 1, slave.isSymbolTableStatic(i));
-            }
+            scope.addColumnsFrom(step.getSlave().getOutput(), step.getSlaveAlias());
             prefix += step.getAggregateColumnIds().size();
         }
     }
@@ -824,12 +817,10 @@ final class DecorrelationPass implements Mutable {
             ctx.copier.remap(plan, compensation.consumerRemap);
         }
         if (domains.decorrelatedSteps.size() > 0) {
-            switch (plan) {
-                case ProjectPlan _, GroupingPlan _, JoinPlan _, SetOperationPlan _, ScanPlan _,
-                     FunctionSourcePlan _ -> {
-                }
-                case WindowJoinPlan windowJoin -> alignWindowJoin(windowJoin);
-                default -> ctx.alignColumns(plan.getOutput(), plan.inputAt(0).getOutput());
+            if (plan instanceof WindowJoinPlan windowJoin) {
+                alignWindowJoin(windowJoin);
+            } else if (plan instanceof WindowPlan window) {
+                ctx.alignColumns(window.getOutput(), window.getInput().getOutput());
             }
         }
         return plan instanceof JoinPlan join && hasDependentStep(join) ? decorrelateJoin(join) : result;

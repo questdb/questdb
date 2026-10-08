@@ -37,10 +37,10 @@ public class ExplainPlanLifecycleTest extends AbstractCairoTest {
     @Test
     public void testInsertSelectPlanSurvivesCompilerReuseAndClose() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table target (x int)");
-            execute("create table source (x int)");
+            execute("CREATE TABLE target (x INT)");
+            execute("CREATE TABLE source (x INT)");
             assertPlanSurvivesCompilerReuseAndClose(
-                    "explain insert into target select x from source",
+                    "EXPLAIN INSERT INTO target SELECT x FROM source",
                     """
                             Insert into table: target
                                 PageFrame
@@ -54,10 +54,10 @@ public class ExplainPlanLifecycleTest extends AbstractCairoTest {
     @Test
     public void testInsertValuesPlanSurvivesCompilerReuseAndClose() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table target (x int)");
-            execute("create table source (x int)");
+            execute("CREATE TABLE target (x INT)");
+            execute("CREATE TABLE source (x INT)");
             assertPlanSurvivesCompilerReuseAndClose(
-                    "explain insert into target values (1)",
+                    "EXPLAIN INSERT INTO target VALUES (1)",
                     "Insert into table: target\n"
             );
         });
@@ -80,7 +80,7 @@ public class ExplainPlanLifecycleTest extends AbstractCairoTest {
                 retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
                 assertPlan(retained, expected);
                 try (RecordCursorFactory other = compiler.compile(
-                        "explain insert into source values (2)", sqlExecutionContext
+                        "EXPLAIN INSERT INTO source VALUES (2)", sqlExecutionContext
                 ).getRecordCursorFactory()) {
                     assertPlan(other, "Insert into table: source\n");
                     assertPlan(retained, expected);

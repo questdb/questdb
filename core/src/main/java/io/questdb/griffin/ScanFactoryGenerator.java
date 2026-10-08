@@ -540,7 +540,7 @@ final class ScanFactoryGenerator {
             frames = newFrames(scan, buildIntervals(frame, scanIntervals, reader), readerMetadata, order);
             configurePushdown(frame, frames, residual, scan, metadata, indexes, reader, executionContext);
             filter = residual == null ? null : frame.functionInstantiator.instantiate(residual, scan.getOutput(), metadata, executionContext);
-            subquery = frame.functionInstantiator.takeSubquery(keySubquery, executionContext);
+            subquery = frame.functionInstantiator.generateSubquery(keySubquery, executionContext);
             keyGetter = subqueryKeyGetter(subquery.getMetadata().getColumnType(0));
         } catch (Throwable th) {
             Misc.free(subquery, th);
@@ -548,7 +548,7 @@ final class ScanFactoryGenerator {
             Misc.free(frames, th);
             throw th;
         }
-        return new FilterOnSubQueryRecordCursorFactory(configuration, metadata, frames, subquery, keySubquery.isStableWithinExecution(),
+        return new FilterOnSubQueryRecordCursorFactory(configuration, metadata, frames, subquery,
                 scan.getOutput().getColumnIndexById(frame.symbols.getColumnId()), filter, keyGetter, indexes, shifts);
     }
 
@@ -615,8 +615,13 @@ final class ScanFactoryGenerator {
                 }
                 final int workerCount = executionContext.getSharedQueryWorkerCount();
                 workerFilters = new ObjList<>(workerCount);
-                for (int i = 0; i < workerCount; i++) {
-                    workerFilters.add(preparePatternFilter(frame, input, metadata, executionContext));
+                frame.functionInstantiator.beginWorkerClones();
+                try {
+                    for (int i = 0; i < workerCount; i++) {
+                        workerFilters.add(preparePatternFilter(frame, input, metadata, executionContext));
+                    }
+                } finally {
+                    frame.functionInstantiator.endWorkerClones();
                 }
             }
             final IntHashSet filterColumns = new IntHashSet();
@@ -850,7 +855,7 @@ final class ScanFactoryGenerator {
                 configurePushdown(frame, frames, latestResidual, scan, metadata, indexes, reader, executionContext);
             }
             if (keySubquery != null) {
-                subquery = frame.functionInstantiator.takeSubquery(keySubquery, executionContext);
+                subquery = frame.functionInstantiator.generateSubquery(keySubquery, executionContext);
                 keyGetter = subqueryKeyGetter(subquery.getMetadata().getColumnType(0));
             } else if (latestResidual != null) {
                 symbolCounts = symbolCounts(latestResidual, latest.getKeyColumnIds());
@@ -869,7 +874,7 @@ final class ScanFactoryGenerator {
                     !scan.hasHint(ScanPlan.HINT_NO_INDEX) && metadata.isColumnIndexed(keyIndex), keyGetter, indexes, shifts);
         }
         return latestByGenerator.generateLatestByScan(
-                frames, metadata, reader, indexes, shifts, keyIndexes,
+                frame, frames, metadata, reader, indexes, shifts, keyIndexes,
                 isIndexedAllowed,
                 filter, keys, excludedKeys, frame.latestPrefixes,
                 symbolCounts,

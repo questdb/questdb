@@ -324,25 +324,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
-     * Returns true if this factory is guaranteed to produce the same result for every cursor
-     * open within a single query execution (same {@code SqlExecutionContext}). This is a weaker
-     * property than {@code !isNonDeterministic()}: a factory projecting {@code now()} or a bind
-     * variable is non-deterministic across executions, yet stable within one, because those
-     * functions re-initialize to the same execution-scoped snapshot on every open.
-     * <p>
-     * Fail-safe like {@link #isNonDeterministic()}: the default claims stability only for
-     * provably deterministic factories, so unknown shapes never enable stability-dependent
-     * optimizations (for example scalar-subquery timestamp pruning in {@code IntervalExtractor}).
-     * Overriding factories must prove that every value source they evaluate is itself stable
-     * within the execution.
-     *
-     * @return true if every cursor open within one execution yields the same result
-     */
-    default boolean isStableWithinExecution() {
-        return !isNonDeterministic();
-    }
-
-    /**
      * Returns true if this factory reads data from outside the database, i.e. from a source whose
      * contents QuestDB neither owns nor tracks transactionally (currently {@code read_parquet()}).
      * <p>

@@ -201,6 +201,14 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         return false;
     }
 
+    /**
+     * A record over this chain that only {@link #recordAt(Record, long)} positions, for a reader that iterates
+     * independently of the chain's own cursor.
+     */
+    public Record newRecord() {
+        return newChainRecord();
+    }
+
     public void of(long nextRecordOffset) {
         assert nextRecordOffset == -1 || (nextRecordOffset > -1 && nextRecordOffset + Long.BYTES <= mem.size());
         this.nextRecordOffset = nextRecordOffset;

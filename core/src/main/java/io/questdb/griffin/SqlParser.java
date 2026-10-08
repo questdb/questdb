@@ -112,6 +112,7 @@ public class SqlParser {
     private static final LowerCaseAsciiCharSequenceHashSet pivotForStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet setOperations = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet tableAliasStop = new LowerCaseAsciiCharSequenceHashSet();
+    private static final int VIEW_LEXER_INITIAL_POOL_CAPACITY = 16;
     private final IntList accumulatedColumnPositions = new IntList();
     private final ObjList<QueryColumn> accumulatedColumns = new ObjList<>();
     private final LowerCaseCharSequenceHashSet aliasMap = new LowerCaseCharSequenceHashSet();
@@ -186,17 +187,26 @@ public class SqlParser {
         this.queryColumnPool = queryColumnPool;
         this.windowExpressionPool = windowExpressionPool;
         this.expressionTreeBuilder = new ExpressionTreeBuilder();
-        this.createTableColumnModelPool = new ObjectPool<>(CreateTableColumnModel.FACTORY, configuration.getCreateTableColumnModelPoolCapacity());
-        this.renameTableModelPool = new ObjectPool<>(RenameTableModel.FACTORY, configuration.getRenameTableModelPoolCapacity());
-        this.withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, configuration.getWithClauseModelPoolCapacity());
-        this.insertModelPool = new ObjectPool<>(InsertModel.FACTORY, configuration.getInsertModelPoolCapacity());
-        this.compileViewModelPool = new ObjectPool<>(CompileViewModel.FACTORY, configuration.getCompileViewModelPoolCapacity());
-        this.copyModelPool = new ObjectPool<>(ExportModel.FACTORY, configuration.getCopyPoolCapacity());
-        this.explainModelPool = new ObjectPool<>(ExplainModel.FACTORY, configuration.getExplainPoolCapacity());
-        this.pivotQueryColumnPool = new ObjectPool<>(PivotForColumn.FACTORY, configuration.getPivotColumnPoolCapacity());
+        final int createTableColumnModelPoolCapacity = configuration.getCreateTableColumnModelPoolCapacity();
+        this.createTableColumnModelPool = new ObjectPool<>(CreateTableColumnModel.FACTORY, createTableColumnModelPoolCapacity, createTableColumnModelPoolCapacity);
+        final int renameTableModelPoolCapacity = configuration.getRenameTableModelPoolCapacity();
+        this.renameTableModelPool = new ObjectPool<>(RenameTableModel.FACTORY, renameTableModelPoolCapacity, renameTableModelPoolCapacity);
+        final int withClauseModelPoolCapacity = configuration.getWithClauseModelPoolCapacity();
+        this.withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, withClauseModelPoolCapacity, withClauseModelPoolCapacity);
+        final int insertModelPoolCapacity = configuration.getInsertModelPoolCapacity();
+        this.insertModelPool = new ObjectPool<>(InsertModel.FACTORY, insertModelPoolCapacity, insertModelPoolCapacity);
+        final int compileViewModelPoolCapacity = configuration.getCompileViewModelPoolCapacity();
+        this.compileViewModelPool = new ObjectPool<>(CompileViewModel.FACTORY, compileViewModelPoolCapacity, compileViewModelPoolCapacity);
+        final int copyPoolCapacity = configuration.getCopyPoolCapacity();
+        this.copyModelPool = new ObjectPool<>(ExportModel.FACTORY, copyPoolCapacity, copyPoolCapacity);
+        final int explainPoolCapacity = configuration.getExplainPoolCapacity();
+        this.explainModelPool = new ObjectPool<>(ExplainModel.FACTORY, explainPoolCapacity, explainPoolCapacity);
+        final int pivotColumnPoolCapacity = configuration.getPivotColumnPoolCapacity();
+        this.pivotQueryColumnPool = new ObjectPool<>(PivotForColumn.FACTORY, pivotColumnPoolCapacity, pivotColumnPoolCapacity);
         this.traversalAlgo = traversalAlgo;
         this.characterStore = characterStore;
-        this.viewLexers = new ObjectPool<>(this::createLexer, configuration.getViewLexerPoolCapacity());
+        final int viewLexerPoolCapacity = configuration.getViewLexerPoolCapacity();
+        this.viewLexers = new ObjectPool<>(this::createLexer, viewLexerPoolCapacity, viewLexerPoolCapacity);
         boolean tempCairoSqlLegacyOperatorPrecedence = configuration.getCairoSqlLegacyOperatorPrecedence();
         if (tempCairoSqlLegacyOperatorPrecedence) {
             this.expressionParser = new ExpressionParser(
@@ -703,7 +713,8 @@ public class SqlParser {
     }
 
     private GenericLexer createLexer() {
-        final GenericLexer lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
+        final int maxPoolCapacity = configuration.getSqlLexerPoolCapacity();
+        final GenericLexer lexer = new GenericLexer(Math.min(VIEW_LEXER_INITIAL_POOL_CAPACITY, maxPoolCapacity), maxPoolCapacity);
         SqlCompilerImpl.configureLexer(lexer);
         return lexer;
     }
@@ -7064,6 +7075,20 @@ public class SqlParser {
     @TestOnly
     void expr(GenericLexer lexer, ExpressionParserListener listener, SqlParserCallback sqlParserCallback) throws SqlException {
         expressionParser.parseExpr(lexer, listener, sqlParserCallback, null);
+    }
+
+    @TestOnly
+    int getViewLexerCapacity() {
+        return viewLexers.getCapacity();
+    }
+
+    @TestOnly
+    int getViewLexerMaxPoolCapacity() {
+        int max = 0;
+        for (int i = 0, n = viewLexers.getCapacity(); i < n; i++) {
+            max = Math.max(max, viewLexers.peekQuick(i).getPoolCapacity());
+        }
+        return max;
     }
 
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {

@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.plan.logical;
 
-import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 
@@ -38,8 +37,6 @@ public final class SampleByPlan extends GroupingPlan {
     public static final int FILL_NULL = 2;
     public static final int FILL_LINEAR = 3;
     public static final int FILL_VALUE = 4;
-    private final ObjList<CharSequence> aggregateSql = new ObjList<>();
-    private final IntList fillPositions = new IntList();
     private final ObjList<CharSequence> fillTokens = new ObjList<>();
     private final ObjList<BoundExpression> fillValues = new ObjList<>();
     private int fillMode;
@@ -59,8 +56,6 @@ public final class SampleByPlan extends GroupingPlan {
     @Override
     public void clear() {
         super.clear();
-        aggregateSql.clear();
-        fillPositions.clear();
         fillTokens.clear();
         fillValues.clear();
         fillMode = FILL_NONE;
@@ -78,16 +73,8 @@ public final class SampleByPlan extends GroupingPlan {
         to = null;
     }
 
-    public ObjList<CharSequence> getAggregateSql() {
-        return aggregateSql;
-    }
-
     public int getFillMode() {
         return fillMode;
-    }
-
-    public IntList getFillPositions() {
-        return fillPositions;
     }
 
     public ObjList<CharSequence> getFillTokens() {

@@ -128,7 +128,6 @@ public final class LogicalPlanPrinter {
                 sink.put(')');
             }
             case TypeExpression type -> sink.put(ColumnType.nameOf(type.getDataType()));
-            case DeferredErrorExpression _ -> sink.put("error");
         }
     }
 

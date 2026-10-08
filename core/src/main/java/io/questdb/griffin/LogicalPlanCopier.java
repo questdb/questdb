@@ -69,10 +69,10 @@ final class LogicalPlanCopier implements Mutable {
     private final OptimiserContext context;
     private final ObjList<JoinInput> copiedInputs = new ObjList<>();
     private final ObjList<JoinInput> originalInputs = new ObjList<>();
-    private final BindContext planNodes;
+    private final PlanNodePools planNodes;
     private final ObjList<AggregatePlan> sharingCopies = new ObjList<>();
 
-    LogicalPlanCopier(OptimiserContext context, BindContext planNodes) {
+    LogicalPlanCopier(OptimiserContext context, PlanNodePools planNodes) {
         this.context = context;
         this.planNodes = planNodes;
     }
@@ -141,9 +141,7 @@ final class LogicalPlanCopier implements Mutable {
     private FillPlan cloneFill(FillPlan fill) {
         final FillPlan clone = planNodes.fills.next().of(fill.getInput(), fill.getPosition());
         clone.getModes().addAll(fill.getModes());
-        clone.getPositions().addAll(fill.getPositions());
         clone.getSourceColumnIds().addAll(fill.getSourceColumnIds());
-        clone.getSourcePositions().addAll(fill.getSourcePositions());
         clone.getTargetColumnIds().addAll(fill.getTargetColumnIds());
         clone.getTokens().addAll(fill.getTokens());
         clone.getValues().addAll(fill.getValues());
@@ -168,9 +166,9 @@ final class LogicalPlanCopier implements Mutable {
 
     private HorizonJoinPlan cloneHorizonJoin(HorizonJoinPlan horizon) {
         final HorizonJoinPlan clone = planNodes.horizonJoinPlans.next().of(horizon.getMaster(), horizon.getMasterAlias(),
-                horizon.getHorizonAlias(), horizon.getHorizonPosition(), horizon.getMode(), horizon.getPosition());
+                horizon.getHorizonAlias(), horizon.getPosition());
         clone.getOffsets().addAll(horizon.getOffsets());
-        clone.getOffsetPositions().addAll(horizon.getOffsetPositions());
+        clone.getOffsetValues().addAll(horizon.getOffsetValues());
         for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
             final HorizonJoinSlave slave = horizon.getSlaves().getQuick(i);
             final HorizonJoinSlave slaveClone = planNodes.horizonJoinSlaves.next().of(slave.getInput(), slave.getAlias(), slave.getPosition());
@@ -214,8 +212,7 @@ final class LogicalPlanCopier implements Mutable {
         clone.setKeyFilter(input.getKeyFilter());
         clone.setOnResidual(input.getOnResidual());
         clone.setPostJoinFilter(input.getPostJoinFilter());
-        clone.setTolerance(input.getToleranceToken(), input.getTolerancePosition());
-        clone.setUnsupportedOnExpression(input.getUnsupportedOnExpression(), input.getUnsupportedOnPosition());
+        clone.setToleranceInterval(input.getToleranceInterval());
         originalInputs.add(input);
         copiedInputs.add(clone);
         return clone;
@@ -268,8 +265,6 @@ final class LogicalPlanCopier implements Mutable {
     private SampleByPlan cloneSampleBy(SampleByPlan sampleBy) {
         final SampleByPlan clone = planNodes.sampleByPlans.next().of(sampleBy.getInput(), sampleBy.getPosition());
         cloneGrouping(sampleBy, clone);
-        clone.getAggregateSql().addAll(sampleBy.getAggregateSql());
-        clone.getFillPositions().addAll(sampleBy.getFillPositions());
         clone.getFillTokens().addAll(sampleBy.getFillTokens());
         clone.getFillValues().addAll(sampleBy.getFillValues());
         clone.setFillMode(sampleBy.getFillMode());
@@ -361,10 +356,10 @@ final class LogicalPlanCopier implements Mutable {
 
     private LogicalPlan copyTree(LogicalPlan plan) {
         final LogicalPlan copy = cloneNode(plan);
+        remap(copy, columnIds);
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
             copy.replaceInput(i, copyTree(plan.inputAt(i)));
         }
-        remap(copy, columnIds);
         return copy;
     }
 

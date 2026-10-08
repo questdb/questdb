@@ -100,13 +100,6 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
         return intervalModel.isNonDeterministic();
     }
 
-    // Compose the weaker within-execution property separately so execution-scoped bounds can
-    // remain stable even when they are non-deterministic across executions.
-    @Override
-    public boolean isStableWithinExecution() {
-        return intervalModel.isStableWithinExecution();
-    }
-
     @Override
     public boolean isIntervalScan() {
         return true;

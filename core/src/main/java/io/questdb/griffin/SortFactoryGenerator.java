@@ -72,6 +72,7 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.ColumnType.isTimestamp;
@@ -82,9 +83,9 @@ final class SortFactoryGenerator {
     private final CairoConfiguration configuration;
     private final OutputSchema emptySchema;
     private final EntityColumnFilter entityColumnFilter;
-    private final ListColumnFilter keys;
     private final ProjectionFactoryGenerator projectionGenerator;
     private final RecordComparatorCompiler recordComparatorCompiler;
+    private final ObjectPool<SortPlan> sorts;
 
     SortFactoryGenerator(
             CairoConfiguration configuration,
@@ -94,7 +95,7 @@ final class SortFactoryGenerator {
             OutputSchema emptySchema,
             EntityColumnFilter entityColumnFilter,
             RecordComparatorCompiler recordComparatorCompiler,
-            ListColumnFilter keys
+            ObjectPool<SortPlan> sorts
     ) {
         this.configuration = configuration;
         this.codeGenerator = codeGenerator;
@@ -102,8 +103,8 @@ final class SortFactoryGenerator {
         this.asm = asm;
         this.emptySchema = emptySchema;
         this.entityColumnFilter = entityColumnFilter;
-        this.keys = keys;
         this.recordComparatorCompiler = recordComparatorCompiler;
+        this.sorts = sorts;
     }
 
     private static FilterPlan findFilterPlan(SortPlan sort) {
@@ -158,11 +159,12 @@ final class SortFactoryGenerator {
 
     // Consumes the input and optional limit functions on entry, including failure.
     RecordCursorFactory generate(
-            SortPlan sort, RecordCursorFactory base, Function lo, Function hi,
-            int limitPosition, SqlExecutionContext executionContext, FunctionInstantiator instantiator
+            GenerationFrame frame, SortPlan sort, RecordCursorFactory base, Function lo, Function hi,
+            int limitPosition, SqlExecutionContext executionContext
     ) throws SqlException {
         try {
             final OutputSchema input = sort.getInput().getOutput();
+            final ListColumnFilter keys = frame.listColumnFilterB;
             keys.clear();
             for (int i = 0, n = sort.getColumnIds().size(); i < n; i++) {
                 final int index = input.getColumnIndexById(sort.getColumnIds().getQuick(i));
@@ -189,7 +191,7 @@ final class SortFactoryGenerator {
                             final RecordCursorFactory ownedBase = base;
                             base = null;
                             base = tryGenerateTopK(metadata, ownedBase, keys, count, executionContext,
-                                    findFilterPlan(sort), instantiator);
+                                    findFilterPlan(sort), frame.functionInstantiator);
                             if (base != ownedBase) {
                                 final Function unused = lo;
                                 lo = null;
@@ -333,7 +335,7 @@ final class SortFactoryGenerator {
                 ? RecordCursorFactory.SCAN_DIRECTION_BACKWARD : RecordCursorFactory.SCAN_DIRECTION_FORWARD;
         final RecordCursorFactory base = generateSortInput(frame, sort, executionContext, requiredOrderId, direction, limit);
         if (base.implementsLimit() && hasNativeFilterInput(sort.getInput())) {
-            return generate(sort, base, null, null, limit.getPosition(), executionContext, frame.functionInstantiator);
+            return generate(frame, sort, base, null, null, limit.getPosition(), executionContext);
         }
         Function lo = null;
         final Function hi;
@@ -345,14 +347,14 @@ final class SortFactoryGenerator {
             Misc.free(base, th);
             throw th;
         }
-        return generate(sort, base, lo, hi, limit.getPosition(), executionContext, frame.functionInstantiator);
+        return generate(frame, sort, base, lo, hi, limit.getPosition(), executionContext);
     }
 
-    SortPlan remapOrderAdvice(GenerationFrame frame, ProjectPlan project, SortPlan advice) {
+    SortPlan remapOrderAdvice(ProjectPlan project, SortPlan advice) {
         if (advice == null || advice.hasAliasedKey()) {
             return null;
         }
-        final SortPlan mapped = frame.sorts.next().of(project.getInput(), advice.getPosition());
+        final SortPlan mapped = sorts.next().of(project.getInput(), advice.getPosition());
         for (int i = 0, n = advice.getColumnIds().size(); i < n; i++) {
             final int index = project.getOutput().getColumnIndexById(advice.getColumnIds().getQuick(i));
             if (index < 0 || !(project.getExpressions().getQuick(index) instanceof ColumnExpression column)) {
@@ -436,12 +438,8 @@ final class SortFactoryGenerator {
                 filterIndexes = new IntHashSet();
                 final OutputSchema filterInput = filterPlan.getInput().getOutput();
                 FilterFactoryGenerator.collectColumnIndexes(filterPlan.getPredicate(), filterInput, filterIndexes);
-                if (!filter.isThreadSafe()) {
-                    workerFilters = new ObjList<>(workerCount);
-                    for (int i = 0; i < workerCount; i++) {
-                        workerFilters.add(instantiator.instantiate(filterPlan.getPredicate(), filterInput, leafMetadata, executionContext));
-                    }
-                }
+                workerFilters = FilterFactoryGenerator.compileWorkers(filterPlan.getPredicate(), filterInput, leafMetadata, filter,
+                        instantiator, executionContext);
                 filterFactory.halfClose();
             }
             // The constructor adopts the leaf and stolen filter state, leaving old wrappers unowned.

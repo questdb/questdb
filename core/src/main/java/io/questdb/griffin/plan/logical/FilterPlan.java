@@ -28,7 +28,7 @@ import io.questdb.std.ObjectFactory;
 
 import java.util.Objects;
 
-public final class FilterPlan extends UnaryPlan {
+public final class FilterPlan extends ForwardingPlan {
     public static final ObjectFactory<FilterPlan> FACTORY = FilterPlan::new;
     private BoundExpression predicate;
 
@@ -36,13 +36,6 @@ public final class FilterPlan extends UnaryPlan {
     public void clear() {
         super.clear();
         predicate = null;
-    }
-
-    /**
-     * Sets the output to the input's columns and designated timestamp: a filter only drops rows.
-     */
-    public void deriveOutput() {
-        getOutput().copyFrom(getInput().getOutput());
     }
 
     public BoundExpression getPredicate() {

@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.model.CompiledTickExpression;
 import io.questdb.griffin.model.DateExpressionEvaluator;
+import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.FiberLocal;
 import io.questdb.std.IntList;
@@ -62,6 +63,36 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
     private static final int LIST_VARIABLE = 3;
     private static final FiberLocal<StringSink> VETTED_SINK = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<LongList> VETTED_VALUES = new FiberLocal<>(LongList::new);
+
+    public static boolean containsDateVariable(CharSequence seq) {
+        return containsDateVariable(seq, 0, seq.length());
+    }
+
+    /**
+     * Parses into {@code out}, which it clears first, the intervals a constant text element of a TIMESTAMP IN list
+     * spells when it is not a timestamp; false when the text spells no interval free of date variables.
+     */
+    public static boolean parseIntervalElement(
+            TimestampDriver driver,
+            CairoConfiguration configuration,
+            CharSequence seq,
+            int lo,
+            int lim,
+            LongList out,
+            StringSink sink
+    ) {
+        out.clear();
+        if (containsDateVariable(seq, lo, lim)) {
+            return false;
+        }
+        try {
+            IntervalUtils.parseTickExpr(driver, configuration, seq, lo, lim, 0, out, IntervalOperation.INTERSECT, sink, true);
+            return true;
+        } catch (SqlException e) {
+            out.clear();
+            return false;
+        }
+    }
 
     @Override
     public int getResultType(IntList argTypes) {
@@ -86,7 +117,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         final LongList values = VETTED_VALUES.get();
         values.clear();
         if (!isIntervalSearch(args)) {
-            parseDiscreteTimestampValues(timestampType, args, argPositions, values);
+            parseElements(timestampType, args, argPositions, configuration, values);
             return true;
         }
         final CharSequence right = args.getQuick(1).getStrA(null);
@@ -130,7 +161,9 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 return new EqTimestampStrConstantFunction(args.getQuick(0), timestampType, right, argPositions.getQuick(1), configuration);
             }
             final LongList values = new LongList(args.size() - 1);
-            parseDiscreteTimestampValues(timestampType, args, argPositions, values);
+            if (parseElements(timestampType, args, argPositions, configuration, values)) {
+                return new EqTimestampStrConstantFunction(args.getQuick(0), values);
+            }
             return new InTimestampConstFunction(args.getQuick(0), values);
         }
 
@@ -167,9 +200,9 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static boolean containsDateVariable(CharSequence seq) {
-        int lim = seq.length();
-        for (int i = 0; i < lim - 1; i++) {
+
+    private static boolean containsDateVariable(CharSequence seq, int lo, int lim) {
+        for (int i = lo; i < lim - 1; i++) {
             if (seq.charAt(i) == '$' && DateExpressionEvaluator.isDateVariable(seq, i, lim)) {
                 return true;
             }
@@ -255,9 +288,22 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         return allConst ? LIST_CONSTANT : allRuntimeConst ? LIST_RUNTIME_CONSTANT : LIST_VARIABLE;
     }
 
-    private static void parseDiscreteTimestampValues(int timestampType, ObjList<Function> args, IntList argPositions, LongList res)
-            throws SqlException {
+    /**
+     * Parses the elements of a constant list into its sorted values. When an element is text that spells intervals
+     * rather than a timestamp, the list holds instead the union of the element intervals, each value spelling the
+     * interval of itself, and the method returns true.
+     */
+    private static boolean parseElements(
+            int timestampType,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            LongList res
+    ) throws SqlException {
         final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        LongList intervals = null;
+        LongList parsed = null;
+        StringSink sink = null;
         for (int i = 1, n = args.size(); i < n; i++) {
             final Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
@@ -271,10 +317,30 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             try {
                 addElement(res, func, null, driver);
             } catch (NumericException e) {
-                throw SqlException.invalidDate(func.getStrA(null), argPositions.getQuick(i));
+                final CharSequence text = ColumnType.tagOf(func.getType()) == ColumnType.VARCHAR
+                        ? func.getVarcharA(null).asAsciiCharSequence() : func.getStrA(null);
+                if (intervals == null) {
+                    intervals = new LongList();
+                    parsed = new LongList();
+                    sink = new StringSink();
+                }
+                if (text == null || !parseIntervalElement(driver, configuration, text, 0, text.length(), parsed, sink)) {
+                    throw SqlException.invalidDate(text, argPositions.getQuick(i));
+                }
+                intervals.add(parsed);
             }
         }
-        res.sort();
+        if (intervals == null) {
+            res.sort();
+            return false;
+        }
+        for (int i = 0, n = res.size(); i < n; i++) {
+            intervals.add(res.getQuick(i), res.getQuick(i));
+        }
+        IntervalUtils.sortAndUnionInPlace(intervals, 0);
+        res.clear();
+        res.add(intervals);
+        return true;
     }
 
     private static class EqTimestampCompiledTickExprFunction extends NegatableBooleanFunction implements UnaryFunction {
@@ -323,6 +389,11 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
     private static class EqTimestampStrConstantFunction extends NegatableBooleanFunction implements UnaryFunction {
         private final LongList intervals = new LongList();
         private final Function left;
+
+        public EqTimestampStrConstantFunction(Function left, LongList intervals) {
+            this.left = left;
+            this.intervals.add(intervals);
+        }
 
         public EqTimestampStrConstantFunction(
                 Function left,

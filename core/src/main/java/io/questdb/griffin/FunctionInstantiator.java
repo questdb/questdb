@@ -34,10 +34,10 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.RuntimeConstFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryBoundRefFunction;
-import io.questdb.griffin.engine.functions.SubqueryCursorFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
 import io.questdb.griffin.engine.functions.columns.BindableColumn;
@@ -80,7 +80,6 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
-import io.questdb.griffin.plan.logical.DeferredErrorExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.TypeExpression;
@@ -97,7 +96,8 @@ import io.questdb.std.ObjectPool;
  */
 public final class FunctionInstantiator implements Mutable {
     private static final String NULL_PROBE_COLUMN = "null_probe";
-    private final ObjectPool<InstantiationArguments> instantiations = new ObjectPool<>(InstantiationArguments::new, 8);
+    private final SubqueryCompiler compiler;
+    private final ObjectPool<InstantiationArguments> instantiations;
     private final ObjList<Function> nullProbeConstants = new ObjList<>(1);
     private final GenericRecordMetadata nullProbeMetadata = new GenericRecordMetadata();
     private final VirtualRecord nullProbeRecord;
@@ -106,20 +106,24 @@ public final class FunctionInstantiator implements Mutable {
     private final ObjList<Function> parkedSubqueries = new ObjList<>();
     private final FunctionParser parser;
     private final PreparedFunctions prepared;
+    private final BindScopeStack scopes;
     private final ObjList<CursorExpression> sharedBoundCursors = new ObjList<>();
     private final ObjList<ScalarTimestampBoundHolder> sharedBoundHolders = new ObjList<>();
-    private final QueryLevelCompiler level;
     private int bindingDepth;
     private int workerCloneDepth;
 
     /**
-     * The NULL probe schema is borrowed for single calls only.
+     * Instantiates for the compiler's binder, adopting from the statement's preparations; a query generates at the
+     * nesting depth the scope stack enters. The NULL probe schema is borrowed for single calls only.
      */
-    FunctionInstantiator(FunctionParser parser, PreparedFunctions prepared, OutputSchema nullProbeSchema, QueryLevelCompiler level) {
+    FunctionInstantiator(SubqueryCompiler compiler, FunctionParser parser, PreparedFunctions prepared, OutputSchema nullProbeSchema,
+                         int maxRetainedInstantiations, BindScopeStack scopes) {
+        this.compiler = compiler;
+        this.scopes = scopes;
+        this.instantiations = new ObjectPool<>(InstantiationArguments::new, 8, maxRetainedInstantiations);
         this.parser = parser;
         this.prepared = prepared;
         this.nullProbeSchema = nullProbeSchema;
-        this.level = level;
         nullProbeConstants.add(null);
         this.nullProbeRecord = new VirtualRecord(nullProbeConstants);
     }
@@ -171,17 +175,14 @@ public final class FunctionInstantiator implements Mutable {
             RecordMetadata metadata,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        if (expression instanceof DeferredErrorExpression deferred) {
-            throw deferred.raise();
-        }
         if (metadata != null && metadata.getColumnCount() != input.getColumnCount()) {
             throw new IllegalStateException("bound function input metadata has changed");
         }
-        instantiations.clear();
+        final int mark = instantiations.getPos();
         try {
             return instantiateNew(expression, input, metadata, executionContext, true, null);
         } finally {
-            instantiations.clear();
+            instantiations.rewind(mark);
         }
     }
 
@@ -207,11 +208,11 @@ public final class FunctionInstantiator implements Mutable {
             throw new IllegalStateException("bound aggregate input metadata has changed");
         }
         closePreparation(expression);
-        instantiations.clear();
+        final int mark = instantiations.getPos();
         try {
             return instantiateNew(expression, input, metadata, executionContext, false, null);
         } finally {
-            instantiations.clear();
+            instantiations.rewind(mark);
         }
     }
 
@@ -234,11 +235,11 @@ public final class FunctionInstantiator implements Mutable {
             throw new IllegalStateException("bound window input metadata has changed");
         }
         closePreparation(expression);
-        instantiations.clear();
+        final int mark = instantiations.getPos();
         try {
             return (WindowFunction) instantiateNew(expression, input, metadata, executionContext, false, null);
         } finally {
-            instantiations.clear();
+            instantiations.rewind(mark);
         }
     }
 
@@ -388,9 +389,6 @@ public final class FunctionInstantiator implements Mutable {
             return leaf;
         }
         if (expression instanceof ConstantExpression constant) {
-            if (constant.isUnparsedTimestamp()) {
-                throw SqlException.invalidDate(constant.getTimestampText(), constant.getPosition());
-            }
             final PreparedFunctions.Entry entry = prepared.findOwned(constant, -1);
             if (entry != null) {
                 return prepared.detach(entry);
@@ -471,10 +469,6 @@ public final class FunctionInstantiator implements Mutable {
         if (!(expression instanceof FunctionExpression call)) {
             throw new IllegalStateException("unexpected bound expression");
         }
-        final BoundExpression error = LogicalPlans.firstGenerationError(call);
-        if (error != null) {
-            LogicalPlans.raiseGenerationError(error);
-        }
         final InstantiationArguments frame = instantiations.next();
         final int count = call.getArgumentCount();
         frame.functions.setPos(count);
@@ -488,9 +482,9 @@ public final class FunctionInstantiator implements Mutable {
                 final Function child = instantiateNew(call.argumentAt(i), input, metadata, executionContext, isAdoptionAllowed, preparation);
                 frame.functions.setQuick(i, child);
                 frame.positions.setQuick(i, call.getArgumentPosition(i));
-                final boolean runtimeConstant = child.isRuntimeConstant();
-                allConstOrRuntimeConst &= child.isConstant() || runtimeConstant;
-                anyRuntimeConst |= runtimeConstant;
+                final boolean isRuntimeConstant = child.isRuntimeConstant();
+                allConstOrRuntimeConst &= child.isConstant() || isRuntimeConstant;
+                anyRuntimeConst |= isRuntimeConstant;
             }
             // Match FunctionParser's runtime-constant boundary treatment. These
             // wrappers own the original child and preserve its semantic type.
@@ -521,10 +515,9 @@ public final class FunctionInstantiator implements Mutable {
                         && ColumnType.isArray(call.getDataType()) && function.getType() != call.getDataType()) {
                     function.assignType(call.getDataType(), executionContext.getBindVariableService());
                 }
-                // Optimiser-built calls may record a weaker stability than the built function proves, and a call
-                // stable with its sub-queries is built over their proven stability; the bound flags stay the
-                // conservative ones optimisations relied on.
-                final int flags = call.getFunctionFlags() & ~BoundExpression.STABLE_WITH_SUBQUERIES;
+                // Optimiser-built calls may record a weaker stability than the built function proves; the bound
+                // flags stay the conservative ones optimisations relied on.
+                final int flags = call.getFunctionFlags();
                 if (function.getType() != call.getDataType()
                         || (FunctionBinder.functionFlags(function) & (flags | ~BoundExpression.STABLE_WITHIN_EXECUTION)) != flags) {
                     throw new IllegalStateException("bound function semantics have changed");
@@ -626,16 +619,22 @@ public final class FunctionInstantiator implements Mutable {
         workerCloneDepth++;
     }
 
-    Throwable closePrepared(Throwable primary) {
-        return prepared.closePrepared(primary);
-    }
-
     void endWorkerClones() {
         workerCloneDepth--;
     }
 
-    int getLevelDepth() {
-        return level.getDepth();
+    /**
+     * An owned factory of the sub-query for a consumer that reads it directly.
+     */
+    RecordCursorFactory generateSubquery(CursorExpression cursor, SqlExecutionContext executionContext) throws SqlException {
+        return compiler.generateSubqueryConsumer(cursor.getSubquery(), workerCloneDepth == 0, executionContext);
+    }
+
+    /**
+     * The nesting depth of the query generating now.
+     */
+    int getDepth() {
+        return scopes.depth();
     }
 
     Function instantiateSubquery(CursorExpression cursor, SqlExecutionContext executionContext) throws SqlException {
@@ -646,36 +645,11 @@ public final class FunctionInstantiator implements Mutable {
             parkedSubqueries.remove(parked);
             return function;
         }
-        final int index = cursor.getSubqueryIndex();
         if (bindingDepth > 0) {
             // Binding builds against the output metadata; the generator rebuilds the root.
-            return new SubqueryCursorFunction(level.getSubqueryMetadata(index), true);
+            return new CursorFunction(cursor.getSubquery().getOutputMetadata());
         }
-        final boolean isStable = cursor.isStableWithinExecution();
-        if (workerCloneDepth == 0) {
-            return new SubqueryCursorFunction(level.takeSubquery(index, executionContext), isStable);
-        }
-        // Worker clones receive the owner's sub-query state, so generating their copy serially keeps
-        // nested sub-queries from compiling once per worker at every nesting level.
-        final boolean isParallelFilter = executionContext.isParallelFilterEnabled();
-        final boolean isParallelGroupBy = executionContext.isParallelGroupByEnabled();
-        final boolean isParallelHorizonJoin = executionContext.isParallelHorizonJoinEnabled();
-        final boolean isParallelTopK = executionContext.isParallelTopKEnabled();
-        final boolean isParallelWindowJoin = executionContext.isParallelWindowJoinEnabled();
-        executionContext.setParallelFilterEnabled(false);
-        executionContext.setParallelGroupByEnabled(false);
-        executionContext.setParallelHorizonJoinEnabled(false);
-        executionContext.setParallelTopKEnabled(false);
-        executionContext.setParallelWindowJoinEnabled(false);
-        try {
-            return new SubqueryCursorFunction(level.generateSubquery(index, executionContext), isStable);
-        } finally {
-            executionContext.setParallelFilterEnabled(isParallelFilter);
-            executionContext.setParallelGroupByEnabled(isParallelGroupBy);
-            executionContext.setParallelHorizonJoinEnabled(isParallelHorizonJoin);
-            executionContext.setParallelTopKEnabled(isParallelTopK);
-            executionContext.setParallelWindowJoinEnabled(isParallelWindowJoin);
-        }
+        return new CursorFunction(generateSubquery(cursor, executionContext));
     }
 
     Function instantiateUpdateAssignment(BoundExpression expression, int targetType, OutputSchema input,
@@ -741,11 +715,13 @@ public final class FunctionInstantiator implements Mutable {
      * constructed while binding; its column leaves join {@code preparation} so the prepared root stays relocatable.
      */
     Function realize(BoundExpression expression, OutputSchema input, PreparedFunctions.Entry preparation, SqlExecutionContext executionContext) throws SqlException {
+        final int mark = instantiations.getPos();
         bindingDepth++;
         try {
             return instantiateNew(expression, input, null, executionContext, false, preparation);
         } finally {
             bindingDepth--;
+            instantiations.rewind(mark);
         }
     }
 
@@ -754,11 +730,13 @@ public final class FunctionInstantiator implements Mutable {
      * binder rebuilds replacement arguments this way while the parser constructs their parent.
      */
     Function rebuild(BoundExpression expression, OutputSchema input, SqlExecutionContext executionContext) throws SqlException {
+        final int mark = instantiations.getPos();
         bindingDepth++;
         try {
             return instantiateNew(expression, input, null, executionContext, false, null);
         } finally {
             bindingDepth--;
+            instantiations.rewind(mark);
         }
     }
 
@@ -773,13 +751,6 @@ public final class FunctionInstantiator implements Mutable {
         } else {
             sharedBoundHolders.setQuick(index, holder);
         }
-    }
-
-    /**
-     * An owned factory of the sub-query for a consumer that reads it directly.
-     */
-    RecordCursorFactory takeSubquery(CursorExpression cursor, SqlExecutionContext executionContext) throws SqlException {
-        return level.takeSubquery(cursor.getSubqueryIndex(), executionContext);
     }
 
     private static final class InstantiationArguments implements Mutable {

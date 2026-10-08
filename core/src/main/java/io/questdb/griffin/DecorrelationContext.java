@@ -50,15 +50,15 @@ final class DecorrelationContext implements Mutable {
     final ObjList<LogicalPlan> chain;
     final IntList chainOuterIds = new IntList();
     final CharacterStore characterStore;
+    final OptimiserContext context;
     final LogicalPlanCopier copier;
     final IntList mappedColumnIds;
     final IntList mappedOuterIds;
     final IntList masterOuterIds = new IntList();
     final IntIntHashMap outerAliases = new IntIntHashMap();
-    final BindContext planNodes;
+    final PlanNodePools planNodes;
     final IntList tmpColumnIds;
     final IntIntHashMap substitution = new IntIntHashMap();
-    private final OptimiserContext context;
     private final OutputSchema tmpSchema;
     int carrierSequence;
     JoinPlan master;
@@ -67,7 +67,7 @@ final class DecorrelationContext implements Mutable {
 
     DecorrelationContext(
             OptimiserContext context,
-            BindContext planNodes,
+            PlanNodePools planNodes,
             CharacterStore characterStore,
             ObjList<BoundExpression> callArguments,
             IntList tmpColumnIds,
@@ -92,9 +92,12 @@ final class DecorrelationContext implements Mutable {
     public void clear() {
         chainOuterIds.clear();
         copier.clear();
+        mappedColumnIds.clear();
+        mappedOuterIds.clear();
         masterOuterIds.clear();
         outerAliases.clear();
         substitution.clear();
+        tmpColumnIds.clear();
         carrierSequence = 0;
         master = null;
         masterLimit = 0;
@@ -226,10 +229,10 @@ final class DecorrelationContext implements Mutable {
                 output.add(columnId, name, type, false);
             }
             if (i < n) {
-                addColumn(output, copy, i);
+                output.addColumnFrom(copy, i);
             }
         }
-        output.setTimestampIndex(output.getColumnIndexById(timestampId));
+        output.setTimestampColumnId(timestampId);
         copy.clear();
     }
 
@@ -248,25 +251,16 @@ final class DecorrelationContext implements Mutable {
                 output.add(input.getColumnId(i), input.getColumnName(i), input.getColumnType(i), input.getMetadata(i), false,
                         input.getColumnQualifier(i));
             } else {
-                addColumn(output, copy, index);
+                output.addColumnFrom(copy, index);
             }
         }
         for (int i = 0, n = copy.getColumnCount(); i < n; i++) {
             if (input.getColumnIndexById(copy.getColumnId(i)) < 0) {
-                addColumn(output, copy, i);
+                output.addColumnFrom(copy, i);
             }
         }
-        output.setTimestampIndex(output.getColumnIndexById(timestampId));
+        output.setTimestampColumnId(timestampId);
         copy.clear();
-    }
-
-    static void addColumn(OutputSchema output, OutputSchema source, int index) {
-        output.add(source.getColumnId(index), source.getColumnName(index), source.getColumnType(index), source.getMetadata(index),
-                source.isVisible(index), source.getColumnQualifier(index));
-        output.setSymbolTableStatic(output.getColumnCount() - 1, source.isSymbolTableStatic(index));
-        if (source.isNameProtected(index)) {
-            output.protectName(output.getColumnCount() - 1);
-        }
     }
 
     CharSequence joinedName(OutputSchema output, int columnId) {

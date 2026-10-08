@@ -112,11 +112,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         return base.isNonDeterministic();
     }
 
-    @Override
-    public boolean isStableWithinExecution() {
-        return base.isStableWithinExecution();
-    }
-
     // to be used in combination with compiled filter
     @Nullable
     public ObjList<Function> getBindVarFunctions() {

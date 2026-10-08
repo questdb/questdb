@@ -99,11 +99,6 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        return dfcFactory.isStableWithinExecution();
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

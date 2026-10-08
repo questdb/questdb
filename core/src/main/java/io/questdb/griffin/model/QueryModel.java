@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.model;
 
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.ShowCreateDatabaseRecordCursorFactory;
@@ -120,7 +119,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final LowerCaseCharSequenceObjHashMap<CharSequence> aliasToColumnNameMap = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
-    private final LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet dependencies = new IntHashSet();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
@@ -149,8 +147,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<ObjList<CharSequence>> unnestJsonColumnNames = new ObjList<>();
     private final ObjList<IntList> unnestJsonColumnTypes = new ObjList<>();
     private final ObjList<ExpressionNode> updateSetColumns = new ObjList<>();
-    private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
-    private final IntList updateTableColumnTypes = new IntList();
     private final ObjList<CharSequence> wildcardColumnNames = new ObjList<>();
     private final WindowJoinContext windowJoinContext = new WindowJoinContext();
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
@@ -205,7 +201,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode timestamp;
     private QueryModel unionModel;
     private boolean unnestOrdinality;
-    private TableToken updateTableToken;
     private ExpressionNode viewNameExpr;
     private ExpressionNode whereClause;
 
@@ -259,7 +254,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         if (aliasKeyIndex > -1) {
             aliasToColumnNameMap.putAt(aliasKeyIndex, alias, ast.token);
             wildcardColumnNames.add(alias);
-            columnNameToAliasMap.put(ast.token, alias);
             columnAliasIndexes.put(alias, wildcardColumnNames.size() - 1);
             return true;
         }
@@ -338,7 +332,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         withClauseModel.clear();
         namedWindows.clear();
         selectModelType = SELECT_MODEL_NONE;
-        columnNameToAliasMap.clear();
         tableId = -1;
         metadataVersion = -1;
         wildcardColumnNames.clear();
@@ -356,15 +349,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         isCteModel = false;
         modelType = ExecutionModel.QUERY;
         updateSetColumns.clear();
-        updateTableColumnTypes.clear();
         standaloneUnnest = false;
         unnestColumnAliases.clear();
         unnestExpressions.clear();
         unnestJsonColumnNames.clear();
         unnestJsonColumnTypes.clear();
         unnestOrdinality = false;
-        updateTableColumnNames.clear();
-        updateTableToken = null;
         setOperationType = SET_OPERATION_UNION_ALL;
         artificialStar = false;
         explicitTimestamp = false;
@@ -702,10 +692,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return updateSetColumns;
     }
 
-    public TableToken getUpdateTableToken() {
-        return updateTableToken;
-    }
-
     public ExpressionNode getViewNameExpr() {
         return viewNameExpr;
     }
@@ -767,11 +753,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isStandaloneUnnest() {
         return standaloneUnnest;
-    }
-
-    @SuppressWarnings("unused")
-    public boolean isTemporalJoin() {
-        return joinType >= JOIN_ASOF && joinType <= JOIN_LT;
     }
 
     public boolean isUnnestJsonSource(int index) {

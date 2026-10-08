@@ -36,7 +36,7 @@ import org.jetbrains.annotations.TestOnly;
 import static io.questdb.cairo.ColumnType.*;
 
 /**
- * Binding-side typing of UNION/EXCEPT/INTERSECT: output column types, symbol columns and timestamp.
+ * Binding-side typing of UNION/EXCEPT/INTERSECT: output column types, branch casts, symbol columns and timestamp.
  */
 public final class SetOperationBinder {
     // @formatter:off
@@ -210,10 +210,34 @@ public final class SetOperationBinder {
         return result;
     }
 
+    private static boolean isSupportedCast(int fromTag, int fromType, int toTag) {
+        return switch (toTag) {
+            case LONG -> fromTag == BYTE || fromTag == SHORT || fromTag == CHAR || fromTag == INT || fromTag == LONG;
+            case FLOAT -> fromTag == BYTE || fromTag == SHORT || fromTag == INT || fromTag == LONG || fromTag == FLOAT;
+            case DOUBLE ->
+                    fromTag == BYTE || fromTag == SHORT || fromTag == INT || fromTag == LONG || fromTag == FLOAT || fromTag == DOUBLE;
+            case IPv4, DATE -> fromTag == toTag;
+            case TIMESTAMP -> fromTag == DATE || fromTag == TIMESTAMP;
+            case STRING, VARCHAR ->
+                    fromTag != BINARY && (fromTag != ARRAY || decodeArrayElementType(fromType) == DOUBLE);
+            case GEOBYTE, GEOSHORT, GEOINT, GEOLONG ->
+                    fromTag == STRING || fromTag == VARCHAR || fromTag >= toTag && fromTag <= GEOLONG;
+            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> ColumnType.isDecimalType(fromTag)
+                    || fromTag == BYTE || fromTag == SHORT || fromTag == INT || fromTag == LONG || fromTag == STRING || fromTag == VARCHAR;
+            default -> true;
+        };
+    }
+
     private static boolean isSymbolColumn(LogicalPlan plan, int index) {
         return ColumnType.isSymbol(plan.getOutput().getColumnType(index))
                 || plan instanceof SetOperationPlan operation && !operation.isSymbolRestorationRequired()
                 && operation.getSymbolColumns().contains(index);
+    }
+
+    private static void validateCasts(OutputSchema branch, OutputSchema left, OutputSchema right, int position) throws SqlException {
+        for (int i = 0, n = branch.getColumnCount(); i < n; i++) {
+            validateCast(branch.getColumnType(i), getUnionCastType(left.getColumnType(i), right.getColumnType(i)), branch.getColumnName(i), position);
+        }
     }
 
     static boolean isCastRequired(SetOperationPlan plan) {
@@ -244,21 +268,49 @@ public final class SetOperationBinder {
         if (left.getColumnCount() != right.getColumnCount()) {
             throw SqlException.$(plan.getRightPosition(), "queries have different number of columns");
         }
-        final boolean union = plan.getOperation().isUnion();
-        final boolean castRequired = isCastRequired(plan);
+        final boolean isUnion = plan.getOperation().isUnion();
+        final boolean isCastRequired = isCastRequired(plan);
         targetTypes.clear();
         plan.getSymbolColumns().clear();
         for (int i = 0, n = left.getColumnCount(); i < n; i++) {
-            int type = castRequired
+            int type = isCastRequired
                     ? getUnionCastType(left.getColumnType(i), right.getColumnType(i))
                     : left.getColumnType(i);
-            if (union && isSymbolColumn(plan.getLeft(), i) && isSymbolColumn(plan.getRight(), i)) {
+            if (isUnion && isSymbolColumn(plan.getLeft(), i) && isSymbolColumn(plan.getRight(), i)) {
                 plan.getSymbolColumns().add(i);
                 if (plan.isSymbolRestorationRequired()) {
                     type = ColumnType.SYMBOL;
                 }
             }
             targetTypes.add(type);
+        }
+        if (isCastRequired) {
+            validateCasts(left, left, right, plan.getPosition());
+            validateCasts(right, left, right, plan.getRightPosition());
+        }
+    }
+
+    /**
+     * Rejects a branch column type that the set operation cannot cast to the column's output type.
+     */
+    static void validateCast(int fromType, int toType, CharSequence column, int position) throws SqlException {
+        int fromTag = tagOf(fromType);
+        if (fromTag == VARCHAR_SLICE) {
+            fromTag = VARCHAR;
+        }
+        if (fromTag == NULL) {
+            return;
+        }
+        final int toTag = tagOf(toType);
+        if (toTag == ARRAY) {
+            if (decodeWeakArrayDimensionality(toType) == -1) {
+                throw SqlException.$(position, "cast to array bind variable type is not supported [column=").put(column).put(']');
+            }
+            if (fromTag == ARRAY && decodeWeakArrayDimensionality(fromType) > decodeWeakArrayDimensionality(toType)) {
+                throw SqlException.$(position, "array cast to lower dimensionality is not supported [column=").put(column).put(']');
+            }
+        } else if (!isSupportedCast(fromTag, fromType, toTag)) {
+            throw SqlException.unsupportedCast(position, column, fromType, toType);
         }
     }
 }

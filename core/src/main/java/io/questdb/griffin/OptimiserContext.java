@@ -36,21 +36,29 @@ import io.questdb.std.ObjList;
  * passes read it.
  */
 final class OptimiserContext implements Mutable {
+    private final FunctionBinder functionBinder;
+    private final TableFunctionSources functionSources;
+    private final FunctionInstantiator instantiator;
+    private final BoundExpressionRewriter rewriter;
     private SqlExecutionContext executionContext;
-    private FunctionBinder functionBinder;
-    private TableFunctionSources functionSources;
-    private FunctionInstantiator instantiator;
     private int nextColumnId;
-    private BoundExpressionRewriter rewriter;
+
+    OptimiserContext(
+            BoundExpressionRewriter rewriter,
+            FunctionBinder functionBinder,
+            FunctionInstantiator instantiator,
+            TableFunctionSources functionSources
+    ) {
+        this.rewriter = rewriter;
+        this.functionBinder = functionBinder;
+        this.instantiator = instantiator;
+        this.functionSources = functionSources;
+    }
 
     @Override
     public void clear() {
         executionContext = null;
-        functionBinder = null;
-        functionSources = null;
-        instantiator = null;
         nextColumnId = 0;
-        rewriter = null;
     }
 
     /**
@@ -82,18 +90,7 @@ final class OptimiserContext implements Mutable {
     /**
      * Starts a query level: {@code nextColumnId} is the first id its bound plan does not use.
      */
-    void of(
-            BoundExpressionRewriter rewriter,
-            FunctionBinder functionBinder,
-            FunctionInstantiator instantiator,
-            TableFunctionSources functionSources,
-            int nextColumnId,
-            SqlExecutionContext executionContext
-    ) {
-        this.rewriter = rewriter;
-        this.functionBinder = functionBinder;
-        this.instantiator = instantiator;
-        this.functionSources = functionSources;
+    void of(int nextColumnId, SqlExecutionContext executionContext) {
         this.nextColumnId = nextColumnId;
         this.executionContext = executionContext;
     }

@@ -67,11 +67,6 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        return base.isStableWithinExecution();
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

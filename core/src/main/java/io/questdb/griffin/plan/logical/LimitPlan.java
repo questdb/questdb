@@ -26,7 +26,7 @@ package io.questdb.griffin.plan.logical;
 
 import io.questdb.std.ObjectFactory;
 
-public final class LimitPlan extends UnaryPlan {
+public final class LimitPlan extends ForwardingPlan {
     public static final ObjectFactory<LimitPlan> FACTORY = LimitPlan::new;
     private BoundExpression hi;
     private BoundExpression lo;
@@ -36,13 +36,6 @@ public final class LimitPlan extends UnaryPlan {
         super.clear();
         hi = null;
         lo = null;
-    }
-
-    /**
-     * Sets the output to the input's columns and designated timestamp: a limit only drops rows.
-     */
-    public void deriveOutput() {
-        getOutput().copyFrom(getInput().getOutput());
     }
 
     public BoundExpression getHi() {

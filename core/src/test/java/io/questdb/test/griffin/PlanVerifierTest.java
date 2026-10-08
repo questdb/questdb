@@ -32,6 +32,7 @@ import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
+import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
@@ -245,11 +246,40 @@ public class PlanVerifierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillTimestamp() {
+        final FunctionSourcePlan source = source();
+        source.getOutput().add(3, "ts", ColumnType.TIMESTAMP, true);
+        final FillPlan fill = FillPlan.FACTORY.newInstance().of(source, 5);
+        fill.setTimestampColumnId(3);
+        fill.getOutput().copyFrom(source.getOutput());
+        assertFails(fill, PlanVerifier.FILL_TIMESTAMP, "FillPlan");
+        fill.deriveOutput();
+        Assert.assertEquals(2, fill.getOutput().getTimestampIndex());
+        Assert.assertTrue(verifier.verify(fill, PASS));
+    }
+
+    @Test
     public void testOutputForwarding() {
         final FunctionSourcePlan source = source();
         final FilterPlan filter = filter(source, column(2, ColumnType.BOOLEAN));
         filter.getOutput().remove(0);
         assertFails(filter, PlanVerifier.OUTPUT_FORWARDING, "FilterPlan");
+    }
+
+    @Test
+    public void testOutputForwardingAttributes() {
+        final FunctionSourcePlan source = source();
+        final FilterPlan filter = filter(source, column(2, ColumnType.BOOLEAN));
+        filter.getOutput().setColumnName(0, "renamed", null);
+        assertFails(filter, PlanVerifier.OUTPUT_FORWARDING + " [column id 1]", "FilterPlan");
+        filter.deriveOutput();
+        filter.getOutput().setSymbolTableStatic(1, true);
+        assertFails(filter, PlanVerifier.OUTPUT_FORWARDING + " [column id 2]", "FilterPlan");
+        filter.deriveOutput();
+        filter.getOutput().protectName(1);
+        assertFails(filter, PlanVerifier.OUTPUT_FORWARDING + " [column id 2]", "FilterPlan");
+        filter.deriveOutput();
+        Assert.assertTrue(verifier.verify(filter, PASS));
     }
 
     @Test
@@ -273,6 +303,29 @@ public class PlanVerifierTest extends AbstractCairoTest {
         project.getExpressions().add(column(1, ColumnType.INT));
         project.getOutput().add(3, "a", ColumnType.LONG, true);
         assertFails(project, PlanVerifier.PROJECT_TYPE, "ProjectPlan");
+    }
+
+    @Test
+    public void testReplaceInputDerivesOutput() {
+        final FilterPlan filter = filter(source(), column(2, ColumnType.BOOLEAN));
+        final FunctionSourcePlan replacement = source(5, 2);
+        replacement.getOutput().add(3, "ts", ColumnType.TIMESTAMP, true);
+        replacement.getOutput().setTimestampIndex(2);
+        filter.replaceInput(0, replacement);
+        Assert.assertEquals(3, filter.getOutput().getColumnCount());
+        Assert.assertEquals(5, filter.getOutput().getColumnId(0));
+        Assert.assertEquals(2, filter.getOutput().getTimestampIndex());
+        Assert.assertTrue(verifier.verify(filter, PASS));
+        final SortPlan sort = SortPlan.FACTORY.newInstance().of(source(), 4);
+        sort.getColumnIds().add(3);
+        sort.getDirections().add(SortDirection.DESCENDING);
+        sort.replaceInput(0, filter);
+        Assert.assertEquals(2, sort.getOutput().getTimestampIndex());
+        Assert.assertTrue(verifier.verify(sort, PASS));
+        sort.getColumnIds().setQuick(0, 5);
+        sort.replaceInput(0, filter);
+        Assert.assertEquals(-1, sort.getOutput().getTimestampIndex());
+        Assert.assertTrue(verifier.verify(sort, PASS));
     }
 
     @Test

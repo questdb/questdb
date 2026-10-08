@@ -27,18 +27,25 @@ package io.questdb.griffin;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.columns.BindableColumn;
 import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Owns the executable roots the parser builds while binding, one slot per bound expression, and the constant arguments
  * and column leaves of calls the binder leaves unconstructed, until a consumer adopts, retargets or closes them.
  */
 final class PreparedFunctions implements Mutable {
-    private final ObjectPool<Entry> entries = new ObjectPool<>(Entry::new, 4);
+    private final ObjectPool<Entry> entries;
     private final ObjList<Entry> prepared = new ObjList<>();
     private final ResourceScope resources = new ResourceScope();
+
+    PreparedFunctions(int maxRetainedEntries) {
+        this.entries = new ObjectPool<>(Entry::new, 4, maxRetainedEntries);
+    }
 
     @Override
     public void clear() {
@@ -48,6 +55,20 @@ final class PreparedFunctions implements Mutable {
             prepared.clear();
             entries.clear();
         }
+    }
+
+    /**
+     * Whether every open column leaf of the entry is a column its description reads: the binder closes and removes
+     * the leaves of the operands its folds drop.
+     */
+    static boolean hasOnlyReadLeaves(Entry entry) {
+        for (int i = 0, n = entry.leaves.size(); i < n; i++) {
+            final BindableColumn leaf = entry.leaves.getQuick(i);
+            if (leaf.isOpen() && !BoundExpressionRewriter.references(entry.expression, leaf.getColumnId())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -61,10 +82,16 @@ final class PreparedFunctions implements Mutable {
     }
 
     /**
-     * Closes every owned root when binding fails; the parser owns its partial roots.
+     * Closes the roots prepared since {@code mark} when their binding fails; the parser owns its partial roots and
+     * the roots prepared earlier stay with their consumers.
      */
-    void closeOnFailure(Throwable primary) {
-        resources.closeOwned(primary);
+    void closeOnFailure(int mark, @NotNull Throwable primary) {
+        for (int i = mark, n = prepared.size(); i < n; i++) {
+            final Entry entry = prepared.getQuick(i);
+            if (entry.slot >= 0 && resources.isOwned(entry.slot)) {
+                Misc.free(detach(entry), primary);
+            }
+        }
     }
 
     /**
@@ -111,18 +138,16 @@ final class PreparedFunctions implements Mutable {
         return null;
     }
 
+    @TestOnly
+    int getEntryCapacity() {
+        return entries.getCapacity();
+    }
+
     /**
-     * Whether every open column leaf of the entry is a column its description reads: the binder closes and removes
-     * the leaves of the operands its folds drop.
+     * The position of the next root, from which {@link #closeOnFailure} closes.
      */
-    static boolean hasOnlyReadLeaves(Entry entry) {
-        for (int i = 0, n = entry.leaves.size(); i < n; i++) {
-            final BindableColumn leaf = entry.leaves.getQuick(i);
-            if (leaf.isOpen() && !BoundExpressionRewriter.references(entry.expression, leaf.getColumnId())) {
-                return false;
-            }
-        }
-        return true;
+    int mark() {
+        return prepared.size();
     }
 
     /**

@@ -573,9 +573,6 @@ final class AggregateRewritePass implements Mutable {
         }
         output.setTimestampIndex(LogicalPlans.projectedColumnIndex(project, aggregate.getOutput().getTimestampColumnId()));
         sort.replaceInput(0, project);
-        sort.getOutput().copyFrom(output);
-        final int firstIndex = sortKeyIndexes.getQuick(0);
-        sort.getOutput().setTimestampIndex(ColumnType.isTimestamp(output.getColumnType(firstIndex)) ? firstIndex : -1);
         return sort;
     }
 

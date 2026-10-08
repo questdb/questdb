@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.plan.logical;
 
-import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 
@@ -37,36 +37,26 @@ import java.util.Objects;
  */
 public final class HorizonJoinPlan extends LogicalPlan {
     public static final ObjectFactory<HorizonJoinPlan> FACTORY = HorizonJoinPlan::new;
-    public static final int MODE_LIST = 2;
-    public static final int MODE_RANGE = 1;
-    private final IntList offsetPositions = new IntList();
+    private final LongList offsetValues = new LongList();
     private final ObjList<CharSequence> offsets = new ObjList<>();
     private final ObjList<HorizonJoinSlave> slaves = new ObjList<>();
     private CharSequence horizonAlias;
-    private int horizonPosition;
     private CharSequence masterAlias;
     private LogicalPlan master;
-    private int mode;
 
     @Override
     public void clear() {
         super.clear();
-        offsetPositions.clear();
+        offsetValues.clear();
         offsets.clear();
         slaves.clear();
         horizonAlias = null;
-        horizonPosition = 0;
         masterAlias = null;
         master = null;
-        mode = 0;
     }
 
     public CharSequence getHorizonAlias() {
         return horizonAlias;
-    }
-
-    public int getHorizonPosition() {
-        return horizonPosition;
     }
 
     public LogicalPlan getMaster() {
@@ -77,10 +67,6 @@ public final class HorizonJoinPlan extends LogicalPlan {
         return masterAlias;
     }
 
-    public int getMode() {
-        return mode;
-    }
-
     /**
      * Interval literals: FROM, TO and STEP for RANGE, otherwise the LIST entries in order.
      */
@@ -88,8 +74,11 @@ public final class HorizonJoinPlan extends LogicalPlan {
         return offsets;
     }
 
-    public IntList getOffsetPositions() {
-        return offsetPositions;
+    /**
+     * Horizon offsets in the units of the master's designated timestamp, ascending.
+     */
+    public LongList getOffsetValues() {
+        return offsetValues;
     }
 
     public ObjList<HorizonJoinSlave> getSlaves() {
@@ -106,12 +95,10 @@ public final class HorizonJoinPlan extends LogicalPlan {
         return slaves.size() + 1;
     }
 
-    public HorizonJoinPlan of(LogicalPlan master, CharSequence masterAlias, CharSequence horizonAlias, int horizonPosition, int mode, int position) {
+    public HorizonJoinPlan of(LogicalPlan master, CharSequence masterAlias, CharSequence horizonAlias, int position) {
         this.master = Objects.requireNonNull(master);
         this.masterAlias = masterAlias;
         this.horizonAlias = horizonAlias;
-        this.horizonPosition = horizonPosition;
-        this.mode = mode;
         setPosition(position);
         return this;
     }

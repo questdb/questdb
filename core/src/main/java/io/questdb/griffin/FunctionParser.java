@@ -144,6 +144,7 @@ import java.util.ArrayDeque;
 import static io.questdb.griffin.SqlKeywords.*;
 
 public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
+    private static final boolean ASSERTIONS_ENABLED = FunctionParser.class.desiredAssertionStatus();
     private static final Log LOG = LogFactory.getLog(FunctionParser.class);
     private final IntList argTraits = new IntList();
     private final IntList argTypes = new IntList();
@@ -163,7 +164,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private int executionRequirementPosition = -1;
     private RecordMetadata metadata;
     private SqlExecutionContext sqlExecutionContext;
-    private QueryLevelCompiler level;
+    private SubqueryCompiler subqueryCompiler;
 
     public FunctionParser(CairoConfiguration configuration, FunctionFactoryCache functionFactoryCache) {
         this.configuration = configuration;
@@ -345,9 +346,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             throw rejection;
         }
 
-        int declaredType = ColumnType.UNDEFINED;
-        //noinspection AssertWithSideEffects
-        assert (declaredType = declaredResultType(factory, args)) == declaredType;
+        final int declaredType = ASSERTIONS_ENABLED ? declaredResultType(factory, args) : ColumnType.UNDEFINED;
         Function function;
         try {
             LOG.debug().$("call ").$safe(name)
@@ -642,16 +641,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     }
                 }
             }
-            final Function function;
-            try {
-                function = createFunction(node, mutableArgs, mutableArgPositions);
-            } catch (SqlException e) {
-                if (binding != null) {
-                    binding.completeArgumentSubqueries(sqlExecutionContext);
-                }
-                throw e;
-            }
-            functionStack.push(function);
+            functionStack.push(createFunction(node, mutableArgs, mutableArgPositions));
         }
         positionStack.push(node.position);
     }
@@ -1013,11 +1003,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
-        if (level == null) {
+        if (subqueryCompiler == null) {
             throw SqlException.$(node.position, "sub-query is not supported in this context");
         }
-        final int index = level.compileSubquery(node.queryModel, node.position, sqlExecutionContext);
-        return new CursorFunction(level.takeSubquery(index, sqlExecutionContext));
+        return new CursorFunction(subqueryCompiler.compileSubqueryFactory(node.queryModel, node.position, sqlExecutionContext));
     }
 
     /**
@@ -1100,11 +1089,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             @Transient IntList argPositions
     ) throws SqlException {
         if (binding != null) {
+            final ExpressionNode exclusion;
             try {
                 binding.validateSubsampleArguments(node, args, argPositions);
+                exclusion = binding.timestampExclusion(node, args, argPositions, sqlExecutionContext);
             } catch (Throwable th) {
                 Misc.freeObjList(args, th);
                 throw th;
+            }
+            if (exclusion != null) {
+                return createNegatedIn(exclusion, args, argPositions);
             }
         }
         final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
@@ -1319,10 +1313,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                             args.set(k, TimestampConstant.newInstance(
                                     ColumnType.getTimestampDriver(adaptiveType).parseFloorLiteral(timestampStr), adaptiveType));
                         } catch (NumericException e) {
-                            if (binding == null || !binding.isTimestampComparison(node)) {
-                                throw SqlException.invalidDate(timestampStr, position);
-                            }
-                            args.set(k, binding.captureUnparsedTimestamp(k, timestampStr, adaptiveType, position));
+                            throw binding == null ? SqlException.invalidDate(timestampStr, position)
+                                    : binding.timestampTextError(node, k, timestampStr, position);
                         }
                     } else if (sigArgTypeTag == ColumnType.DATE) {
                         int position = argPositions.getQuick(k);
@@ -1391,6 +1383,19 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return binding == null
                 ? createFunction(candidateDescriptor, node.position, node.token, args, argPositions, sqlExecutionContext)
                 : binding.createFunction(candidateDescriptor, node, args, argPositions, sqlExecutionContext);
+    }
+
+    /**
+     * Builds the NOT over the single-interval IN the binder binds a TIMESTAMP exclusion of interval text as.
+     */
+    private Function createNegatedIn(ExpressionNode not, @Transient ObjList<Function> args, @Transient IntList argPositions) throws SqlException {
+        final Function in = createFunction(not.rhs, args, argPositions);
+        binding.beginArguments(1);
+        args.clear();
+        args.add(in);
+        argPositions.clear();
+        argPositions.add(not.rhs.position);
+        return createFunction(not, args, argPositions);
     }
 
     @Nullable
@@ -1803,19 +1808,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return true;
     }
 
-    /**
-     * Applies the admission checks and records the execution requirements of a call the binder types without
-     * constructing it and whose constant arguments need no vetting.
-     */
-    void admitUnvetted(FunctionFactoryDescriptor overload, int position, CharSequence name, SqlExecutionContext executionContext) throws SqlException {
-        final FunctionFactory factory = overload.getFactory();
-        final SqlException rejection = rejectAdministrativeFunction(factory, position, name, executionContext);
-        if (rejection != null) {
-            throw rejection;
-        }
-        addExecutionRequirements(factory, position, name);
-    }
-
     int enterExecutionRequirementPosition(int position) {
         final int previousPosition = executionRequirementPosition;
         if (previousPosition < 0) {
@@ -1865,12 +1857,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     /**
-     * Installs the query level that compiles the sub-queries met outside function binding, e.g. in
-     * table-function arguments, and returns the previous one for the caller to restore.
+     * Installs the compiler that compiles the sub-queries met outside function binding while it binds a statement,
+     * e.g. in table-function arguments, and returns the previous one for the caller to restore.
      */
-    QueryLevelCompiler swapQueryLevel(QueryLevelCompiler level) {
-        final QueryLevelCompiler previous = this.level;
-        this.level = level;
+    SubqueryCompiler swapSubqueryCompiler(SubqueryCompiler compiler) {
+        final SubqueryCompiler previous = subqueryCompiler;
+        subqueryCompiler = compiler;
         return previous;
     }
 

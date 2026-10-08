@@ -52,39 +52,38 @@ final class SqlOptimiser implements Mutable {
     private final AggregateInputOrderPass aggregateInputOrder;
     private final AggregateRewritePass aggregateRewrite;
     private final ColumnPruningPass columnPruning;
-    private final ObjList<BoundExpression> tmpConjuncts = new ObjList<>();
-    private final OptimiserContext context = new OptimiserContext();
+    private final OptimiserContext context;
     private final DecorrelationPass decorrelation;
-    private final ObjList<BoundExpression> tmpExpressions = new ObjList<>();
     private final FilterPushdownPass filterPushdown;
-    private final IntList tmpIndexes;
-    private final IntList tmpKeys;
     private final NegativeLimitReversalPass negativeLimitReversal;
-    private final ObjList<LogicalPlan> tmpPlans = new ObjList<>();
     private final ProjectionMergePass projectionMerge;
-    private final OutputSchema tmpSchema = new OutputSchema();
-    private final SortEliminationPass sortElimination = new SortEliminationPass();
-    private final ObjList<JoinInput> tmpSteps = new ObjList<>();
     private final TimestampEndpointPass timestampEndpoint;
-    private final IntList tmpValues;
+    private final ObjList<BoundExpression> tmpConjuncts = new ObjList<>();
+    private final ObjList<BoundExpression> tmpExpressions = new ObjList<>();
+    private final ObjList<LogicalPlan> tmpPlans = new ObjList<>();
+    private final OutputSchema tmpSchema = new OutputSchema();
+    private final ObjList<JoinInput> tmpSteps = new ObjList<>();
     private final PlanVerifier verifier;
     private final WindowCsePass windowCse;
 
     /**
      * Allocates plan nodes from the given pools, whose owner empties them once the optimised plan and
-     * every nested sub-query plan it optimised are no longer used.
+     * every nested sub-query plan it optimised are no longer used. Expression rewrites allocate from
+     * {@code rewriter}, which shares the pools of {@code functionBinder}, the binder that produces the plans.
      */
     SqlOptimiser(
             CharacterStore characterStore,
-            BindContext planNodes,
+            PlanNodePools planNodes,
             IntHashSet columnIds,
             IntList tmpIndexes,
             IntList tmpValues,
-            IntList tmpKeys
+            IntList tmpKeys,
+            BoundExpressionRewriter rewriter,
+            FunctionBinder functionBinder,
+            FunctionInstantiator instantiator,
+            TableFunctionSources functionSources
     ) {
-        this.tmpIndexes = tmpIndexes;
-        this.tmpValues = tmpValues;
-        this.tmpKeys = tmpKeys;
+        context = new OptimiserContext(rewriter, functionBinder, instantiator, functionSources);
         final ObjectPool<ColumnExpression> columns = planNodes.columns;
         final ObjectPool<ConstantExpression> constants = planNodes.constants;
         final ObjectPool<FilterPlan> filters = planNodes.filters;
@@ -104,7 +103,7 @@ final class SqlOptimiser implements Mutable {
                 tmpExpressions, tmpIndexes, tmpValues, tmpKeys);
         negativeLimitReversal = new NegativeLimitReversalPass(constants, sorts, tmpIndexes, tmpPlans);
         windowCse = new WindowCsePass(context, columns, projects, tmpPlans);
-        verifier = new PlanVerifier(tmpPlans, tmpSchema, columnIds, tmpSteps);
+        verifier = SqlOptimiser.class.desiredAssertionStatus() ? new PlanVerifier(tmpPlans, tmpSchema, columnIds, tmpSteps) : null;
     }
 
     @Override
@@ -112,12 +111,9 @@ final class SqlOptimiser implements Mutable {
         tmpConjuncts.clear();
         context.clear();
         tmpExpressions.clear();
-        tmpIndexes.clear();
-        tmpKeys.clear();
         tmpPlans.clear();
         tmpSchema.clear();
         tmpSteps.clear();
-        tmpValues.clear();
         aggregateInputOrder.clear();
         aggregateRewrite.clear();
         decorrelation.clear();
@@ -127,39 +123,39 @@ final class SqlOptimiser implements Mutable {
 
     /**
      * Rewrites a bound plan. Plan nodes the optimiser allocates stay valid until the pool owner empties
-     * them, so one instance serves a statement and all of its nested sub-query plans. Expression rewrites
-     * allocate from {@code rewriter}, which shares the pools of {@code functionBinder}, the binder that produced
-     * {@code root}; new columns take ids from {@code nextColumnId}, the first id {@code root} does not use. The
-     * passes read these through the {@link OptimiserContext} this method resets.
+     * them, so one instance serves a statement and all of its nested sub-query plans. New columns take ids
+     * from {@code nextColumnId}, the first id {@code root} does not use. The passes read it through the
+     * {@link OptimiserContext} this method resets.
      */
-    LogicalPlan optimise(LogicalPlan root, BoundExpressionRewriter rewriter, FunctionBinder functionBinder, FunctionInstantiator instantiator,
-                         TableFunctionSources functionSources, int nextColumnId, SqlExecutionContext executionContext) throws SqlException {
+    LogicalPlan optimise(LogicalPlan root, int nextColumnId, SqlExecutionContext executionContext) throws SqlException {
         clear();
-        context.of(rewriter, functionBinder, instantiator, functionSources, nextColumnId, executionContext);
+        context.of(nextColumnId, executionContext);
         assert verifier.verifyBound(root);
         LogicalPlan plan = decorrelation.decorrelate(root);
+        assert verifier.verify(plan, "decorrelation");
 
-        // Aggregate shapes. The endpoint LIMIT comes first so the later passes keep filters below it.
+        // The endpoint LIMIT comes first so the later passes keep filters below it.
         timestampEndpoint.limitEndpointInputs(plan);
         plan = aggregateRewrite.rewriteAggregates(plan);
+        assert verifier.verify(plan, "aggregate rewrite");
 
-        // Filter placement. Ordered set-operation branches are marked after join filters settle and
-        // before pushdown and pruning, which read the marks when they drop an aggregate's input order.
+        // Pushdown and pruning read the ordered-branch marks when they drop an aggregate's input order.
         filterPushdown.pushJoinFilters(plan);
         aggregateInputOrder.collectOrderedBranchAggregates(plan);
         plan = filterPushdown.pushDownFilters(plan);
         filterPushdown.filterSharedDomains(plan);
+        assert verifier.verify(plan, "filter placement");
 
-        // Window calls merge over their final inputs, before pruning drops the columns a merge leaves unread.
+        // Window calls merge before pruning drops the columns a merge leaves unread.
         windowCse.mergeWindowCalls(plan);
         columnPruning.prune(plan);
         plan = projectionMerge.collapseColumnProjects(plan);
+        assert verifier.verify(plan, "column pruning");
 
-        // Sort and LIMIT shape.
         plan = negativeLimitReversal.reverseNegativeLimits(plan);
-        sortElimination.markMarkoutHorizons(plan);
-        plan = sortElimination.removeReorderedSorts(plan);
-        assert verifier.verify(plan, "SqlOptimiser.optimise");
+        SortEliminationPass.markMarkoutHorizons(plan);
+        plan = SortEliminationPass.removeReorderedSorts(plan);
+        assert verifier.verify(plan, "sort elimination");
         return plan;
     }
 }

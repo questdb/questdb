@@ -51,15 +51,13 @@ final class DecorrelationDomains implements Mutable {
     final ObjList<JoinInput> decorrelatedSteps;
     final IntList domainEqualities = new IntList();
     final IntList domainOuterIds = new IntList();
-    private final OptimiserContext context;
     private final DecorrelationContext ctx;
     int domainSequence;
 
     /**
      * {@code decorrelatedSteps} is the optimiser's temporary step list, which the owner empties before decorrelation starts.
      */
-    DecorrelationDomains(OptimiserContext context, DecorrelationContext ctx, ObjList<JoinInput> decorrelatedSteps) {
-        this.context = context;
+    DecorrelationDomains(DecorrelationContext ctx, ObjList<JoinInput> decorrelatedSteps) {
         this.ctx = ctx;
         this.decorrelatedSteps = decorrelatedSteps;
     }
@@ -142,7 +140,7 @@ final class DecorrelationDomains implements Mutable {
             final int sourceId = source.getOutput().getColumnId(index);
             final int type = source.getOutput().getColumnType(index);
             domain.getGroupingExpressions().add(ctx.planNodes.columns.next().of(sourceId, type, position));
-            final int columnId = context.newColumnId();
+            final int columnId = ctx.context.newColumnId();
             domain.getOutput().add(columnId, ctx.outerRefName(outerId), type, false);
             ctx.addMapping(outerId, columnId);
         }
@@ -231,7 +229,7 @@ final class DecorrelationDomains implements Mutable {
             if (right == null) {
                 return left;
             }
-            return left == call.argumentAt(0) && right == call.argumentAt(1) ? call : context.getRewriter().replaceConjunction(call, left, right);
+            return left == call.argumentAt(0) && right == call.argumentAt(1) ? call : ctx.context.getRewriter().replaceConjunction(call, left, right);
         }
         final int columnBase = ctx.tmpColumnIds.size();
         LogicalPlans.collectOuterColumnIds(predicate, ctx.tmpColumnIds);
@@ -244,7 +242,7 @@ final class DecorrelationDomains implements Mutable {
             return predicate;
         }
         final BoundExpression moved = domainStep.getPostJoinFilter();
-        domainStep.setPostJoinFilter(moved == null ? predicate : context.getRewriter().combineConjunction(moved, predicate, predicate.getPosition()));
+        domainStep.setPostJoinFilter(moved == null ? predicate : ctx.context.getRewriter().combineConjunction(moved, predicate, predicate.getPosition()));
         return null;
     }
 }

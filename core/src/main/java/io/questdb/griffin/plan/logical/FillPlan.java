@@ -28,16 +28,14 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 
-public final class FillPlan extends UnaryPlan {
+public final class FillPlan extends ForwardingPlan {
     public static final ObjectFactory<FillPlan> FACTORY = FillPlan::new;
     public static final int FILL_NULL = 0;
     public static final int FILL_PREV = 1;
     public static final int FILL_VALUE = 2;
     public static final int FILL_PREV_COLUMN = 3;
     private final IntList modes = new IntList();
-    private final IntList positions = new IntList();
     private final IntList sourceColumnIds = new IntList();
-    private final IntList sourcePositions = new IntList();
     private final IntList targetColumnIds = new IntList();
     private final ObjList<CharSequence> tokens = new ObjList<>();
     private final ObjList<BoundExpression> values = new ObjList<>();
@@ -53,9 +51,7 @@ public final class FillPlan extends UnaryPlan {
     public void clear() {
         super.clear();
         modes.clear();
-        positions.clear();
         sourceColumnIds.clear();
-        sourcePositions.clear();
         targetColumnIds.clear();
         tokens.clear();
         values.clear();
@@ -66,6 +62,14 @@ public final class FillPlan extends UnaryPlan {
         timestampColumnId = -1;
         timezone = null;
         to = null;
+    }
+
+    /**
+     * The bucket timestamp: the input, a hash aggregate, designates none.
+     */
+    @Override
+    public int derivedTimestampIndex() {
+        return getInput().getOutput().getColumnIndexById(timestampColumnId);
     }
 
     public BoundExpression getFrom() {
@@ -96,16 +100,8 @@ public final class FillPlan extends UnaryPlan {
         return periodToken;
     }
 
-    public IntList getPositions() {
-        return positions;
-    }
-
     public IntList getSourceColumnIds() {
         return sourceColumnIds;
-    }
-
-    public IntList getSourcePositions() {
-        return sourcePositions;
     }
 
     public IntList getTargetColumnIds() {
@@ -142,7 +138,6 @@ public final class FillPlan extends UnaryPlan {
 
     public FillPlan of(LogicalPlan input, int position) {
         configure(input, position);
-        getOutput().copyFrom(input.getOutput());
         return this;
     }
 

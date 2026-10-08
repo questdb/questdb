@@ -45,40 +45,60 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Binding builds sub-query consumers over the plan's metadata and the sub-queries are generated once the statement is
- * bound: binding errors precede sub-query generation errors, which surface in bind order, as on master.
+ * Binding builds sub-query consumers over the plan's metadata, every query of the statement is optimised and
+ * authorized before any factory is generated, and a sub-query generates where its consumer reads it: binding errors,
+ * including a sub-query's static errors and a call that fails to resolve over a sub-query argument, precede
+ * generation errors, which surface in generation order, and a sub-query the optimiser drops is never generated.
+ * PIVOT IN and table-function arguments generate their sub-query while the statement binds.
  */
 public class SubqueryGenerationOrderTest extends AbstractCairoTest {
-    private static final String BAD_SUBQUERY = "(SELECT sum(p.price) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym)"
+    private static final String GENERATION_ERROR_SUBQUERY = "(SELECT p.price FROM (SELECT * FROM prices ORDER BY ts DESC) p ASOF JOIN trades t)";
+    private static final String STATIC_ERROR_SUBQUERY = "(SELECT sum(p.price) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym)"
             + " RANGE BETWEEN 2 minute PRECEDING AND 4 minute PRECEDING)";
     private static final String UNFRAMED_TOUCH = "touch(SELECT * FROM trades LATEST ON ts PARTITION BY sym)";
 
     @Test
-    public void testDroppedSubqueryErrorSurfaces() throws Exception {
+    public void testDroppedSubqueryIsNeverGenerated() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            assertQuery("SELECT price FROM trades WHERE true OR price = " + BAD_SUBQUERY)
+            execute("INSERT INTO trades VALUES ('a', 1.5, '2024-01-01T00:00:00.000000Z')");
+            assertQuery("SELECT price FROM trades WHERE true OR price = " + GENERATION_ERROR_SUBQUERY)
+                    .expectSize()
+                    .returns("""
+                            price
+                            1.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testDroppedSubqueryStaticErrorSurfacesAtBind() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT price FROM trades WHERE true OR price = " + STATIC_ERROR_SUBQUERY)
                     .fails(159, "WINDOW join hi value cannot be less than lo value");
         });
     }
 
     @Test
-    public void testSubqueryArgumentErrorPrecedesCallError() throws Exception {
+    public void testCallErrorPrecedesSubqueryArgumentError() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            assertQuery("SELECT price FROM trades WHERE EXISTS " + BAD_SUBQUERY)
-                    .fails(150, "WINDOW join hi value cannot be less than lo value");
+            assertQuery("SELECT price FROM trades WHERE EXISTS " + GENERATION_ERROR_SUBQUERY)
+                    .fails(31, "unknown function name: EXISTS(CURSOR)");
+            assertQuery("SELECT price FROM trades WHERE price = abs(1, 2) OR price = " + GENERATION_ERROR_SUBQUERY)
+                    .fails(39, "there is no matching function `abs` with the argument types: (INT, INT)");
             assertQuery("SELECT price FROM trades WHERE EXISTS (SELECT price FROM prices)")
                     .fails(31, "unknown function name: EXISTS(CURSOR)");
         });
     }
 
     @Test
-    public void testEarlierSubqueryErrorWins() throws Exception {
+    public void testGenerationFailureOfSecondSubqueryFreesFirst() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            assertQuery("SELECT price FROM trades WHERE price = (SELECT price FROM prices LIMIT 1) AND price = " + BAD_SUBQUERY)
-                    .fails(198, "WINDOW join hi value cannot be less than lo value");
+            assertQuery("SELECT price FROM trades WHERE price = (SELECT price FROM prices LIMIT 1) AND price = " + GENERATION_ERROR_SUBQUERY)
+                    .fails(149, "left side of time series join doesn't have ASC timestamp order");
         });
     }
 
@@ -91,16 +111,23 @@ public class SubqueryGenerationOrderTest extends AbstractCairoTest {
                     SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1).with(new DenySecretSecurityContext());
                     SqlCompilerImpl compiler = new ScanAuthorizingCompiler(engine)
             ) {
-                final String query = "SELECT price FROM trades WHERE price = (SELECT sum(p.price) FROM secret t WINDOW JOIN prices p"
-                        + " ON (t.sym = p.sym) RANGE BETWEEN 2 minute PRECEDING AND 4 minute PRECEDING)";
+                final String query = "SELECT price FROM trades WHERE price = (SELECT p.price FROM (SELECT * FROM secret ORDER BY ts DESC) p"
+                        + " ASOF JOIN prices t)";
                 try (RecordCursorFactory ignore = compiler.compile(query, executionContext).getRecordCursorFactory()) {
                     Assert.fail("authorization must reject the sub-query");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "permission denied [table=secret]");
                 }
-                try (RecordCursorFactory ignore = compiler.compile("SELECT price FROM trades WHERE price = " + BAD_SUBQUERY,
+                try (RecordCursorFactory ignore = compiler.compile("SELECT price FROM trades WHERE price = " + GENERATION_ERROR_SUBQUERY,
                         executionContext).getRecordCursorFactory()) {
                     Assert.fail("the sub-query must fail generation");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "left side of time series join doesn't have ASC timestamp order");
+                }
+                final String staticErrorQuery = "SELECT price FROM trades WHERE price = (SELECT sum(p.price) FROM secret t WINDOW JOIN prices p"
+                        + " ON (t.sym = p.sym) RANGE BETWEEN 2 minute PRECEDING AND 4 minute PRECEDING)";
+                try (RecordCursorFactory ignore = compiler.compile(staticErrorQuery, executionContext).getRecordCursorFactory()) {
+                    Assert.fail("binding must reject the sub-query");
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "WINDOW join hi value cannot be less than lo value");
                 }
@@ -112,26 +139,82 @@ public class SubqueryGenerationOrderTest extends AbstractCairoTest {
     public void testBindErrorPrecedesSubqueryError() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            assertQuery("SELECT price FROM trades WHERE price = " + BAD_SUBQUERY + " AND missing = 1")
-                    .fails(175, "Invalid column: missing");
-            assertQuery("SELECT price FROM trades WHERE price = (SELECT price FROM prices WHERE price = " + BAD_SUBQUERY + ") AND missing = 1")
-                    .fails(216, "Invalid column: missing");
-            assertQuery("SELECT price FROM trades WHERE price = " + BAD_SUBQUERY + " AND price = (SELECT missing FROM prices)")
-                    .fails(191, "Invalid column: missing");
-            assertQuery("SELECT price FROM trades WHERE price = " + BAD_SUBQUERY + " ORDER BY missing")
-                    .fails(180, "Invalid column: missing");
+            assertQuery("SELECT price FROM trades WHERE price = " + GENERATION_ERROR_SUBQUERY + " AND missing = 1")
+                    .fails(126, "Invalid column: missing");
+            assertQuery("SELECT price FROM trades WHERE price = (SELECT price FROM prices WHERE price = " + GENERATION_ERROR_SUBQUERY + ") AND missing = 1")
+                    .fails(167, "Invalid column: missing");
+            assertQuery("SELECT price FROM trades WHERE price = " + GENERATION_ERROR_SUBQUERY + " AND price = (SELECT missing FROM prices)")
+                    .fails(142, "Invalid column: missing");
+            assertQuery("SELECT price FROM trades WHERE price = " + GENERATION_ERROR_SUBQUERY + " ORDER BY missing")
+                    .fails(131, "Invalid column: missing");
         });
     }
 
     @Test
-    public void testStatementsWithoutQueryGenerationSurfaceSubqueryError() throws Exception {
+    public void testGenerationErrorsSurfaceInGenerationOrder() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            assertException("CREATE VIEW v1 AS (SELECT price FROM trades WHERE price = " + BAD_SUBQUERY + ")",
+            assertQuery("SELECT price FROM trades WHERE price = " + GENERATION_ERROR_SUBQUERY + " AND price = " + GENERATION_ERROR_SUBQUERY)
+                    .fails(102, "left side of time series join doesn't have ASC timestamp order");
+        });
+    }
+
+    @Test
+    public void testPivotInSubqueryGenerationFailureFreesResources() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT * FROM trades PIVOT (sum(price) FOR price IN " + GENERATION_ERROR_SUBQUERY + " GROUP BY sym)")
+                    .fails(115, "left side of time series join doesn't have ASC timestamp order");
+        });
+    }
+
+    @Test
+    public void testPivotInSubqueryReadsNestedSubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('a', 1.0, '2024-01-01T00:00:00.000000Z'),
+                        ('a', 2.0, '2024-01-01T00:00:01.000000Z'),
+                        ('b', 2.0, '2024-01-01T00:00:02.000000Z')
+                    """);
+            assertQuery("""
+                    SELECT * FROM trades
+                    PIVOT (
+                        count()
+                        FOR price IN (SELECT DISTINCT price FROM trades WHERE price = (SELECT max(price) FROM trades))
+                        GROUP BY sym
+                    )
+                    ORDER BY sym
+                    """)
+                    .expectSize()
+                    .returns("""
+                            sym	2.0
+                            a	1
+                            b	1
+                            """);
+        });
+    }
+
+    @Test
+    public void testCreateViewAndInsertSelectReportSubqueryErrors() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertException("CREATE VIEW v1 AS (SELECT price FROM trades WHERE price = " + GENERATION_ERROR_SUBQUERY + ")",
+                    121, "left side of time series join doesn't have ASC timestamp order");
+            assertException("INSERT INTO trades(sym, price) SELECT sym, price FROM trades WHERE price = " + GENERATION_ERROR_SUBQUERY,
+                    138, "left side of time series join doesn't have ASC timestamp order");
+            assertException("CREATE VIEW v1 AS (SELECT price FROM trades WHERE price = " + STATIC_ERROR_SUBQUERY + ")",
                     170, "WINDOW join hi value cannot be less than lo value");
-            assertException("INSERT INTO trades(sym, price) SELECT sym, price FROM trades WHERE price = " + BAD_SUBQUERY,
+            assertException("INSERT INTO trades(sym, price) SELECT sym, price FROM trades WHERE price = " + STATIC_ERROR_SUBQUERY,
                     187, "WINDOW join hi value cannot be less than lo value");
         });
+    }
+
+    @Test
+    public void testTableFunctionArgumentSubqueryGeneratesWithNestedSubquery() throws Exception {
+        assertMemoryLeak(() -> assertQuery("SELECT x FROM long_sequence((SELECT x FROM long_sequence(3) WHERE x = (SELECT 2)))")
+                .fails(29, "constant expected"));
     }
 
     @Test

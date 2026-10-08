@@ -590,9 +590,6 @@ public class CompiledFilterIRSerializer implements Mutable {
     }
 
     private @Nullable CharSequence constantToken(ConstantExpression constant) {
-        if (constant.isUnparsedTimestamp()) {
-            return null;
-        }
         final int type = constant.getDataType();
         final long longValue = constant.getLongValue();
         return switch (ColumnType.tagOf(type)) {
@@ -1483,9 +1480,6 @@ public class CompiledFilterIRSerializer implements Mutable {
         }
         for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
             if (call.argumentAt(i) instanceof ConstantExpression constant) {
-                if (constant.isUnparsedTimestamp()) {
-                    return false;
-                }
                 if (timestampType == ColumnType.UNDEFINED) {
                     if (ColumnType.isTimestamp(constant.getDataType())) {
                         return false;

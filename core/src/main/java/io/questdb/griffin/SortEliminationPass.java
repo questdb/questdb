@@ -49,6 +49,9 @@ import io.questdb.std.ObjList;
  */
 final class SortEliminationPass {
 
+    private SortEliminationPass() {
+    }
+
     private static boolean isHiddenSortKeyPrefix(ProjectPlan project, ProjectPlan inner) {
         final int n = project.getExpressions().size();
         if (!LogicalPlans.isColumnProjection(project) || project.hasTimestampDeclaration() || inner.hasTimestampDeclaration()
@@ -152,8 +155,8 @@ final class SortEliminationPass {
                     return;
                 }
             }
-        } else {
-            plan.getOutput().setTimestampIndex(plan.getOutput().getColumnIndexById(timestampId));
+        } else if (plan instanceof WindowPlan) {
+            plan.getOutput().setTimestampColumnId(timestampId);
         }
     }
 
@@ -233,7 +236,7 @@ final class SortEliminationPass {
      * Marks a sort over a {@code markout_horizon}-hinted CROSS JOIN whose key is {@code master.ts + slave.offset},
      * so the generator can use the markout factory.
      */
-    void markMarkoutHorizons(LogicalPlan plan) {
+    static void markMarkoutHorizons(LogicalPlan plan) {
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
             final LogicalPlan input = plan.inputAt(i);
             if (input != null) {
@@ -249,7 +252,7 @@ final class SortEliminationPass {
      * Drops the sorts whose order a consumer re-sorts or discards, and the sorts of a single row that keep its
      * designated timestamp; a window's own ORDER BY and a markout sort stay.
      */
-    LogicalPlan removeReorderedSorts(LogicalPlan root) {
+    static LogicalPlan removeReorderedSorts(LogicalPlan root) {
         return removeReorderedSorts0(root, false, false);
     }
 }

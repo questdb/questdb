@@ -241,11 +241,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        return filter.isStableWithinExecution() && base.isStableWithinExecution();
-    }
-
-    @Override
     public int getScanDirection() {
         return base.getScanDirection();
     }

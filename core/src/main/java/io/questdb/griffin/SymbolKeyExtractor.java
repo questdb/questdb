@@ -38,6 +38,7 @@ import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -48,7 +49,6 @@ import io.questdb.std.str.SingleCharCharSequence;
  * single column, combined across conjuncts.
  */
 final class SymbolKeyExtractor implements Mutable {
-    private final CharacterStore characterStore = new CharacterStore(32, 8);
     private final KeySet excluded = new KeySet();
     private final ObjList<BoundExpression> excludedConjuncts = new ObjList<>();
     private final KeySet included = new KeySet();
@@ -67,7 +67,6 @@ final class SymbolKeyExtractor implements Mutable {
         hasKey = false;
         isFalse = false;
         subquery = null;
-        characterStore.clear();
         included.clear();
         excluded.clear();
         pending.clear();
@@ -75,6 +74,23 @@ final class SymbolKeyExtractor implements Mutable {
         includedConjuncts.clear();
         excludedConjuncts.clear();
         intrinsics.clear();
+    }
+
+    /**
+     * The code of a one-character constant, CHAR or STRING, so that both spellings compare equal; -1 otherwise.
+     */
+    private static int charCodeOf(BoundExpression value) {
+        if (!(value instanceof ConstantExpression constant)) {
+            return -1;
+        }
+        return switch (ColumnType.tagOf(constant.getDataType())) {
+            case ColumnType.CHAR -> constant.getLongValue() == 0 ? -1 : (int) constant.getLongValue();
+            case ColumnType.STRING -> {
+                final String text = constant.getStrValue();
+                yield text != null && text.length() == 1 ? text.charAt(0) : -1;
+            }
+            default -> -1;
+        };
     }
 
     private static boolean isBind(BoundExpression value) {
@@ -121,8 +137,25 @@ final class SymbolKeyExtractor implements Mutable {
         return call.getArgumentCount() == 2 && ("!=".equals(name) || "<>".equals(name));
     }
 
-    private static boolean isSameText(CharSequence left, CharSequence right) {
-        return left == null ? right == null : right != null && Chars.equals(left, right);
+    private static boolean isNullKey(BoundExpression value) {
+        return !isBind(value) && charCodeOf(value) < 0 && textOf(value) == null;
+    }
+
+    private static boolean isSameKey(BoundExpression left, BoundExpression right) {
+        if (isBind(left) || isBind(right)) {
+            return isBind(left) && isBind(right)
+                    && Chars.equals(((BindVariableExpression) left).getName(), ((BindVariableExpression) right).getName());
+        }
+        final int code = charCodeOf(left);
+        if (code != charCodeOf(right)) {
+            return false;
+        }
+        if (code >= 0) {
+            return true;
+        }
+        final CharSequence leftText = textOf(left);
+        final CharSequence rightText = textOf(right);
+        return leftText == null ? rightText == null : rightText != null && Chars.equals(leftText, rightText);
     }
 
     private static ColumnExpression selectorColumn(FunctionExpression call) {
@@ -149,8 +182,16 @@ final class SymbolKeyExtractor implements Mutable {
         return (ColumnExpression) list.argumentAt(0);
     }
 
-    private void addExcluded(FunctionExpression call, CharSequence text, BoundExpression value) {
-        excluded.add(text, value);
+    /**
+     * The text of a constant that {@link #charCodeOf} does not encode; null for a NULL value.
+     */
+    private static CharSequence textOf(BoundExpression value) {
+        final ConstantExpression constant = (ConstantExpression) value;
+        return ColumnType.tagOf(constant.getDataType()) == ColumnType.STRING ? constant.getStrValue() : null;
+    }
+
+    private void addExcluded(FunctionExpression call, BoundExpression value) {
+        excluded.add(value);
         markExcluded(call);
     }
 
@@ -207,20 +248,19 @@ final class SymbolKeyExtractor implements Mutable {
     }
 
     private void analyzeEquals(FunctionExpression call, BoundExpression value) {
-        final CharSequence text = textOf(value);
         if (!hasKey) {
             startKey();
-            included.add(text, value);
+            included.add(value);
             markIncluded(call);
             return;
         }
         if (!included.isKnown || isBind(value) && included.size() > 0) {
             return;
         }
-        if (included.contains(text, isBind(value))) {
+        if (included.contains(value)) {
             if (included.size() > 1) {
                 included.clear();
-                included.add(text, value);
+                included.add(value);
                 markIncluded(call);
             }
         } else if (included.size() > 0) {
@@ -229,13 +269,13 @@ final class SymbolKeyExtractor implements Mutable {
             isFalse = true;
             return;
         }
-        if (text != null && excluded.contains(text, isBind(value))) {
+        if (!isNullKey(value) && excluded.contains(value)) {
             excluded.clear();
             mark(call);
             isFalse = true;
             return;
         }
-        included.add(text, value);
+        included.add(value);
         markIncluded(call);
     }
 
@@ -263,8 +303,8 @@ final class SymbolKeyExtractor implements Mutable {
         merged.clear();
         for (int i = 0, n = pending.size(); i < n; i++) {
             final BoundExpression value = pending.values.getQuick(i);
-            if (included.contains(pending.texts.getQuick(i), isBind(value))) {
-                merged.add(pending.texts.getQuick(i), value);
+            if (included.contains(value)) {
+                merged.add(value);
             }
         }
         included.clear();
@@ -281,23 +321,22 @@ final class SymbolKeyExtractor implements Mutable {
     }
 
     private void analyzeNotEquals(FunctionExpression call, BoundExpression value) {
-        final CharSequence text = textOf(value);
         if (!hasKey) {
             startKey();
-            addExcluded(call, text, value);
+            addExcluded(call, value);
             return;
         }
-        if (excluded.contains(text, isBind(value))) {
+        if (excluded.contains(value)) {
             markExcluded(call);
-        } else if (included.contains(text, false) && included.isKnown && !isBind(value)) {
-            included.remove(text, false);
-            removeIncludedConjuncts(text);
+        } else if (!isBind(value) && included.isKnown && included.contains(value)) {
+            included.remove(value);
+            removeIncludedConjuncts(value);
             if (included.size() == 0) {
                 isFalse = true;
             }
             markExcluded(call);
         } else {
-            addExcluded(call, text, value);
+            addExcluded(call, value);
         }
     }
 
@@ -352,12 +391,12 @@ final class SymbolKeyExtractor implements Mutable {
         pending.clear();
         for (int i = 1, n = call.getArgumentCount(); i < n; i++) {
             final BoundExpression value = call.argumentAt(i);
-            pending.add(textOf(value), value);
+            pending.add(value);
         }
     }
 
     private void excludeIncluded(BoundExpression value) {
-        included.remove(textOf(value), isBind(value));
+        included.remove(value);
         if (included.size() == 0) {
             isFalse = true;
         }
@@ -411,11 +450,11 @@ final class SymbolKeyExtractor implements Mutable {
         includedConjuncts.add(conjunct);
     }
 
-    private void removeIncludedConjuncts(CharSequence text) {
+    private void removeIncludedConjuncts(BoundExpression key) {
         for (int i = includedConjuncts.size() - 1; i > -1; i--) {
             if (includedConjuncts.getQuick(i) instanceof FunctionExpression call && call.getArgumentCount() == 2) {
                 final BoundExpression value = isKeyColumn(call.argumentAt(0)) ? call.argumentAt(1) : call.argumentAt(0);
-                if (isKeyValue(value) && !isBind(value) && isSameText(textOf(value), text)) {
+                if (isKeyValue(value) && !isBind(value) && isSameKey(value, key)) {
                     includedConjuncts.remove(i);
                 }
             }
@@ -481,24 +520,6 @@ final class SymbolKeyExtractor implements Mutable {
         excluded.clear();
         revert(includedConjuncts);
         revert(excludedConjuncts);
-    }
-
-    private CharSequence textOf(BoundExpression value) {
-        if (value instanceof BindVariableExpression parameter) {
-            return parameter.getName();
-        }
-        final ConstantExpression constant = (ConstantExpression) value;
-        return switch (ColumnType.tagOf(constant.getDataType())) {
-            case ColumnType.NULL -> null;
-            case ColumnType.CHAR -> {
-                if (constant.getLongValue() == 0) {
-                    yield null;
-                }
-                characterStore.newEntry().put((char) constant.getLongValue());
-                yield characterStore.toImmutable();
-            }
-            default -> constant.getStrValue();
-        };
     }
 
     /**
@@ -567,43 +588,60 @@ final class SymbolKeyExtractor implements Mutable {
 
     private static final class KeySet {
         private final CharSequenceHashSet binds = new CharSequenceHashSet();
+        private final IntHashSet chars = new IntHashSet();
         private final CharSequenceHashSet constants = new CharSequenceHashSet();
-        private final ObjList<CharSequence> texts = new ObjList<>();
         private final ObjList<BoundExpression> values = new ObjList<>();
         private boolean isKnown = true;
 
-        void add(CharSequence text, BoundExpression value) {
-            if (!(isBind(value) ? binds : constants).add(text)) {
-                return;
+        void add(BoundExpression value) {
+            final boolean isAdded;
+            if (value instanceof BindVariableExpression parameter) {
+                isAdded = binds.add(parameter.getName());
+            } else {
+                final int code = charCodeOf(value);
+                isAdded = code >= 0 ? chars.add(code) : constants.add(textOf(value));
             }
-            texts.add(text);
-            values.add(value);
-            isKnown &= !isBind(value);
+            if (isAdded) {
+                values.add(value);
+                isKnown &= !isBind(value);
+            }
         }
 
         void addAll(KeySet that) {
             for (int i = 0, n = that.size(); i < n; i++) {
-                add(that.texts.getQuick(i), that.values.getQuick(i));
+                add(that.values.getQuick(i));
             }
         }
 
         void clear() {
             binds.clear();
+            chars.clear();
             constants.clear();
-            texts.clear();
             values.clear();
             isKnown = true;
         }
 
-        boolean contains(CharSequence text, boolean isBind) {
-            return (isBind ? binds : constants).contains(text);
+        boolean contains(BoundExpression value) {
+            if (value instanceof BindVariableExpression parameter) {
+                return binds.contains(parameter.getName());
+            }
+            final int code = charCodeOf(value);
+            return code >= 0 ? chars.contains(code) : constants.contains(textOf(value));
         }
 
-        void remove(CharSequence text, boolean isBind) {
+        void remove(BoundExpression value) {
             for (int i = 0, n = values.size(); i < n; i++) {
-                if (isBind(values.getQuick(i)) == isBind && isSameText(texts.getQuick(i), text)) {
-                    (isBind ? binds : constants).remove(text);
-                    texts.remove(i);
+                if (isSameKey(values.getQuick(i), value)) {
+                    if (value instanceof BindVariableExpression parameter) {
+                        binds.remove(parameter.getName());
+                    } else {
+                        final int code = charCodeOf(value);
+                        if (code >= 0) {
+                            chars.remove(code);
+                        } else {
+                            constants.remove(textOf(value));
+                        }
+                    }
                     values.remove(i);
                     return;
                 }

@@ -30,7 +30,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
@@ -45,28 +44,9 @@ import io.questdb.cairo.sql.SingleSymbolFilter;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.functions.constants.BooleanConstant;
-import io.questdb.griffin.engine.functions.constants.ByteConstant;
-import io.questdb.griffin.engine.functions.constants.CharConstant;
-import io.questdb.griffin.engine.functions.constants.DateConstant;
-import io.questdb.griffin.engine.functions.constants.DoubleConstant;
-import io.questdb.griffin.engine.functions.constants.FloatConstant;
-import io.questdb.griffin.engine.functions.constants.GeoByteConstant;
-import io.questdb.griffin.engine.functions.constants.GeoIntConstant;
-import io.questdb.griffin.engine.functions.constants.GeoLongConstant;
-import io.questdb.griffin.engine.functions.constants.GeoShortConstant;
-import io.questdb.griffin.engine.functions.constants.IPv4Constant;
-import io.questdb.griffin.engine.functions.constants.IntConstant;
-import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
-import io.questdb.griffin.engine.functions.constants.LongConstant;
-import io.questdb.griffin.engine.functions.constants.NullArrayConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
-import io.questdb.griffin.engine.functions.constants.ShortConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
-import io.questdb.griffin.engine.functions.constants.UuidConstant;
-import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.engine.functions.groupby.InterpolationGroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SampleByFillNoneNotKeyedRecordCursorFactory;
@@ -85,6 +65,7 @@ import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.LogicalPlan;
@@ -95,11 +76,8 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
-import io.questdb.std.Uuid;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
@@ -115,18 +93,14 @@ import static io.questdb.griffin.SqlKeywords.*;
 final class SampleByFactoryGenerator {
     private final BytecodeAssembler asm;
     private final SqlCodeGenerator codeGenerator;
+    private final IntList columnIndexes = new IntList();
     private final CairoConfiguration configuration;
     private final EntityColumnFilter entityColumnFilter;
-    private final Uuid fillUuid = new Uuid();
+    private final IntList firstLastKinds = new IntList();
+    private final IntList firstLastPositions = new IntList();
     private final FunctionParser functionParser;
     private final IntList groupByFunctionPositions = new IntList();
-    private final ObjectPool<IntList> intListPool;
-    private final ArrayColumnTypes keyTypes;
-    private final ListColumnFilter listColumnFilterA;
     private final RecordComparatorCompiler recordComparatorCompiler;
-    private final IntList recordFunctionPositions = new IntList();
-    private final boolean validateSampleByFillType;
-    private final ArrayColumnTypes valueTypes;
 
     SampleByFactoryGenerator(
             CairoConfiguration configuration,
@@ -134,10 +108,6 @@ final class SampleByFactoryGenerator {
             FunctionParser functionParser,
             BytecodeAssembler asm,
             EntityColumnFilter entityColumnFilter,
-            ObjectPool<IntList> intListPool,
-            ArrayColumnTypes keyTypes,
-            ArrayColumnTypes valueTypes,
-            ListColumnFilter listColumnFilterA,
             RecordComparatorCompiler recordComparatorCompiler
     ) {
         this.configuration = configuration;
@@ -145,83 +115,34 @@ final class SampleByFactoryGenerator {
         this.functionParser = functionParser;
         this.asm = asm;
         this.entityColumnFilter = entityColumnFilter;
-        this.intListPool = intListPool;
-        this.keyTypes = keyTypes;
-        this.valueTypes = valueTypes;
-        this.listColumnFilterA = listColumnFilterA;
         this.recordComparatorCompiler = recordComparatorCompiler;
-        this.validateSampleByFillType = configuration.isValidateSampleByFillType();
     }
 
-    private static void coerceRuntimeConstantType(Function func, int type, SqlExecutionContext context, CharSequence message, int pos) throws SqlException {
+    private static void assignUndefinedType(Function func, int type, SqlExecutionContext context) throws SqlException {
         if (isUndefined(func.getType())) {
             func.assignType(type, context.getBindVariableService());
-        } else if ((!func.isConstant() && !func.isRuntimeConstant()) || !ColumnType.isConvertibleFrom(func.getType(), type)) {
-            throw SqlException.$(pos, message);
         }
-    }
-
-    private static Function createNullFillPlaceholder(IntList recordFunctionPositions, int index, int type) throws SqlException {
-        return switch (ColumnType.tagOf(type)) {
-            case ColumnType.INT -> IntConstant.NULL;
-            case ColumnType.IPv4 -> IPv4Constant.NULL;
-            case ColumnType.LONG -> LongConstant.NULL;
-            case ColumnType.FLOAT -> FloatConstant.NULL;
-            case ColumnType.DOUBLE -> DoubleConstant.NULL;
-            case ColumnType.BYTE -> ByteConstant.ZERO;
-            case ColumnType.SHORT -> ShortConstant.ZERO;
-            case ColumnType.GEOBYTE -> GeoByteConstant.NULL;
-            case ColumnType.GEOSHORT -> GeoShortConstant.NULL;
-            case ColumnType.GEOINT -> GeoIntConstant.NULL;
-            case ColumnType.GEOLONG -> GeoLongConstant.NULL;
-            case ColumnType.UUID -> UuidConstant.NULL;
-            case ColumnType.DATE -> DateConstant.NULL;
-            case ColumnType.LONG256 -> Long256NullConstant.INSTANCE;
-            case ColumnType.STRING -> StrConstant.NULL;
-            case ColumnType.VARCHAR -> VarcharConstant.NULL;
-            case ColumnType.SYMBOL -> SymbolConstant.NULL;
-            case ColumnType.TIMESTAMP -> ColumnType.getTimestampDriver(type).getTimestampConstantNull();
-            default -> {
-                if (ColumnType.isArray(type)) {
-                    yield new NullArrayConstant(type);
-                }
-                if (ColumnType.isDecimal(type)) {
-                    yield DecimalUtil.createNullDecimalConstant(
-                            ColumnType.getDecimalPrecision(type),
-                            ColumnType.getDecimalScale(type)
-                    );
-                }
-                throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
-            }
-        };
     }
 
     @NotNull
     private static ObjList<Function> createSampleByFillPlaceholders(
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            @Transient IntList recordFunctionPositions,
             @NotNull @Transient ObjList<CharSequence> fillTokens,
-            @Transient IntList fillPositions,
             ObjList<Function> fillConstants
-    ) throws SqlException {
+    ) {
         final ObjList<Function> placeholderFunctions = new ObjList<>();
         int fillIndex = 0;
         final int fillValueCount = fillTokens.size();
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             Function function = recordFunctions.getQuick(i);
             if (function instanceof GroupByFunction) {
-                if (fillIndex == fillValueCount) {
-                    throw SqlException.position(fillPositions.getQuick(fillIndex - 1))
-                            .put("insufficient fill values for SAMPLE BY FILL: expected ")
-                            .put(groupByFunctions.size())
-                            .put(" values but only ")
-                            .put(fillValueCount)
-                            .put(" provided");
-                }
+                assert fillIndex < fillValueCount;
                 final CharSequence fillToken = fillTokens.getQuick(fillIndex++);
                 if (isNullKeyword(fillToken)) {
-                    placeholderFunctions.add(createNullFillPlaceholder(recordFunctionPositions, i, function.getType()));
+                    final Function placeholder = GroupByUtils.nullFillConstant(function.getType());
+                    assert placeholder != null;
+                    placeholderFunctions.add(placeholder);
                 } else if (isPrevKeyword(fillToken)) {
                     placeholderFunctions.add(function);
                 } else if (isLinearKeyword(fillToken)) {
@@ -256,62 +177,6 @@ final class SampleByFactoryGenerator {
         };
     }
 
-    private static int resolveFillPrevMode(
-            RecordMetadata metadata, int timestampIndex, int targetIndex, int sourceIndex,
-            CharSequence sourceName, int position
-    ) throws SqlException {
-        if (sourceIndex < 0) {
-            throw SqlException.$(position, "PREV(col): column not found in output: ").put(sourceName);
-        }
-        if (sourceIndex == timestampIndex) {
-            throw SqlException.$(position, "PREV cannot reference the designated timestamp column");
-        }
-        if (sourceIndex == targetIndex) {
-            return SampleByFillRecordCursorFactory.FILL_PREV_SELF;
-        }
-        final int targetType = metadata.getColumnType(targetIndex);
-        final int sourceType = metadata.getColumnType(sourceIndex);
-        final int targetTag = ColumnType.tagOf(targetType);
-        final int sourceTag = ColumnType.tagOf(sourceType);
-        if (targetTag == ColumnType.SYMBOL || sourceTag == ColumnType.SYMBOL) {
-            throw SqlException.$(position, "FILL(PREV(").put(sourceName)
-                    .put(")) is not supported on SYMBOL columns; use bare FILL(PREV) instead");
-        }
-        final boolean needsExactType = ColumnType.isDecimal(targetType) || ColumnType.isGeoHash(targetType)
-                || targetTag == ColumnType.ARRAY || targetTag == ColumnType.TIMESTAMP || targetTag == ColumnType.INTERVAL;
-        if (needsExactType ? targetType != sourceType : targetTag != sourceTag) {
-            throw SqlException.$(position, "FILL(PREV(").put(sourceName).put(")): source type ")
-                    .put(ColumnType.nameOf(sourceType)).put(" cannot fill target column of type ")
-                    .put(ColumnType.nameOf(targetType));
-        }
-        return sourceIndex;
-    }
-
-    // Reads the value through the getter SampleByFillRecordCursorFactory's record uses for the target type.
-    private static Function toFillConstant(Function fill, int targetType, CharSequence fillToken, int fillPosition) throws SqlException {
-        try {
-            return switch (ColumnType.tagOf(targetType)) {
-                case ColumnType.BOOLEAN -> BooleanConstant.of(fill.getBool(null));
-                case ColumnType.BYTE -> ByteConstant.newInstance((byte) fill.getInt(null));
-                case ColumnType.SHORT -> ShortConstant.newInstance((short) fill.getInt(null));
-                case ColumnType.CHAR -> CharConstant.newInstance(fill.getChar(null));
-                case ColumnType.INT -> IntConstant.newInstance(fill.getInt(null));
-                case ColumnType.IPv4 -> IPv4Constant.newInstance(fill.getIPv4(null));
-                case ColumnType.LONG -> LongConstant.newInstance(fill.getLong(null));
-                case ColumnType.DATE -> DateConstant.newInstance(fill.getLong(null));
-                case ColumnType.FLOAT -> FloatConstant.newInstance(fill.getFloat(null));
-                case ColumnType.DOUBLE -> DoubleConstant.newInstance(fill.getDouble(null));
-                case ColumnType.LONG256 -> {
-                    fill.getLong256A(null);
-                    yield fill;
-                }
-                default -> fill;
-            };
-        } catch (ImplicitCastException | UnsupportedOperationException e) {
-            throw GroupByUtils.invalidSampleByFillValue(fillToken, fillPosition);
-        }
-    }
-
     private static Function toSampleByUtc(Function function, TimestampDriver driver, TimeZoneRules rules, int timestampType) {
         if (function != driver.getTimestampConstantNull()) {
             final long timestamp = driver.from(function.getTimestamp(null), ColumnType.getTimestampType(function.getType()));
@@ -322,35 +187,11 @@ final class SampleByFactoryGenerator {
         return function;
     }
 
-    private static void validateFillNull(int type, int position) throws SqlException {
-        final int tag = ColumnType.tagOf(type);
-        if (tag == ColumnType.BOOLEAN || tag == ColumnType.CHAR) {
-            throw SqlException.$(position, "fill value of type NULL cannot fill column of type ")
-                    .put(ColumnType.nameOf(type));
-        }
-    }
-
-    private static void validateFillPrevChains(IntList modes, IntList positions) throws SqlException {
-        for (int i = 0, n = modes.size(); i < n; i++) {
-            final int source = modes.getQuick(i);
-            if (source >= 0) {
-                final int sourceMode = modes.getQuick(source);
-                if (sourceMode >= 0) {
-                    throw SqlException.$(positions.getQuick(i),
-                            "FILL(PREV) chains are not supported: source column is itself a cross-column PREV");
-                }
-                if (sourceMode == SampleByFillRecordCursorFactory.FILL_CONSTANT) {
-                    throw SqlException.$(positions.getQuick(i),
-                            "FILL(PREV) cannot reference a column that is itself filled with a constant");
-                }
-            }
-        }
-    }
-
     /**
      * Consumes the input and all function lists/parameters, including on failure.
      */
     private RecordCursorFactory generateFillFactory(
+            GenerationFrame frame,
             RecordCursorFactory groupByFactory,
             int timestampIndex,
             int timestampType,
@@ -505,6 +346,7 @@ final class SampleByFactoryGenerator {
             // validation makes the switch exhaustive.
             if (groupByFactory.getMetadata().getTimestampIndex() != timestampIndex) {
                 final RecordMetadata sortMetadata = groupByFactory.getMetadata();
+                final ListColumnFilter listColumnFilterA = frame.listColumnFilterA;
                 listColumnFilterA.clear();
                 listColumnFilterA.add(timestampIndex + 1); // positive = ascending
                 entityColumnFilter.of(sortMetadata.getColumnCount());
@@ -637,6 +479,7 @@ final class SampleByFactoryGenerator {
      * Consumes the base, assembled functions and temporal parameters, including on failure.
      */
     private RecordCursorFactory generateSampleByFactory(
+            GenerationFrame frame,
             RecordCursorFactory base,
             GenericRecordMetadata projectionMetadata,
             TimestampSampler timestampSampler,
@@ -645,11 +488,11 @@ final class SampleByFactoryGenerator {
             int timestampIndex,
             int timestampType,
             ObjList<CharSequence> fillTokens,
-            IntList fillPositions,
             ObjList<Function> fillConstants,
             @Nullable IntList firstLastIndexes,
             @Nullable IntList firstLastKinds,
             @Nullable IntList firstLastPositions,
+            IntList groupByFunctionPositions,
             int symbolKeyIndex,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
@@ -664,6 +507,8 @@ final class SampleByFactoryGenerator {
         boolean isTransferred = false;
         try {
             final RecordMetadata baseMetadata = base.getMetadata();
+            final ArrayColumnTypes keyTypes = frame.keyTypes;
+            final ArrayColumnTypes valueTypes = frame.valueTypes;
             final int fillCount = fillTokens.size();
             if (fillCount == 1 && isLinearKeyword(fillTokens.getQuick(0))) {
                 isTransferred = true;
@@ -675,7 +520,7 @@ final class SampleByFactoryGenerator {
                         groupByFunctions,
                         recordFunctions,
                         timestampSampler,
-                        listColumnFilterA,
+                        frame.listColumnFilterA,
                         keyTypes,
                         valueTypes,
                         entityColumnFilter,
@@ -747,7 +592,7 @@ final class SampleByFactoryGenerator {
                         groupByFunctions,
                         recordFunctions,
                         timestampSampler,
-                        listColumnFilterA,
+                        frame.listColumnFilterA,
                         keyTypes,
                         valueTypes,
                         timestampIndex,
@@ -763,38 +608,33 @@ final class SampleByFactoryGenerator {
                 );
             }
 
-            assert fillCount > 0;
+            assert fillCount > 0 && keyTypes.getColumnCount() == 0;
+            final ObjList<Function> placeholders = createSampleByFillPlaceholders(
+                    groupByFunctions, recordFunctions, fillTokens, fillConstants
+            );
 
-            if (keyTypes.getColumnCount() == 0) {
-                final ObjList<Function> placeholders = createSampleByFillPlaceholders(
-                        groupByFunctions, recordFunctions, recordFunctionPositions, fillTokens, fillPositions, fillConstants
-                );
-
-                isTransferred = true;
-                return new SampleByFillValueNotKeyedRecordCursorFactory(
-                        asm,
-                        configuration,
-                        base,
-                        timestampSampler,
-                        placeholders,
-                        projectionMetadata,
-                        groupByFunctions,
-                        recordFunctions,
-                        valueTypes.getColumnCount(),
-                        timestampIndex,
-                        timestampType,
-                        timezoneNameFunc,
-                        timezoneNameFuncPos,
-                        offsetFunc,
-                        offsetFuncPos,
-                        sampleFromFunc,
-                        sampleFromFuncPos,
-                        sampleToFunc,
-                        sampleToFuncPos
-                );
-            }
-
-            throw SqlException.position(0).put("linear interpolation is not supported when using fill values for keyed sample by expression");
+            isTransferred = true;
+            return new SampleByFillValueNotKeyedRecordCursorFactory(
+                    asm,
+                    configuration,
+                    base,
+                    timestampSampler,
+                    placeholders,
+                    projectionMetadata,
+                    groupByFunctions,
+                    recordFunctions,
+                    valueTypes.getColumnCount(),
+                    timestampIndex,
+                    timestampType,
+                    timezoneNameFunc,
+                    timezoneNameFuncPos,
+                    offsetFunc,
+                    offsetFuncPos,
+                    sampleFromFunc,
+                    sampleFromFuncPos,
+                    sampleToFunc,
+                    sampleToFuncPos
+            );
         } catch (Throwable th) {
             if (!isTransferred) {
                 GroupByUtils.freeAssembledProjectionFunctions(recordFunctions, null, th);
@@ -815,99 +655,33 @@ final class SampleByFactoryGenerator {
         }
     }
 
-    /**
-     * Owns the FILL value rule of both SAMPLE BY shapes: replaces the instantiated value at
-     * {@code fillIndex} with a constant of {@code targetType}, or fails at {@code fillPosition}.
-     */
-    private void prepareFillValue(
-            ObjList<Function> fillValues,
-            int fillIndex,
+    private Function instantiateFillValue(
+            BoundExpression value,
             int targetType,
-            CharSequence fillToken,
-            int fillPosition
+            OutputSchema input,
+            RecordMetadata metadata,
+            FunctionInstantiator instantiator,
+            SqlExecutionContext executionContext
     ) throws SqlException {
-        if (ColumnType.isTimestamp(targetType)) {
-            // functionParser produces TIMESTAMP_NANO for any string
-            // literal, which drifts by 1000x against a MICRO target.
-            // Re-parse with the target driver to keep units correct.
-            if (!Chars.isQuoted(fillToken)) {
-                throw SqlException.position(fillPosition).put("Invalid fill value: '").put(fillToken)
-                        .put("'. Timestamp fill value must be in quotes. Example: '2019-01-01T00:00:00.000Z'");
-            }
-            final long parsed;
-            try {
-                parsed = ColumnType.getTimestampDriver(targetType).parseQuotedLiteral(fillToken);
-            } catch (NumericException e) {
-                throw GroupByUtils.invalidSampleByFillValue(fillToken, fillPosition);
-            }
-            // Null-then-free: if Misc.free's codeGenerator.close() throws, the
-            // outer catch must not double-close the same instance.
-            Function staleFunc = fillValues.getQuick(fillIndex);
-            fillValues.setQuick(fillIndex, null);
-            Misc.free(staleFunc);
-            fillValues.setQuick(fillIndex, TimestampConstant.newInstance(parsed, targetType));
-            return;
+        final Function fill = instantiator.instantiate(value, input, metadata, executionContext);
+        if (fill.getType() == targetType || !ColumnType.isArray(targetType)) {
+            return fill;
         }
-        Function fillFunc = fillValues.getQuick(fillIndex);
-        final int fillType = fillFunc.getType();
-        if (fillType != ColumnType.UNDEFINED && !ColumnType.isConvertibleFrom(fillType, targetType)) {
-            throw SqlException.$(fillPosition, "fill value of type ").put(ColumnType.nameOf(fillType))
-                    .put(" cannot fill column of type ").put(ColumnType.nameOf(targetType));
-        }
-        if (fillFunc.isNonDeterministic() || !fillFunc.isConstant()) {
-            throw SqlException.$(fillPosition, "fill value must be a constant expression");
-        }
-        if (ColumnType.tagOf(targetType) == ColumnType.UUID) {
-            validateUuidFill(fillFunc, fillToken, fillPosition);
-        }
-        // An implicit cast factory turns e.g. INT into DECIMAL; without it the
-        // fill record would call a getter the value's function does not implement.
-        if (fillType != targetType && !ColumnType.isBuiltInWideningCast(fillType, targetType)) {
-            fillValues.setQuick(fillIndex, null);
-            final Function cast;
-            try {
-                cast = functionParser.createImplicitCast(fillPosition, fillFunc, targetType);
-            } catch (ImplicitCastException e) {
-                throw GroupByUtils.invalidSampleByFillValue(fillToken, fillPosition);
-            }
-            if (cast != null) {
-                fillFunc = cast;
-            }
-            fillValues.setQuick(fillIndex, fillFunc);
-        }
-        if (fillFunc.getType() != ColumnType.NULL && ColumnType.tagOf(fillFunc.getType()) != ColumnType.tagOf(targetType)) {
-            final Function constant = toFillConstant(fillFunc, targetType, fillToken, fillPosition);
-            if (constant != fillFunc) {
-                fillValues.setQuick(fillIndex, constant);
-                Misc.free(fillFunc);
-            }
-        }
-    }
-
-    private void validateUuidFill(Function fill, CharSequence fillToken, int fillPosition) throws SqlException {
-        try {
-            switch (ColumnType.tagOf(fill.getType())) {
-                case ColumnType.STRING, ColumnType.SYMBOL ->
-                        SqlUtil.implicitCastStrAsUuid(fill.getStrA(null), fillUuid);
-                case ColumnType.VARCHAR -> SqlUtil.implicitCastStrAsUuid(fill.getVarcharA(null), fillUuid);
-                default -> {
-                }
-            }
-        } catch (ImplicitCastException e) {
-            throw GroupByUtils.invalidSampleByFillValue(fillToken, fillPosition);
-        }
+        final Function cast = functionParser.createImplicitCast(value.getPosition(), fill, targetType);
+        return cast == null ? fill : cast;
     }
 
     /**
      * Consumes the aggregate input on entry, including on failure.
      */
     RecordCursorFactory generateFill(
+            GenerationFrame frame,
             FillPlan plan,
             OutputSchema input,
             RecordCursorFactory groupByFactory,
-            FunctionInstantiator instantiator,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        final FunctionInstantiator instantiator = frame.functionInstantiator;
         ObjList<Function> values = null;
         ObjList<Function> constants = null;
         Function from = null;
@@ -922,7 +696,8 @@ final class SampleByFactoryGenerator {
             values.setPos(entryCount);
             for (int i = 0; i < entryCount; i++) {
                 if (plan.getModes().getQuick(i) == FillPlan.FILL_VALUE) {
-                    values.setQuick(i, instantiator.instantiate(plan.getValues().getQuick(i), input, metadata, executionContext));
+                    final int targetType = metadata.getColumnType(input.getColumnIndexById(plan.getTargetColumnIds().getQuick(i)));
+                    values.setQuick(i, instantiateFillValue(plan.getValues().getQuick(i), targetType, input, metadata, instantiator, executionContext));
                 }
             }
             final int timestampIndex = input.getColumnIndexById(plan.getTimestampColumnId());
@@ -930,12 +705,10 @@ final class SampleByFactoryGenerator {
             final TimestampDriver driver = getTimestampDriver(timestampType);
             from = plan.getFrom() == null ? driver.getTimestampConstantNull()
                     : instantiator.instantiate(plan.getFrom(), input, metadata, executionContext);
-            coerceRuntimeConstantType(from, timestampType, executionContext,
-                    "from lower bound must be a constant expression convertible to a TIMESTAMP", plan.getFromPosition());
+            assignUndefinedType(from, timestampType, executionContext);
             to = plan.getTo() == null ? driver.getTimestampConstantNull()
                     : instantiator.instantiate(plan.getTo(), input, metadata, executionContext);
-            coerceRuntimeConstantType(to, timestampType, executionContext,
-                    "to upper bound must be a constant expression convertible to a TIMESTAMP", plan.getToPosition());
+            assignUndefinedType(to, timestampType, executionContext);
             final int intervalEnd = TimestampSamplerFactory.findPositiveIntervalEndIndex(plan.getPeriodToken(), plan.getPeriodPosition(), "sample");
             final long interval = TimestampSamplerFactory.parsePositiveInterval(plan.getPeriodToken(), intervalEnd,
                     plan.getPeriodPosition(), "sample", Numbers.INT_NULL, ' ');
@@ -943,23 +716,19 @@ final class SampleByFactoryGenerator {
             final TimestampSampler sampler = TimestampSamplerFactory.getInstance(driver, interval, unit, plan.getPeriodPosition());
             if (plan.getTimezone() != null) {
                 timezone = instantiator.instantiate(plan.getTimezone(), input, metadata, executionContext);
-                coerceRuntimeConstantType(timezone, STRING, executionContext,
-                        "TIME ZONE must be a constant expression of STRING or CHAR type", plan.getTimezonePosition());
+                assignUndefinedType(timezone, STRING, executionContext);
             }
             offset = plan.getOffset() == null ? StrConstant.NULL
                     : instantiator.instantiate(plan.getOffset(), input, metadata, executionContext);
-            coerceRuntimeConstantType(offset, STRING, executionContext,
-                    "offset must be a constant expression of STRING or CHAR type", plan.getOffsetPosition());
+            assignUndefinedType(offset, STRING, executionContext);
 
             final int columnCount = metadata.getColumnCount();
-            final IntList columnToEntry = intListPool.next();
+            final IntList columnToEntry = columnIndexes;
             columnToEntry.setAll(columnCount, -1);
             for (int i = 0; i < entryCount; i++) {
                 columnToEntry.setQuick(input.getColumnIndexById(plan.getTargetColumnIds().getQuick(i)), i);
             }
             final IntList modes = new IntList(columnCount);
-            final IntList positions = intListPool.next();
-            positions.setAll(columnCount, 0);
             constants = new ObjList<>(columnCount);
             for (int col = 0; col < columnCount; col++) {
                 final int entry = columnToEntry.getQuick(col);
@@ -970,11 +739,8 @@ final class SampleByFactoryGenerator {
                     modes.add(SampleByFillRecordCursorFactory.FILL_KEY);
                     constants.add(NullConstant.NULL);
                 } else {
-                    final int position = plan.getPositions().getQuick(entry);
-                    positions.setQuick(col, position);
                     switch (plan.getModes().getQuick(entry)) {
                         case FillPlan.FILL_NULL -> {
-                            validateFillNull(metadata.getColumnType(col), position);
                             modes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
                             constants.add(NullConstant.NULL);
                         }
@@ -984,12 +750,11 @@ final class SampleByFactoryGenerator {
                         }
                         case FillPlan.FILL_PREV_COLUMN -> {
                             final int sourceIndex = input.getColumnIndexById(plan.getSourceColumnIds().getQuick(entry));
-                            modes.add(resolveFillPrevMode(metadata, timestampIndex, col, sourceIndex,
-                                    plan.getTokens().getQuick(entry), plan.getSourcePositions().getQuick(entry)));
+                            assert sourceIndex >= 0 && sourceIndex != col && sourceIndex != timestampIndex;
+                            modes.add(sourceIndex);
                             constants.add(NullConstant.NULL);
                         }
                         case FillPlan.FILL_VALUE -> {
-                            prepareFillValue(values, entry, metadata.getColumnType(col), plan.getTokens().getQuick(entry), position);
                             modes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
                             constants.add(values.getQuick(entry));
                             values.setQuick(entry, null);
@@ -998,9 +763,8 @@ final class SampleByFactoryGenerator {
                     }
                 }
             }
-            validateFillPrevChains(modes, positions);
             isTransferred = true;
-            return generateFillFactory(groupByFactory, timestampIndex, timestampType, interval, unit, sampler,
+            return generateFillFactory(frame, groupByFactory, timestampIndex, timestampType, interval, unit, sampler,
                     modes, constants, values, from, to, plan.getToPosition(), offset, plan.getOffsetPosition(),
                     timezone, plan.getTimezonePosition());
         } catch (Throwable th) {
@@ -1027,7 +791,7 @@ final class SampleByFactoryGenerator {
         final LogicalPlan sampled = sample.getInput();
         final RecordCursorFactory base = codeGenerator.generateJoinInput(frame, !sample.isTimestampRequired() && SqlCodeGenerator.isTimestampDeclarationOnly(sampled) ? sampled.inputAt(0) : sampled, executionContext,
                 sample.isTimestampRequired(), OrderByMnemonic.ORDER_BY_REQUIRED);
-        return generateSampleBy(sample, base, frame.functionInstantiator, executionContext);
+        return generateSampleBy(frame, sample, base, executionContext);
     }
 
     /**
@@ -1035,11 +799,12 @@ final class SampleByFactoryGenerator {
      */
     @NotNull
     RecordCursorFactory generateSampleBy(
+            GenerationFrame frame,
             SampleByPlan plan,
             RecordCursorFactory base,
-            FunctionInstantiator instantiator,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        final FunctionInstantiator instantiator = frame.functionInstantiator;
         Function timezone = null;
         Function offset = null;
         Function from = null;
@@ -1052,12 +817,10 @@ final class SampleByFactoryGenerator {
             final RecordMetadata baseMetadata = base.getMetadata();
             timezone = plan.getTimezone() == null ? StrConstant.NULL
                     : instantiator.instantiate(plan.getTimezone(), input, baseMetadata, executionContext);
-            coerceRuntimeConstantType(timezone, STRING, executionContext,
-                    "timezone must be a constant expression of STRING or CHAR type", plan.getTimezonePosition());
+            assignUndefinedType(timezone, STRING, executionContext);
             offset = plan.getOffset() == null ? StrConstant.NULL
                     : instantiator.instantiate(plan.getOffset(), input, baseMetadata, executionContext);
-            coerceRuntimeConstantType(offset, STRING, executionContext,
-                    "offset must be a constant expression of STRING or CHAR type", plan.getOffsetPosition());
+            assignUndefinedType(offset, STRING, executionContext);
             final int timestampIndex = plan.isTimestampRequired()
                     ? baseMetadata.getTimestampIndex() : input.getColumnIndexById(plan.getTimestampColumnId());
             if (timestampIndex < 0) {
@@ -1072,49 +835,36 @@ final class SampleByFactoryGenerator {
             final TimestampDriver driver = getTimestampDriver(timestampType);
             from = plan.getFrom() == null ? driver.getTimestampConstantNull()
                     : instantiator.instantiate(plan.getFrom(), input, baseMetadata, executionContext);
-            coerceRuntimeConstantType(from, timestampType, executionContext,
-                    "from lower bound must be a constant expression convertible to a TIMESTAMP", plan.getFromPosition());
+            assignUndefinedType(from, timestampType, executionContext);
             to = plan.getTo() == null ? driver.getTimestampConstantNull()
                     : instantiator.instantiate(plan.getTo(), input, baseMetadata, executionContext);
-            coerceRuntimeConstantType(to, timestampType, executionContext,
-                    "to upper bound must be a constant expression convertible to a TIMESTAMP", plan.getToPosition());
+            assignUndefinedType(to, timestampType, executionContext);
             if (plan.getTimezone() != null && CommonUtils.isSubDayUnit(plan.getPeriodUnit())) {
                 final CharSequence zone = timezone.getStrA(null);
                 if (zone != null) {
-                    try {
-                        final TimeZoneRules rules = driver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, zone);
-                        final Function oldFrom = from;
-                        from = toSampleByUtc(from, driver, rules, timestampType);
-                        if (from != oldFrom) {
-                            Misc.free(oldFrom);
-                        }
-                        final Function oldTo = to;
-                        to = toSampleByUtc(to, driver, rules, timestampType);
-                        if (to != oldTo) {
-                            Misc.free(oldTo);
-                        }
-                    } catch (NumericException ex) {
-                        throw SqlException.$(plan.getTimezonePosition(), "invalid timezone: ").put(zone);
+                    final TimeZoneRules rules = driver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, zone);
+                    final Function oldFrom = from;
+                    from = toSampleByUtc(from, driver, rules, timestampType);
+                    if (from != oldFrom) {
+                        Misc.free(oldFrom);
+                    }
+                    final Function oldTo = to;
+                    to = toSampleByUtc(to, driver, rules, timestampType);
+                    if (to != oldTo) {
+                        Misc.free(oldTo);
                     }
                 }
             }
-            final TimestampSampler sampler;
-            if (plan.getPeriod() == null) {
-                sampler = TimestampSamplerFactory.getInstance(driver, plan.getPeriodToken(), plan.getPeriodPosition());
-            } else {
-                try (Function period = instantiator.instantiate(plan.getPeriod(), input, baseMetadata, executionContext)) {
-                    if (!period.isConstant() || period.getType() != LONG && period.getType() != INT) {
-                        throw SqlException.$(plan.getPeriodPosition(), "sample by period must be a constant expression of INT or LONG type");
-                    }
-                    sampler = TimestampSamplerFactory.getInstance(driver, period.getLong(null), plan.getPeriodUnit(), plan.getPeriodUnitPosition());
-                }
-            }
+            final TimestampSampler sampler = plan.getPeriod() instanceof ConstantExpression period
+                    ? TimestampSamplerFactory.getInstance(driver, period.getLongValue(), plan.getPeriodUnit(), plan.getPeriodUnitPosition())
+                    : TimestampSamplerFactory.getInstance(driver, plan.getPeriodToken(), plan.getPeriodPosition());
 
+            final ArrayColumnTypes keyTypes = frame.keyTypes;
+            final ArrayColumnTypes valueTypes = frame.valueTypes;
+            final ListColumnFilter listColumnFilterA = frame.listColumnFilterA;
             keyTypes.clear();
             valueTypes.clear();
             listColumnFilterA.clear();
-            groupByFunctionPositions.clear();
-            recordFunctionPositions.clear();
             valueTypes.add(plan.getFillMode() == SampleByPlan.FILL_LINEAR ? BYTE : timestampType);
             final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
             final ObjList<FunctionExpression> calls = plan.getAggregates();
@@ -1122,64 +872,39 @@ final class SampleByFactoryGenerator {
             final OutputSchema output = plan.getOutput();
             records = new ObjList<>(output.getColumnCount());
             records.setPos(output.getColumnCount());
-            for (int i = 0, n = keys.size(); i < n; i++) {
-                recordFunctionPositions.add(keys.getQuick(i).getPosition());
-            }
             for (int i = 0, n = calls.size(); i < n; i++) {
                 final FunctionExpression call = calls.getQuick(i);
                 final GroupByFunction function = (GroupByFunction) instantiator.instantiateAggregate(call, input, baseMetadata, executionContext);
                 records.setQuick(keys.size() + i, function);
                 aggregates.add(function);
-                recordFunctionPositions.add(call.getPosition());
-                groupByFunctionPositions.add(call.getPosition());
             }
             final int fillCount = plan.getFillTokens().size();
-            if (validateSampleByFillType && fillCount > 1 && fillCount < aggregates.size()) {
-                boolean hasNone = false;
-                for (int i = 0; i < fillCount; i++) {
-                    hasNone |= isNoneKeyword(plan.getFillTokens().getQuick(i));
-                }
-                if (!hasNone) {
-                    throw SqlException.$(plan.getFillPositions().getQuick(0), "not enough fill values");
-                }
-            }
             for (int i = 0, n = aggregates.size(); i < n; i++) {
                 final GroupByFunction function = aggregates.getQuick(i);
-                final int position = groupByFunctionPositions.getQuick(i);
+                final int position = calls.getQuick(i).getPosition();
                 GroupByUtils.validateTimestampOrder(function, timestampIndex, SqlCodeGenerator.isBaseTimestampAscending(base, timestampIndex), position);
-                if (validateSampleByFillType && fillCount > 0) {
-                    final int fillIndex = Math.min(i, fillCount - 1);
-                    final CharSequence unsupportedFill = GroupByUtils.getUnsupportedSampleByFill(function, plan.getFillTokens().getQuick(fillIndex));
-                    if (unsupportedFill != null) {
-                        throw SqlException.$(plan.getFillPositions().getQuick(fillIndex), "support for ").put(unsupportedFill)
-                                .put(" fill is not yet implemented [function=").put(plan.getAggregateSql().getQuick(i))
-                                .put(", class=").put(function.getClass().getName()).put(']');
-                    }
-                }
                 function.initValueTypes(valueTypes);
             }
             fillConstants = new ObjList<>(fillCount);
             fillConstants.setPos(fillCount);
             for (int k = 0, n = Math.min(fillCount, aggregates.size()); k < n; k++) {
-                final CharSequence fillToken = plan.getFillTokens().getQuick(k);
-                final int fillPosition = plan.getFillPositions().getQuick(k);
                 final BoundExpression value = plan.getFillValues().getQuick(k);
                 if (value != null) {
-                    fillConstants.setQuick(k, instantiator.instantiate(value, input, baseMetadata, executionContext));
-                    prepareFillValue(fillConstants, k, aggregates.getQuick(k).getType(), fillToken, fillPosition);
-                } else if (isNullKeyword(fillToken)) {
-                    for (int i = fillCount == 1 ? 0 : k, m = fillCount == 1 ? aggregates.size() : k + 1; i < m; i++) {
-                        validateFillNull(aggregates.getQuick(i).getType(), fillPosition);
-                    }
+                    fillConstants.setQuick(k, instantiateFillValue(value, aggregates.getQuick(k).getType(), input, baseMetadata, instantiator, executionContext));
                 }
             }
             final GenericRecordMetadata metadata = new GenericRecordMetadata();
             int lastKeyIndex = -1;
             int symbolKeyIndex = -1;
             boolean isFirstLast = plan.getFillMode() == SampleByPlan.FILL_NONE;
-            final IntList firstLastIndexes = intListPool.next();
-            final IntList firstLastKinds = intListPool.next();
-            final IntList firstLastPositions = intListPool.next();
+            final IntList firstLastIndexes = columnIndexes;
+            final IntList firstLastKinds = this.firstLastKinds;
+            final IntList firstLastPositions = this.firstLastPositions;
+            final IntList groupByFunctionPositions = this.groupByFunctionPositions;
+            firstLastIndexes.clear();
+            firstLastKinds.clear();
+            firstLastPositions.clear();
+            groupByFunctionPositions.clear();
             for (int i = 0, n = keys.size(); i < n; i++) {
                 final ColumnExpression column = (ColumnExpression) keys.getQuick(i);
                 final int index = input.getColumnIndexById(column.getColumnId());
@@ -1212,6 +937,7 @@ final class SampleByFactoryGenerator {
             for (int i = 0, n = calls.size(); i < n; i++) {
                 final FunctionExpression call = calls.getQuick(i);
                 final Function function = aggregates.getQuick(i);
+                groupByFunctionPositions.add(call.getPosition());
                 metadata.add(new TableColumnMetadata(Chars.toString(output.getColumnName(keys.size() + i)), function.getType(),
                         IndexType.NONE, 0, function instanceof SymbolFunction symbol && symbol.isSymbolTableStatic(), function.getMetadata()));
                 if (call.getArgumentCount() != 1 || !(call.argumentAt(0) instanceof ColumnExpression column)
@@ -1226,9 +952,9 @@ final class SampleByFactoryGenerator {
                 firstLastPositions.add(call.getPosition());
             }
             isTransferred = true;
-            return generateSampleByFactory(base, metadata, sampler, aggregates, records,
-                    timestampIndex, timestampType, plan.getFillTokens(), plan.getFillPositions(), fillConstants,
-                    isFirstLast ? firstLastIndexes : null, firstLastKinds, firstLastPositions, symbolKeyIndex,
+            return generateSampleByFactory(frame, base, metadata, sampler, aggregates, records,
+                    timestampIndex, timestampType, plan.getFillTokens(), fillConstants,
+                    isFirstLast ? firstLastIndexes : null, firstLastKinds, firstLastPositions, groupByFunctionPositions, symbolKeyIndex,
                     timezone, plan.getTimezonePosition(), offset, plan.getOffsetPosition(),
                     from, plan.getFromPosition(), to, plan.getToPosition(), executionContext);
         } catch (Throwable th) {

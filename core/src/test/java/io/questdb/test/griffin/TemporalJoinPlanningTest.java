@@ -774,8 +774,9 @@ public class TemporalJoinPlanningTest extends AbstractCairoTest {
             execute("CREATE TABLE lp_tc_plain(id INT,k INT,v INT)");
             assertQuery("SELECT l.id FROM lp_tc_plain l SPLICE JOIN lp_tc_s r ON l.v<r.v").noLeakCheck().fails(31, "left side of time series join has no timestamp");
             assertQuery("SELECT l.id FROM lp_tc_m l SPLICE JOIN lp_tc_plain r ON l.v<r.v").noLeakCheck().fails(27, "right side of time series join has no timestamp");
-            assertQuery("SELECT l.id FROM (SELECT * FROM lp_tc_m ORDER BY ts DESC) l SPLICE JOIN lp_tc_s r ON l.v<r.v").noLeakCheck().fails(60, "left side of time series join doesn't have ASC timestamp order");
-            assertQuery("SELECT l.id FROM lp_tc_m l SPLICE JOIN (SELECT * FROM lp_tc_s ORDER BY ts DESC) r ON l.v<r.v").noLeakCheck().fails(27, "right side of time series join doesn't have ASC timestamp order");
+            assertQuery("SELECT l.id FROM (SELECT * FROM lp_tc_m ORDER BY ts DESC) l SPLICE JOIN lp_tc_s r ON(k)").noLeakCheck().fails(60, "left side of time series join doesn't have ASC timestamp order");
+            assertQuery("SELECT l.id FROM lp_tc_m l SPLICE JOIN (SELECT * FROM lp_tc_s ORDER BY ts DESC) r ON(k)").noLeakCheck().fails(27, "right side of time series join doesn't have ASC timestamp order");
+            assertQuery("SELECT l.id FROM (SELECT * FROM lp_tc_m ORDER BY ts DESC) l SPLICE JOIN lp_tc_s r ON l.v<r.v").noLeakCheck().fails(88, "unsupported SPLICE join expression [expr='l.v < r.v']");
             assertQuery("SELECT l.id FROM lp_tc_m l SPLICE JOIN lp_tc_s r ON l.v<r.v").noLeakCheck().fails(55, "unsupported SPLICE join expression [expr='l.v < r.v']");
             assertQuery("SELECT l.id FROM lp_tc_m l SPLICE JOIN lp_tc_s r ON l.k=r.sym").noLeakCheck().fails(56, "join column type mismatch");
             assertQuery("SELECT l.id FROM lp_tc_m l SPLICE JOIN lp_tc_s r ON(k)").noLeakCheck().fullFatJoins().fails(27, "splice join doesn't support full fat mode");
@@ -1079,8 +1080,9 @@ public class TemporalJoinPlanningTest extends AbstractCairoTest {
             assertQuery("SELECT l.id FROM lp_tc_plain l ASOF JOIN lp_tc_s r ON(k) TOLERANCE 1y").noLeakCheck().fails(31, "left side of time series join has no timestamp");
             assertQuery("SELECT l.id FROM lp_tc_m l LT JOIN lp_tc_plain r ON(k) TOLERANCE 1y").noLeakCheck().fails(27, "right side of time series join has no timestamp");
             assertQuery("SELECT l.id FROM lp_tc_m l ASOF JOIN lp_tc_s r ON l.v<r.v TOLERANCE 1y").noLeakCheck().fails(53, "unsupported ASOF join expression [expr='l.v < r.v']");
-            assertQuery("SELECT l.id FROM (SELECT * FROM lp_tc_m ORDER BY ts DESC) l ASOF JOIN lp_tc_s r ON(k) TOLERANCE 1y").noLeakCheck().fails(60, "left side of time series join doesn't have ASC timestamp order");
-            assertQuery("SELECT l.id FROM lp_tc_m l LT JOIN (SELECT * FROM lp_tc_s ORDER BY ts DESC) r ON(k) TOLERANCE 1y").noLeakCheck().fails(27, "right side of time series join doesn't have ASC timestamp order");
+            assertQuery("SELECT l.id FROM (SELECT * FROM lp_tc_m ORDER BY ts DESC) l ASOF JOIN lp_tc_s r ON(k) TOLERANCE 1s").noLeakCheck().fails(60, "left side of time series join doesn't have ASC timestamp order");
+            assertQuery("SELECT l.id FROM lp_tc_m l LT JOIN (SELECT * FROM lp_tc_s ORDER BY ts DESC) r ON(k) TOLERANCE 1s").noLeakCheck().fails(27, "right side of time series join doesn't have ASC timestamp order");
+            assertQuery("SELECT l.id FROM (SELECT * FROM lp_tc_m ORDER BY ts DESC) l ASOF JOIN lp_tc_s r ON(k) TOLERANCE 1y").noLeakCheck().fails(96, "unsupported TOLERANCE unit [unit=y]");
             assertQuery("SELECT l.id FROM lp_tc_m l ASOF JOIN lp_tc_s r ON l.k=r.ts TOLERANCE 1y").noLeakCheck().fails(54, "join column type mismatch");
             assertQuery("SELECT l.id FROM lp_tc_m l ASOF JOIN lp_tc_s r ON(k,ts) TOLERANCE 1y").noLeakCheck().fails(27, "ASOF/LT JOIN cannot use designated timestamp as a join key");
             assertQuery("SELECT l.id FROM lp_tc_m l ASOF JOIN lp_tc_s r ON(k) TOLERANCE 1y").noLeakCheck().fails(63, "unsupported TOLERANCE unit [unit=y]");

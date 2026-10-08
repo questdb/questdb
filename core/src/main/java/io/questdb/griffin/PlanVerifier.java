@@ -29,10 +29,10 @@ import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
-import io.questdb.griffin.plan.logical.DeferredErrorExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
+import io.questdb.griffin.plan.logical.ForwardingPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.GroupingPlan;
@@ -51,12 +51,12 @@ import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
-import io.questdb.griffin.plan.logical.UnaryPlan;
 import io.questdb.griffin.plan.logical.UnnestSpec;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
+import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -72,7 +72,6 @@ public final class PlanVerifier {
     public static final String AGGREGATE_TYPE = "aggregate output type differs from its expression";
     public static final String COLUMN_TYPE = "column expression type differs from the column it reads";
     public static final String CURSOR_PLAN = "sub-query cursor has no plan";
-    public static final String DEFERRED_ERROR = "deferred error is neither a projection column, a grouping key nor a filter conjunct, so generation would not raise it";
     public static final String DEPENDENT_STEP = "dependent join step survives decorrelation";
     public static final String DUPLICATE_COLUMN_ID = "output lists a column id twice";
     public static final String EXPRESSION_NULL = "expression is null";
@@ -117,7 +116,6 @@ public final class PlanVerifier {
     private final ObjList<LogicalPlan> visited;
     private OutputSchema aliasScope;
     private BoundExpression expressionRoot;
-    private boolean isConjunct;
     private boolean isDependentStepAllowed;
     private LogicalPlan node;
     private String pass;
@@ -157,13 +155,6 @@ public final class PlanVerifier {
         return check(root, "SqlBinder.bind", true);
     }
 
-    private static void addColumns(OutputSchema target, OutputSchema source) {
-        for (int i = 0, n = source.getColumnCount(); i < n; i++) {
-            target.add(source.getColumnId(i), source.getColumnName(i), source.getColumnType(i), source.getMetadata(i),
-                    source.isVisible(i), source.getColumnQualifier(i));
-        }
-    }
-
     private static int occurrences(BoundExpression tree, BoundExpression node) {
         if (tree == node) {
             return 1;
@@ -191,6 +182,10 @@ public final class PlanVerifier {
             }
             default -> false;
         };
+    }
+
+    private static boolean sameText(CharSequence text, CharSequence other) {
+        return text == null ? other == null : other != null && Chars.equals(text, other);
     }
 
     private boolean check(LogicalPlan root, String pass, boolean isDependentStepAllowed) {
@@ -224,19 +219,6 @@ public final class PlanVerifier {
         final int type = typeOf(columnId);
         if (!isCast && type != dataType) {
             fail(COLUMN_TYPE, columnId);
-        }
-    }
-
-    /**
-     * Checks a filter conjunct, or a conjunction of them. A conjunct that failed to bind is deferred whole;
-     * generation raises it when it builds the filter.
-     */
-    private void conjunct(BoundExpression root) {
-        isConjunct = true;
-        try {
-            expression(root);
-        } finally {
-            isConjunct = false;
         }
     }
 
@@ -286,21 +268,13 @@ public final class PlanVerifier {
                 if (call.getOverload() == null) {
                     fail(FUNCTION_OVERLOAD);
                 }
-                final boolean wasConjunct = isConjunct;
-                isConjunct = wasConjunct && call.isAnd();
                 for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
                     expressionNode(call.argumentAt(i));
                 }
-                isConjunct = wasConjunct;
             }
             case CursorExpression cursor -> {
                 if (cursor.getPlan() == null) {
                     fail(CURSOR_PLAN);
-                }
-            }
-            case DeferredErrorExpression _ -> {
-                if (!isConjunct) {
-                    fail(DEFERRED_ERROR);
                 }
             }
             default -> {
@@ -323,13 +297,7 @@ public final class PlanVerifier {
     }
 
     private void fill(FillPlan fill) {
-        final OutputSchema output = fill.getOutput();
-        if (!sameColumns(output, fill.getInput().getOutput())) {
-            fail(OUTPUT_FORWARDING);
-        }
-        if (output.getTimestampColumnId() != fill.getTimestampColumnId()) {
-            fail(FILL_TIMESTAMP);
-        }
+        forwards(fill, FILL_TIMESTAMP);
         final int count = fill.getTargetColumnIds().size();
         if (fill.getModes().size() != count || fill.getValues().size() != count) {
             fail(FILL_SHAPE);
@@ -355,14 +323,30 @@ public final class PlanVerifier {
         noColumnReads(fill.getTimezone());
     }
 
-    private void forwards(UnaryPlan plan) {
+    /**
+     * The output is what {@link ForwardingPlan#deriveOutput()} lays out: the input's columns, attribute for
+     * attribute, under the node's own timestamp designation.
+     */
+    private void forwards(ForwardingPlan plan, String timestampInvariant) {
         final OutputSchema output = plan.getOutput();
         final OutputSchema input = plan.getInput().getOutput();
-        if (!sameColumns(output, input)) {
+        final int n = output.getColumnCount();
+        if (n != input.getColumnCount()) {
             fail(OUTPUT_FORWARDING);
         }
-        if (output.getTimestampIndex() != input.getTimestampIndex()) {
-            fail(OUTPUT_TIMESTAMP);
+        for (int i = 0; i < n; i++) {
+            if (output.getColumnId(i) != input.getColumnId(i) || output.getColumnType(i) != input.getColumnType(i)
+                    || !Chars.equals(output.getColumnName(i), input.getColumnName(i))
+                    || !sameText(output.getColumnQualifier(i), input.getColumnQualifier(i))
+                    || output.getMetadata(i) != input.getMetadata(i)
+                    || output.isVisible(i) != input.isVisible(i)
+                    || output.isSymbolTableStatic(i) != input.isSymbolTableStatic(i)
+                    || output.isNameProtected(i) != input.isNameProtected(i)) {
+                fail(OUTPUT_FORWARDING, output.getColumnId(i));
+            }
+        }
+        if (output.getTimestampIndex() != plan.derivedTimestampIndex()) {
+            fail(timestampInvariant);
         }
     }
 
@@ -404,9 +388,7 @@ public final class PlanVerifier {
         site = "grouping keys";
         for (int i = 0; i < keyCount; i++) {
             final BoundExpression key = keys.getQuick(i);
-            if (!(key instanceof DeferredErrorExpression)) {
-                expression(key);
-            }
+            expression(key);
             if (key.getDataType() != output.getColumnType(i)) {
                 fail(AGGREGATE_TYPE, output.getColumnId(i));
             }
@@ -479,7 +461,7 @@ public final class PlanVerifier {
         site = "filter conjuncts";
         final ObjList<BoundExpression> conjuncts = join.getFilterConjuncts();
         for (int i = 0, n = conjuncts.size(); i < n; i++) {
-            conjunct(conjuncts.getQuick(i));
+            expression(conjuncts.getQuick(i));
         }
         joinScope.clear();
     }
@@ -540,7 +522,7 @@ public final class PlanVerifier {
             site = "markout sequence";
             typeOf(step.getMarkoutSequenceColumnId());
         }
-        addColumns(joinScope, source);
+        joinScope.addColumnsFrom(source);
         scope = joinScope;
         site = "ON residual";
         predicate(step.getOnResidual());
@@ -554,7 +536,7 @@ public final class PlanVerifier {
     }
 
     private void latestBy(LatestByPlan latest) {
-        forwards(latest);
+        forwards(latest, OUTPUT_TIMESTAMP);
         final LogicalPlan input = latest.getInput();
         scope = input.getOutput();
         site = "LATEST BY keys";
@@ -575,7 +557,7 @@ public final class PlanVerifier {
     }
 
     private void limit(LimitPlan limit) {
-        forwards(limit);
+        forwards(limit, OUTPUT_TIMESTAMP);
         if (limit.getLo() == null) {
             fail(EXPRESSION_NULL);
         }
@@ -641,7 +623,7 @@ public final class PlanVerifier {
             case FunctionSourcePlan _ -> {
             }
             case FilterPlan filter -> {
-                forwards(filter);
+                forwards(filter, OUTPUT_TIMESTAMP);
                 scope = filter.getInput().getOutput();
                 site = "filter predicate";
                 if (filter.getPredicate() == null) {
@@ -651,7 +633,7 @@ public final class PlanVerifier {
             }
             case ProjectPlan project -> project(project);
             case GroupingPlan grouping -> grouping(grouping);
-            case DistinctPlan distinct -> forwards(distinct);
+            case DistinctPlan distinct -> forwards(distinct, OUTPUT_TIMESTAMP);
             case FillPlan fill -> fill(fill);
             case WindowPlan window -> window(window);
             case JoinPlan join -> join(join);
@@ -670,7 +652,7 @@ public final class PlanVerifier {
         if (predicate == null) {
             return;
         }
-        conjunct(predicate);
+        expression(predicate);
         if (predicate.getDataType() != ColumnType.BOOLEAN) {
             fail(PREDICATE_TYPE);
         }
@@ -687,9 +669,7 @@ public final class PlanVerifier {
         aliasScope = output;
         for (int i = 0, n = expressions.size(); i < n; i++) {
             final BoundExpression expression = expressions.getQuick(i);
-            if (!(expression instanceof DeferredErrorExpression) || project.hasUpdateConversions()) {
-                expression(expression);
-            }
+            expression(expression);
             if (!project.hasUpdateConversions() && expression.getDataType() != output.getColumnType(i)) {
                 fail(PROJECT_TYPE, output.getColumnId(i));
             }
@@ -749,18 +729,10 @@ public final class PlanVerifier {
         if (keys.size() == 0 || keys.size() != sort.getDirections().size()) {
             fail(SORT_KEYS);
         }
-        final OutputSchema output = sort.getOutput();
-        if (!sameColumns(output, sort.getInput().getOutput())) {
-            fail(OUTPUT_FORWARDING);
-        }
-        scope = output;
+        scope = sort.getOutput();
         site = "sort keys";
         resolveAll(keys);
-        final int firstKey = output.getColumnIndexById(keys.getQuick(0));
-        final int expected = ColumnType.isTimestamp(output.getColumnType(firstKey)) ? firstKey : -1;
-        if (output.getTimestampIndex() != expected) {
-            fail(SORT_TIMESTAMP);
-        }
+        forwards(sort, SORT_TIMESTAMP);
     }
 
     private void timestampColumn(int columnId) {
@@ -840,7 +812,7 @@ public final class PlanVerifier {
         for (int s = 0, m = steps.size(); s < m; s++) {
             final WindowJoinStep step = steps.getQuick(s);
             joinScope.clear();
-            addColumns(joinScope, master);
+            joinScope.addColumnsFrom(master);
             for (int t = 0; t < s; t++) {
                 final WindowJoinStep earlier = steps.getQuick(t);
                 for (int i = 0, n = earlier.getAggregates().size(); i < n; i++) {
@@ -858,7 +830,7 @@ public final class PlanVerifier {
             if (step.getHiExpression() != null) {
                 expression(step.getHiExpression());
             }
-            addColumns(joinScope, step.getSlave().getOutput());
+            joinScope.addColumnsFrom(step.getSlave().getOutput());
             if (step.getScope().getColumnCount() > 0 && !sameColumns(step.getScope(), joinScope)) {
                 fail(WINDOW_JOIN_SCOPE);
             }

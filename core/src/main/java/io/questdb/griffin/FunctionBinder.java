@@ -30,8 +30,8 @@ import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.SubqueryCursorFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
 import io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.BindableColumn;
@@ -42,6 +42,7 @@ import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -49,9 +50,9 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
-import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.Subquery;
 import io.questdb.griffin.plan.logical.TypeExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
@@ -60,12 +61,13 @@ import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.TestOnly;
 
 /**
@@ -79,50 +81,32 @@ public final class FunctionBinder implements Mutable {
     private final ObjList<BoundExpression> arguments = new ObjList<>();
     private final ObjList<ExpressionNode> callArguments = new ObjList<>();
     private final BindContext ctx;
-    private final ObjectPool<CursorExpression> cursors = new ObjectPool<>(CursorExpression.FACTORY, 4);
     private final Decimal128 decimal128 = new Decimal128();
     private final Decimal256 decimal256 = new Decimal256();
-    private final ObjectPool<ExpressionNode> expressionNodes = new ObjectPool<>(ExpressionNode.FACTORY, 32);
     private final IntList expressionLeafMarks = new IntList();
     private final ObjList<BoundExpression> expressionStack = new ObjList<>();
-    private final IntHashSet keySubqueryColumnIds = new IntHashSet();
-    private final IntList outerColumnIds = new IntList();
-    private final ObjList<OutputSchema> outerScopes = new ObjList<>();
+    private final StringSink intervalSink = new StringSink();
+    private final StringSink intervalText = new StringSink();
+    private final LongList parsedIntervals = new LongList();
     private final FunctionParser parser;
-    private final ObjList<ExpressionNode> predicateConjuncts = new ObjList<>();
-    private final ObjectPool<StaticTypeFunction> staticTypes = new ObjectPool<>(StaticTypeFunction::new, 8);
+    private final SubqueryCompiler subqueryCompiler;
     private final ObjList<BoundExpression> unconstructed = new ObjList<>();
-    private ExpressionNode aggregateRoot;
-    private ExpressionNode bindingRoot;
-    private int compiledLowerBoundIndex;
-    private ExpressionNode compiledLowerBoundNode;
-    private PreparedFunctions.Entry currentPreparation;
-    private OutputSchema input;
-    private CharSequence inputAlias;
-    private boolean isBindingGroupByExpression;
-    private boolean isBindingPredicate;
-    private IntHashSet nativeTimestampIds;
-    private int nestedWindowPosition;
-    private ObjList<? extends BoundExpression> replacementExpressions;
-    private ObjList<ExpressionNode> replacementNodes;
-    private final QueryLevelCompiler level;
-    private ExpressionNode windowRoot;
 
     /**
      * Allocates descriptions from the context's pools and hands built roots to its prepared functions.
      */
-    FunctionBinder(BindContext ctx, FunctionParser parser, QueryLevelCompiler level) {
+    FunctionBinder(BindContext ctx, FunctionParser parser, SubqueryCompiler subqueryCompiler) {
         this.ctx = ctx;
         this.parser = parser;
-        this.level = level;
+        this.subqueryCompiler = subqueryCompiler;
     }
 
     /**
-     * A binder over the context of a stand-alone level of the compiler, which must outlive it.
+     * A binder over the context of a stand-alone statement binder of the compiler, which must outlive it.
      */
     @TestOnly
     public static FunctionBinder newStandalone(SqlCompilerImpl compiler, FunctionParser parser) {
-        return new QueryLevelCompiler(compiler.getEngine().getConfiguration(), parser, compiler, new ObjList<>()).getBinder().ctx.functionBinder;
+        return compiler.newStandaloneFunctionBinder(parser);
     }
 
     /**
@@ -175,14 +159,15 @@ public final class FunctionBinder implements Mutable {
             ObjList<ColumnExpression> replacementColumns,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        assert this.replacementNodes == null && replacementNodes.size() == replacementColumns.size();
-        this.replacementNodes = replacementNodes;
-        this.replacementExpressions = replacementColumns;
+        final BindScope scope = ctx.scope();
+        assert scope.replacementNodes == null && replacementNodes.size() == replacementColumns.size();
+        scope.replacementNodes = replacementNodes;
+        scope.replacementExpressions = replacementColumns;
         try {
             return bind(node, input, inputAlias, preferredType, executionContext);
         } finally {
-            this.replacementNodes = null;
-            this.replacementExpressions = null;
+            scope.replacementNodes = null;
+            scope.replacementExpressions = null;
         }
     }
 
@@ -213,16 +198,18 @@ public final class FunctionBinder implements Mutable {
             OutputSchema input,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        assert replacementNodes == null;
+        final BindScope scope = ctx.scope();
+        assert scope.replacementNodes == null;
         final OperatorExpression operator = OperatorExpression.getRegistry().getOperatorDefinition(name);
-        final ExpressionNode call = expressionNodes.next().of(operator == null ? ExpressionNode.FUNCTION
+        final int syntheticNodeMark = ctx.planNodes.syntheticNodes.getPos();
+        final ExpressionNode call = ctx.planNodes.syntheticNodes.next().of(operator == null ? ExpressionNode.FUNCTION
                 : operator.type == OperatorExpression.SET ? ExpressionNode.SET_OPERATION : ExpressionNode.OPERATION, name, 0, position);
         final int count = args.size();
         for (int i = 0; i < count; i++) {
             final BoundExpression argument = args.getQuick(i);
             // A float literal's spelling selects its exact DECIMAL cast, as in SQL text.
             final CharSequence literalText = argument instanceof ConstantExpression constant ? constant.getLiteralText() : null;
-            callArguments.add(expressionNodes.next().of(literalText != null ? ExpressionNode.CONSTANT : ExpressionNode.LITERAL,
+            callArguments.add(ctx.planNodes.syntheticNodes.next().of(literalText != null ? ExpressionNode.CONSTANT : ExpressionNode.LITERAL,
                     literalText, 0, argument.getPosition()));
         }
         call.paramCount = count;
@@ -234,16 +221,17 @@ public final class FunctionBinder implements Mutable {
                 call.args.add(callArguments.getQuick(i));
             }
         }
-        replacementNodes = callArguments;
-        replacementExpressions = args;
+        scope.replacementNodes = callArguments;
+        scope.replacementExpressions = args;
         try {
             return isGroupBy(name)
                     ? bindAggregateRoot(call, input, null, executionContext)
                     : bind(call, input, null, executionContext);
         } finally {
-            replacementNodes = null;
-            replacementExpressions = null;
+            scope.replacementNodes = null;
+            scope.replacementExpressions = null;
             callArguments.clear();
+            ctx.planNodes.rewindSyntheticNodes(syntheticNodeMark);
         }
     }
 
@@ -253,14 +241,15 @@ public final class FunctionBinder implements Mutable {
             CharSequence inputAlias,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        assert !isBindingGroupByExpression;
+        final BindScope scope = ctx.scope();
+        assert !scope.isBindingGroupByExpression;
         assert node.type == ExpressionNode.FUNCTION && node.windowExpression == null
                 && parser.getFunctionFactoryCache().isGroupBy(node.token);
-        isBindingGroupByExpression = true;
+        scope.isBindingGroupByExpression = true;
         try {
             return bindAggregateRoot(node, input, inputAlias, executionContext);
         } finally {
-            isBindingGroupByExpression = false;
+            scope.isBindingGroupByExpression = false;
         }
     }
 
@@ -271,14 +260,15 @@ public final class FunctionBinder implements Mutable {
             ObjList<ColumnExpression> replacementColumns,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        assert this.replacementNodes == null && replacementNodes.size() == replacementColumns.size();
-        this.replacementNodes = replacementNodes;
-        this.replacementExpressions = replacementColumns;
+        final BindScope scope = ctx.scope();
+        assert scope.replacementNodes == null && replacementNodes.size() == replacementColumns.size();
+        scope.replacementNodes = replacementNodes;
+        scope.replacementExpressions = replacementColumns;
         try {
             return bindGroupByExpression(node, input, null, executionContext);
         } finally {
-            this.replacementNodes = null;
-            this.replacementExpressions = null;
+            scope.replacementNodes = null;
+            scope.replacementExpressions = null;
         }
     }
 
@@ -320,15 +310,15 @@ public final class FunctionBinder implements Mutable {
             int preferredRootType,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        assert !isBindingPredicate;
-        isBindingPredicate = true;
-        this.nativeTimestampIds = nativeTimestampIds;
+        final BindScope scope = ctx.scope();
+        assert !scope.isBindingPredicate;
+        scope.isBindingPredicate = true;
+        scope.nativeTimestampIds = nativeTimestampIds;
         try {
             return bind(node, input, inputAlias, preferredRootType, executionContext);
         } finally {
-            predicateConjuncts.clear();
-            isBindingPredicate = false;
-            this.nativeTimestampIds = null;
+            scope.isBindingPredicate = false;
+            scope.nativeTimestampIds = null;
         }
     }
 
@@ -360,13 +350,14 @@ public final class FunctionBinder implements Mutable {
         if (executionContext.getWindowContext().isEmpty()) {
             throw SqlException.emptyWindowContext(node.position);
         }
-        assert windowRoot == null && aggregateRoot == null && !isBindingPredicate;
-        windowRoot = node;
-        nestedWindowPosition = -1;
+        final BindScope scope = ctx.scope();
+        assert scope.windowRoot == null && scope.aggregateRoot == null && !scope.isBindingPredicate;
+        scope.windowRoot = node;
+        scope.nestedWindowPosition = -1;
         try {
             return (FunctionExpression) bind(node, input, inputAlias, executionContext);
         } finally {
-            windowRoot = null;
+            scope.windowRoot = null;
         }
     }
 
@@ -377,20 +368,19 @@ public final class FunctionBinder implements Mutable {
         arguments.clear();
         argumentLeafMarks.clear();
         argumentPositions.clear();
-        cursors.clear();
-        outerColumnIds.clear();
-        outerScopes.clear();
-        keySubqueryColumnIds.clear();
-        staticTypes.clear();
+        argumentTypes.clear();
+        callArguments.clear();
         unconstructed.clear();
-        currentPreparation = null;
-        input = null;
-        inputAlias = null;
     }
 
     @TestOnly
     public void clearExpressions() {
-        ctx.clearExpressions();
+        try {
+            ctx.preparedFunctions.clear();
+        } finally {
+            ctx.clearExpressions();
+            ctx.planNodes.clearExpressions();
+        }
     }
 
     @TestOnly
@@ -405,39 +395,6 @@ public final class FunctionBinder implements Mutable {
 
     public boolean isGroupBy(CharSequence name) {
         return parser.getFunctionFactoryCache().isGroupBy(name);
-    }
-
-    /**
-     * The flags of a call built while binding. Sub-query placeholders report stability, so a call stable only
-     * through an argument stable with its sub-queries is itself stable with them.
-     */
-    private static int callFlags(Function function, int argumentStability) {
-        final int flags = functionFlags(function);
-        if ((flags & BoundExpression.STABLE_WITHIN_EXECUTION) == 0 || argumentStability != BoundExpression.STABLE_WITH_SUBQUERIES) {
-            return flags;
-        }
-        return flags & ~BoundExpression.STABLE_WITHIN_EXECUTION | BoundExpression.STABLE_WITH_SUBQUERIES;
-    }
-
-    private static int callFlags(Function function, FunctionExpression call) {
-        int stability = BoundExpression.STABLE_WITHIN_EXECUTION;
-        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-            stability = conditionalStability(stability, call.argumentAt(i));
-        }
-        return callFlags(function, stability);
-    }
-
-    private static int callFlags(Function function, ObjList<BoundExpression> arguments) {
-        int stability = BoundExpression.STABLE_WITHIN_EXECUTION;
-        for (int i = 0, n = arguments.size(); i < n; i++) {
-            stability = conditionalStability(stability, arguments.getQuick(i));
-        }
-        return callFlags(function, stability);
-    }
-
-    private static int conditionalStability(int stability, BoundExpression argument) {
-        return LogicalPlans.stabilityFlags(argument) == BoundExpression.STABLE_WITH_SUBQUERIES
-                ? BoundExpression.STABLE_WITH_SUBQUERIES : stability;
     }
 
     private static int getColumnIndexQuiet(OutputSchema input, CharSequence qualifier, CharSequence name, int lo, int hi) {
@@ -580,40 +537,43 @@ public final class FunctionBinder implements Mutable {
             boolean isUpdateAssignment,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        assert currentPreparation == null;
+        final BindScope scope = ctx.scope();
+        assert scope.currentPreparation == null;
+        final int preparationMark = ctx.preparedFunctions.mark();
         final PreparedFunctions.Entry entry = ctx.preparedFunctions.begin();
-        currentPreparation = entry;
-        this.input = input;
-        this.inputAlias = inputAlias;
-        expressionStack.clear();
-        expressionLeafMarks.clear();
-        final ExpressionNode originalAggregateRoot = aggregateRoot;
-        final ExpressionNode originalWindowRoot = windowRoot;
+        scope.currentPreparation = entry;
+        scope.expressionInput = input;
+        scope.expressionInputAlias = inputAlias;
+        final int expressionMark = expressionStack.size();
+        final int unconstructedMark = unconstructed.size();
+        final ExpressionNode originalAggregateRoot = scope.aggregateRoot;
+        final ExpressionNode originalWindowRoot = scope.windowRoot;
+        final int syntheticNodeMark = ctx.planNodes.syntheticNodes.getPos();
+        final int staticTypeMark = ctx.planNodes.staticTypes.getPos();
         try {
             if (isAstRewritable()) {
                 // DECLARE references may share parser nodes across occurrences.
                 // Reassociation belongs to this binding, never to that shared AST.
-                node = ExpressionNode.deepClone(expressionNodes, node);
+                node = ExpressionNode.deepClone(ctx.planNodes.syntheticNodes, node);
                 if (originalAggregateRoot != null) {
-                    aggregateRoot = node;
+                    scope.aggregateRoot = node;
                 }
                 if (originalWindowRoot != null) {
-                    windowRoot = node;
+                    scope.windowRoot = node;
                 }
             }
-            if (isBindingPredicate) {
+            if (scope.isBindingPredicate) {
                 if (isAstRewritable()) {
                     rewriteAndOffsets(node);
                 }
-                collectPredicateConjuncts(node);
-                compileTimestampBetweenLowerBound(executionContext);
+                compileTimestampBetweenLowerBound(node, executionContext);
             }
-            bindingRoot = node;
+            scope.bindingRoot = node;
             Function function = parser.parseFunction(node, executionContext, this);
             if (function instanceof StaticTypeFunction) {
                 // UPDATE converts the owned root while binding; every other root is built by its generator.
                 if (isUpdateAssignment) {
-                    function = ctx.functionInstantiator.realize(expressionStack.getQuick(0), input, entry, executionContext);
+                    function = ctx.functionInstantiator.realize(expressionStack.getQuick(expressionMark), input, entry, executionContext);
                     ctx.preparedFunctions.own(entry, function);
                 }
             } else {
@@ -624,33 +584,31 @@ public final class FunctionBinder implements Mutable {
                 function.assignType(preferredType, executionContext.getBindVariableService());
                 finish(function);
             }
-            assert expressionStack.size() == 1;
-            entry.expression = expressionStack.getQuick(0);
+            assert expressionStack.size() == expressionMark + 1;
+            entry.expression = expressionStack.getQuick(expressionMark);
             assert PreparedFunctions.hasOnlyReadLeaves(entry) : "bound leaf is not read by its description";
             return entry.expression;
         } catch (Throwable th) {
             // The parser owns partial roots; only completed roots enter this scope.
-            ctx.preparedFunctions.closeOnFailure(th);
+            ctx.preparedFunctions.closeOnFailure(preparationMark, th);
             throw th;
         } finally {
-            aggregateRoot = originalAggregateRoot;
-            windowRoot = originalWindowRoot;
-            bindingRoot = null;
-            for (int i = 0, n = expressionNodes.getPos(); i < n; i++) {
-                expressionNodes.peekQuick(i).clear();
-            }
-            expressionNodes.clear();
-            currentPreparation = null;
-            compiledLowerBoundNode = null;
-            this.input = null;
-            this.inputAlias = null;
+            scope.aggregateRoot = originalAggregateRoot;
+            scope.windowRoot = originalWindowRoot;
+            scope.bindingRoot = null;
+            ctx.planNodes.rewindSyntheticNodes(syntheticNodeMark);
+            scope.currentPreparation = null;
+            scope.compiledLowerBound = null;
+            scope.compiledLowerBoundNode = null;
+            scope.expressionInput = null;
+            scope.expressionInputAlias = null;
             arguments.clear();
             argumentLeafMarks.clear();
             argumentPositions.clear();
-            expressionStack.clear();
-            expressionLeafMarks.clear();
-            unconstructed.clear();
-            staticTypes.clear();
+            expressionStack.setPos(expressionMark);
+            expressionLeafMarks.setPos(expressionMark);
+            unconstructed.setPos(unconstructedMark);
+            ctx.planNodes.staticTypes.rewind(staticTypeMark);
         }
     }
 
@@ -660,12 +618,13 @@ public final class FunctionBinder implements Mutable {
             CharSequence inputAlias,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        assert aggregateRoot == null && !isBindingPredicate;
-        aggregateRoot = node;
+        final BindScope scope = ctx.scope();
+        assert scope.aggregateRoot == null && !scope.isBindingPredicate;
+        scope.aggregateRoot = node;
         try {
             return bind(node, input, inputAlias, executionContext);
         } finally {
-            aggregateRoot = null;
+            scope.aggregateRoot = null;
         }
     }
 
@@ -809,109 +768,15 @@ public final class FunctionBinder implements Mutable {
     }
 
     /**
-     * Records each text element of a predicate's TIMESTAMP IN list that does not parse as a timestamp as an
-     * unparsed timestamp, so that whatever builds the list raises the element's parse error.
-     */
-    private void captureUnparsedInElements(FunctionFactoryDescriptor overload, ObjList<Function> args) {
-        if (!isBindingPredicate || !(overload.getFactory() instanceof InTimestampTimestampFunctionFactory) || args.size() < 3
-                || ColumnType.tagOf(args.getQuick(0).getType()) != ColumnType.TIMESTAMP) {
-            return;
-        }
-        final int operandType = args.getQuick(0).getType();
-        final TimestampDriver driver = ColumnType.getTimestampDriver(operandType);
-        for (int i = 1, n = args.size(); i < n; i++) {
-            final Function element = args.getQuick(i);
-            final CharSequence text = element.isConstant() && isCaseText(element.getType()) ? literalText(arguments.getQuick(i)) : null;
-            if (text != null && !isTimestampText(driver, text)) {
-                args.setQuick(i, captureUnparsedTimestamp(i, text, operandType, arguments.getQuick(i).getPosition()));
-            }
-        }
-    }
-
-    private void collectPredicateConjuncts(ExpressionNode node) {
-        if (node != null && node.token != null && SqlKeywords.isAndKeyword(node.token)) {
-            collectPredicateConjuncts(node.lhs);
-            collectPredicateConjuncts(node.rhs);
-        } else {
-            predicateConjuncts.add(node);
-        }
-    }
-
-    /**
      * Timestamp interval analysis compiles a sub-query BETWEEN bound pair low bound first.
      */
-    private void compileTimestampBetweenLowerBound(SqlExecutionContext executionContext) throws SqlException {
-        for (int i = 0, n = predicateConjuncts.size(); i < n; i++) {
-            final ExpressionNode conjunct = unwrapNot(predicateConjuncts.getQuick(i));
-            if (conjunct.paramCount == 3 && SqlKeywords.isBetweenKeyword(conjunct.token)
-                    && conjunct.args.getQuick(0).type == ExpressionNode.QUERY
-                    && conjunct.args.getQuick(1).type == ExpressionNode.QUERY
-                    && conjunct.args.getQuick(2).type == ExpressionNode.LITERAL) {
-                final int columnIndex = findColumn(conjunct.args.getQuick(2), input, inputAlias);
-                if (columnIndex >= 0 && isNativeTimestampColumn(input.getColumnId(columnIndex))) {
-                    final ExpressionNode lo = conjunct.args.getQuick(1);
-                    compiledLowerBoundIndex = level.compileSubquery(lo.queryModel, lo.position, executionContext);
-                    compiledLowerBoundNode = lo;
-                    return;
-                }
-            }
+    private void compileTimestampBetweenLowerBound(ExpressionNode node, SqlExecutionContext executionContext) throws SqlException {
+        final ExpressionNode lo = findTimestampBetweenLowerBound(node);
+        if (lo != null) {
+            final BindScope scope = ctx.scope();
+            scope.compiledLowerBound = subqueryCompiler.compileSubquery(lo.queryModel, lo.position, executionContext);
+            scope.compiledLowerBoundNode = lo;
         }
-    }
-
-    private ConstantExpression constant(Function function, int position) {
-        return switch (ColumnType.tagOf(function.getType())) {
-            case ColumnType.TIMESTAMP ->
-                    ctx.constants.next().ofTimestamp(function.getTimestamp(null), function.getType(), position);
-            case ColumnType.STRING -> ctx.constants.next().ofString(Chars.toString(function.getStrA(null)), position);
-            case ColumnType.SYMBOL -> ctx.constants.next().ofSymbol(Chars.toString(function.getSymbol(null)), position);
-            case ColumnType.VARCHAR -> ctx.constants.next().ofVarchar(function.getVarcharA(null), position);
-            case ColumnType.BYTE -> ctx.constants.next().ofByte(function.getByte(null), position);
-            case ColumnType.SHORT -> ctx.constants.next().ofShort(function.getShort(null), position);
-            case ColumnType.DATE -> ctx.constants.next().ofDate(function.getDate(null), position);
-            case ColumnType.IPv4 -> ctx.constants.next().ofIPv4(function.getIPv4(null), position);
-            case ColumnType.CHAR -> ctx.constants.next().ofChar(function.getChar(null), position);
-            case ColumnType.BOOLEAN -> ctx.constants.next().ofBoolean(function.getBool(null), position);
-            case ColumnType.INT -> ctx.constants.next().ofInt(function.getInt(null), position);
-            case ColumnType.LONG -> ctx.constants.next().ofLong(function.getLong(null), position);
-            case ColumnType.LONG256 -> ctx.constants.next().ofLong256(function.getLong256A(null), position);
-            case ColumnType.UUID ->
-                    ctx.constants.next().ofUuid(function.getLong128Lo(null), function.getLong128Hi(null), position);
-            case ColumnType.LONG128 ->
-                    ctx.constants.next().ofLong128(function.getLong128Lo(null), function.getLong128Hi(null), position);
-            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
-                    ctx.constants.next().ofGeoHash(GeoHashes.getGeoLong(function.getType(), function, null), function.getType(), position);
-            case ColumnType.FLOAT -> ctx.constants.next().ofFloat(function.getFloat(null), position);
-            case ColumnType.DOUBLE -> ctx.constants.next().ofDouble(function.getDouble(null), position);
-            case ColumnType.NULL -> ctx.constants.next().ofNull(position);
-            case ColumnType.DECIMAL8 ->
-                    ctx.constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal8(null), position);
-            case ColumnType.DECIMAL16 ->
-                    ctx.constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal16(null), position);
-            case ColumnType.DECIMAL32 ->
-                    ctx.constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal32(null), position);
-            case ColumnType.DECIMAL64 ->
-                    ctx.constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal64(null), position);
-            case ColumnType.DECIMAL128 -> {
-                function.getDecimal128(null, decimal128);
-                yield ctx.constants.next().ofDecimal(function.getType(), 0, 0, decimal128.getHigh(), decimal128.getLow(), position);
-            }
-            case ColumnType.DECIMAL256 -> {
-                function.getDecimal256(null, decimal256);
-                yield ctx.constants.next().ofDecimal(function.getType(), decimal256.getHh(), decimal256.getHl(),
-                        decimal256.getLh(), decimal256.getLl(), position);
-            }
-            case ColumnType.INTERVAL -> {
-                final Interval interval = function.getInterval(null);
-                yield ctx.constants.next().ofInterval(interval.getLo(), interval.getHi(), function.getType(), position);
-            }
-            case ColumnType.BINARY -> {
-                if (function.getBin(null) != null) {
-                    throw new IllegalStateException("non-null BINARY constant");
-                }
-                yield ctx.constants.next().ofBinaryNull(position);
-            }
-            default -> throw new IllegalStateException("unexpected constant type");
-        };
     }
 
     /**
@@ -920,26 +785,28 @@ public final class FunctionBinder implements Mutable {
     private void constructArguments(ObjList<Function> args, int count, SqlExecutionContext executionContext) throws SqlException {
         for (int i = 0; i < count; i++) {
             final BoundExpression argument = arguments.getQuick(i);
-            if (unconstructed.indexOf(argument) >= 0 || args.getQuick(i) instanceof StaticTypeFunction) {
+            if (unconstructed.indexOf(argument) >= 0) {
+                final BindScope scope = ctx.scope();
                 final Function placeholder = args.getQuick(i);
-                args.setQuick(i, ctx.functionInstantiator.realize(argument, input, currentPreparation, executionContext));
+                args.setQuick(i, ctx.functionInstantiator.realize(argument, scope.expressionInput, scope.currentPreparation, executionContext));
                 Misc.free(placeholder);
             }
         }
     }
 
     private Function createOuterColumn(ExpressionNode node) throws SqlException {
-        for (int i = outerScopes.size() - 1; i > -1; i--) {
-            final OutputSchema scope = outerScopes.getQuick(i);
-            final int index = findColumn(node, scope, null);
+        final BindScope scope = ctx.scope();
+        for (int i = scope.outerScopes.size() - 1; i > -1; i--) {
+            final OutputSchema outer = scope.outerScopes.getQuick(i);
+            final int index = findColumn(node, outer, null);
             if (index > -1) {
-                final int columnId = scope.getColumnId(index);
-                final int type = scope.getColumnType(index);
-                outerColumnIds.add(columnId);
-                currentPreparation.isRebuildRequired = true;
-                push(ctx.outerColumns.next().of(columnId, type, node.position), leafMark());
-                return BindableColumn.isBindableType(type) ? BindableColumn.newInstance(columnId, type, scope.isSymbolTableStatic(index))
-                        : FunctionInstantiator.createColumnFunction(node.position, index, type, scope);
+                final int columnId = outer.getColumnId(index);
+                final int type = outer.getColumnType(index);
+                scope.outerColumnIds.add(columnId);
+                scope.currentPreparation.isRebuildRequired = true;
+                push(ctx.planNodes.outerColumns.next().of(columnId, type, node.position), leafMark());
+                return BindableColumn.isBindableType(type) ? BindableColumn.newInstance(columnId, type, outer.isSymbolTableStatic(index))
+                        : FunctionInstantiator.createColumnFunction(node.position, index, type, outer);
             }
         }
         return null;
@@ -951,7 +818,7 @@ public final class FunctionBinder implements Mutable {
      */
     private void closeLeaves(int from, int to) {
         if (from < to) {
-            final ObjList<BindableColumn> leaves = currentPreparation.leaves;
+            final ObjList<BindableColumn> leaves = ctx.scope().currentPreparation.leaves;
             for (int i = from; i < to; i++) {
                 final BindableColumn leaf = leaves.getQuick(i);
                 if (leaf.isOpen()) {
@@ -967,7 +834,7 @@ public final class FunctionBinder implements Mutable {
      */
     private void dropLeaves(int from, int to) {
         if (from < to) {
-            final ObjList<BindableColumn> leaves = currentPreparation.leaves;
+            final ObjList<BindableColumn> leaves = ctx.scope().currentPreparation.leaves;
             for (int i = from; i < to; i++) {
                 final BindableColumn leaf = leaves.getQuick(i);
                 if (leaf.isOpen()) {
@@ -976,6 +843,29 @@ public final class FunctionBinder implements Mutable {
             }
             leaves.remove(from, to - 1);
         }
+    }
+
+    /**
+     * The sub-query low bound of the first conjunct that compares a native timestamp column BETWEEN two sub-queries,
+     * conjuncts left to right, or null.
+     */
+    private ExpressionNode findTimestampBetweenLowerBound(ExpressionNode node) {
+        if (node != null && node.token != null && SqlKeywords.isAndKeyword(node.token)) {
+            final ExpressionNode lo = findTimestampBetweenLowerBound(node.lhs);
+            return lo != null ? lo : findTimestampBetweenLowerBound(node.rhs);
+        }
+        final ExpressionNode conjunct = unwrapNot(node);
+        if (conjunct.paramCount == 3 && SqlKeywords.isBetweenKeyword(conjunct.token)
+                && conjunct.args.getQuick(0).type == ExpressionNode.QUERY
+                && conjunct.args.getQuick(1).type == ExpressionNode.QUERY
+                && conjunct.args.getQuick(2).type == ExpressionNode.LITERAL) {
+            final BindScope scope = ctx.scope();
+            final int columnIndex = findColumn(conjunct.args.getQuick(2), scope.expressionInput, scope.expressionInputAlias);
+            if (columnIndex >= 0 && isNativeTimestampColumn(scope.expressionInput.getColumnId(columnIndex))) {
+                return conjunct.args.getQuick(1);
+            }
+        }
+        return null;
     }
 
     private void finish(Function function) {
@@ -988,43 +878,27 @@ public final class FunctionBinder implements Mutable {
     }
 
     /**
-     * Whether the call holds a timestamp literal that does not parse, which only an unconstructed call can hold
-     * below it, or is a predicate comparison of a TIMESTAMP with a constant text that does not convert to one.
+     * The spelling interval extraction parses text in: a string literal quoted as in SQL, which keeps a bare
+     * number from reading as an epoch, other text as it is.
      */
-    private boolean hasUnparsedTimestampText(ExpressionNode node, ObjList<Function> args) {
-        final int count = args.size();
-        for (int i = 0; i < count; i++) {
-            final BoundExpression argument = arguments.getQuick(i);
-            if ((argument instanceof ConstantExpression || unconstructed.indexOf(argument) >= 0)
-                    && LogicalPlans.hasGenerationError(argument)) {
-                return true;
-            }
+    private CharSequence intervalSpelling(BoundExpression argument, CharSequence text) {
+        if (argument instanceof ConstantExpression constant && IntervalExtractor.isStringLiteral(constant)) {
+            intervalText.clear();
+            intervalText.put('\'').put(text).put('\'');
+            return intervalText;
         }
-        return count == 2 && isBindingPredicate && isTemporalComparisonOperator(node.token)
-                && (LogicalPlans.isUnconvertibleSymbol(arguments.getQuick(0), args.getQuick(1).getType())
-                || LogicalPlans.isUnconvertibleSymbol(arguments.getQuick(1), args.getQuick(0).getType()));
+        return text;
     }
 
-    /**
-     * A call over a text constant that does not convert to TIMESTAMP raises that conversion error whenever it is
-     * built, whatever its other constant arguments, so it needs no vetting to wait for code generation.
-     */
-    private boolean isAdmittedUnconstructed(
-            FunctionFactoryDescriptor overload,
-            ExpressionNode node,
-            ObjList<Function> args,
-            IntList positions,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        if (hasUnparsedTimestampText(node, args)) {
-            parser.admitUnvetted(overload, node.position, node.token, executionContext);
-            return true;
-        }
-        return parser.admitUnconstructed(overload, node.position, node.token, args, positions, executionContext);
+    private boolean isConstantText(ObjList<Function> args, int index) {
+        return args.getQuick(index).isConstant() && ColumnType.isVarcharOrString(args.getQuick(index).getType())
+                && arguments.getQuick(index) instanceof ConstantExpression;
     }
 
     private boolean isNativeTimestampColumn(int columnId) {
-        return nativeTimestampIds != null ? nativeTimestampIds.contains(columnId)
+        final BindScope scope = ctx.scope();
+        final OutputSchema input = scope.expressionInput;
+        return scope.nativeTimestampIds != null ? scope.nativeTimestampIds.contains(columnId)
                 : input.getTimestampIndex() >= 0 && columnId == input.getColumnId(input.getTimestampIndex());
     }
 
@@ -1037,7 +911,13 @@ public final class FunctionBinder implements Mutable {
                 && (operandType != ColumnType.DATE || literalText(arguments.getQuick(index)) == null);
     }
 
+    private boolean isStringLiteral(ObjList<Function> args, int index) {
+        return args.getQuick(index).isConstant() && arguments.getQuick(index) instanceof ConstantExpression constant
+                && IntervalExtractor.isStringLiteral(constant);
+    }
+
     private boolean isWindowArgument(ExpressionNode node) {
+        final ExpressionNode windowRoot = ctx.scope().windowRoot;
         if (windowRoot == null) {
             return false;
         }
@@ -1051,11 +931,16 @@ public final class FunctionBinder implements Mutable {
      * The number of column leaves of the preparation, where the leaves of the next bound operand start.
      */
     private int leafMark() {
+        final PreparedFunctions.Entry currentPreparation = ctx.scope().currentPreparation;
         return currentPreparation != null ? currentPreparation.leaves.size() : 0;
     }
 
     private ConstantExpression markSource(ConstantExpression folded, FunctionFactoryDescriptor overload, int type, int flags, int position) {
-        return markSource(folded, ctx.functions.next().of(overload, arguments, argumentPositions, type, flags, position));
+        return markSource(folded, ctx.planNodes.functions.next().of(overload, arguments, argumentPositions, type, flags, position));
+    }
+
+    private CursorExpression nextCursor() {
+        return ctx.planNodes.cursors.next();
     }
 
     private BoundExpression normalizeArgument(BoundExpression expression, Function function) {
@@ -1063,11 +948,10 @@ public final class FunctionBinder implements Mutable {
             return expression;
         }
         if (expression instanceof CursorExpression cursor && function instanceof BooleanSubQueryFunction) {
-            return cursors.next().ofBoolean(cursor, functionFlags(function) & ~BoundExpression.STABLE_WITHIN_EXECUTION
-                    | cursor.getFunctionFlags() & BoundExpression.STABLE_WITHIN_EXECUTION);
+            return nextCursor().ofBoolean(cursor, functionFlags(function));
         }
         if (ColumnType.isArray(function.getType()) && expression instanceof FunctionExpression call
-                && (call.getDataType() != function.getType() || call.getFunctionFlags() != callFlags(function, call))) {
+                && (call.getDataType() != function.getType() || call.getFunctionFlags() != functionFlags(function))) {
             ctx.tmpArguments.clear();
             ctx.tmpPositions.clear();
             try {
@@ -1075,8 +959,8 @@ public final class FunctionBinder implements Mutable {
                     ctx.tmpArguments.add(call.argumentAt(i));
                     ctx.tmpPositions.add(call.getArgumentPosition(i));
                 }
-                return ctx.functions.next().of(call.getOverload(), ctx.tmpArguments, ctx.tmpPositions,
-                        function.getType(), callFlags(function, call), call.getPosition());
+                return ctx.planNodes.functions.next().of(call.getOverload(), ctx.tmpArguments, ctx.tmpPositions,
+                        function.getType(), functionFlags(function), call.getPosition());
             } finally {
                 ctx.tmpArguments.clear();
                 ctx.tmpPositions.clear();
@@ -1095,7 +979,7 @@ public final class FunctionBinder implements Mutable {
             return normalized;
         }
         if (expression instanceof BindVariableExpression parameter && expression.getDataType() != function.getType()) {
-            return ctx.parameters.next().of(parameter.getName(), function.getType(), functionFlags(function), parameter.getPosition(), parameter.isDirectReference());
+            return ctx.planNodes.parameters.next().of(parameter.getName(), function.getType(), functionFlags(function), parameter.getPosition(), parameter.isDirectReference());
         }
         return expression;
     }
@@ -1111,14 +995,14 @@ public final class FunctionBinder implements Mutable {
                 final Function arg = args.getQuick(i);
                 final BoundExpression argument = arguments.getQuick(i);
                 if (arg instanceof ConstantFunction && !(arg instanceof TypeConstant) && argument instanceof ConstantExpression constant
-                        && !constant.isUnparsedTimestamp() && constant.getDataType() == arg.getType()) {
+                        && constant.getDataType() == arg.getType()) {
                     final PreparedFunctions.Entry entry = ctx.preparedFunctions.begin();
                     entry.expression = constant;
                     ctx.preparedFunctions.own(entry, arg);
                     args.setQuick(i, null);
                 } else if (arg instanceof BindableColumn leaf && leaf.isOpen() && argument instanceof ColumnExpression column
                         && column.getColumnId() == leaf.getColumnId() && column.getDataType() == leaf.getType()) {
-                    final ObjList<BindableColumn> leaves = currentPreparation.leaves;
+                    final ObjList<BindableColumn> leaves = ctx.scope().currentPreparation.leaves;
                     int index = leaves.size() - 1;
                     while (index >= 0 && leaves.getQuick(index) != leaf) {
                         index--;
@@ -1152,7 +1036,7 @@ public final class FunctionBinder implements Mutable {
             call.markSetOperation();
         }
         final BoundExpression pushed = node.token == "dateadd" && expression instanceof FunctionExpression call
-                ? ctx.functions.next().ofProjectedOffset(call) : expression;
+                ? ctx.planNodes.functions.next().ofProjectedOffset(call) : expression;
         push(pushed, callLeafMark());
         return pushed;
     }
@@ -1162,7 +1046,8 @@ public final class FunctionBinder implements Mutable {
             return false;
         }
         if (node.type == ExpressionNode.LITERAL) {
-            return findColumn(node, input, inputAlias) == index;
+            final BindScope scope = ctx.scope();
+            return findColumn(node, scope.expressionInput, scope.expressionInputAlias) == index;
         }
         if (referencesColumn(node.lhs, index) || referencesColumn(node.rhs, index)) {
             return true;
@@ -1217,7 +1102,7 @@ public final class FunctionBinder implements Mutable {
             return;
         }
         final ExpressionNode predicate = node.args.getQuick(2);
-        final int timestampIndex = input.getTimestampIndex();
+        final int timestampIndex = ctx.scope().expressionInput.getTimestampIndex();
         final ExpressionNode unit = node.args.getQuick(1);
         final int unitLength = unit.token == null ? 0 : unit.token.length();
         if (timestampIndex < 0 || !referencesColumn(predicate, timestampIndex) || unit.type != ExpressionNode.CONSTANT
@@ -1238,25 +1123,24 @@ public final class FunctionBinder implements Mutable {
      * The result type the selected overload declares when the call may need no construction while binding: an
      * audited scalar over columns and other such calls, with type operands and constants beside them. Construction
      * over non-constant arguments cannot vary in type with argument values; the factory vets the arguments on
-     * admission ({@link FunctionParser#admitUnconstructed}). A call that holds timestamp text that does
-     * not parse may have any other scalar arguments: building it raises that text's error.
-     * {@link ColumnType#UNDEFINED} when the call must be constructed.
+     * admission ({@link FunctionParser#admitUnconstructed}). {@link ColumnType#UNDEFINED} when the call must be
+     * constructed.
      */
-    private int staticResultType(FunctionFactoryDescriptor overload, ExpressionNode node, ObjList<Function> args, int count) {
+    private int staticResultType(FunctionFactoryDescriptor overload, ExpressionNode node, int count) {
         final FunctionFactory factory = overload.getFactory();
+        final BindScope scope = ctx.scope();
         if (count == 0 || !overload.isRelocatableScalar() || overload.isCase() || overload.isSwitch()
-                || factory.isGroupBy() || factory.isWindow() || factory.isCursor() || node == windowRoot || node == aggregateRoot) {
+                || factory.isGroupBy() || factory.isWindow() || factory.isCursor() || node == scope.windowRoot || node == scope.aggregateRoot) {
             return ColumnType.UNDEFINED;
         }
-        final boolean hasUnparsedText = hasUnparsedTimestampText(node, args);
         boolean hasVariableArgument = false;
         argumentTypes.clear();
         for (int i = 0; i < count; i++) {
             final BoundExpression argument = arguments.getQuick(i);
             final int type = argument.getDataType();
             if (!(argument instanceof TypeExpression) && !(argument instanceof ConstantExpression)) {
-                if (ColumnType.isArray(type) || !hasUnparsedText && (argument.getFunctionFlags() != BoundExpression.STABLE_WITHIN_EXECUTION
-                        || !(argument instanceof ColumnExpression && BindableColumn.isBindableType(type) || unconstructed.indexOf(argument) >= 0))) {
+                if (ColumnType.isArray(type) || argument.getFunctionFlags() != BoundExpression.STABLE_WITHIN_EXECUTION
+                        || !(argument instanceof ColumnExpression && BindableColumn.isBindableType(type) || unconstructed.indexOf(argument) >= 0)) {
                     return ColumnType.UNDEFINED;
                 }
                 hasVariableArgument = true;
@@ -1311,13 +1195,14 @@ public final class FunctionBinder implements Mutable {
                  ColumnType.BINARY, ColumnType.INTERVAL, ColumnType.REGCLASS, ColumnType.REGPROCEDURE,
                  ColumnType.ARRAY_STRING,
                  ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
-                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> ctx.types.next().of(function.getType(), position);
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
+                    ctx.planNodes.types.next().of(function.getType(), position);
             default -> throw new IllegalStateException("unexpected CAST target type");
         };
     }
 
     private void validateKeySubquery() throws SqlException {
-        if (!(arguments.getQuick(0) instanceof ColumnExpression column) || !keySubqueryColumnIds.contains(column.getColumnId())
+        if (!(arguments.getQuick(0) instanceof ColumnExpression column) || !ctx.scope().keySubqueryColumnIds.contains(column.getColumnId())
                 || !(arguments.getQuick(1) instanceof CursorExpression cursor) || cursor.isBoolean()) {
             return;
         }
@@ -1326,11 +1211,67 @@ public final class FunctionBinder implements Mutable {
         switch (ColumnType.tagOf(type)) {
             case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR -> {
             }
-            default -> throw SqlException.position(level.getSubqueryFirstColumnPosition(cursor.getSubqueryIndex()))
+            default -> throw SqlException.position(SqlBinder.getOutputColumnPosition(cursor.getPlan(), 0))
                     .put("unsupported column type: ")
                     .put(output.getColumnName(0))
                     .put(": ")
                     .put(ColumnType.nameOf(type));
+        }
+    }
+
+    /**
+     * Raises, where the call binds, the error of TIMESTAMP text that converts neither to a timestamp nor, where
+     * the call reads intervals, to an interval: a SYMBOL constant compared with a TIMESTAMP, the string literal of a
+     * single-interval TIMESTAMP IN parsed in its quoted spelling, as interval extraction parses it, so a bare
+     * number is an invalid interval rather than an epoch, and a text element of a TIMESTAMP IN list, last to first.
+     */
+    private void validateTimestampText(FunctionFactoryDescriptor overload, ExpressionNode node, ObjList<Function> args,
+                                       SqlExecutionContext executionContext) throws SqlException {
+        final int count = args == null ? 0 : args.size();
+        if (count == 2 && isTemporalComparisonOperator(node.token)) {
+            for (int i = 0; i < 2; i++) {
+                final Function symbol = args.getQuick(i);
+                final int timestampType = args.getQuick(1 - i).getType();
+                if (symbol.getType() == ColumnType.SYMBOL && symbol.isConstant() && ColumnType.tagOf(timestampType) == ColumnType.TIMESTAMP) {
+                    final CharSequence text = literalText(arguments.getQuick(i));
+                    try {
+                        ColumnType.getTimestampDriver(timestampType).implicitCast(text, ColumnType.SYMBOL);
+                    } catch (ImplicitCastException e) {
+                        throw timestampTextError(node, i, text, arguments.getQuick(i).getPosition());
+                    }
+                }
+            }
+            return;
+        }
+        if (!(overload.getFactory() instanceof InTimestampTimestampFunctionFactory) || count < 2
+                || ColumnType.tagOf(args.getQuick(0).getType()) != ColumnType.TIMESTAMP) {
+            return;
+        }
+        final TimestampDriver driver = ColumnType.getTimestampDriver(args.getQuick(0).getType());
+        if (count == 2 && ColumnType.isVarcharOrString(args.getQuick(1).getType())) {
+            final BoundExpression argument = arguments.getQuick(1);
+            final CharSequence text = isStringLiteral(args, 1) ? literalText(argument) : null;
+            if (text != null && !InTimestampTimestampFunctionFactory.containsDateVariable(text)) {
+                final CharSequence seq = intervalSpelling(argument, text);
+                parsedIntervals.clear();
+                IntervalUtils.parseTickExpr(driver, executionContext.getCairoEngine().getConfiguration(), seq, 1, seq.length() - 1,
+                        argument.getPosition(), parsedIntervals, IntervalOperation.INTERSECT, intervalSink, true);
+                parsedIntervals.clear();
+            }
+            return;
+        }
+        for (int i = count - 1; i > 0; i--) {
+            final Function element = args.getQuick(i);
+            final BoundExpression argument = arguments.getQuick(i);
+            final CharSequence text = element.isConstant() && isCaseText(element.getType()) ? literalText(argument) : null;
+            if (text != null && !isTimestampText(driver, text)) {
+                final CharSequence seq = intervalSpelling(argument, text);
+                final int lo = seq == text ? 0 : 1;
+                if (!InTimestampTimestampFunctionFactory.parseIntervalElement(driver, executionContext.getCairoEngine().getConfiguration(),
+                        seq, lo, seq.length() - lo, parsedIntervals, intervalSink)) {
+                    throw seq != text ? SqlException.invalidDate(argument.getPosition()) : SqlException.invalidDate(text, argument.getPosition());
+                }
+            }
         }
     }
 
@@ -1342,14 +1283,15 @@ public final class FunctionBinder implements Mutable {
             wrapTimestampColumns(node, unit, stride, timestampIndex);
             return node;
         }
-        if (findColumn(node, input, inputAlias) != timestampIndex) {
+        final BindScope scope = ctx.scope();
+        if (findColumn(node, scope.expressionInput, scope.expressionInputAlias) != timestampIndex) {
             return node;
         }
-        final ExpressionNode dateadd = expressionNodes.next().of(ExpressionNode.FUNCTION, "dateadd", 0, node.position);
+        final ExpressionNode dateadd = ctx.planNodes.syntheticNodes.next().of(ExpressionNode.FUNCTION, "dateadd", 0, node.position);
         dateadd.paramCount = 3;
         dateadd.args.add(node);
-        dateadd.args.add(expressionNodes.next().of(ExpressionNode.CONSTANT, stride, 0, node.position));
-        dateadd.args.add(expressionNodes.next().of(ExpressionNode.CONSTANT, unit, 0, node.position));
+        dateadd.args.add(ctx.planNodes.syntheticNodes.next().of(ExpressionNode.CONSTANT, stride, 0, node.position));
+        dateadd.args.add(ctx.planNodes.syntheticNodes.next().of(ExpressionNode.CONSTANT, unit, 0, node.position));
         return dateadd;
     }
 
@@ -1460,12 +1402,12 @@ public final class FunctionBinder implements Mutable {
                 ctx.tmpPositions.clear();
                 try {
                     ctx.tmpArguments.add(arguments.getQuick(index));
-                    ctx.tmpArguments.add(ctx.types.next().of(function.getType(), position));
+                    ctx.tmpArguments.add(ctx.planNodes.types.next().of(function.getType(), position));
                     ctx.tmpPositions.add(position);
                     ctx.tmpPositions.add(position);
-                    final FunctionExpression conversion = ctx.functions.next().of(overload, ctx.tmpArguments,
+                    final FunctionExpression conversion = ctx.planNodes.functions.next().of(overload, ctx.tmpArguments,
                             ctx.tmpPositions, function.getType(),
-                            callFlags(function, LogicalPlans.stabilityFlags(arguments.getQuick(index))), position);
+                            functionFlags(function), position);
                     if (unconstructed.indexOf(arguments.getQuick(index)) >= 0) {
                         unconstructed.add(conversion);
                     }
@@ -1482,7 +1424,7 @@ public final class FunctionBinder implements Mutable {
 
     void captureParameter(Function function, ExpressionNode node, boolean isPredefined) {
         try {
-            final BindVariableExpression parameter = ctx.parameters.next().of(node.token, function.getType(), functionFlags(function), node.position);
+            final BindVariableExpression parameter = ctx.planNodes.parameters.next().of(node.token, function.getType(), functionFlags(function), node.position);
             push(isPredefined ? parameter.markPredefined() : parameter, leafMark());
         } catch (Throwable th) {
             Misc.free(function, th);
@@ -1490,28 +1432,68 @@ public final class FunctionBinder implements Mutable {
         }
     }
 
-    /**
-     * Records a text constant the call converts to TIMESTAMP that does not parse as one. Whatever builds the
-     * call raises the parse error, so the returned stand-in is never evaluated.
-     */
-    Function captureUnparsedTimestamp(int index, CharSequence text, int type, int position) {
-        arguments.setQuick(index, markSource(ctx.constants.next().ofUnparsedTimestamp(text, type, position), arguments.getQuick(index)));
-        return staticTypes.next().of(type);
-    }
-
-    /**
-     * Hands the consumers of a completed sub-query its optimised plan and the stability its factory proves.
-     */
-    void completeCursors(int subqueryIndex, LogicalPlan plan, boolean isFactoryStable) {
-        for (int i = 0, n = cursors.getPos(); i < n; i++) {
-            final CursorExpression cursor = cursors.peekQuick(i);
-            if (cursor.getSubqueryIndex() == subqueryIndex) {
-                cursor.ofGenerated(plan, isFactoryStable);
+    ConstantExpression constant(Function function, int position) {
+        return switch (ColumnType.tagOf(function.getType())) {
+            case ColumnType.TIMESTAMP ->
+                    ctx.planNodes.constants.next().ofTimestamp(function.getTimestamp(null), function.getType(), position);
+            case ColumnType.STRING ->
+                    ctx.planNodes.constants.next().ofString(Chars.toString(function.getStrA(null)), position);
+            case ColumnType.SYMBOL ->
+                    ctx.planNodes.constants.next().ofSymbol(Chars.toString(function.getSymbol(null)), position);
+            case ColumnType.VARCHAR -> ctx.planNodes.constants.next().ofVarchar(function.getVarcharA(null), position);
+            case ColumnType.BYTE -> ctx.planNodes.constants.next().ofByte(function.getByte(null), position);
+            case ColumnType.SHORT -> ctx.planNodes.constants.next().ofShort(function.getShort(null), position);
+            case ColumnType.DATE -> ctx.planNodes.constants.next().ofDate(function.getDate(null), position);
+            case ColumnType.IPv4 -> ctx.planNodes.constants.next().ofIPv4(function.getIPv4(null), position);
+            case ColumnType.CHAR -> ctx.planNodes.constants.next().ofChar(function.getChar(null), position);
+            case ColumnType.BOOLEAN -> ctx.planNodes.constants.next().ofBoolean(function.getBool(null), position);
+            case ColumnType.INT -> ctx.planNodes.constants.next().ofInt(function.getInt(null), position);
+            case ColumnType.LONG -> ctx.planNodes.constants.next().ofLong(function.getLong(null), position);
+            case ColumnType.LONG256 -> ctx.planNodes.constants.next().ofLong256(function.getLong256A(null), position);
+            case ColumnType.UUID ->
+                    ctx.planNodes.constants.next().ofUuid(function.getLong128Lo(null), function.getLong128Hi(null), position);
+            case ColumnType.LONG128 ->
+                    ctx.planNodes.constants.next().ofLong128(function.getLong128Lo(null), function.getLong128Hi(null), position);
+            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
+                    ctx.planNodes.constants.next().ofGeoHash(GeoHashes.getGeoLong(function.getType(), function, null), function.getType(), position);
+            case ColumnType.FLOAT -> ctx.planNodes.constants.next().ofFloat(function.getFloat(null), position);
+            case ColumnType.DOUBLE -> ctx.planNodes.constants.next().ofDouble(function.getDouble(null), position);
+            case ColumnType.NULL -> ctx.planNodes.constants.next().ofNull(position);
+            case ColumnType.DECIMAL8 ->
+                    ctx.planNodes.constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal8(null), position);
+            case ColumnType.DECIMAL16 ->
+                    ctx.planNodes.constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal16(null), position);
+            case ColumnType.DECIMAL32 ->
+                    ctx.planNodes.constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal32(null), position);
+            case ColumnType.DECIMAL64 ->
+                    ctx.planNodes.constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal64(null), position);
+            case ColumnType.DECIMAL128 -> {
+                function.getDecimal128(null, decimal128);
+                yield ctx.planNodes.constants.next().ofDecimal(function.getType(), 0, 0, decimal128.getHigh(), decimal128.getLow(), position);
             }
-        }
+            case ColumnType.DECIMAL256 -> {
+                function.getDecimal256(null, decimal256);
+                yield ctx.planNodes.constants.next().ofDecimal(function.getType(), decimal256.getHh(), decimal256.getHl(),
+                        decimal256.getLh(), decimal256.getLl(), position);
+            }
+            case ColumnType.INTERVAL -> {
+                final Interval interval = function.getInterval(null);
+                yield ctx.planNodes.constants.next().ofInterval(interval.getLo(), interval.getHi(), function.getType(), position);
+            }
+            case ColumnType.BINARY -> {
+                if (function.getBin(null) != null) {
+                    throw new IllegalStateException("non-null BINARY constant");
+                }
+                yield ctx.planNodes.constants.next().ofBinaryNull(position);
+            }
+            default -> throw new IllegalStateException("unexpected constant type");
+        };
     }
 
     Function createColumn(ExpressionNode node) throws SqlException {
+        final BindScope scope = ctx.scope();
+        final OutputSchema input = scope.expressionInput;
+        final CharSequence inputAlias = scope.expressionInputAlias;
         if (findColumn(node, input, inputAlias) == -1) {
             final Function outer = createOuterColumn(node);
             if (outer != null) {
@@ -1521,34 +1503,33 @@ public final class FunctionBinder implements Mutable {
         final int index = resolveColumn(node, input, inputAlias);
         final int type = input.getColumnType(index);
         final int columnId = input.getColumnId(index);
-        ctx.raiseDeferredColumn(columnId);
         final int mark = leafMark();
         final Function leaf;
         if (BindableColumn.isBindableType(type)) {
             final BindableColumn bindable = BindableColumn.newInstance(columnId, type, input.isSymbolTableStatic(index));
-            currentPreparation.leaves.add(bindable);
+            scope.currentPreparation.leaves.add(bindable);
             leaf = bindable;
         } else {
             leaf = FunctionInstantiator.createColumnFunction(node.position, index, type, input);
-            currentPreparation.isRebuildRequired = true;
+            scope.currentPreparation.isRebuildRequired = true;
         }
-        push(ctx.columns.next().of(columnId, type, node.position), mark);
+        push(ctx.planNodes.columns.next().of(columnId, type, node.position), mark);
         return leaf;
     }
 
     Function createCursorFunction(ExpressionNode node, SqlExecutionContext executionContext) throws SqlException {
-        final int index;
-        if (node == compiledLowerBoundNode) {
-            index = compiledLowerBoundIndex;
-            compiledLowerBoundNode = null;
+        final BindScope scope = ctx.scope();
+        final Subquery subquery;
+        if (node == scope.compiledLowerBoundNode) {
+            subquery = scope.compiledLowerBound;
+            scope.compiledLowerBound = null;
+            scope.compiledLowerBoundNode = null;
         } else {
-            index = level.compileSubquery(node.queryModel, node.position, executionContext);
+            subquery = subqueryCompiler.compileSubquery(node.queryModel, node.position, executionContext);
         }
-        final LogicalPlan plan = level.getSubqueryPlan(index);
-        final int flags = LogicalPlans.isResultStable(plan, executionContext) ? BoundExpression.STABLE_WITHIN_EXECUTION : 0;
-        currentPreparation.isRebuildRequired = true;
-        push(cursors.next().of(plan, index, flags, node.position), leafMark());
-        return new SubqueryCursorFunction(level.getSubqueryMetadata(index), true);
+        scope.currentPreparation.isRebuildRequired = true;
+        push(nextCursor().of(subquery, node.position), leafMark());
+        return new CursorFunction(subquery.getOutputMetadata());
     }
 
     Function createFunction(
@@ -1558,15 +1539,16 @@ public final class FunctionBinder implements Mutable {
             IntList positions,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        final BindScope scope = ctx.scope();
         validateFactory(overload, node, args);
         final int staticType;
         try {
-            captureUnparsedInElements(overload, args);
+            validateTimestampText(overload, node, args, executionContext);
             final Function folded = canonicalizeTemporalComparison(node, args, positions);
             if (folded != null) {
                 Misc.freeObjList(args);
                 dropLeaves(callLeafMark(), leafMark());
-                push(ctx.constants.next().ofBoolean(folded.getBool(null), node.position).markLiteral(), leafMark());
+                push(ctx.planNodes.constants.next().ofBoolean(folded.getBool(null), node.position).markLiteral(), leafMark());
                 return folded;
             }
             final int count = args == null ? 0 : args.size();
@@ -1596,19 +1578,19 @@ public final class FunctionBinder implements Mutable {
                     throw new IllegalStateException("bound argument does not match its function");
                 }
             }
-            if (count == 2 && keySubqueryColumnIds.size() > 0 && SqlKeywords.isInKeyword(node.token)) {
+            if (count == 2 && scope.keySubqueryColumnIds.size() > 0 && SqlKeywords.isInKeyword(node.token)) {
                 validateKeySubquery();
             }
             if (requiresConditionalRebuild(overload, args)) {
-                currentPreparation.isRebuildRequired = true;
+                scope.currentPreparation.isRebuildRequired = true;
             }
             argumentPositions.clear();
             if (positions != null) {
                 argumentPositions.addAll(positions);
             }
-            final int declaredType = staticResultType(overload, node, args, count);
+            final int declaredType = staticResultType(overload, node, count);
             staticType = declaredType != ColumnType.UNDEFINED
-                    && isAdmittedUnconstructed(overload, node, args, positions, executionContext)
+                    && parser.admitUnconstructed(overload, node.position, node.token, args, positions, executionContext)
                     ? declaredType : ColumnType.UNDEFINED;
             if (staticType == ColumnType.UNDEFINED) {
                 constructArguments(args, count, executionContext);
@@ -1621,20 +1603,20 @@ public final class FunctionBinder implements Mutable {
             prepareUnconstructedArguments(args);
             Misc.freeObjList(args);
             args.clear();
-            unconstructed.add(pushCall(node, ctx.functions.next().of(overload, arguments, argumentPositions,
+            unconstructed.add(pushCall(node, ctx.planNodes.functions.next().of(overload, arguments, argumentPositions,
                     staticType, BoundExpression.STABLE_WITHIN_EXECUTION, node.position)));
-            return staticTypes.next().of(staticType);
+            return ctx.planNodes.staticTypes.next().of(staticType);
         }
         final Function first = args != null && args.size() == 2 ? args.getQuick(0) : null;
         final Function second = first != null ? args.getQuick(1) : null;
         final Function function = parser.createFunction(overload, node.position, node.token, args, positions, executionContext);
         try {
-            if (node == windowRoot) {
+            if (node == scope.windowRoot) {
                 if (!(function instanceof WindowFunction)) {
                     throw SqlException.$(node.position, "non-window function called in window context");
                 }
-                if (nestedWindowPosition >= 0) {
-                    throw SqlException.emptyWindowContext(nestedWindowPosition);
+                if (scope.nestedWindowPosition >= 0) {
+                    throw SqlException.emptyWindowContext(scope.nestedWindowPosition);
                 }
             }
             // Some factories return a folded constant and close unused children.
@@ -1647,8 +1629,8 @@ public final class FunctionBinder implements Mutable {
                 // A connective with a constant operand returns its other operand.
                 expression = arguments.getQuick(function == first ? 0 : 1);
             } else {
-                expression = ctx.functions.next().of(overload, arguments, argumentPositions,
-                        function.getType(), callFlags(function, arguments), node.position);
+                expression = ctx.planNodes.functions.next().of(overload, arguments, argumentPositions,
+                        function.getType(), functionFlags(function), node.position);
             }
             pushCall(node, expression);
             return function;
@@ -1698,33 +1680,11 @@ public final class FunctionBinder implements Mutable {
         }
     }
 
-    void completeArgumentSubqueries(SqlExecutionContext executionContext) throws SqlException {
-        level.completeArgumentSubqueries(arguments, executionContext);
-    }
-
-    IntHashSet getKeySubqueryColumnIds() {
-        return keySubqueryColumnIds;
-    }
-
-    /**
-     * Ids of the outer columns every binding since {@link #clear()} resolved, in resolution order and with
-     * repeats; a caller reads the range its own binding appended.
-     */
-    IntList getOuterColumnIds() {
-        return outerColumnIds;
-    }
-
-    /**
-     * True while a LATERAL body binds.
-     */
-    boolean hasOuterScope() {
-        return outerScopes.size() > 0;
-    }
-
     /**
      * True when no replacement matches subtrees by AST identity, so binding may clone and reassociate the tree.
      */
     boolean isAstRewritable() {
+        final ObjList<ExpressionNode> replacementNodes = ctx.scope().replacementNodes;
         return replacementNodes == null || replacementNodes.size() == 0;
     }
 
@@ -1735,6 +1695,7 @@ public final class FunctionBinder implements Mutable {
         if (node.type != ExpressionNode.LITERAL || findColumn(node, input, inputAlias) != -1) {
             return false;
         }
+        final ObjList<OutputSchema> outerScopes = ctx.scope().outerScopes;
         for (int i = outerScopes.size() - 1; i > -1; i--) {
             if (findColumn(node, outerScopes.getQuick(i), null) > -1) {
                 return true;
@@ -1743,19 +1704,9 @@ public final class FunctionBinder implements Mutable {
         return false;
     }
 
-    /**
-     * Whether the call is a predicate comparison whose TIMESTAMP text operands interval extraction validates.
-     */
-    boolean isTimestampComparison(ExpressionNode node) {
-        return isBindingPredicate && (isTemporalComparisonOperator(node.token) || SqlKeywords.isBetweenKeyword(node.token));
-    }
-
     boolean isUnresolvedNoArgFunction(ExpressionNode node) {
-        return findColumn(node, input, inputAlias) == -1 && parser.findNoArgFunction(node);
-    }
-
-    void popOuterScope() {
-        outerScopes.remove(outerScopes.size() - 1);
+        final BindScope scope = ctx.scope();
+        return findColumn(node, scope.expressionInput, scope.expressionInputAlias) == -1 && parser.findNoArgFunction(node);
     }
 
     /**
@@ -1778,28 +1729,23 @@ public final class FunctionBinder implements Mutable {
         return function;
     }
 
-    /**
-     * Makes the columns of {@code scope} resolvable as outer columns until {@link #popOuterScope()}.
-     */
-    void pushOuterScope(OutputSchema scope) {
-        outerScopes.add(scope);
-    }
-
     Function replaceNode(ExpressionNode node, SqlExecutionContext executionContext) throws SqlException {
+        final BindScope scope = ctx.scope();
+        final ObjList<ExpressionNode> replacementNodes = scope.replacementNodes;
         if (replacementNodes != null) {
+            final OutputSchema input = scope.expressionInput;
             for (int i = 0, n = replacementNodes.size(); i < n; i++) {
                 if (replacementNodes.getQuick(i) == node) {
-                    final BoundExpression replacement = replacementExpressions.getQuick(i);
+                    final BoundExpression replacement = scope.replacementExpressions.getQuick(i);
                     if (!(replacement instanceof ColumnExpression column)) {
                         // Leaves of a reconstructed subtree carry this layout's indexes.
                         if (replacement instanceof FunctionExpression || replacement instanceof CursorExpression) {
-                            currentPreparation.isRebuildRequired = true;
+                            scope.currentPreparation.isRebuildRequired = true;
                         }
                         final Function function = ctx.functionInstantiator.rebuild(replacement, input, executionContext);
                         push(replacement, leafMark());
                         return function;
                     }
-                    ctx.raiseDeferredColumn(column.getColumnId());
                     final int index = input.getColumnIndexById(column.getColumnId());
                     if (index < 0 || input.getColumnType(index) != column.getDataType()) {
                         throw new IllegalStateException("bound expression replacement input has changed");
@@ -1808,13 +1754,13 @@ public final class FunctionBinder implements Mutable {
                     final Function leaf;
                     if (BindableColumn.isBindableType(column.getDataType())) {
                         final BindableColumn bindable = BindableColumn.newInstance(column.getColumnId(), column.getDataType(), input.isSymbolTableStatic(index));
-                        currentPreparation.leaves.add(bindable);
+                        scope.currentPreparation.leaves.add(bindable);
                         leaf = bindable;
                     } else {
                         leaf = FunctionInstantiator.createColumnFunction(node.position, index, column.getDataType(), input);
-                        currentPreparation.isRebuildRequired = true;
+                        scope.currentPreparation.isRebuildRequired = true;
                     }
-                    push(ctx.columns.next().of(column.getColumnId(), column.getDataType(), node.position,
+                    push(ctx.planNodes.columns.next().of(column.getColumnId(), column.getDataType(), node.position,
                             column.isDirectReference(), column.isCast()), mark);
                     return leaf;
                 }
@@ -1830,12 +1776,12 @@ public final class FunctionBinder implements Mutable {
             // source position without mutating the already captured argument.
             final BoundExpression repositioned = switch (argument) {
                 case ColumnExpression column ->
-                        ctx.columns.next().of(column.getColumnId(), column.getDataType(), position, false, true);
+                        ctx.planNodes.columns.next().of(column.getColumnId(), column.getDataType(), position, false, true);
                 case OuterColumnExpression outer ->
-                        ctx.outerColumns.next().of(outer.getColumnId(), outer.getDataType(), position);
+                        ctx.planNodes.outerColumns.next().of(outer.getColumnId(), outer.getDataType(), position);
                 case BindVariableExpression parameter ->
-                        ctx.parameters.next().of(parameter.getName(), parameter.getDataType(), parameter.getFunctionFlags(), position, false);
-                case FunctionExpression call -> ctx.functions.next().of(call, position);
+                        ctx.planNodes.parameters.next().of(parameter.getName(), parameter.getDataType(), parameter.getFunctionFlags(), position, false);
+                case FunctionExpression call -> ctx.planNodes.functions.next().of(call, position);
                 default -> constant(function, position);
             };
             if (unconstructed.indexOf(argument) >= 0) {
@@ -1850,20 +1796,118 @@ public final class FunctionBinder implements Mutable {
         }
     }
 
+    /**
+     * A {@code !=} or {@code <>} comparison of a TIMESTAMP with constant STRING or VARCHAR text that spells an
+     * interval wider than one value binds as the negation of the single-interval IN of that text, so the comparison
+     * excludes the interval wherever it runs: a string literal that spells an interval rather than a timestamp, and
+     * text that spells a partial timestamp, such as {@code '2024-01'}, which excludes the whole month. Returns the
+     * NOT node over the IN node to bind in place of the comparison, with the arguments in IN order, or null for any
+     * other call. Raises the parse error of a string literal that spells neither a timestamp nor an interval.
+     */
+    ExpressionNode timestampExclusion(ExpressionNode node, ObjList<Function> args, IntList positions,
+                                      SqlExecutionContext executionContext) throws SqlException {
+        if (args == null || args.size() != 2 || !isNotEqualsOperator(node.token)) {
+            return null;
+        }
+        final int textIndex = isConstantText(args, 1) ? 1 : isConstantText(args, 0) ? 0 : -1;
+        if (textIndex < 0 || ColumnType.tagOf(args.getQuick(1 - textIndex).getType()) != ColumnType.TIMESTAMP) {
+            return null;
+        }
+        final BoundExpression argument = arguments.getQuick(textIndex);
+        final CharSequence text = literalText(argument);
+        if (text == null) {
+            return null;
+        }
+        final TimestampDriver driver = ColumnType.getTimestampDriver(args.getQuick(1 - textIndex).getType());
+        final boolean isTimestamp = isTimestampText(driver, text);
+        if (!isTimestamp && !isStringLiteral(args, textIndex)) {
+            return null;
+        }
+        final CharSequence seq = intervalSpelling(argument, text);
+        final int lo = seq == text ? 0 : 1;
+        parsedIntervals.clear();
+        try {
+            IntervalUtils.parseTickExpr(driver, executionContext.getCairoEngine().getConfiguration(), seq, lo, seq.length() - lo,
+                    argument.getPosition(), parsedIntervals, IntervalOperation.INTERSECT, intervalSink, true);
+        } catch (SqlException e) {
+            if (isTimestamp) {
+                return null;
+            }
+            throw e;
+        }
+        final boolean isPoint = parsedIntervals.size() == 0
+                || parsedIntervals.size() == 2 && parsedIntervals.getQuick(0) == parsedIntervals.getQuick(1);
+        parsedIntervals.clear();
+        if (isTimestamp && isPoint) {
+            return null;
+        }
+        if (textIndex == 0) {
+            final Function operand = args.getQuick(1);
+            args.setQuick(1, args.getQuick(0));
+            args.setQuick(0, operand);
+            final int position = positions.getQuick(1);
+            positions.setQuick(1, positions.getQuick(0));
+            positions.setQuick(0, position);
+            arguments.setQuick(0, arguments.getQuick(1));
+            arguments.setQuick(1, argument);
+        }
+        final ExpressionNode in = ctx.planNodes.syntheticNodes.next().of(ExpressionNode.SET_OPERATION, "in", node.precedence, node.position);
+        in.paramCount = 2;
+        in.lhs = textIndex == 0 ? node.rhs : node.lhs;
+        in.rhs = textIndex == 0 ? node.lhs : node.rhs;
+        final ExpressionNode not = ctx.planNodes.syntheticNodes.next().of(ExpressionNode.OPERATION, "not", node.precedence, node.position);
+        not.paramCount = 1;
+        not.rhs = in;
+        return not;
+    }
+
+    /**
+     * The error of a comparison of a TIMESTAMP with constant text that does not parse as a timestamp. Interval
+     * extraction over a designated timestamp once raised these messages, so a comparison reports them wherever it
+     * binds: {@code =} and a {@code !=} or {@code <>} of text other than a string literal report
+     * {@code invalid timestamp} for a literal, otherwise {@code Invalid date [str=text]}, and for text with
+     * {@code ;} {@code not a timestamp, use IN keyword with intervals} for a literal, otherwise
+     * {@code Not a date, use IN keyword with intervals}; a range comparison reports {@code Invalid date [str=text]}
+     * with a literal quoted; a BETWEEN bound reports a bare {@code Invalid date} for a literal. A comparison of a
+     * DATE, which interval extraction never implements, and any other call report {@code Invalid date [str=text]}.
+     */
+    SqlException timestampTextError(ExpressionNode node, int index, CharSequence text, int position) {
+        final CharSequence operator = node.token;
+        final boolean isBetween = SqlKeywords.isBetweenKeyword(operator);
+        if (!isBetween && !isTemporalComparisonOperator(operator)
+                || arguments.getQuick(isBetween ? 0 : 1 - index).getDataType() == ColumnType.DATE) {
+            return SqlException.invalidDate(text, position);
+        }
+        final boolean isLiteral = arguments.getQuick(index) instanceof ConstantExpression constant && IntervalExtractor.isStringLiteral(constant);
+        if (isBetween) {
+            return isLiteral ? SqlException.invalidDate(position) : SqlException.invalidDate(text, position);
+        }
+        if (Chars.equals(operator, '=') || isNotEqualsOperator(operator)) {
+            if (Chars.indexOf(text, ';') >= 0) {
+                return SqlException.$(position, isLiteral ? "not a timestamp, use IN keyword with intervals" : "Not a date, use IN keyword with intervals");
+            }
+            return isLiteral ? SqlException.$(position, "invalid timestamp") : SqlException.invalidDate(text, position);
+        }
+        return isLiteral ? SqlException.position(position).put("Invalid date [str='").put(text).put("']") : SqlException.invalidDate(text, position);
+    }
+
     BoundExpression toBooleanSubquery(BoundExpression expression) {
         if (expression instanceof CursorExpression cursor && ColumnType.tagOf(cursor.getPlan().getOutput().getColumnCount() == 1
                 ? cursor.getPlan().getOutput().getColumnType(0) : ColumnType.UNDEFINED) == ColumnType.BOOLEAN) {
-            return cursors.next().ofBoolean(cursor, BoundExpression.RUNTIME_CONSTANT | cursor.getFunctionFlags()
+            return nextCursor().ofBoolean(cursor, BoundExpression.RUNTIME_CONSTANT | cursor.getFunctionFlags()
                     & (BoundExpression.STABLE_WITHIN_EXECUTION | BoundExpression.NON_DETERMINISTIC));
         }
         return expression;
     }
 
     void validateFactory(FunctionFactoryDescriptor overload, ExpressionNode node, ObjList<Function> args) throws SqlException {
+        final BindScope scope = ctx.scope();
+        final ExpressionNode aggregateRoot = scope.aggregateRoot;
+        final ExpressionNode windowRoot = scope.windowRoot;
         if (node != aggregateRoot && node != windowRoot && overload.getFactory().isGroupBy()) {
-            final SqlException exception = node != bindingRoot
+            final SqlException exception = node != scope.bindingRoot
                     ? SqlException.$(node.position, "Aggregate function cannot be passed as an argument")
-                    : isBindingPredicate ? SqlException.$(node.position, "boolean expression expected")
+                    : scope.isBindingPredicate ? SqlException.$(node.position, "boolean expression expected")
                       : SqlException.$(node.position, "aggregate functions are not allowed in this context");
             Misc.freeObjList(args, exception);
             throw exception;
@@ -1875,8 +1919,8 @@ public final class FunctionBinder implements Mutable {
         }
         if (node != windowRoot && node != aggregateRoot && overload.getFactory().isWindow()) {
             if (isWindowArgument(node)) {
-                if (nestedWindowPosition < 0) {
-                    nestedWindowPosition = node.position;
+                if (scope.nestedWindowPosition < 0) {
+                    scope.nestedWindowPosition = node.position;
                 }
                 return;
             }
@@ -1885,7 +1929,7 @@ public final class FunctionBinder implements Mutable {
             throw exception;
         }
         if (node == aggregateRoot && !overload.getFactory().isGroupBy()
-                && !(isBindingGroupByExpression && overload.isArrayElementWiseScalar())) {
+                && !(scope.isBindingGroupByExpression && overload.isArrayElementWiseScalar())) {
             final IllegalStateException exception = new IllegalStateException("aggregate root is bound to a non-aggregate factory");
             Misc.freeObjList(args, exception);
             throw exception;
@@ -1896,7 +1940,7 @@ public final class FunctionBinder implements Mutable {
         if (node.type == ExpressionNode.QUERY) {
             return;
         }
-        if (node.windowExpression != null && node != windowRoot
+        if (node.windowExpression != null && node != ctx.scope().windowRoot
                 || node.type != ExpressionNode.LITERAL && node.type != ExpressionNode.CONSTANT
                 && node.type != ExpressionNode.FUNCTION && node.type != ExpressionNode.OPERATION
                 && node.type != ExpressionNode.BIND_VARIABLE && node.type != ExpressionNode.MEMBER_ACCESS
@@ -1926,7 +1970,7 @@ public final class FunctionBinder implements Mutable {
     }
 
     void validateSubsampleArguments(ExpressionNode node, ObjList<Function> args, IntList positions) throws SqlException {
-        if (node != windowRoot || node.windowExpression == null || !node.windowExpression.isSubsampleKeepFlag() || args == null) {
+        if (node != ctx.scope().windowRoot || node.windowExpression == null || !node.windowExpression.isSubsampleKeepFlag() || args == null) {
             return;
         }
         if (Chars.equalsIgnoreCase(node.token, "uniform") && args.size() == 1) {

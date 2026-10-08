@@ -49,11 +49,9 @@ final class CorrelationKeys implements Mutable {
     final ObjList<JoinInput> deferredInputs = new ObjList<>();
     final IntList deferredOuterIds = new IntList();
     final IntList droppedEqualities = new IntList();
-    private final OptimiserContext context;
     private final DecorrelationContext ctx;
 
-    CorrelationKeys(OptimiserContext context, DecorrelationContext ctx) {
-        this.context = context;
+    CorrelationKeys(DecorrelationContext ctx) {
         this.ctx = ctx;
     }
 
@@ -106,7 +104,7 @@ final class CorrelationKeys implements Mutable {
             if (left == null || right == null) {
                 return left == null ? right : left;
             }
-            return context.getRewriter().replaceConjunction(call, left, right);
+            return ctx.context.getRewriter().replaceConjunction(call, left, right);
         }
         if (!(condition instanceof FunctionExpression call) || !Chars.equals(call.getName(), '=') || call.getArgumentCount() != 2
                 || !(call.argumentAt(0) instanceof ColumnExpression left) || !(call.argumentAt(1) instanceof ColumnExpression right)
@@ -152,7 +150,7 @@ final class CorrelationKeys implements Mutable {
     void addKeyFilter(JoinInput step, int columnId, int keyId, OutputSchema output) throws SqlException {
         final int position = step.getPosition();
         final BoundExpression equality = ctx.bindCall("=", position, ctx.column(output, columnId, position), ctx.column(output, keyId, position), output);
-        step.setKeyFilter(step.getKeyFilter() == null ? equality : context.getRewriter().combineConjunction(step.getKeyFilter(), equality, position));
+        step.setKeyFilter(step.getKeyFilter() == null ? equality : ctx.context.getRewriter().combineConjunction(step.getKeyFilter(), equality, position));
     }
 
     void collectEqualities(BoundExpression predicate, OutputSchema input, int base) {
@@ -234,7 +232,7 @@ final class CorrelationKeys implements Mutable {
             if (right == null) {
                 return left;
             }
-            return left == call.argumentAt(0) && right == call.argumentAt(1) ? call : context.getRewriter().replaceConjunction(call, left, right);
+            return left == call.argumentAt(0) && right == call.argumentAt(1) ? call : ctx.context.getRewriter().replaceConjunction(call, left, right);
         }
         if (call.getArgumentCount() == 2 && "=".equals(call.getName())
                 && (isDroppedEquality(call.argumentAt(0), call.argumentAt(1)) || isDroppedEquality(call.argumentAt(1), call.argumentAt(0)))) {
@@ -318,7 +316,7 @@ final class CorrelationKeys implements Mutable {
             final BoundExpression equality = ctx.bindCall("=", position,
                     ctx.planNodes.columns.next().of(slaveId, output.getColumnType(output.getColumnIndexById(slaveId)), position),
                     ctx.planNodes.columns.next().of(masterId, output.getColumnType(output.getColumnIndexById(masterId)), position), output);
-            condition = condition == null ? equality : context.getRewriter().combineConjunction(condition, equality, step.getPosition());
+            condition = condition == null ? equality : ctx.context.getRewriter().combineConjunction(condition, equality, step.getPosition());
         }
         for (int i = 0; i < keyCount; i++) {
             step.getMasterKeyColumnIds().removeIndex(0);

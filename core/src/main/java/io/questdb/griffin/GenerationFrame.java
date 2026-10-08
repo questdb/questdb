@@ -24,28 +24,30 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.griffin.engine.window.WindowMapSpec;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
-import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowJoinStep;
+import io.questdb.std.BitSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
-import io.questdb.std.ObjectPool;
 import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
@@ -54,12 +56,18 @@ import java.io.Closeable;
  * State of one {@link SqlCodeGenerator#generate} call. Function instantiation can compile a
  * sub-query, which re-enters generation before the outer call finishes, so the generator keeps
  * one frame per nesting depth and passes it explicitly to the operator generators, which keep
- * no state across a nested generation.
+ * no state across a nested generation. The frame owns the map key and value types, the two
+ * column filters and the symbol-as-string set that an operator fills before it instantiates
+ * functions and reads after, so a sub-query generated in between, one frame deeper, cannot
+ * overwrite them.
  */
 final class GenerationFrame implements Closeable, Mutable {
     final IntList columnReferenceCounts = new IntList();
     final IntervalExtractor intervals;
+    final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     final LongList latestPrefixes = new LongList();
+    final ListColumnFilter listColumnFilterA = new ListColumnFilter();
+    final ListColumnFilter listColumnFilterB = new ListColumnFilter();
     final IntervalExtractor overrideIntervals;
     final ObjList<RecordCursorFactory> parallelFilterFactories = new ObjList<>();
     final ObjList<BoundExpression> parallelFilterPredicates = new ObjList<>();
@@ -76,11 +84,19 @@ final class GenerationFrame implements Closeable, Mutable {
     final IntList sharedConsumerTotals = new IntList();
     final ObjList<RecordCursorFactory> sharedFactories = new ObjList<>();
     final ObjList<JoinInput> sharedSources = new ObjList<>();
-    final ObjectPool<SortPlan> sorts = new ObjectPool<>(SortPlan.FACTORY, 4);
     final SymbolKeyExtractor symbols = new SymbolKeyExtractor();
+    final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+    final ArrayColumnTypes windowChainTypes = new ArrayColumnTypes();
+    final IntList windowDirections = new IntList();
     final ObjObjHashMap<IntList, ObjList<WindowFunction>> windowGroups = new ObjObjHashMap<>();
+    final ArrayColumnTypes windowKeyTypes = new ArrayColumnTypes();
+    final ObjList<TableColumnMetadata> windowMetadata = new ObjList<>();
+    final IntList windowOrder = new IntList();
     final ObjList<TableColumnMetadata> windowOutputColumns = new ObjList<>();
     final WindowFactoryGenerator.WindowPartitionKeys windowPartitionKeys = new WindowFactoryGenerator.WindowPartitionKeys();
+    final ObjList<WindowFunction> windowSpecFunctions = new ObjList<>();
+    final ObjList<WindowMapSpec> windowSpecs = new ObjList<>();
+    final BitSet writeSymbolAsString = new BitSet();
     private final ObjList<TableColumnMetadata> projectionSlotColumns = new ObjList<>();
     BoundExpressionRewriter expressionRewriter;
     FunctionInstantiator functionInstantiator;
@@ -103,7 +119,17 @@ final class GenerationFrame implements Closeable, Mutable {
 
     @Override
     public void clear() {
-        final Throwable failure = Misc.clearBestEffort(null, intervals);
+        Throwable failure = Misc.clearBestEffort(null, intervals);
+        failure = Misc.clearBestEffort(failure, overrideIntervals);
+        expressionRewriter = null;
+        functionInstantiator = null;
+        functionSources = null;
+        keyTypes.clear();
+        valueTypes.clear();
+        listColumnFilterA.clear();
+        listColumnFilterB.clear();
+        patternArguments.clear();
+        writeSymbolAsString.clear();
         parallelFilterFactories.clear();
         parallelFilterPredicates.clear();
         isJoinIntervalCapture = false;
@@ -112,8 +138,12 @@ final class GenerationFrame implements Closeable, Mutable {
         joinIntervalStep = null;
         latestPrefixes.clear();
         latestWithin = null;
+        patternConjuncts.clear();
+        patternPositions.clear();
+        patternIndex = 0;
+        isPatternNegated = false;
+        projectionScope.clear();
         symbols.clear();
-        sorts.clear();
         columnReferenceCounts.clear();
         sharedConsumerCounts.clear();
         sharedConsumerSources.clear();
@@ -123,10 +153,18 @@ final class GenerationFrame implements Closeable, Mutable {
         setOperationHeads.clear();
         setOperationPlans.clear();
         projectionScopeMetadata.clear();
+        windowChainTypes.clear();
+        windowDirections.clear();
         windowGroups.clear();
+        windowKeyTypes.clear();
+        windowMetadata.clear();
+        windowOrder.clear();
         windowOutputColumns.clear();
         windowPartitionKeys.clear();
+        windowSpecFunctions.clear();
+        windowSpecs.clear();
         sharedHeadFactory = null;
+        sharedHeadId = 0;
         sharedHeadTarget = null;
         CairoException.rethrowCleanupFailure(failure);
     }
@@ -134,10 +172,6 @@ final class GenerationFrame implements Closeable, Mutable {
     @Override
     public void close() {
         clear();
-    }
-
-    Throwable closePrepared(Throwable primary) {
-        return functionSources.closePrepared(functionInstantiator.closePrepared(primary));
     }
 
     int getReferenceCount(int columnId) {
@@ -150,7 +184,8 @@ final class GenerationFrame implements Closeable, Mutable {
     TableColumnMetadata projectionSlotColumn(int index, int type) {
         TableColumnMetadata column = projectionSlotColumns.getQuiet(index);
         if (column == null || column.getColumnType() != type) {
-            column = new TableColumnMetadata("$projection" + index, type, IndexType.NONE, 0, false, null);
+            final String name = column != null ? column.getColumnName() : "$projection" + index;
+            column = new TableColumnMetadata(name, type, IndexType.NONE, 0, false, null);
             projectionSlotColumns.extendAndSet(index, column);
         }
         return column;

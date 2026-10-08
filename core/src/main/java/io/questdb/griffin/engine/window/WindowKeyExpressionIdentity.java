@@ -254,9 +254,6 @@ public final class WindowKeyExpressionIdentity {
             return true;
         }
         if (node instanceof ConstantExpression constant) {
-            if (constant.isUnparsedTimestamp()) {
-                return false;
-            }
             sink.putAscii('=').put(constant.getDataType()).putAscii(':');
             switch (ColumnType.tagOf(constant.getDataType())) {
                 case ColumnType.STRING, ColumnType.SYMBOL -> {

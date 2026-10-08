@@ -177,13 +177,6 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         return true;
     }
 
-    // Ties break on row id, so the kept rows and their order depend only on the filter and the base.
-    @Override
-    public boolean isStableWithinExecution() {
-        final Function filter = frameSequence.getAtom().getFilterContext().getFilter(-1);
-        return (filter == null || filter.isStableWithinExecution()) && base.isStableWithinExecution();
-    }
-
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;

@@ -28,68 +28,44 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.std.ObjectFactory;
 
 /**
- * A sub-query used as a function argument: its plan, whose output schema types the consumer, and its result
- * stability. Binding publishes the bound plan and the stability its rules prove
- * ({@link BoundExpression#STABLE_WITHIN_EXECUTION}); once the whole statement is bound, the sub-query is optimised
- * and generated, and the expression receives the optimised plan and the generated factory's proof. Each executable
- * consumer receives its own factory generated from the plan.
+ * A sub-query used as a function argument: the statement's {@link Subquery}, whose plan's output schema types the
+ * consumer. Every copy of the expression shares the sub-query. The generator generates the sub-query once per statement
+ * and evaluates it at most once per execution, so its value is stable within an execution by construction
+ * ({@link BoundExpression#STABLE_WITHIN_EXECUTION}).
  */
 public final class CursorExpression extends BoundExpression {
     public static final ObjectFactory<CursorExpression> FACTORY = CursorExpression::new;
-    private boolean isFactoryStable;
-    private LogicalPlan plan;
-    private int subqueryIndex = -1;
+    private Subquery subquery;
 
     @Override
     public void clear() {
         super.clear();
-        isFactoryStable = false;
-        plan = null;
-        subqueryIndex = -1;
+        subquery = null;
     }
 
     public LogicalPlan getPlan() {
-        return plan;
+        return subquery.getRoot();
     }
 
-    public int getSubqueryIndex() {
-        return subqueryIndex;
+    public Subquery getSubquery() {
+        return subquery;
     }
 
     public boolean isBoolean() {
         return getDataType() == ColumnType.BOOLEAN;
     }
 
-    /**
-     * Whether every evaluation of the sub-query within one execution yields the same rows: proven by the plan's
-     * rules, or by the factory generated for it.
-     */
-    public boolean isStableWithinExecution() {
-        return (getFunctionFlags() & STABLE_WITHIN_EXECUTION) != 0 || isFactoryStable;
-    }
-
-    public CursorExpression of(LogicalPlan plan, int subqueryIndex, int functionFlags, int position) {
-        return of(plan, subqueryIndex, ColumnType.CURSOR, functionFlags, position);
+    public CursorExpression of(Subquery subquery, int position) {
+        return of(subquery, ColumnType.CURSOR, STABLE_WITHIN_EXECUTION, position);
     }
 
     public CursorExpression ofBoolean(CursorExpression cursor, int functionFlags) {
-        of(cursor.plan, cursor.subqueryIndex, ColumnType.BOOLEAN, functionFlags, cursor.getPosition());
-        isFactoryStable = cursor.isFactoryStable;
-        return this;
+        return of(cursor.subquery, ColumnType.BOOLEAN, functionFlags, cursor.getPosition());
     }
 
-    /**
-     * Completes the expression once its sub-query is optimised and generated.
-     */
-    public void ofGenerated(LogicalPlan plan, boolean isFactoryStable) {
-        this.plan = plan;
-        this.isFactoryStable = isFactoryStable;
-    }
-
-    private CursorExpression of(LogicalPlan plan, int subqueryIndex, int dataType, int functionFlags, int position) {
+    private CursorExpression of(Subquery subquery, int dataType, int functionFlags, int position) {
         configure(dataType, position, functionFlags);
-        this.plan = plan;
-        this.subqueryIndex = subqueryIndex;
+        this.subquery = subquery;
         return this;
     }
 }

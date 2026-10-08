@@ -34,6 +34,7 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public class CharacterStore implements CharacterStoreEntry, Mutable, Utf16Sink {
     private static final Log LOG = LogFactory.getLog(CharacterStore.class);
@@ -45,9 +46,17 @@ public class CharacterStore implements CharacterStoreEntry, Mutable, Utf16Sink {
     private int size = 0;
 
     public CharacterStore(int capacity, int poolCapacity) {
+        this(capacity, poolCapacity, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Creates a store that keeps at most {@code maxRetainedPoolCapacity} sequences once {@link #clear()} releases
+     * them, as a {@link ObjectPool} with a retention ceiling does.
+     */
+    public CharacterStore(int capacity, int poolCapacity, int maxRetainedPoolCapacity) {
         this.capacity = capacity;
         this.chars = new char[Numbers.ceilPow2(capacity)];
-        csPool = new ObjectPool<>(NameAssemblerCharSequence::new, poolCapacity);
+        csPool = new ObjectPool<>(NameAssemblerCharSequence::new, poolCapacity, maxRetainedPoolCapacity);
     }
 
     @Override
@@ -55,6 +64,11 @@ public class CharacterStore implements CharacterStoreEntry, Mutable, Utf16Sink {
         csPool.clear();
         size = 0;
         next = null;
+    }
+
+    @TestOnly
+    public int getPoolCapacity() {
+        return csPool.getCapacity();
     }
 
     @Override

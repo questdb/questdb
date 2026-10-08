@@ -60,7 +60,6 @@ import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.griffin.engine.table.HeapRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
@@ -134,14 +133,12 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             FunctionParser functionParser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
 
             // Parse the expression AST
-            ExpressionNode node;
             QueryModel qm = QueryModel.FACTORY.newInstance();
+            final Function f;
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                node = compiler.testParseExpression(predicate, qm);
+                // Compile to a Function; may throw if predicate is malformed
+                f = functionParser.parseFunction(compiler.testParseExpression(predicate, qm), meta, sqlExecutionContext);
             }
-
-            // Compile to a Function; may throw if predicate is malformed
-            Function f = functionParser.parseFunction(node, meta, sqlExecutionContext);
 
             Assert.assertTrue(
                     predicate + " did not compile to a SymbolKeySetProvider: " + f.getClass().getName(),
@@ -3342,11 +3339,10 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             try (TableReader reader = engine.getReader("t")) {
                 final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
                 final QueryModel model = QueryModel.FACTORY.newInstance();
-                final ExpressionNode expression;
+                final Function residual;
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    expression = compiler.testParseExpression("txt LIKE '%a_b%'", model);
+                    residual = parser.parseFunction(compiler.testParseExpression("txt LIKE '%a_b%'", model), reader.getMetadata(), sqlExecutionContext);
                 }
-                final Function residual = parser.parseFunction(expression, reader.getMetadata(), sqlExecutionContext);
                 try {
                     Assert.assertEquals("ConstLikeStrFunction", residual.getClass().getSimpleName());
                     Assert.assertFalse(residual.isThreadSafe());

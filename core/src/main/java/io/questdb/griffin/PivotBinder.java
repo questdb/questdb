@@ -38,7 +38,6 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.DeferredErrorExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.JoinPlan;
@@ -53,9 +52,6 @@ import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
-import io.questdb.std.IntList;
-import io.questdb.std.LowerCaseCharSequenceHashSet;
-import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
@@ -68,59 +64,44 @@ import static io.questdb.griffin.TemporalJoinBinder.windowJoinIndex;
 
 final class PivotBinder implements Mutable {
     private final AggregateBinder aggregateBinder;
-    private final ObjList<ExpressionNode> aggregateNodes;
     private final SqlBinder binder;
     private final CairoConfiguration configuration;
     private final BindContext ctx;
-    private final ObjList<ExpressionNode> groupingNodes;
     private final JoinBinder joinBinder;
-    private final LowerCaseCharSequenceHashSet pivotAliases;
-    private final LowerCaseCharSequenceIntHashMap pivotAliasSequences;
-    private final ObjList<CharSequence> pivotForAliases = new ObjList<>();
-    private final IntList pivotIndexes;
-    private final ObjList<CharSequence> pivotKeyAliases;
-    private final IntList pivotKeyIndexes;
     private final CharSequenceHashSet pivotValues = new CharSequenceHashSet();
     private final StringSink pivotValueSink;
-    private final QueryLevelCompiler level;
+    private final SubqueryCompiler subqueryCompiler;
     private final TemporalJoinBinder temporalJoinBinder;
     private final WindowBinder windowBinder;
-    private final ObjectPool<WindowJoinPivotAggregate> windowJoinPivotAggregatePool = new ObjectPool<>(WindowJoinPivotAggregate::new, 4);
-    private final ObjList<WindowJoinPivotAggregate> windowJoinPivotAggregates = new ObjList<>();
+    private final ObjectPool<WindowJoinPivotAggregate> windowJoinPivotAggregatePool;
 
     PivotBinder(
             BindContext ctx,
             SqlBinder binder,
-            QueryLevelCompiler level,
             CairoConfiguration configuration,
             WindowBinder windowBinder,
             TemporalJoinBinder temporalJoinBinder,
             AggregateBinder aggregateBinder,
             JoinBinder joinBinder,
-            StringSink pivotValueSink
+            StringSink pivotValueSink,
+            SubqueryCompiler subqueryCompiler
     ) {
         this.ctx = ctx;
         this.binder = binder;
-        this.level = level;
         this.configuration = configuration;
+        this.windowJoinPivotAggregatePool = new ObjectPool<>(WindowJoinPivotAggregate::new, 4, configuration.getSqlColumnPoolCapacity());
         this.windowBinder = windowBinder;
         this.temporalJoinBinder = temporalJoinBinder;
         this.aggregateBinder = aggregateBinder;
-        this.aggregateNodes = aggregateBinder.aggregateNodes;
-        this.groupingNodes = aggregateBinder.groupingNodes;
         this.joinBinder = joinBinder;
         this.pivotValueSink = pivotValueSink;
-        this.pivotAliases = ctx.aliases;
-        this.pivotAliasSequences = ctx.aliasSequences;
-        this.pivotIndexes = ctx.projectionAliasIndexes;
-        this.pivotKeyAliases = windowBinder.windowNames;
-        this.pivotKeyIndexes = ctx.sourceProjectionIndexes;
+        this.subqueryCompiler = subqueryCompiler;
     }
 
     @Override
     public void clear() {
+        pivotValues.clear();
         windowJoinPivotAggregatePool.clear();
-        windowJoinPivotAggregates.clear();
     }
 
     private static CharSequence pivotAggregateName(ExpressionNode aggregate, ObjList<QueryColumn> measures) {
@@ -130,17 +111,6 @@ final class PivotBinder implements Mutable {
             }
         }
         return aggregate.token;
-    }
-
-    private static BoundExpression raiseDeferredConjunct(BoundExpression predicate) throws SqlException {
-        if (predicate instanceof DeferredErrorExpression deferred) {
-            throw deferred.raise();
-        }
-        if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2 && call.isAnd()) {
-            raiseDeferredConjunct(call.argumentAt(0));
-            raiseDeferredConjunct(call.argumentAt(1));
-        }
-        return predicate;
     }
 
     private static WindowJoinStep windowJoinAggregateStep(WindowJoinPlan plan, int columnId) {
@@ -177,35 +147,37 @@ final class PivotBinder implements Mutable {
     }
 
     private void addPivotKey(AggregatePlan grouped, ExpressionNode key, CharSequence alias, QueryModel input, SqlExecutionContext executionContext) throws SqlException {
+        final BindScope bindScope = ctx.scope();
         final CharSequence name = SqlUtil.toColumnName(alias);
-        pivotKeyAliases.add(name);
+        bindScope.pivotKeyAliases.add(name);
         final int existing = aggregateBinder.findGroupingExpression(key, input, grouped);
         if (existing >= 0) {
-            pivotKeyIndexes.add(existing);
+            bindScope.pivotKeyIndexes.add(existing);
             return;
         }
-        pivotKeyIndexes.add(grouped.getGroupingExpressions().size());
+        bindScope.pivotKeyIndexes.add(grouped.getGroupingExpressions().size());
         final OutputSchema scope = grouped.getInput().getOutput();
         final BoundExpression bound;
         final int index;
         if (key.type == ExpressionNode.LITERAL) {
             index = ctx.bindColumnIndex(key, scope, input);
-            bound = ctx.columns.next().of(scope.getColumnId(index), scope.getColumnType(index), key.position);
+            bound = ctx.planNodes.columns.next().of(scope.getColumnId(index), scope.getColumnType(index), key.position);
         } else {
             index = -1;
             bound = ctx.functionBinder.bind(key, scope, sourceAlias(input), executionContext);
         }
-        groupingNodes.add(key);
+        bindScope.groupingNodes.add(key);
         grouped.getGroupingExpressions().add(bound);
-        grouped.getOutput().add(ctx.nextColumnId++, name, bound.getDataType(), index < 0 ? null : scope.getMetadata(index), true);
+        grouped.getOutput().add(bindScope.nextColumnId++, name, bound.getDataType(), index < 0 ? null : scope.getMetadata(index), true);
         grouped.getOutput().setSymbolTableStatic(grouped.getOutput().getColumnCount() - 1, index >= 0 && scope.isSymbolTableStatic(index));
     }
 
     private void addPivotKeyProjection(ProjectPlan project, AggregatePlan grouped, int key, int position) {
+        final BindScope scope = ctx.scope();
         final OutputSchema keys = grouped.getOutput();
-        final int index = pivotKeyIndexes.getQuick(key);
-        addPivotProjection(project, ctx.columns.next().of(keys.getColumnId(index), keys.getColumnType(index), position),
-                keys.getMetadata(index), pivotKeyAliases.getQuick(key));
+        final int index = scope.pivotKeyIndexes.getQuick(key);
+        addPivotProjection(project, ctx.planNodes.columns.next().of(keys.getColumnId(index), keys.getColumnType(index), position),
+                keys.getMetadata(index), scope.pivotKeyAliases.getQuick(key));
         project.getOutput().setSymbolTableStatic(project.getOutput().getColumnCount() - 1, keys.isSymbolTableStatic(index));
     }
 
@@ -217,15 +189,15 @@ final class PivotBinder implements Mutable {
 
     private void addPivotProjection(ProjectPlan project, BoundExpression expression, OutputSchema metadata, CharSequence name) {
         project.getExpressions().add(expression);
-        project.getOutput().add(ctx.nextColumnId++, name, expression.getDataType(), metadata, true);
+        project.getOutput().add(ctx.scope().nextColumnId++, name, expression.getDataType(), metadata, true);
     }
 
     private void addPivotSubqueryValues(PivotForColumn column, int combinations, int limit, SqlExecutionContext executionContext) throws SqlException {
+        final BindScope scope = ctx.scope();
         final ExpressionNode subquery = column.getSelectSubqueryExpr();
         final int position = subquery.position;
         // The values of the sub-query become output columns, so it is generated and run while binding.
-        final int index = level.compileSubquery(subquery.queryModel, position, executionContext);
-        try (RecordCursorFactory factory = level.takeSubquery(index, executionContext)) {
+        try (RecordCursorFactory factory = subqueryCompiler.compileSubqueryFactory(subquery.queryModel, position, executionContext)) {
             final RecordMetadata metadata = factory.getMetadata();
             if (metadata.getColumnCount() != 1) {
                 throw SqlException.$(position, "PIVOT IN subquery must return exactly one column, got ").put(metadata.getColumnCount());
@@ -237,8 +209,8 @@ final class PivotBinder implements Mutable {
                 default -> false;
             };
             pivotValues.clear();
-            pivotAliases.clear();
-            pivotAliasSequences.clear();
+            scope.aliases.clear();
+            scope.aliasSequences.clear();
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
@@ -253,9 +225,9 @@ final class PivotBinder implements Mutable {
                     if (!pivotValues.add(value)) {
                         continue;
                     }
-                    final CharSequence alias = SqlUtil.createExprColumnAlias(ctx.characterStore, GenericLexer.unquote(value), pivotAliases,
-                            pivotAliasSequences, configuration.getColumnAliasGeneratedMaxSize(), true);
-                    pivotAliases.add(alias);
+                    final CharSequence alias = SqlUtil.createExprColumnAlias(ctx.characterStore, GenericLexer.unquote(value), scope.aliases,
+                            scope.aliasSequences, configuration.getColumnAliasGeneratedMaxSize(), true);
+                    scope.aliases.add(alias);
                     column.addValue(ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, value, 0, position), alias);
                     if ((long) combinations * column.getValueList().size() > limit) {
                         throw SqlException.$(position, "PIVOT produces too many columns: ")
@@ -273,25 +245,26 @@ final class PivotBinder implements Mutable {
 
     private void addWindowJoinPivotMerges(AggregatePlan grouped, OutputSchema input, boolean isDirect,
                                           SqlExecutionContext executionContext) throws SqlException {
+        final BindScope scope = ctx.scope();
         final OutputSchema output = grouped.getOutput();
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
-            pivotAliases.add(output.getColumnName(i));
+            scope.aliases.add(output.getColumnName(i));
         }
-        for (int i = 0, n = windowJoinPivotAggregates.size(); i < n; i++) {
-            final WindowJoinPivotAggregate aggregate = windowJoinPivotAggregates.getQuick(i);
+        for (int i = 0, n = scope.windowJoinPivotAggregates.size(); i < n; i++) {
+            final WindowJoinPivotAggregate aggregate = scope.windowJoinPivotAggregates.getQuick(i);
             if (aggregate.kind == WindowJoinPivotAggregate.MERGE) {
                 continue;
             }
             if (!isDirect) {
                 throw SqlException.$(aggregate.position, "PIVOT over WINDOW JOIN supports avg, first and last only as direct measures");
             }
-            final FunctionExpression merged = bindWindowJoinPivotMerge(aggregateNodes.getQuick(i), aggregate, true, input, executionContext);
+            final FunctionExpression merged = bindWindowJoinPivotMerge(scope.aggregateNodes.getQuick(i), aggregate, true, input, executionContext);
             grouped.getAggregates().add(merged);
-            final int columnId = ctx.nextColumnId++;
-            final CharSequence name = SqlUtil.createColumnAlias(ctx.characterStore, "merged", -1, pivotAliases, pivotAliasSequences, false);
-            pivotAliases.add(name);
+            final int columnId = scope.nextColumnId++;
+            final CharSequence name = SqlUtil.createColumnAlias(ctx.characterStore, "merged", -1, scope.aliases, scope.aliasSequences, false);
+            scope.aliases.add(name);
             output.add(columnId, name, merged.getDataType(), false);
-            aggregate.merged = ctx.columns.next().of(columnId, merged.getDataType(), aggregate.position);
+            aggregate.merged = ctx.planNodes.columns.next().of(columnId, merged.getDataType(), aggregate.position);
         }
     }
 
@@ -315,7 +288,7 @@ final class PivotBinder implements Mutable {
                 }
             }
             if (window == null) {
-                window = ctx.windowPlans.next().of(source, pivot.getModelPosition());
+                window = ctx.planNodes.windowPlans.next().of(source, pivot.getModelPosition());
                 window.getOutput().copyFrom(source.getOutput());
             }
             measure.of(measure.getAlias(), replacePivotWindows(ExpressionNode.deepClone(ctx.bindingExpressions, ast), source, window, input, executionContext),
@@ -326,20 +299,21 @@ final class PivotBinder implements Mutable {
 
     private void bindWindowJoinPivotAggregates(QueryModel pivot, WindowJoinPlan plan, ExpressionNode windowAggregates,
                                                SqlExecutionContext executionContext) throws SqlException {
-        ctx.substitutionNodes.clear();
-        ctx.substitutionColumns.clear();
-        temporalJoinBinder.collectWindowJoinAggregateOccurrences(windowAggregates, plan, ctx.substitutionNodes, ctx.substitutionColumns);
-        aggregateNodes.clear();
+        final BindScope bindScope = ctx.scope();
+        bindScope.substitutionNodes.clear();
+        bindScope.substitutionColumns.clear();
+        temporalJoinBinder.collectWindowJoinAggregateOccurrences(windowAggregates, plan, bindScope.substitutionNodes, bindScope.substitutionColumns);
+        bindScope.aggregateNodes.clear();
         final ObjList<QueryColumn> measures = pivot.getPivotGroupByColumns();
         for (int i = 0, n = measures.size(); i < n; i++) {
             aggregateBinder.collectAggregateNodes(measures.getQuick(i).getAst(), true);
         }
-        windowJoinPivotAggregates.clear();
-        for (int i = 0, n = aggregateNodes.size(), next = 0; i < n; i++) {
-            final ExpressionNode call = aggregateNodes.getQuick(i);
+        bindScope.windowJoinPivotAggregates.clear();
+        for (int i = 0, n = bindScope.aggregateNodes.size(), next = 0; i < n; i++) {
+            final ExpressionNode call = bindScope.aggregateNodes.getQuick(i);
             final int kind = windowJoinPivotKind(call);
-            final ColumnExpression value = ctx.substitutionColumns.getQuick(next++);
-            final ColumnExpression count = kind == WindowJoinPivotAggregate.MERGE ? null : ctx.substitutionColumns.getQuick(next++);
+            final ColumnExpression value = bindScope.substitutionColumns.getQuick(next++);
+            final ColumnExpression count = kind == WindowJoinPivotAggregate.MERGE ? null : bindScope.substitutionColumns.getQuick(next++);
             if (kind == WindowJoinPivotAggregate.AVG) {
                 final OutputSchema scope = windowJoinAggregateStep(plan, count.getColumnId()).getScope();
                 final int type = ColumnType.tagOf(ctx.functionBinder.bind(call.rhs, scope, null, executionContext).getDataType());
@@ -348,15 +322,16 @@ final class PivotBinder implements Mutable {
                     throw SqlException.$(call.position, "PIVOT over WINDOW JOIN supports avg only over DOUBLE, FLOAT, INT, LONG and SHORT values");
                 }
             }
-            windowJoinPivotAggregates.add(windowJoinPivotAggregatePool.next().of(kind, value, count, call.position));
+            bindScope.windowJoinPivotAggregates.add(windowJoinPivotAggregatePool.next().of(kind, value, count, call.position));
         }
     }
 
     private FunctionExpression bindWindowJoinPivotMerge(ExpressionNode call, WindowJoinPivotAggregate aggregate, boolean isHidden,
                                                         OutputSchema input, SqlExecutionContext executionContext) throws SqlException {
+        final BindScope scope = ctx.scope();
         final int position = call.position;
-        ctx.substitutionNodes.clear();
-        ctx.substitutionColumns.clear();
+        scope.substitutionNodes.clear();
+        scope.substitutionColumns.clear();
         final ExpressionNode argument;
         final CharSequence merge;
         switch (aggregate.kind) {
@@ -376,7 +351,7 @@ final class PivotBinder implements Mutable {
         final ExpressionNode node = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, merge, 0, position);
         node.paramCount = 1;
         node.rhs = argument;
-        final BoundExpression bound = ctx.functionBinder.bindGroupByExpression(node, input, ctx.substitutionNodes, ctx.substitutionColumns, executionContext);
+        final BoundExpression bound = ctx.functionBinder.bindGroupByExpression(node, input, scope.substitutionNodes, scope.substitutionColumns, executionContext);
         if (!(bound instanceof FunctionExpression function) || !function.isAggregate()) {
             throw SqlException.$(position, "expected aggregate function [col=").put(call).put(']');
         }
@@ -384,11 +359,12 @@ final class PivotBinder implements Mutable {
     }
 
     private CharSequence pivotAlias(ExpressionNode expression) {
+        final BindScope scope = ctx.scope();
         final CharacterStoreEntry text = ctx.characterStore.newEntry();
         expression.toSink(text);
-        final CharSequence alias = SqlUtil.createExprColumnAlias(ctx.characterStore, text.toImmutable(), pivotAliases,
-                pivotAliasSequences, configuration.getColumnAliasGeneratedMaxSize(), true);
-        pivotAliases.add(alias);
+        final CharSequence alias = SqlUtil.createExprColumnAlias(ctx.characterStore, text.toImmutable(), scope.aliases,
+                scope.aliasSequences, configuration.getColumnAliasGeneratedMaxSize(), true);
+        scope.aliases.add(alias);
         return alias;
     }
 
@@ -422,6 +398,7 @@ final class PivotBinder implements Mutable {
     }
 
     private ExpressionNode pivotMeasure(ObjList<PivotForColumn> forColumns, QueryColumn measure, ExpressionNode value) {
+        final BindScope scope = ctx.scope();
         final int position = measure.getAst().position;
         final boolean isZeroOnEmpty = SqlUtil.isZeroOnEmptyAggregate(measure.getAst());
         final ExpressionNode otherwise = ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, isZeroOnEmpty ? "0" : "null", 0, position);
@@ -431,15 +408,15 @@ final class PivotBinder implements Mutable {
             choice.paramCount = 4;
             choice.args.add(otherwise);
             choice.args.add(value);
-            choice.args.add(forColumns.getQuick(0).getValueList().getQuick(pivotIndexes.getQuick(0)));
-            choice.args.add(ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, quotedPivotName(pivotForAliases.getQuick(0)), 0, position));
+            choice.args.add(forColumns.getQuick(0).getValueList().getQuick(scope.pivotIndexes.getQuick(0)));
+            choice.args.add(ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, quotedPivotName(scope.pivotForAliases.getQuick(0)), 0, position));
         } else {
             ExpressionNode condition = null;
             for (int i = 0, n = forColumns.size(); i < n; i++) {
                 final ExpressionNode equals = ctx.bindingExpressions.next().of(ExpressionNode.OPERATION, "=", 0, position);
                 equals.paramCount = 2;
-                equals.lhs = ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, quotedPivotName(pivotForAliases.getQuick(i)), 0, position);
-                equals.rhs = forColumns.getQuick(i).getValueList().getQuick(pivotIndexes.getQuick(i));
+                equals.lhs = ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, quotedPivotName(scope.pivotForAliases.getQuick(i)), 0, position);
+                equals.rhs = forColumns.getQuick(i).getValueList().getQuick(scope.pivotIndexes.getQuick(i));
                 condition = condition == null ? equals : pivotAnd(condition, equals);
             }
             choice = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "case", 0, position);
@@ -496,7 +473,7 @@ final class PivotBinder implements Mutable {
             final WindowExpression syntax = node.windowExpression;
             final OutputSchema scope = source.getOutput();
             final CharSequence alias = sourceAlias(input);
-            final WindowSpec spec = ctx.windowSpecs.next().of(syntax);
+            final WindowSpec spec = ctx.planNodes.windowSpecs.next().of(syntax);
             for (int k = 0, count = syntax.getPartitionBy().size(); k < count; k++) {
                 spec.getPartitionBy().add(ctx.functionBinder.bind(syntax.getPartitionBy().getQuick(k), scope, alias, executionContext));
             }
@@ -511,7 +488,7 @@ final class PivotBinder implements Mutable {
                 spec.getOrderByNames().add(scope.getColumnName(scope.getColumnIndexById(column.getColumnId())));
             }
             final FunctionExpression function = windowBinder.bindWindowFunction(node, spec, scope, input, executionContext);
-            final int columnId = ctx.nextColumnId++;
+            final int columnId = ctx.scope().nextColumnId++;
             final CharacterStoreEntry entry = ctx.characterStore.newEntry();
             entry.put("__pivot_window_").put(columnId);
             final CharSequence name = entry.toImmutable();
@@ -530,8 +507,9 @@ final class PivotBinder implements Mutable {
     }
 
     private void validatePivotColumnNames(QueryModel pivot) throws SqlException {
-        pivotAliases.clear();
-        pivotAliasSequences.clear();
+        final BindScope scope = ctx.scope();
+        scope.aliases.clear();
+        scope.aliasSequences.clear();
         final ObjList<ExpressionNode> groupBy = pivot.getGroupBy();
         for (int i = 0, n = groupBy.size(); i < n; i++) {
             final ExpressionNode key = groupBy.getQuick(i);
@@ -547,10 +525,10 @@ final class PivotBinder implements Mutable {
         final ObjList<QueryColumn> measures = pivot.getPivotGroupByColumns();
         for (int i = 0, n = measures.size(); i < n; i++) {
             final CharSequence name = measures.getQuick(i).getName();
-            if (pivotAliases.contains(name)) {
+            if (scope.aliases.contains(name)) {
                 throw SqlException.duplicateColumn(0, name);
             }
-            pivotAliases.add(name);
+            scope.aliases.add(name);
         }
     }
 
@@ -562,14 +540,15 @@ final class PivotBinder implements Mutable {
     }
 
     private ExpressionNode windowJoinPivotInputs(QueryModel pivot) throws SqlException {
-        aggregateNodes.clear();
+        final BindScope scope = ctx.scope();
+        scope.aggregateNodes.clear();
         final ObjList<QueryColumn> measures = pivot.getPivotGroupByColumns();
         for (int i = 0, n = measures.size(); i < n; i++) {
             aggregateBinder.collectAggregateNodes(measures.getQuick(i).getAst(), true);
         }
         final ExpressionNode aggregates = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "pivot", 0, pivot.getModelPosition());
-        for (int i = 0, n = aggregateNodes.size(); i < n; i++) {
-            final ExpressionNode call = aggregateNodes.getQuick(i);
+        for (int i = 0, n = scope.aggregateNodes.size(); i < n; i++) {
+            final ExpressionNode call = scope.aggregateNodes.getQuick(i);
             final int position = call.position;
             switch (windowJoinPivotKind(call)) {
                 case WindowJoinPivotAggregate.AVG -> {
@@ -611,15 +590,16 @@ final class PivotBinder implements Mutable {
     }
 
     private ExpressionNode windowJoinPivotPlaceholder(ColumnExpression column, int position) {
+        final BindScope scope = ctx.scope();
         final ExpressionNode placeholder = ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, "merged", 0, position);
-        ctx.substitutionNodes.add(placeholder);
-        ctx.substitutionColumns.add(column);
+        scope.substitutionNodes.add(placeholder);
+        scope.substitutionColumns.add(column);
         return placeholder;
     }
 
     private ExpressionNode windowJoinPivotValue(WindowJoinPivotAggregate aggregate, OutputSchema measured, int measureIndex, int position) {
         final ExpressionNode value = windowJoinPivotPlaceholder(
-                ctx.columns.next().of(measured.getColumnId(measureIndex), measured.getColumnType(measureIndex), position), position);
+                ctx.planNodes.columns.next().of(measured.getColumnId(measureIndex), measured.getColumnType(measureIndex), position), position);
         switch (aggregate.kind) {
             case WindowJoinPivotAggregate.AVG -> {
                 final ExpressionNode ratio = ctx.bindingExpressions.next().of(ExpressionNode.OPERATION, "/", 0, position);
@@ -647,6 +627,7 @@ final class PivotBinder implements Mutable {
     }
 
     LogicalPlan rewritePivot(QueryModel pivot, SqlExecutionContext executionContext) throws SqlException {
+        final BindScope scope = ctx.scope();
         final QueryModel input = pivot.getNestedModel();
         final int combinations = preparePivotValues(pivot, executionContext);
         validatePivotColumnNames(pivot);
@@ -665,22 +646,21 @@ final class PivotBinder implements Mutable {
             source = temporalJoinBinder.bindHorizonJoin(pivot, input, where, executionContext);
             where = null;
         } else if (input.getJoinModels().size() > 1) {
-            source = joinBinder.bindJoins(pivot, input, where, executionContext);
+            source = joinBinder.bindJoins(input, where, executionContext);
         } else {
             source = binder.bindSource(input, executionContext);
         }
         final LatestByPlan latest = input.getLatestBy().size() > 0 ? binder.bindLatestBy(source, input) : null;
         if (where != null && !(source instanceof JoinPlan)) {
-            // The FOR ... IN filter is derived, not a WHERE conjunct: its binding error is raised at once.
             final BoundExpression predicate;
             if (userWhere == null) {
-                predicate = raiseDeferredConjunct(binder.bindPredicate(pivotWhere, source, input, executionContext));
+                predicate = binder.bindPredicate(pivotWhere, source, input, executionContext);
             } else {
-                final BoundExpression pivotPredicate = raiseDeferredConjunct(binder.bindConjuncts(pivotWhere, source, input, executionContext));
+                final BoundExpression pivotPredicate = binder.bindConjuncts(pivotWhere, source, input, executionContext);
                 predicate = ctx.functionBinder.toBooleanSubquery(ctx.expressionRewriter.combineConjunction(pivotPredicate,
                         binder.bindConjuncts(userWhere, source, input, executionContext), where.position));
             }
-            final FilterPlan filter = ctx.filters.next().of(source, predicate, predicate.getPosition());
+            final FilterPlan filter = ctx.planNodes.filters.next().of(source, predicate, predicate.getPosition());
             filter.deriveOutput();
             source = filter;
         }
@@ -690,14 +670,14 @@ final class PivotBinder implements Mutable {
         }
         source = bindPivotWindows(pivot, input, source, executionContext);
 
-        final AggregatePlan grouped = ctx.aggregates.next().of(source, pivot.getModelPosition());
+        final AggregatePlan grouped = ctx.planNodes.aggregates.next().of(source, pivot.getModelPosition());
         grouped.setExplicitGrouping(true);
-        groupingNodes.clear();
-        aggregateNodes.clear();
-        pivotAliases.clear();
-        pivotAliasSequences.clear();
-        pivotKeyAliases.clear();
-        pivotKeyIndexes.clear();
+        scope.groupingNodes.clear();
+        scope.aggregateNodes.clear();
+        scope.aliases.clear();
+        scope.aliasSequences.clear();
+        scope.pivotKeyAliases.clear();
+        scope.pivotKeyIndexes.clear();
         final ObjList<ExpressionNode> groupBy = pivot.getGroupBy();
         for (int i = 0, n = groupBy.size(); i < n; i++) {
             final ExpressionNode key = groupBy.getQuick(i);
@@ -706,12 +686,12 @@ final class PivotBinder implements Mutable {
             }
             addPivotKey(grouped, key, pivotAlias(key), input, executionContext);
         }
-        pivotForAliases.clear();
+        scope.pivotForAliases.clear();
         final ObjList<PivotForColumn> forColumns = pivot.getPivotForColumns();
         for (int i = 0, n = forColumns.size(); i < n; i++) {
             final ExpressionNode expression = forColumns.getQuick(i).getInExpr();
             final CharSequence alias = pivotAlias(expression);
-            pivotForAliases.add(alias);
+            scope.pivotForAliases.add(alias);
             addPivotKey(grouped, expression, alias, input, executionContext);
         }
         final int keyCount = grouped.getGroupingExpressions().size();
@@ -724,24 +704,24 @@ final class PivotBinder implements Mutable {
             }
             aggregateBinder.collectAggregateNodes(measure, true);
         }
-        for (int i = 0, n = aggregateNodes.size(); i < n; i++) {
-            final ExpressionNode call = aggregateNodes.getQuick(i);
+        for (int i = 0, n = scope.aggregateNodes.size(); i < n; i++) {
+            final ExpressionNode call = scope.aggregateNodes.getQuick(i);
             final BoundExpression bound = windowJoin != null
-                    ? bindWindowJoinPivotMerge(call, windowJoinPivotAggregates.getQuick(i), false, source.getOutput(), executionContext)
+                    ? bindWindowJoinPivotMerge(call, scope.windowJoinPivotAggregates.getQuick(i), false, source.getOutput(), executionContext)
                     : ctx.functionBinder.bindGroupByExpression(call, source.getOutput(), sourceAlias(input), executionContext);
             if (!(bound instanceof FunctionExpression function) || !function.isAggregate()) {
                 throw SqlException.$(call.position, "expected aggregate function [col=").put(call).put(']');
             }
             grouped.getAggregates().add(function);
         }
-        boolean isDirect = aggregateNodes.size() == measures.size() && pivotKeyIndexes.size() == keyCount
+        boolean isDirect = scope.aggregateNodes.size() == measures.size() && scope.pivotKeyIndexes.size() == keyCount
                 && keyCount == grouped.getGroupingExpressions().size();
         for (int i = 0, n = measures.size(); i < n && isDirect; i++) {
-            isDirect = aggregateNodes.getQuick(i) == measures.getQuick(i).getAst();
+            isDirect = scope.aggregateNodes.getQuick(i) == measures.getQuick(i).getAst();
         }
-        for (int i = 0, n = aggregateNodes.size(); i < n; i++) {
-            final CharSequence name = isDirect ? SqlUtil.toColumnName(measures.getQuick(i).getAlias()) : pivotAggregateName(aggregateNodes.getQuick(i), measures);
-            grouped.getOutput().add(ctx.nextColumnId++, name, grouped.getAggregates().getQuick(i).getDataType(), isDirect);
+        for (int i = 0, n = scope.aggregateNodes.size(); i < n; i++) {
+            final CharSequence name = isDirect ? SqlUtil.toColumnName(measures.getQuick(i).getAlias()) : pivotAggregateName(scope.aggregateNodes.getQuick(i), measures);
+            grouped.getOutput().add(scope.nextColumnId++, name, grouped.getAggregates().getQuick(i).getDataType(), isDirect);
         }
         if (windowJoin != null) {
             addWindowJoinPivotMerges(grouped, source.getOutput(), isDirect, executionContext);
@@ -750,8 +730,8 @@ final class PivotBinder implements Mutable {
         LogicalPlan measured = grouped;
         final int firstMeasureIndex = groupBy.size() + forColumns.size();
         if (!isDirect) {
-            final ProjectPlan project = ctx.projects.next().of(grouped, pivot.getModelPosition());
-            for (int i = 0, n = pivotKeyIndexes.size(); i < n; i++) {
+            final ProjectPlan project = ctx.planNodes.projects.next().of(grouped, pivot.getModelPosition());
+            for (int i = 0, n = scope.pivotKeyIndexes.size(); i < n; i++) {
                 addPivotKeyProjection(project, grouped, i, pivot.getModelPosition());
             }
             for (int i = 0, n = measures.size(); i < n; i++) {
@@ -760,38 +740,38 @@ final class PivotBinder implements Mutable {
             measured = project;
         }
 
-        final AggregatePlan pivoted = ctx.aggregates.next().of(measured, pivot.getModelPosition());
+        final AggregatePlan pivoted = ctx.planNodes.aggregates.next().of(measured, pivot.getModelPosition());
         pivoted.setExplicitGrouping(groupBy.size() > 0);
         final OutputSchema measuredOutput = measured.getOutput();
         for (int i = 0, n = groupBy.size(); i < n; i++) {
-            pivoted.getGroupingExpressions().add(ctx.columns.next().of(measuredOutput.getColumnId(i), measuredOutput.getColumnType(i), groupBy.getQuick(i).position));
-            pivoted.getOutput().add(ctx.nextColumnId++, measuredOutput.getColumnName(i), measuredOutput.getColumnType(i), measuredOutput.getMetadata(i), true);
+            pivoted.getGroupingExpressions().add(ctx.planNodes.columns.next().of(measuredOutput.getColumnId(i), measuredOutput.getColumnType(i), groupBy.getQuick(i).position));
+            pivoted.getOutput().add(scope.nextColumnId++, measuredOutput.getColumnName(i), measuredOutput.getColumnType(i), measuredOutput.getMetadata(i), true);
         }
-        pivotIndexes.setAll(forColumns.size(), 0);
+        scope.pivotIndexes.setAll(forColumns.size(), 0);
         for (int combination = 0; combination < combinations; combination++) {
             for (int k = 0, m = measures.size(); k < m; k++) {
                 final QueryColumn measure = measures.getQuick(k);
                 final int measureIndex = firstMeasureIndex + k;
                 final int position = measure.getAst().position;
-                ctx.substitutionNodes.clear();
-                ctx.substitutionColumns.clear();
+                scope.substitutionNodes.clear();
+                scope.substitutionColumns.clear();
                 final ExpressionNode value = windowJoin != null && isDirect
-                        ? windowJoinPivotValue(windowJoinPivotAggregates.getQuick(k), measuredOutput, measureIndex, position)
+                        ? windowJoinPivotValue(scope.windowJoinPivotAggregates.getQuick(k), measuredOutput, measureIndex, position)
                         : ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, quotedPivotName(measuredOutput.getColumnName(measureIndex)), 0, position);
                 final ExpressionNode call = pivotMeasure(forColumns, measure, value);
-                final BoundExpression bound = ctx.functionBinder.bindGroupByExpression(call, measuredOutput, ctx.substitutionNodes, ctx.substitutionColumns, executionContext);
+                final BoundExpression bound = ctx.functionBinder.bindGroupByExpression(call, measuredOutput, scope.substitutionNodes, scope.substitutionColumns, executionContext);
                 pivoted.getAggregates().add((FunctionExpression) bound);
             }
             for (int i = forColumns.size() - 1; i >= 0; i--) {
-                final int next = pivotIndexes.getQuick(i) + 1;
+                final int next = scope.pivotIndexes.getQuick(i) + 1;
                 if (next < forColumns.getQuick(i).getValueList().size()) {
-                    pivotIndexes.setQuick(i, next);
+                    scope.pivotIndexes.setQuick(i, next);
                     break;
                 }
-                pivotIndexes.setQuick(i, 0);
+                scope.pivotIndexes.setQuick(i, 0);
             }
         }
-        pivotIndexes.setAll(forColumns.size(), 0);
+        scope.pivotIndexes.setAll(forColumns.size(), 0);
         for (int combination = 0; combination < combinations; combination++) {
             for (int k = 0, m = measures.size(); k < m; k++) {
                 final CharacterStoreEntry name = ctx.characterStore.newEntry();
@@ -799,31 +779,31 @@ final class PivotBinder implements Mutable {
                     if (i > 0) {
                         name.put('_');
                     }
-                    name.put(SqlUtil.toColumnName(forColumns.getQuick(i).getValueAliases().getQuick(pivotIndexes.getQuick(i))));
+                    name.put(SqlUtil.toColumnName(forColumns.getQuick(i).getValueAliases().getQuick(scope.pivotIndexes.getQuick(i))));
                 }
                 if (!pivot.isPivotGroupByColumnHasNoAlias()) {
                     name.put('_').put(SqlUtil.toColumnName(measures.getQuick(k).getAlias()));
                 }
                 final int index = pivoted.getOutput().getColumnCount() - groupBy.size();
                 final CharSequence columnName = name.toImmutable();
-                pivoted.getOutput().add(ctx.nextColumnId++, columnName, pivoted.getAggregates().getQuick(index).getDataType(), true);
+                pivoted.getOutput().add(scope.nextColumnId++, columnName, pivoted.getAggregates().getQuick(index).getDataType(), true);
                 if (SqlUtil.protectColumnAlias(ctx.characterStore, columnName) != columnName) {
                     pivoted.getOutput().protectName(pivoted.getOutput().getColumnCount() - 1);
                 }
             }
             for (int i = forColumns.size() - 1; i >= 0; i--) {
-                final int next = pivotIndexes.getQuick(i) + 1;
+                final int next = scope.pivotIndexes.getQuick(i) + 1;
                 if (next < forColumns.getQuick(i).getValueList().size()) {
-                    pivotIndexes.setQuick(i, next);
+                    scope.pivotIndexes.setQuick(i, next);
                     break;
                 }
-                pivotIndexes.setQuick(i, 0);
+                scope.pivotIndexes.setQuick(i, 0);
             }
         }
         return pivoted;
     }
 
-    private static final class WindowJoinPivotAggregate implements Mutable {
+    static final class WindowJoinPivotAggregate implements Mutable {
         private static final int AVG = 1;
         private static final int FIRST = 2;
         private static final int LAST = 3;

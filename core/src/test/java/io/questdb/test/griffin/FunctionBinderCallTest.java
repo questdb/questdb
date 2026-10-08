@@ -171,7 +171,7 @@ public class FunctionBinderCallTest extends AbstractCairoTest {
             );
             assertException("SELECT * FROM t WHERE along = 0x123", 30, "invalid constant: 0x123");
             assertException("SELECT * FROM t WHERE ts = ''", 27, "invalid timestamp");
-            assertException("SELECT * FROM t WHERE ts_ns = ''", 30, "Invalid date [str=]");
+            assertException("SELECT * FROM t WHERE ts_ns = ''", 30, "invalid timestamp");
         });
     }
 

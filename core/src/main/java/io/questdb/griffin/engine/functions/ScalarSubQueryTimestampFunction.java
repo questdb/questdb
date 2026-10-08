@@ -111,11 +111,10 @@ public final class ScalarSubQueryTimestampFunction extends TimestampFunction {
         return true;
     }
 
-    // Runtime-constant does NOT imply stable here: init() re-opens the wrapped cursor, so
-    // stability holds only when the sub-query factory proves it (fail-safe default: unstable).
+    // The generator evaluates a sub-query at most once per execution and shares its rows between consumers.
     @Override
     public boolean isStableWithinExecution() {
-        return factory.isStableWithinExecution();
+        return true;
     }
 
     public void setPublishHolder(ScalarTimestampBoundHolder publishHolder) {

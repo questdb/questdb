@@ -29,7 +29,7 @@ import io.questdb.std.ObjectFactory;
 /**
  * Removes duplicate full input tuples without changing column identities.
  */
-public final class DistinctPlan extends UnaryPlan {
+public final class DistinctPlan extends ForwardingPlan {
     public static final ObjectFactory<DistinctPlan> FACTORY = DistinctPlan::new;
 
     public DistinctPlan of(LogicalPlan input, int position) {

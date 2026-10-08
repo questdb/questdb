@@ -36,14 +36,14 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Runs sub-queries of every plan shape the stability rules can prove stable, over a plain, a
- * bitmap-indexed, a posting-covering-indexed and a posting-indexed table with Parquet partitions,
- * under every combination of the settings that change the generator's physical choices (parallel
- * GROUP BY, which also gates vectorised GROUP BY, parallel filter and Parquet read, JIT, parallel
- * top K and encoded sort). Generating a sub-query asserts that a
- * sequence-stable plan produced a factory that proves it, so with assertions enabled an
- * unproven factory fails the query; the rows of every run must equal those of the plain table
- * under serial execution.
+ * Runs sub-queries of many plan shapes (scans, index lookups, filters, sorts, Top-K, limits, keyed
+ * and keyless aggregates, DISTINCT, set operations, bind variables, nested sub-queries) as IN and
+ * scalar consumers, over a plain, a bitmap-indexed, a posting-covering-indexed and a
+ * posting-indexed table with Parquet partitions, under every combination of the settings that
+ * change the generator's physical choices (parallel GROUP BY, which also gates vectorised GROUP BY,
+ * parallel filter and Parquet read, JIT, parallel top K and encoded sort). A sub-query is evaluated
+ * once per execution whatever factory the generator builds for it, so the rows of every run must
+ * equal those of the plain table under serial execution.
  */
 public class SubqueryStabilityContractTest extends AbstractCairoTest {
     private static final String[] IN_SYM = {

@@ -45,10 +45,8 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
-import io.questdb.griffin.plan.logical.DeferredErrorExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
-import io.questdb.std.Chars;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -69,8 +67,8 @@ final class IntervalExtractor implements Mutable {
     private final RuntimeIntervalModelBuilder intervals = new RuntimeIntervalModelBuilder();
     private final Interval inverted = new Interval();
     private final LongList parsedIntervals;
-    private boolean intrinsicFalse;
     private boolean isBoundSpeculationAllowed;
+    private boolean isIntrinsicFalse;
     private boolean isNestedOffset;
     private IntervalExtractor offsetIntervals;
     private int timestampType;
@@ -83,8 +81,10 @@ final class IntervalExtractor implements Mutable {
 
     @Override
     public void clear() {
-        intrinsicFalse = false;
+        isIntrinsicFalse = false;
+        final Throwable failure = Misc.clearBestEffort(null, offsetIntervals);
         intervals.clear();
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private static Function boundFunction(BoundExpression bound, OutputSchema input, FunctionInstantiator instantiator,
@@ -186,21 +186,8 @@ final class IntervalExtractor implements Mutable {
                 && isSameOffset(l.argumentAt(2), r.argumentAt(2));
     }
 
-    /**
-     * A designated timestamp bound or element whose text does not parse: a quoted literal reports only its
-     * position, other text reports itself.
-     */
-    private static SqlException invalidDate(ConstantExpression constant) {
-        return isQuotedLiteral(constant) ? SqlException.invalidDate(constant.getPosition())
-                : SqlException.invalidDate(constant.getTimestampText(), constant.getPosition());
-    }
-
     private static boolean isQuotedLiteral(ConstantExpression constant) {
         return constant.isLiteral() && constant.getSource() == null;
-    }
-
-    private static boolean isStringLiteral(ConstantExpression constant) {
-        return isQuotedLiteral(constant) && constant.getDataType() == ColumnType.STRING;
     }
 
     private static boolean isTimestampCursor(CursorExpression cursor) {
@@ -256,11 +243,15 @@ final class IntervalExtractor implements Mutable {
         }
     }
 
+    /**
+     * A string literal spelled in SQL as itself rather than folded from an expression.
+     */
+    static boolean isStringLiteral(ConstantExpression constant) {
+        return isQuotedLiteral(constant) && constant.getDataType() == ColumnType.STRING;
+    }
+
     private BoundExpression intersect(BoundExpression predicate, int timestampColumnId, OutputSchema input, FunctionInstantiator instantiator,
                                       BoundExpressionRewriter rewriter, SqlExecutionContext executionContext) throws SqlException {
-        if (predicate instanceof DeferredErrorExpression deferred && deferred.getComparedColumnId() == timestampColumnId) {
-            throw deferred.raise();
-        }
         if (!(predicate instanceof FunctionExpression call)) {
             return predicate;
         }
@@ -345,15 +336,6 @@ final class IntervalExtractor implements Mutable {
             }
         }
         final ColumnExpression column = (ColumnExpression) (isReversed ? right : left);
-        if (bound instanceof ConstantExpression constant) {
-            if (column.isDirectReference() && column.getDataType() == timestampType) {
-                if (isTextComparisonConsumed(operator, constant)) {
-                    return null;
-                }
-            } else if (constant.isUnparsedTimestamp()) {
-                return predicate;
-            }
-        }
         if (column.isDirectReference() && column.getDataType() == timestampType
                 && (operator.startsWith("<") || operator.startsWith(">")) && !"<>".equals(operator)) {
             validateRangeBound(bound);
@@ -409,18 +391,13 @@ final class IntervalExtractor implements Mutable {
                 }
                 return predicate;
             }
-            final CharSequence text = isIntegralBound ? null : constant.getTimestampText();
             if (isExclusion) {
-                if (text != null) {
-                    intervals.subtractIntervals(text, 0, text.length(), bound.getPosition());
-                } else {
-                    intervals.subtractInterval(value, value);
-                }
-                intrinsicFalse |= intervals.isEmptySet();
+                intervals.subtractInterval(value, value);
+                isIntrinsicFalse |= intervals.isEmptySet();
             } else if (isEquality) {
                 intervals.intersect(value, value);
-                if (text != null) {
-                    intrinsicFalse |= intervals.isEmptySet();
+                if (!isIntegralBound && constant.getTimestampText() != null) {
+                    isIntrinsicFalse |= intervals.isEmptySet();
                 }
             } else {
                 intersectBound(value, isLower, isStrict);
@@ -473,7 +450,7 @@ final class IntervalExtractor implements Mutable {
             intervals.setBetweenNegated(negated);
             setBetweenBoundary(lo, input, instantiator, executionContext);
             setBetweenBoundary(hi, input, instantiator, executionContext);
-            intrinsicFalse |= intervals.isEmptySet();
+            isIntrinsicFalse |= intervals.isEmptySet();
             return null;
         } catch (NumericException e) {
             final SqlException invalidDate = SqlException.invalidDate(predicate.getPosition());
@@ -505,7 +482,7 @@ final class IntervalExtractor implements Mutable {
 
     private void intersectEmpty() {
         intervals.intersectEmpty();
-        intrinsicFalse = true;
+        isIntrinsicFalse = true;
     }
 
     private BoundExpression intersectIn(
@@ -540,12 +517,23 @@ final class IntervalExtractor implements Mutable {
                     } else {
                         intervals.intersectIntervals(seq, lo, seq.length() - lo, bound.getPosition());
                     }
-                    intrinsicFalse |= intervals.isEmptySet();
+                    isIntrinsicFalse |= intervals.isEmptySet();
                 } else {
+                    final CharSequence seq = intervalElement(constant);
+                    if (seq != null) {
+                        final int lo = seq == intervalText ? 1 : 0;
+                        if (negated) {
+                            intervals.subtractIntervals(seq, lo, seq.length() - lo, bound.getPosition());
+                        } else {
+                            intervals.intersectIntervals(seq, lo, seq.length() - lo, bound.getPosition());
+                        }
+                        isIntrinsicFalse |= intervals.isEmptySet();
+                        return null;
+                    }
                     final long value = timestampValue(constant);
                     if (negated) {
                         intervals.subtractInterval(value, value);
-                        intrinsicFalse |= intervals.isEmptySet();
+                        isIntrinsicFalse |= intervals.isEmptySet();
                     } else if (value == Numbers.LONG_NULL && ColumnType.isTimestamp(constant.getDataType())) {
                         intersectEmpty();
                     } else {
@@ -565,7 +553,7 @@ final class IntervalExtractor implements Mutable {
                 } else {
                     intervals.intersectRuntimeTimestamp(function, bound.getPosition());
                 }
-                intrinsicFalse |= intervals.isEmptySet();
+                isIntrinsicFalse |= intervals.isEmptySet();
             }
             return null;
         }
@@ -578,12 +566,19 @@ final class IntervalExtractor implements Mutable {
             }
         }
         for (int i = count - 1; i > 0; i--) {
-            final long value = timestampValue((ConstantExpression) predicate.argumentAt(i));
+            final ConstantExpression constant = (ConstantExpression) predicate.argumentAt(i);
+            final CharSequence seq = intervalElement(constant);
             if (negated) {
-                intervals.subtractInterval(value, value);
-                intrinsicFalse |= intervals.isEmptySet();
+                if (seq != null) {
+                    final int lo = seq == intervalText ? 1 : 0;
+                    intervals.subtractIntervals(seq, lo, seq.length() - lo, constant.getPosition());
+                } else {
+                    final long value = timestampValue(constant);
+                    intervals.subtractInterval(value, value);
+                }
+                isIntrinsicFalse |= intervals.isEmptySet();
             } else {
-                intervals.union(value, value);
+                unionElement(constant, seq);
             }
         }
         return null;
@@ -615,7 +610,7 @@ final class IntervalExtractor implements Mutable {
         } else {
             return predicate;
         }
-        intrinsicFalse |= intervals.isEmptySet();
+        isIntrinsicFalse |= intervals.isEmptySet();
         return null;
     }
 
@@ -786,12 +781,6 @@ final class IntervalExtractor implements Mutable {
                 intervals.intersect(inverted.getLo(), inverted.getHi());
                 return soundness == MonotonicTimestampFunction.EXACT ? null : predicate;
             }
-            // The retained residual reads the bound this inverter evaluates; that is sound only
-            // when repeated opens of the sub-query agree within one execution.
-            if (loFunction instanceof ScalarSubQueryTimestampFunction && !loFunction.isStableWithinExecution()
-                    || hiFunction instanceof ScalarSubQueryTimestampFunction && !hiFunction.isStableWithinExecution()) {
-                return predicate;
-            }
             inverted.of(Long.MIN_VALUE, Long.MAX_VALUE);
             if (invert(head) == MonotonicTimestampFunction.NONE) {
                 return predicate;
@@ -806,7 +795,7 @@ final class IntervalExtractor implements Mutable {
             }
             head = loFunction = hiFunction = null;
             intervals.intersectMonotonicTimestamp(inverter);
-            intrinsicFalse |= intervals.isEmptySet();
+            isIntrinsicFalse |= intervals.isEmptySet();
             // A runtime value can make inversion decline at cursor open.
             return predicate;
         } catch (NumericException e) {
@@ -864,9 +853,15 @@ final class IntervalExtractor implements Mutable {
         }
         final IntervalExtractor source = offsetIntervals;
         source.isNestedOffset = true;
-        final BoundExpression residual = source.extract(rewriter.unwrapProjectedOffsets(predicate),
-                timestampColumnId, input, instantiator, rewriter, executionContext);
-        if (source.intrinsicFalse) {
+        final BoundExpression residual;
+        try {
+            residual = source.extract(rewriter.unwrapProjectedOffsets(predicate),
+                    timestampColumnId, input, instantiator, rewriter, executionContext);
+        } catch (Throwable th) {
+            Misc.clearBestEffort(th, source);
+            throw th;
+        }
+        if (source.isIntrinsicFalse) {
             source.intervals.freeAndClear();
             intersectEmpty();
             return null;
@@ -881,8 +876,27 @@ final class IntervalExtractor implements Mutable {
         if (!isConsumed) {
             source.intervals.freeAndClear();
         }
-        intrinsicFalse |= intervals.isEmptySet();
+        isIntrinsicFalse |= intervals.isEmptySet();
         return isConsumed && residual == null && isInjective ? null : predicate;
+    }
+
+    /**
+     * The spelling of an IN list element that is text spelling intervals rather than a timestamp, a string literal
+     * quoted as in SQL, or null for any other element. The binder rejects text that spells neither.
+     */
+    private CharSequence intervalElement(ConstantExpression constant) {
+        final int tag = ColumnType.tagOf(constant.getDataType());
+        final CharSequence text = tag == ColumnType.STRING || tag == ColumnType.SYMBOL || tag == ColumnType.VARCHAR
+                ? constantText(constant) : null;
+        if (text == null) {
+            return null;
+        }
+        try {
+            ColumnType.getTimestampDriver(timestampType).parseFloorLiteral(text);
+            return null;
+        } catch (NumericException e) {
+            return isStringLiteral(constant) ? quote(text) : text;
+        }
     }
 
     private int invert(Function head) {
@@ -911,43 +925,9 @@ final class IntervalExtractor implements Mutable {
                 || type == ColumnType.SHORT || type == ColumnType.BYTE || type == ColumnType.NULL);
     }
 
-    /**
-     * Validates a comparison of the designated timestamp with constant text that does not parse as a
-     * timestamp: an exclusion of a quoted literal subtracts the intervals the literal spells, any other
-     * such comparison raises its operator's error. Returns false when the constant is not such text or the
-     * call is no comparison.
-     */
-    private boolean isTextComparisonConsumed(String operator, ConstantExpression constant) throws SqlException {
-        final CharSequence text = unparsedText(constant);
-        if (text == null) {
-            return false;
-        }
-        final int position = constant.getPosition();
-        final boolean isQuoted = isQuotedLiteral(constant);
-        switch (operator) {
-            case "<", "<=", ">", ">=" -> throw SqlException.invalidDate(isQuoted ? quote(text) : text, position);
-            case "=", "!=", "<>" -> {
-                if (isQuoted && !"=".equals(operator)) {
-                    final CharSequence seq = quote(text);
-                    intervals.subtractIntervals(seq, 1, seq.length() - 1, position);
-                    intrinsicFalse |= intervals.isEmptySet();
-                    return true;
-                }
-                if (Chars.indexOf(text, ';') >= 0) {
-                    throw SqlException.$(position, isQuoted ? "not a timestamp, use IN keyword with intervals" : "Not a date, use IN keyword with intervals");
-                }
-                throw isQuoted ? SqlException.$(position, "invalid timestamp") : SqlException.invalidDate(text, position);
-            }
-            default -> {
-                return false;
-            }
-        }
-    }
-
     private boolean isTimestampPoint(ColumnExpression column, BoundExpression bound, int timestampColumnId, int timestampType) {
         return column.getColumnId() == timestampColumnId && column.getDataType() == timestampType
-                && (bound instanceof ConstantExpression constant && (bound.getDataType() == timestampType || bound.getDataType() == ColumnType.NULL
-                || constant.isUnparsedTimestamp())
+                && (bound instanceof ConstantExpression && (bound.getDataType() == timestampType || bound.getDataType() == ColumnType.NULL)
                 || bound.getDataType() == timestampType && (bound.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0
                 || bound instanceof CursorExpression cursor && isBoundSpeculationAllowed && isTimestampCursor(cursor)
                 && cursor.getPlan().getOutput().getColumnType(0) == timestampType);
@@ -1013,9 +993,6 @@ final class IntervalExtractor implements Mutable {
             throws SqlException, NumericException {
         if (bound instanceof ConstantExpression constant) {
             final int type = constant.getDataType();
-            if (constant.isUnparsedTimestamp()) {
-                throw invalidDate(constant);
-            }
             if (ColumnType.isTimestamp(type) && type != timestampType) {
                 final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
                 final int constantType = ColumnType.getTimestampType(type);
@@ -1039,9 +1016,6 @@ final class IntervalExtractor implements Mutable {
     }
 
     private long timestampValue(ConstantExpression constant) throws SqlException {
-        if (constant.isUnparsedTimestamp()) {
-            throw invalidDate(constant);
-        }
         final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         try {
             return switch (ColumnType.tagOf(constant.getDataType())) {
@@ -1054,6 +1028,20 @@ final class IntervalExtractor implements Mutable {
             };
         } catch (NumericException e) {
             throw SqlException.invalidDate(constant.getPosition());
+        }
+    }
+
+    /**
+     * Unions an IN list element: the intervals of its {@link #intervalElement spelling} when it has one, otherwise
+     * the timestamp it spells.
+     */
+    private void unionElement(ConstantExpression constant, CharSequence seq) throws SqlException {
+        if (seq != null) {
+            final int lo = seq == intervalText ? 1 : 0;
+            intervals.unionIntervals(seq, lo, seq.length() - lo, constant.getPosition());
+        } else {
+            final long value = timestampValue(constant);
+            intervals.union(value, value);
         }
     }
 
@@ -1072,8 +1060,7 @@ final class IntervalExtractor implements Mutable {
                 for (int i = call.getArgumentCount() - 1; i > 0; i--) {
                     final BoundExpression bound = call.argumentAt(i);
                     if (bound instanceof ConstantExpression constant) {
-                        final long value = timestampValue(constant);
-                        intervals.union(value, value);
+                        unionElement(constant, intervalElement(constant));
                     } else {
                         intervals.unionRuntimeTimestamp(instantiator.instantiate(bound, input, executionContext), bound.getPosition());
                     }
@@ -1082,9 +1069,6 @@ final class IntervalExtractor implements Mutable {
         } else {
             final BoundExpression bound = call.argumentAt(0) instanceof ColumnExpression ? call.argumentAt(1) : call.argumentAt(0);
             if (bound instanceof ConstantExpression constant) {
-                if (constant.isUnparsedTimestamp()) {
-                    throw invalidDate(constant);
-                }
                 final long value = constant.getDataType() == ColumnType.NULL ? Numbers.LONG_NULL : constant.getLongValue();
                 intervals.union(value, value);
             } else {
@@ -1093,27 +1077,7 @@ final class IntervalExtractor implements Mutable {
         }
     }
 
-    /**
-     * The text of a constant that does not parse as the timestamp it is compared with, or null.
-     */
-    private CharSequence unparsedText(ConstantExpression constant) {
-        if (constant.isUnparsedTimestamp()) {
-            return constant.getTimestampText();
-        }
-        if (constant.getDataType() != ColumnType.SYMBOL || constant.getStrValue() == null) {
-            return null;
-        }
-        try {
-            ColumnType.getTimestampDriver(timestampType).parseFloorLiteral(constant.getStrValue());
-            return null;
-        } catch (NumericException e) {
-            return constant.getStrValue();
-        }
-    }
-
     RuntimeIntrinsicIntervalModel build(int partitionBy) {
-        // The scan supplies the validated reader's partition scheme immediately
-        // before construction; the preceding intersections need no reader.
         intervals.of(timestampType, partitionBy, configuration);
         return intervals.hasIntervalFilters() ? intervals.build() : null;
     }
@@ -1124,18 +1088,17 @@ final class IntervalExtractor implements Mutable {
     BoundExpression extract(BoundExpression predicate, int timestampColumnId, OutputSchema input, FunctionInstantiator instantiator,
                             BoundExpressionRewriter rewriter, SqlExecutionContext executionContext) throws SqlException {
         of(input.getColumnType(input.getColumnIndexById(timestampColumnId)));
-        // Each pruning bound generates its sub-query once more, so cap the nesting that speculates.
-        isBoundSpeculationAllowed = instantiator.getLevelDepth() < MAX_SPECULATIVE_SCALAR_BOUND_DEPTH;
+        isBoundSpeculationAllowed = instantiator.getDepth() < MAX_SPECULATIVE_SCALAR_BOUND_DEPTH;
         return intersect(predicate, timestampColumnId, input, instantiator, rewriter, executionContext);
     }
 
     boolean isIntrinsicFalse() {
-        return intrinsicFalse;
+        return isIntrinsicFalse;
     }
 
     void merge(RuntimeIntervalModel model, long lo, long hi) {
         intervals.merge(model, lo, hi);
-        intrinsicFalse |= intervals.isEmptySet();
+        isIntrinsicFalse |= intervals.isEmptySet();
     }
 
     void of(int timestampType) {
@@ -1149,6 +1112,6 @@ final class IntervalExtractor implements Mutable {
      */
     void override(TableToken tableToken, SqlExecutionContext executionContext) {
         executionContext.overrideWhereIntervals(tableToken, intervals, timestampType);
-        intrinsicFalse |= intervals.isEmptySet();
+        isIntrinsicFalse |= intervals.isEmptySet();
     }
 }

@@ -29,15 +29,11 @@ import org.junit.Test;
 
 /**
  * A monotonic-wrapper timestamp predicate whose bound is a scalar sub-query
- * (e.g. {@code dateadd('h',1,ts) >= (select ...)}) is compiled twice: once for the interval-pruning
- * inverter and once for the retained residual filter. When that sub-query is NON-deterministic
- * (its projection evaluates {@code rnd_*} / {@code systimestamp()}), the two independent cursor opens
- * can yield different bounds and the pruning inverter can drop rows the residual filter would keep.
- *
- * <p>{@code IntervalExtractor#intersectMonotonicRange} therefore skips interval
- * pruning (residual-only) for a non-deterministic {@code ScalarSubQueryTimestampFunction} bound while
- * still pruning for deterministic sub-query bounds and for runtime-constant bounds (bind variables,
- * {@code now()}). Detection uses {@code RecordCursorFactory.isStableWithinExecution()}.
+ * (e.g. {@code dateadd('h',1,ts) >= (select ...)}) is used twice: by the interval-pruning inverter and
+ * by the retained residual filter. The pruning bound evaluates the sub-query once per execution and
+ * publishes its value, which the residual reads, so every sub-query bound prunes, including a
+ * NON-deterministic one (its projection evaluates {@code rnd_*} / {@code systimestamp()}): both uses
+ * see the same value. Bounds over bind variables and {@code now()} prune as before.
  */
 public class ScalarSubqueryNonDeterministicPruningTest extends AbstractCairoTest {
 
@@ -61,15 +57,14 @@ public class ScalarSubqueryNonDeterministicPruningTest extends AbstractCairoTest
                 "('2020-06-03T00:00:00.000000Z', 3)");
         execute("CREATE TABLE b (lo TIMESTAMP)");
         execute("INSERT INTO b VALUES ('2020-06-02T00:00:00.000000Z')");
-        // indexed symbol source: exercises the index-driven row-cursor stability composition
+        // indexed symbol source: exercises index-driven sub-query bounds
         execute("CREATE TABLE bi (lo TIMESTAMP, sym SYMBOL INDEX, k INT)");
         execute("INSERT INTO bi VALUES " +
                 "('2020-06-02T00:00:00.000000Z', 'X', 1), " +
                 "('2020-06-05T00:00:00.000000Z', 'Y', 2)");
     }
 
-    // A deterministic single-row sub-query bound MUST still prune to an interval scan
-    // (the PR's headline feature). isStableWithinExecution()==true, so the guard does not fire.
+    // A deterministic single-row sub-query bound prunes to an interval scan.
     @Test
     public void testDeterministicSubqueryBoundStillPrunes() throws Exception {
         assertMemoryLeak(() -> {
@@ -89,47 +84,37 @@ public class ScalarSubqueryNonDeterministicPruningTest extends AbstractCairoTest
         });
     }
 
-    // A non-deterministic rnd_* sub-query bound MUST NOT prune: the predicate stays a residual
-    // filter (no interval scan), so the single residual evaluation is the source of truth.
     @Test
-    public void testRndSubqueryBoundNotPruned() throws Exception {
+    public void testRndSubqueryBoundPrunes() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= " +
                     "(SELECT rnd_timestamp('2020-06-01T00:00:00.000000Z'::timestamp, '2020-06-03T00:00:00.000000Z'::timestamp, 0))")
-                    .assertsPlanNotContaining("Interval forward scan on: t");
+                    .assertsPlanContaining("Interval forward scan on: t");
         });
     }
 
-    // A NON-deterministic AGGREGATE sub-query bound (rnd_* inside max()) MUST NOT prune: the
-    // non-determinism lives in the aggregate function held by the group-by factory, not in a
-    // projection, filter or base factory. Two independent opens draw different bounds, so pruning
-    // with one draw while filtering with another silently drops rows.
     @Test
-    public void testNonDeterministicAggregateSubqueryBoundNotPruned() throws Exception {
+    public void testNonDeterministicAggregateSubqueryBoundPrunes() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= " +
                     "(SELECT max(rnd_timestamp('2020-06-01T00:00:00.000000Z'::timestamp, '2020-06-03T00:00:00.000000Z'::timestamp, 0)) FROM long_sequence(5))")
-                    .assertsPlanNotContaining("Interval forward scan on: t");
+                    .assertsPlanContaining("Interval forward scan on: t");
         });
     }
 
-    // Same shape over a table base (group-by factory over a page-frame scan) MUST NOT prune.
     @Test
-    public void testNonDeterministicAggregateOverTableSubqueryBoundNotPruned() throws Exception {
+    public void testNonDeterministicAggregateOverTableSubqueryBoundPrunes() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= " +
                     "(SELECT max(rnd_timestamp('2020-06-01T00:00:00.000000Z'::timestamp, '2020-06-03T00:00:00.000000Z'::timestamp, 0)) FROM b)")
-                    .assertsPlanNotContaining("Interval forward scan on: t");
+                    .assertsPlanContaining("Interval forward scan on: t");
         });
     }
 
-    // POSITIVE CONTROL for the set-operation shape: the same UNION ALL ... LIMIT 1 sub-query
-    // bound with deterministic aggregates MUST prune. AbstractSetRecordCursorFactory composes
-    // isStableWithinExecution() from both inputs, so only the rnd_* source in the negative twin
-    // below blocks pruning - proving the twin fails for the right reason.
+    // A UNION ALL ... LIMIT 1 sub-query bound with deterministic aggregates prunes.
     @Test
     public void testDeterministicUnionSubqueryBoundStillPrunes() throws Exception {
         assertMemoryLeak(() -> {
@@ -143,11 +128,8 @@ public class ScalarSubqueryNonDeterministicPruningTest extends AbstractCairoTest
         });
     }
 
-    // A set-operation sub-query bound holding a non-deterministic aggregate MUST NOT prune.
-    // AbstractSetRecordCursorFactory composes isStableWithinExecution() from both inputs, so
-    // the rnd_* aggregate arms keep this shape out of the pruning path.
     @Test
-    public void testNonDeterministicUnionSubqueryBoundNotPruned() throws Exception {
+    public void testNonDeterministicUnionSubqueryBoundPrunes() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= " +
@@ -155,46 +137,42 @@ public class ScalarSubqueryNonDeterministicPruningTest extends AbstractCairoTest
                     "UNION ALL " +
                     "SELECT max(rnd_timestamp('2020-06-01T00:00:00.000000Z'::timestamp, '2020-06-03T00:00:00.000000Z'::timestamp, 0)) FROM long_sequence(5) " +
                     "LIMIT 1)")
-                    .assertsPlanNotContaining("Interval forward scan on: t");
+                    .assertsPlanContaining("Interval forward scan on: t");
         });
     }
 
-    // A non-deterministic systimestamp() sub-query bound MUST NOT prune.
     @Test
-    public void testSystimestampSubqueryBoundNotPruned() throws Exception {
+    public void testSystimestampSubqueryBoundPrunes() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= (SELECT systimestamp())")
-                    .assertsPlanNotContaining("Interval forward scan on: t");
+                    .assertsPlanContaining("Interval forward scan on: t");
         });
     }
 
-    // BETWEEN with a non-deterministic sub-query bound MUST NOT prune (symmetric coverage).
     @Test
-    public void testBetweenRndSubqueryBoundNotPruned() throws Exception {
+    public void testBetweenRndSubqueryBoundPrunes() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) BETWEEN " +
                     "(SELECT rnd_timestamp('2020-06-01T00:00:00.000000Z'::timestamp, '2020-06-03T00:00:00.000000Z'::timestamp, 0)) " +
                     "AND '2020-06-03T00:00:00.000000Z'")
-                    .assertsPlanNotContaining("Interval forward scan on: t");
+                    .assertsPlanContaining("Interval forward scan on: t");
         });
     }
 
-    // Strict less-than (<=) with a non-deterministic sub-query bound MUST NOT prune (symmetric coverage).
     @Test
-    public void testLessThanRndSubqueryBoundNotPruned() throws Exception {
+    public void testLessThanRndSubqueryBoundPrunes() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) <= " +
                     "(SELECT rnd_timestamp('2020-06-01T00:00:00.000000Z'::timestamp, '2020-06-03T00:00:00.000000Z'::timestamp, 0))")
-                    .assertsPlanNotContaining("Interval forward scan on: t");
+                    .assertsPlanContaining("Interval forward scan on: t");
         });
     }
 
-    // A bind variable is non-deterministic across executions yet stable within one. Wrapping it
-    // in an expression (dateadd) must not lose that stability: the wrapper interfaces compose
-    // isStableWithinExecution() from their args, so the bound still prunes.
+    // A bind variable is non-deterministic across executions yet stable within one, and so is an
+    // expression over it, so the bound prunes.
     @Test
     public void testExpressionWrappedBindVariableBoundStillPrunes() throws Exception {
         assertMemoryLeak(() -> {
@@ -222,25 +200,20 @@ public class ScalarSubqueryNonDeterministicPruningTest extends AbstractCairoTest
         });
     }
 
-    // An rnd_* source hidden inside a nested cursor predicate (between(NCC) over CursorFunctions)
-    // MUST NOT prune: CursorFunction stability delegates to the wrapped factory and the wrapper
-    // interfaces and the async group-by factory (fused filter included) compose it through.
     @Test
-    public void testNestedCursorPredicateRndBoundNotPruned() throws Exception {
+    public void testNestedCursorPredicateRndBoundPrunes() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= " +
                     "(SELECT max(lo) FROM b WHERE lo BETWEEN " +
                     "(SELECT rnd_timestamp('2020-06-01T00:00:00.000000Z'::timestamp, '2020-06-03T00:00:00.000000Z'::timestamp, 0)) " +
                     "AND (SELECT rnd_timestamp('2020-06-05T00:00:00.000000Z'::timestamp, '2020-06-08T00:00:00.000000Z'::timestamp, 0)))")
-                    .assertsPlanNotContaining("Interval forward scan on: t");
+                    .assertsPlanContaining("Interval forward scan on: t");
         });
     }
 
-    // POSITIVE CONTROL for the group-by-key shape: the same serial keyed group-by (forced by the
-    // UNION ALL base) with a deterministic key expression MUST prune. The factory classifies its
-    // key functions, so only the rnd_* key in the negative twin below blocks pruning - proving
-    // the twin fails for the right reason.
+    // A serial keyed group-by (forced by the UNION ALL base) with a deterministic key expression
+    // prunes.
     @Test
     public void testDeterministicGroupByKeyBoundStillPrunes() throws Exception {
         assertMemoryLeak(() -> {
@@ -252,24 +225,18 @@ public class ScalarSubqueryNonDeterministicPruningTest extends AbstractCairoTest
         });
     }
 
-    // An rnd_* GROUP BY key under LIMIT 1 keeps scalar cardinality at one while the selected key
-    // changes across opens. The serial keyed group-by factory (forced by the UNION ALL base) must
-    // classify its key functions, so this MUST NOT prune.
     @Test
-    public void testRndGroupByKeyBoundNotPruned() throws Exception {
+    public void testRndGroupByKeyBoundPrunes() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= " +
                     "(SELECT k FROM (SELECT rnd_timestamp('2020-06-01T00:00:00.000000Z'::timestamp, '2020-06-03T00:00:00.000000Z'::timestamp, 0) k, count() c " +
                     "FROM (SELECT lo FROM b UNION ALL SELECT lo FROM b)) LIMIT 1)")
-                    .assertsPlanNotContaining("Interval forward scan on: t");
+                    .assertsPlanContaining("Interval forward scan on: t");
         });
     }
 
     // Indexed scalar sub-query bounds.
-    // A sub-query bound that resolves through a symbol INDEX scan is stable within the execution
-    // when its key (and any residual filter) is stable. Previously PageFrameRecordCursorFactory
-    // reported EVERY index-driven cursor unstable, so these prunes were lost to a full outer scan.
 
     // Fixed-literal indexed symbol lookup: the key is constant, so the bound prunes.
     @Test
@@ -285,8 +252,7 @@ public class ScalarSubqueryNonDeterministicPruningTest extends AbstractCairoTest
         });
     }
 
-    // Bind-variable indexed symbol lookup: non-deterministic across executions yet stable within
-    // one (frozen snapshot), so the deferred index lookup still prunes.
+    // Bind-variable indexed symbol lookup: the deferred index lookup prunes.
     @Test
     public void testIndexedBindSymbolBoundPrunes() throws Exception {
         assertMemoryLeak(() -> {
@@ -302,8 +268,7 @@ public class ScalarSubqueryNonDeterministicPruningTest extends AbstractCairoTest
         });
     }
 
-    // Deterministic aggregate over an index-filtered scan: max(lo) over a fixed row set is stable,
-    // so the bound prunes even though the aggregate's base is index-driven.
+    // Deterministic aggregate over an index-filtered scan prunes.
     @Test
     public void testIndexedAggregateBoundPrunes() throws Exception {
         assertMemoryLeak(() -> {
@@ -317,7 +282,7 @@ public class ScalarSubqueryNonDeterministicPruningTest extends AbstractCairoTest
         });
     }
 
-    // BETWEEN with two indexed literal lookups: both ends are stable, so the range prunes.
+    // BETWEEN with two indexed literal lookups prunes on both ends.
     @Test
     public void testIndexedBetweenBoundPrunes() throws Exception {
         assertMemoryLeak(() -> {
@@ -333,8 +298,7 @@ public class ScalarSubqueryNonDeterministicPruningTest extends AbstractCairoTest
         });
     }
 
-    // Stable residual filter on top of the indexed lookup: both the symbol key and the filter are
-    // stable, so the filtered index cursor is stable and the bound prunes.
+    // A residual filter on top of the indexed lookup prunes to the same interval.
     @Test
     public void testIndexedFilteredStableBoundPrunes() throws Exception {
         assertMemoryLeak(() -> {
@@ -348,27 +312,23 @@ public class ScalarSubqueryNonDeterministicPruningTest extends AbstractCairoTest
         });
     }
 
-    // GUARD: a non-deterministic index KEY (rnd_symbol) makes the selected row vary across opens,
-    // so the composition must report unstable and this MUST NOT prune.
     @Test
-    public void testIndexedRndSymbolKeyBoundNotPruned() throws Exception {
+    public void testIndexedRndSymbolKeyBoundPrunes() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= " +
                     "(SELECT lo FROM bi WHERE sym = rnd_symbol('X', 'Y') LIMIT 1)")
-                    .assertsPlanNotContaining("Interval forward scan on: t");
+                    .assertsPlanContaining("Interval forward scan on: t");
         });
     }
 
-    // GUARD: a stable index key but a non-deterministic residual FILTER (rnd_*) must also stay
-    // unstable - the filter composition is the second half of the AND.
     @Test
-    public void testIndexedRndResidualFilterBoundNotPruned() throws Exception {
+    public void testIndexedRndResidualFilterBoundPrunes() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= " +
                     "(SELECT lo FROM bi WHERE sym = 'X' AND k >= rnd_int(0, 5, 0) LIMIT 1)")
-                    .assertsPlanNotContaining("Interval forward scan on: t");
+                    .assertsPlanContaining("Interval forward scan on: t");
         });
     }
 }

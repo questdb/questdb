@@ -27,7 +27,7 @@ package io.questdb.griffin.plan.logical;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjectFactory;
 
-public final class LatestByPlan extends UnaryPlan {
+public final class LatestByPlan extends ForwardingPlan {
     public static final ObjectFactory<LatestByPlan> FACTORY = LatestByPlan::new;
     private final IntList keyColumnIds = new IntList();
     private boolean isTimestampOrderInherited;

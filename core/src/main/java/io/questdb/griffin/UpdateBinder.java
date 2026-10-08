@@ -34,7 +34,6 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.BoundExpression;
-import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
@@ -99,29 +98,18 @@ final class UpdateBinder implements Mutable {
     }
 
     private void bindAssignment(
-            QueryColumn column, ProjectPlan project, LogicalPlan input, OutputSchema output, QueryModel source, SqlExecutionContext executionContext
+            QueryColumn column, ProjectPlan project, OutputSchema output, QueryModel source, SqlExecutionContext executionContext
     ) throws SqlException {
+        final BindScope scope = ctx.scope();
         final ExpressionNode expression = column.getAst();
         final CharSequence alias = sourceAlias(source);
         if (expression.type != ExpressionNode.LITERAL || ctx.functionBinder.isOuterColumn(expression, output, alias)) {
             final int targetIndex = getColumnIndex(column.getName());
-            final BoundExpression bound;
-            try {
-                bound = targetIndex >= 0
-                        ? ctx.functionBinder.bindUpdateAssignment(expression, output, alias, tableColumnTypes.getQuick(targetIndex), executionContext)
-                        : ctx.functionBinder.bind(expression, output, alias, ColumnType.STRING, executionContext);
-            } catch (SqlException e) {
-                // UPDATE builds its filter before its assignments.
-                if (input instanceof FilterPlan filter) {
-                    final BoundExpression filterError = LogicalPlans.firstGenerationError(filter.getPredicate());
-                    if (filterError != null) {
-                        LogicalPlans.raiseGenerationError(filterError);
-                    }
-                }
-                throw e;
-            }
+            final BoundExpression bound = targetIndex >= 0
+                    ? ctx.functionBinder.bindUpdateAssignment(expression, output, alias, tableColumnTypes.getQuick(targetIndex), executionContext)
+                    : ctx.functionBinder.bind(expression, output, alias, ColumnType.STRING, executionContext);
             ctx.addProjection(project, bound, null, targetIndex >= 0 ? tableColumnNames.getQuick(targetIndex) : column.getName(), true);
-            ctx.projectionAliasIndexes.add(project.getExpressions().size() - 1);
+            scope.projectionAliasIndexes.add(project.getExpressions().size() - 1);
             return;
         }
         final int index = ctx.bindColumnIndex(expression, output, source);
@@ -133,10 +121,10 @@ final class UpdateBinder implements Mutable {
         final int dot = Chars.indexOfLastUnquoted(expression.token, '.');
         final boolean isSourceAliasReusable = dot < 0 || Chars.equalsIgnoreCase(name, expression.token, dot + 1, expression.token.length());
         final boolean isTranslatingCopy = !isSourceAliasReusable && source.getJoinModels().size() == 1
-                && ctx.sourceProjectionIndexes.getQuick(index) < 0 && SqlBinder.isReferenced(project, output.getColumnId(index));
+                && scope.sourceProjectionIndexes.getQuick(index) < 0 && SqlBinder.isReferenced(project, output.getColumnId(index));
         ctx.addProjection(project, output, index, name, expression.position, isSourceAliasReusable);
         if (isTranslatingCopy) {
-            ctx.translatingCopyIds.add(project.getOutput().getColumnId(project.getOutput().getColumnCount() - 1));
+            scope.translatingCopyIds.add(project.getOutput().getColumnId(project.getOutput().getColumnCount() - 1));
         }
         if (targetIndex >= 0 && tableColumnTypes.getQuick(targetIndex) != output.getColumnType(index)) {
             project.getExpressions().setQuick(project.getExpressions().size() - 1, ctx.functionBinder.bind(expression, output, alias, executionContext));
@@ -223,17 +211,18 @@ final class UpdateBinder implements Mutable {
      * WHERE clause, into the projection of the assigned values.
      */
     LogicalPlan bind(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        final BindScope scope = ctx.scope();
         final QueryModel source = model.getNestedModel();
         SqlBinder.linkWindowExpressions(model);
         binder.validateBlockWindows(model, source);
         final ExpressionNode where = binder.copyWhereClause(source);
         final boolean hasJoin = source.getJoinModels().size() > 1;
-        final LogicalPlan sourcePlan = hasJoin ? joinBinder.bindJoins(model, source, where, executionContext) : binder.bindSource(source, executionContext);
+        final LogicalPlan sourcePlan = hasJoin ? joinBinder.bindJoins(source, where, executionContext) : binder.bindSource(source, executionContext);
         final OutputSchema output = sourcePlan.getOutput();
         ctx.promoteNoArgFunctions(model, output, hasJoin ? null : sourceAlias(source));
-        ctx.aliases.clear();
-        ctx.aliasSequences.clear();
-        ctx.projectionAliasIndexes.clear();
+        scope.aliases.clear();
+        scope.aliasSequences.clear();
+        scope.projectionAliasIndexes.clear();
         final LogicalPlan input = binder.bindWhere(where, sourcePlan, null, source, executionContext);
         windowBinder.validateWindowOrder(model, source);
         if (windowBinder.hasWindows(model, source)) {
@@ -245,13 +234,10 @@ final class UpdateBinder implements Mutable {
         if (ctx.hasAggregation(model, source)) {
             throw aggregateException(model);
         }
-        final ProjectPlan project = ctx.projects.next().of(input, model.getModelPosition());
-        ctx.sourceProjectionIndexes.setAll(output.getColumnCount(), -1);
+        final ProjectPlan project = ctx.planNodes.projects.next().of(input, model.getModelPosition());
+        scope.sourceProjectionIndexes.setAll(output.getColumnCount(), -1);
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            bindAssignment(model.getBottomUpColumns().getQuick(i), project, input, output, source, executionContext);
-        }
-        if (hasJoin) {
-            binder.throwDeferredError();
+            bindAssignment(model.getBottomUpColumns().getQuick(i), project, output, source, executionContext);
         }
         binder.clearCursorColumns();
         prepareAssignments(model, project);

@@ -181,13 +181,13 @@ public class ViewExpansionTest extends AbstractCairoTest {
                     """);
             final ViewSecurityContext projectedSecurity = new ViewSecurityContext("lp_view_posting_all", false);
             try (SqlExecutionContext context = newContext(projectedSecurity)) {
-                assertView("SELECT DISTINCT sym FROM lp_view_posting_all ORDER BY sym", context, "GroupBy vectorized", """
+                assertView("SELECT DISTINCT sym FROM lp_view_posting_all ORDER BY sym", context, "PostingIndex", """
                         sym
                         A
                         B
                         C
                         """);
-                assertView("SELECT DISTINCT sym FROM lp_view_posting_all WHERE ts>='2020-01-01T00:00:02Z' ORDER BY sym", context, "GroupBy vectorized", """
+                assertView("SELECT DISTINCT sym FROM lp_view_posting_all WHERE ts>='2020-01-01T00:00:02Z' ORDER BY sym", context, "PostingIndex", """
                         sym
                         A
                         B

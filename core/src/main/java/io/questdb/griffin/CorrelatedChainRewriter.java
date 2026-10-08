@@ -51,12 +51,10 @@ import static io.questdb.griffin.ScalarCompensation.isImplicitlyKeyedByOuterColu
  */
 final class CorrelatedChainRewriter {
     private final ScalarCompensation compensation;
-    private final OptimiserContext context;
     private final DecorrelationContext ctx;
     private final CorrelationKeys keys;
 
-    CorrelatedChainRewriter(OptimiserContext context, DecorrelationContext ctx, CorrelationKeys keys, ScalarCompensation compensation) {
-        this.context = context;
+    CorrelatedChainRewriter(DecorrelationContext ctx, CorrelationKeys keys, ScalarCompensation compensation) {
         this.ctx = ctx;
         this.keys = keys;
         this.compensation = compensation;
@@ -89,7 +87,7 @@ final class CorrelatedChainRewriter {
                 final int type = input.getColumnType(input.getColumnIndexById(columnId));
                 aggregate.getGroupingExpressions().add(ctx.planNodes.columns.next().of(columnId, type, aggregate.getPosition()));
                 keyIndex = aggregate.getGroupingExpressions().size() - 1;
-                ctx.insertColumn(output, keyIndex, context.newColumnId(), ctx.outerRefName(ctx.mappedOuterIds.getQuick(i)), type);
+                ctx.insertColumn(output, keyIndex, ctx.context.newColumnId(), ctx.outerRefName(ctx.mappedOuterIds.getQuick(i)), type);
             }
             ctx.mappedColumnIds.setQuick(i, output.getColumnId(keyIndex));
         }
@@ -166,8 +164,8 @@ final class CorrelatedChainRewriter {
             for (int i = 0, n = wrapper.getExpressions().size(); i < n; i++) {
                 ctx.substitution.put(wrapper.getOutput().getColumnId(i), ((ColumnExpression) wrapper.getExpressions().getQuick(i)).getColumnId());
             }
-            lo = lo == null ? null : context.getRewriter().remapColumns(lo, ctx.substitution);
-            hi = hi == null ? null : context.getRewriter().remapColumns(hi, ctx.substitution);
+            lo = lo == null ? null : ctx.context.getRewriter().remapColumns(lo, ctx.substitution);
+            hi = hi == null ? null : ctx.context.getRewriter().remapColumns(hi, ctx.substitution);
         }
         final LogicalPlan ranked = rowNumberFilter(ordered, spec, "__lateral_rn", position, lo, hi);
         if (wrapper == null) {
@@ -209,7 +207,6 @@ final class CorrelatedChainRewriter {
                 return rankLatest(latest, input, base);
             }
             default -> {
-                ctx.alignColumns(node.getOutput(), input.getOutput());
                 return node;
             }
         }
@@ -219,8 +216,8 @@ final class CorrelatedChainRewriter {
             throws SqlException {
         final WindowPlan window = ctx.planNodes.windowPlans.next().of(input, position);
         window.getOutput().copyFrom(input.getOutput());
-        final FunctionExpression rowNumber = context.getRewriter().describeWindowCall("row_number", position);
-        final int rowNumberId = context.newColumnId();
+        final FunctionExpression rowNumber = ctx.context.getRewriter().describeWindowCall("row_number", position);
+        final int rowNumberId = ctx.context.newColumnId();
         window.getFunctions().add(rowNumber);
         window.getSpecs().add(spec);
         window.getFunctionColumnIds().add(rowNumberId);
@@ -232,7 +229,7 @@ final class CorrelatedChainRewriter {
         } else {
             final BoundExpression upper = compensation.limitComparison(">=", hi == null ? lo : hi, rank, window.getOutput(), position);
             predicate = hi != null && lo != null
-                    ? context.getRewriter().combineConjunction(upper, compensation.limitComparison("<", lo, rank, window.getOutput(), position), position) : upper;
+                    ? ctx.context.getRewriter().combineConjunction(upper, compensation.limitComparison("<", lo, rank, window.getOutput(), position), position) : upper;
         }
         final FilterPlan filter = ctx.planNodes.filters.next().of(window, predicate, position);
         filter.deriveOutput();

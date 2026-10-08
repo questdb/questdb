@@ -132,13 +132,14 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
             // revert any debug flags
             setFullFatJoins(false);
             delegate.freeResourcesInFlight();
-            final AbstractMultiTenantPool<C> pool = this.pool;
-            if (pool != null && entry != null) {
-                if (pool.returnToPool(this)) {
-                    return;
+            try {
+                delegate.clear();
+            } finally {
+                final AbstractMultiTenantPool<C> pool = this.pool;
+                if (pool == null || entry == null || !pool.returnToPool(this)) {
+                    delegate.close();
                 }
             }
-            delegate.close();
         }
 
         @Override
@@ -228,7 +229,6 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
 
         @Override
         public void refresh(ResourcePoolSupervisor<C> supervisor) {
-            clear();
         }
 
         @Override

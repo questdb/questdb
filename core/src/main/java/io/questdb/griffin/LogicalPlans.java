@@ -25,15 +25,12 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ImplicitCastException;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
-import io.questdb.griffin.plan.logical.DeferredErrorExpression;
-import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
@@ -62,50 +59,13 @@ import io.questdb.std.ObjList;
  * Stateless plan-node predicates, walkers and plan-property utilities shared by the binder, the optimiser and the plan generator.
  */
 final class LogicalPlans {
-    private static final int ORDER_STABLE = 2;
-    private static final int RESULT_STABLE = 1;
-    private static final int SEQUENCE_STABLE = RESULT_STABLE | ORDER_STABLE;
-
     private LogicalPlans() {
-    }
-
-    private static boolean areStable(ObjList<? extends BoundExpression> expressions) {
-        for (int i = 0, n = expressions.size(); i < n; i++) {
-            if (!isStable(expressions.getQuick(i))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static boolean areSubqueriesStable(BoundExpression expression) {
-        if (expression instanceof CursorExpression cursor) {
-            return cursor.isStableWithinExecution();
-        }
-        if (expression instanceof FunctionExpression call) {
-            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                if (!areSubqueriesStable(call.argumentAt(i))) {
-                    return false;
-                }
-            }
-        }
-        return true;
     }
 
     private static boolean canPushSetTimestampThrough(UnaryPlan plan, int columnIndex) {
         final LogicalPlan input = plan.getInput();
         final int inputIndex = input.getOutput().getColumnIndexById(plan.getOutput().getColumnId(columnIndex));
         return inputIndex >= 0 && canPushSetTimestamp(input, inputIndex);
-    }
-
-    private static int groupingStability(AggregatePlan aggregate, boolean isParallelGroupByEnabled) {
-        if (aggregate.getSharedSource() != null || stability(aggregate.getInput(), isParallelGroupByEnabled) != SEQUENCE_STABLE
-                || !areStable(aggregate.getGroupingExpressions())
-                || !areStable(aggregate.getAggregates())) {
-            return 0;
-        }
-        // Only the parallel GROUP BY emits groups in no fixed order; with it disabled the generator groups serially.
-        return aggregate.getGroupingExpressions().size() == 0 || !isParallelGroupByEnabled ? SEQUENCE_STABLE : RESULT_STABLE;
     }
 
     private static boolean hasInputColumn(BoundExpression expression) {
@@ -120,52 +80,6 @@ final class LogicalPlans {
             }
         }
         return false;
-    }
-
-    private static boolean isStable(BoundExpression expression) {
-        return expression == null || isStableWithinExecution(expression);
-    }
-
-    private static boolean isTimestampComparison(FunctionExpression call) {
-        return call.getArgumentCount() == 2 && switch (call.getName()) {
-            case "=", "!=", "<>", "<", "<=", ">", ">=" -> true;
-            default -> false;
-        };
-    }
-
-    private static boolean isUnconvertedTimestampCall(FunctionExpression call) {
-        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-            if (call.argumentAt(i) instanceof ConstantExpression constant && constant.isUnparsedTimestamp()) {
-                return true;
-            }
-        }
-        return isTimestampComparison(call)
-                && (isUnconvertibleSymbol(call.argumentAt(0), call.argumentAt(1).getDataType())
-                || isUnconvertibleSymbol(call.argumentAt(1), call.argumentAt(0).getDataType()));
-    }
-
-    /**
-     * The stability bits of the plan's result within one execution: {@link #RESULT_STABLE} when every
-     * evaluation yields the same multiset of rows, plus {@link #ORDER_STABLE} when it also yields them in the
-     * same order. Operators whose stability is not proven report neither.
-     */
-    private static int stability(LogicalPlan plan, boolean isParallelGroupByEnabled) {
-        return switch (plan) {
-            case ScanPlan scan -> scan.getTableToken().isLiveView() ? 0 : SEQUENCE_STABLE;
-            case FunctionSourcePlan source -> source.isSequenceStable() ? SEQUENCE_STABLE : 0;
-            case FilterPlan filter ->
-                    isStable(filter.getPredicate()) ? stability(filter.getInput(), isParallelGroupByEnabled) : 0;
-            case ProjectPlan project ->
-                    areStable(project.getExpressions()) ? stability(project.getInput(), isParallelGroupByEnabled) : 0;
-            case SortPlan sort -> sort.isMarkoutHorizon() ? 0 : stability(sort.getInput(), isParallelGroupByEnabled);
-            case LimitPlan limit -> isStable(limit.getLo()) && isStable(limit.getHi())
-                    && stability(limit.getInput(), isParallelGroupByEnabled) == SEQUENCE_STABLE ? SEQUENCE_STABLE : 0;
-            case AggregatePlan aggregate -> groupingStability(aggregate, isParallelGroupByEnabled);
-            case DistinctPlan distinct -> stability(distinct.getInput(), isParallelGroupByEnabled) & RESULT_STABLE;
-            case SetOperationPlan operation ->
-                    stability(operation.getLeft(), isParallelGroupByEnabled) & stability(operation.getRight(), isParallelGroupByEnabled);
-            default -> 0;
-        };
     }
 
     static boolean canPushJoinFilter(JoinPlan join, int source, int lastInput) {
@@ -215,8 +129,7 @@ final class LogicalPlans {
                         && canPushSetTimestamp(input, inputIndex);
             }
             case FilterPlan filter ->
-                    isOrderIndependent(filter.getPredicate()) && !hasDeferredConjunct(filter.getPredicate())
-                            && canPushSetTimestampThrough(filter, columnIndex);
+                    isOrderIndependent(filter.getPredicate()) && canPushSetTimestampThrough(filter, columnIndex);
             case SortPlan sort -> canPushSetTimestampThrough(sort, columnIndex);
             case SetOperationPlan operation -> {
                 final int type = output.getColumnType(columnIndex);
@@ -306,59 +219,19 @@ final class LogicalPlans {
     }
 
     /**
-     * The first error that building the expression raises, or null: a {@link DeferredErrorExpression}
-     * conjunct, a conjunction over a conjunct that is not BOOLEAN, or a call whose conversion of timestamp
-     * text the function parser fails. The parser builds calls in post order, the arguments of each call last
-     * to first, and converts the literal arguments of a call, first to last, as it builds that call. A
-     * conjunction checks its argument types, first to last, once it has built both.
+     * Whether the plan reads a table function over a data source outside the database.
      */
-    static BoundExpression firstGenerationError(BoundExpression expression) {
-        if (expression instanceof DeferredErrorExpression) {
-            return expression;
+    static boolean hasExternalDataSource(LogicalPlan plan) {
+        if (plan instanceof FunctionSourcePlan source) {
+            return source.hasExternalDataSource();
         }
-        if (!(expression instanceof FunctionExpression call)) {
-            return null;
-        }
-        final boolean isAnd = call.isAnd();
-        for (int i = call.getArgumentCount() - 1; i > -1; i--) {
-            final BoundExpression argument = call.argumentAt(i);
-            if (!isAnd || !(argument instanceof DeferredErrorExpression deferred) || !deferred.isNonBoolean()) {
-                final BoundExpression error = firstGenerationError(argument);
-                if (error != null) {
-                    return error;
-                }
+        for (int i = 0, n = plan.inputCount(); i < n; i++) {
+            final LogicalPlan input = plan.inputAt(i);
+            if (input != null && hasExternalDataSource(input)) {
+                return true;
             }
         }
-        if (isAnd) {
-            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                if (call.argumentAt(i) instanceof DeferredErrorExpression deferred && deferred.isNonBoolean()) {
-                    return call;
-                }
-            }
-        }
-        return isUnconvertedTimestampCall(call) ? call : null;
-    }
-
-    /**
-     * Whether a conjunct of the predicate is a WHERE or ON conjunct that failed to bind. Such a conjunct never
-     * evaluates and its filter's generation raises its error, so no pass folds it, reads it as a fact or moves
-     * it out of the filter it was bound in, other than to the join input whose columns alone it reads.
-     */
-    static boolean hasDeferredConjunct(BoundExpression predicate) {
-        if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2 && call.isAnd()) {
-            return hasDeferredConjunct(call.argumentAt(0)) || hasDeferredConjunct(call.argumentAt(1));
-        }
-        return predicate instanceof DeferredErrorExpression;
-    }
-
-    /**
-     * Whether building the expression raises an error the binder deferred: a {@link DeferredErrorExpression}
-     * conjunct, an unparsed timestamp literal, or a SYMBOL constant compared with a TIMESTAMP that it does not
-     * convert to.
-     */
-    static boolean hasGenerationError(BoundExpression expression) {
-        return expression instanceof ConstantExpression constant ? constant.isUnparsedTimestamp()
-                : firstGenerationError(expression) != null;
+        return false;
     }
 
     /**
@@ -437,32 +310,11 @@ final class LogicalPlans {
     }
 
     /**
-     * Whether every evaluation of the plan within one execution yields the same multiset of rows, which is
-     * all the value of a sub-query depends on: its consumers read a set or a single row.
-     */
-    static boolean isResultStable(LogicalPlan plan, SqlExecutionContext executionContext) {
-        return (stability(plan, executionContext.isParallelGroupByEnabled()) & RESULT_STABLE) != 0;
-    }
-
-    /**
-     * Whether every evaluation of the plan within one execution yields the same rows in the same order.
-     */
-    static boolean isSequenceStable(LogicalPlan plan, SqlExecutionContext executionContext) {
-        return stability(plan, executionContext.isParallelGroupByEnabled()) == SEQUENCE_STABLE;
-    }
-
-    /**
-     * Whether every evaluation of the expression within one execution yields the same value: its flags prove it,
-     * or it is stable whenever its sub-queries are and each sub-query it reads is proven stable. The one stability
-     * query the optimiser and the generator ask of a bound expression.
+     * Whether every evaluation of the expression within one execution yields the same value. A sub-query is stable by
+     * construction: the generator evaluates it at most once per execution and shares its rows between consumers.
      */
     static boolean isStableWithinExecution(BoundExpression expression) {
-        if (expression instanceof CursorExpression cursor) {
-            return cursor.isStableWithinExecution();
-        }
-        final int flags = expression.getFunctionFlags();
-        return (flags & BoundExpression.STABLE_WITHIN_EXECUTION) != 0
-                || (flags & BoundExpression.STABLE_WITH_SUBQUERIES) != 0 && areSubqueriesStable(expression);
+        return (expression.getFunctionFlags() & BoundExpression.STABLE_WITHIN_EXECUTION) != 0;
     }
 
     /**
@@ -493,24 +345,8 @@ final class LogicalPlans {
     }
 
     /**
-     * Whether the expression is a SYMBOL constant that does not convert to the TIMESTAMP type it is compared with.
-     */
-    static boolean isUnconvertibleSymbol(BoundExpression expression, int timestampType) {
-        if (!(expression instanceof ConstantExpression symbol) || symbol.getDataType() != ColumnType.SYMBOL
-                || ColumnType.tagOf(timestampType) != ColumnType.TIMESTAMP) {
-            return false;
-        }
-        try {
-            ColumnType.getTimestampDriver(timestampType).implicitCast(symbol.getStrValue(), ColumnType.SYMBOL);
-            return false;
-        } catch (ImplicitCastException e) {
-            return true;
-        }
-    }
-
-    /**
      * Evaluating the expression twice may give two values: it calls a function that is neither
-     * deterministic nor stable within one execution, or reads a sub-query not proven stable.
+     * deterministic nor stable within one execution.
      */
     static boolean isVolatile(BoundExpression expression) {
         if ((expression.getFunctionFlags() & BoundExpression.NON_DETERMINISTIC) != 0 && !isStableWithinExecution(expression)) {
@@ -524,10 +360,7 @@ final class LogicalPlans {
             }
             return false;
         }
-        if (expression instanceof CursorExpression cursor) {
-            return !cursor.isStableWithinExecution();
-        }
-        return !(expression instanceof ColumnExpression || expression instanceof ConstantExpression
+        return !(expression instanceof ColumnExpression || expression instanceof ConstantExpression || expression instanceof CursorExpression
                 || expression instanceof BindVariableExpression || expression instanceof TypeExpression);
     }
 
@@ -582,36 +415,6 @@ final class LogicalPlans {
         return -1;
     }
 
-    /**
-     * Raises an error {@link #firstGenerationError} found: the deferred error, the type mismatch of a
-     * conjunction's first conjunct that is not BOOLEAN, or the error building the call
-     * raises for its first timestamp text that does not convert: the parse error of an unparsed literal, which
-     * the parser raises before it builds the call, otherwise the cast error of the SYMBOL constant.
-     */
-    static void raiseGenerationError(BoundExpression error) throws SqlException {
-        if (error instanceof DeferredErrorExpression deferred) {
-            throw deferred.raise();
-        }
-        final FunctionExpression call = (FunctionExpression) error;
-        if (call.isAnd()) {
-            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                if (call.argumentAt(i) instanceof DeferredErrorExpression deferred && deferred.isNonBoolean()) {
-                    throw deferred.raiseTypeMismatch();
-                }
-            }
-        }
-        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-            if (call.argumentAt(i) instanceof ConstantExpression constant && constant.isUnparsedTimestamp()) {
-                throw SqlException.invalidDate(constant.getTimestampText(), constant.getPosition());
-            }
-        }
-        final int symbolIndex = isUnconvertibleSymbol(call.argumentAt(0), call.argumentAt(1).getDataType()) ? 0 : 1;
-        final BoundExpression timestamp = call.argumentAt(1 - symbolIndex);
-        ColumnType.getTimestampDriver(timestamp.getDataType())
-                .implicitCast(((ConstantExpression) call.argumentAt(symbolIndex)).getStrValue(), ColumnType.SYMBOL);
-        throw new IllegalStateException("timestamp text converts");
-    }
-
     static boolean readsOnly(BoundExpression expression, OutputSchema output) {
         if (expression instanceof ColumnExpression column) {
             return output.getColumnIndexById(column.getColumnId()) >= 0;
@@ -631,6 +434,16 @@ final class LogicalPlans {
      */
     static boolean readsOnlyOuterColumns(FunctionExpression call) {
         return hasOuterColumn(call) && !hasInputColumn(call);
+    }
+
+    /**
+     * Lays out a chain of LIMITs again, bottom-up, after the input beneath the chain changed.
+     */
+    static void deriveLimits(LogicalPlan plan) {
+        if (plan instanceof LimitPlan limit) {
+            deriveLimits(limit.getInput());
+            limit.deriveOutput();
+        }
     }
 
     static int setTimestampIndex(LogicalPlan plan) {
@@ -664,29 +477,5 @@ final class LogicalPlans {
             plan = plan.inputAt(0);
         }
         return plan;
-    }
-
-    /**
-     * The stability an expression's flags record: {@link BoundExpression#STABLE_WITHIN_EXECUTION},
-     * {@link BoundExpression#STABLE_WITH_SUBQUERIES} or neither; a sub-query its rules do not prove stable is
-     * stable with its sub-queries.
-     */
-    static int stabilityFlags(BoundExpression expression) {
-        final int flags = expression.getFunctionFlags();
-        if ((flags & BoundExpression.STABLE_WITHIN_EXECUTION) != 0) {
-            return BoundExpression.STABLE_WITHIN_EXECUTION;
-        }
-        return (flags & BoundExpression.STABLE_WITH_SUBQUERIES) != 0 || expression instanceof CursorExpression
-                ? BoundExpression.STABLE_WITH_SUBQUERIES : 0;
-    }
-
-    /**
-     * The weaker of two {@link #stabilityFlags(BoundExpression)} results.
-     */
-    static int weakerStability(int left, int right) {
-        if (left == 0 || right == 0) {
-            return 0;
-        }
-        return left == right ? left : BoundExpression.STABLE_WITH_SUBQUERIES;
     }
 }

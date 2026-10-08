@@ -75,27 +75,18 @@ final class LatestByFactoryGenerator {
     private final BytecodeAssembler asm;
     private final SqlCodeGenerator codeGenerator;
     private final CairoConfiguration configuration;
-    private final ArrayColumnTypes keyTypes;
     private final IntList latestByColumnIndexes;
-    private final ListColumnFilter listColumnFilterA;
-    private final LongList prefixes;
 
     LatestByFactoryGenerator(
             CairoConfiguration configuration,
             SqlCodeGenerator codeGenerator,
             BytecodeAssembler asm,
-            ArrayColumnTypes keyTypes,
-            ListColumnFilter listColumnFilterA,
-            IntList latestByColumnIndexes,
-            LongList prefixes
+            IntList latestByColumnIndexes
     ) {
         this.configuration = configuration;
         this.codeGenerator = codeGenerator;
         this.asm = asm;
-        this.keyTypes = keyTypes;
-        this.listColumnFilterA = listColumnFilterA;
         this.latestByColumnIndexes = latestByColumnIndexes;
-        this.prefixes = prefixes;
     }
 
     /**
@@ -190,13 +181,16 @@ final class LatestByFactoryGenerator {
         final boolean orderedByTimestampAsc = latest.isTimestampOrderInherited()
                 && timestampIndex == base.getMetadata().getTimestampIndex()
                 && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD;
-        return generateLatestBy(base, timestampIndex, keyIndexes, orderedByTimestampAsc);
+        return generateLatestBy(frame, base, timestampIndex, keyIndexes, orderedByTimestampAsc);
     }
 
     /**
      * Consumes the source; column indexes are borrowed only during construction.
      */
-    RecordCursorFactory generateLatestBy(RecordCursorFactory factory, int timestampIndex, IntList keyIndexes, boolean orderedByTimestampAsc) {
+    RecordCursorFactory generateLatestBy(GenerationFrame frame, RecordCursorFactory factory, int timestampIndex, IntList keyIndexes,
+                                         boolean orderedByTimestampAsc) {
+        final ArrayColumnTypes keyTypes = frame.keyTypes;
+        final ListColumnFilter listColumnFilterA = frame.listColumnFilterA;
         try {
             final RecordMetadata metadata = factory.getMetadata();
             keyTypes.clear();
@@ -210,13 +204,14 @@ final class LatestByFactoryGenerator {
             Misc.free(factory, th);
             throw th;
         }
-        return generateLatestByPrepared(factory, timestampIndex, orderedByTimestampAsc);
+        return generateLatestByPrepared(frame, factory, timestampIndex, orderedByTimestampAsc);
     }
 
     /**
      * Consumes the frames, filter and key functions, including on failure.
      */
     RecordCursorFactory generateLatestByScan(
+            GenerationFrame frame,
             PartitionFrameCursorFactory frames,
             RecordMetadata queryMetadata,
             @Transient TableReader reader,
@@ -246,10 +241,10 @@ final class LatestByFactoryGenerator {
                 Misc.freeObjListAndClear(excludedKeys);
                 return new EmptyTableRecordCursorFactory(queryMetadata);
             }
+            final ArrayColumnTypes keyTypes = frame.keyTypes;
+            final ListColumnFilter listColumnFilterA = frame.listColumnFilterA;
             keyTypes.clear();
             listColumnFilterA.clear();
-            prefixes.clear();
-            prefixes.addAll(geoHashPrefixes);
             for (int i = 0, n = keyIndexes.size(); i < n; i++) {
                 final int index = keyIndexes.getQuick(i);
                 keyTypes.add(queryMetadata.getColumnType(index));
@@ -272,15 +267,16 @@ final class LatestByFactoryGenerator {
             return generateLatestByKeyList(reader, queryMetadata, frames, keyIndex, keys, excludedKeys,
                     filter, columnIndexes, columnSizeShifts, isIndexed, isCoveringAllowed, isBackupSuppressed);
         }
-        return generateLatestByAll(executionContext, queryMetadata, frames, columnIndexes, columnSizeShifts,
+        return generateLatestByAll(frame, executionContext, queryMetadata, frames, columnIndexes, columnSizeShifts,
                 filter == null && isIndexedScan(queryMetadata, keyIndexes, isIndexedAllowed && isIndexAllowed),
-                filter, symbolCounts);
+                filter, symbolCounts, geoHashPrefixes);
     }
 
     /**
-     * Consumes frames and filter, including on failure; keyTypes and listColumnFilterA describe the ordered key tuple.
+     * Consumes frames and filter, including on failure; the frame's keyTypes and listColumnFilterA describe the ordered key tuple.
      */
     private RecordCursorFactory generateLatestByAll(
+            GenerationFrame frame,
             SqlExecutionContext executionContext,
             RecordMetadata metadata,
             PartitionFrameCursorFactory frames,
@@ -288,12 +284,15 @@ final class LatestByFactoryGenerator {
             IntList columnSizeShifts,
             boolean isIndexedScan,
             @Nullable Function filter,
-            @Nullable IntList symbolCounts
+            @Nullable IntList symbolCounts,
+            LongList geoHashPrefixes
     ) {
+        final ArrayColumnTypes keyTypes = frame.keyTypes;
+        final ListColumnFilter listColumnFilterA = frame.listColumnFilterA;
         final int keyIndex = listColumnFilterA.size() == 1 ? listColumnFilterA.getColumnIndexFactored(0) : -1;
         if (keyIndex >= 0 && isIndexedScan) {
             return new LatestByAllIndexedRecordCursorFactory(executionContext.getCairoEngine(), configuration,
-                    metadata, frames, keyIndex, columnIndexes, columnSizeShifts, prefixes);
+                    metadata, frames, keyIndex, columnIndexes, columnSizeShifts, geoHashPrefixes);
         }
         final boolean isStaticSymbolKey;
         RecordSink sink = null;
@@ -377,10 +376,12 @@ final class LatestByFactoryGenerator {
                 reader, true, filter, null, backup, true, backup == null && hasNullableKey);
     }
 
-    private RecordCursorFactory generateLatestByPrepared(RecordCursorFactory factory, int timestampIndex, boolean orderedByTimestampAsc) {
+    private RecordCursorFactory generateLatestByPrepared(GenerationFrame frame, RecordCursorFactory factory, int timestampIndex,
+                                                         boolean orderedByTimestampAsc) {
+        final ArrayColumnTypes keyTypes = frame.keyTypes;
         final RecordSink recordSink;
         try {
-            recordSink = RecordSinkFactory.getInstance(configuration, asm, factory.getMetadata(), listColumnFilterA);
+            recordSink = RecordSinkFactory.getInstance(configuration, asm, factory.getMetadata(), frame.listColumnFilterA);
         } catch (Throwable th) {
             Misc.free(factory, th);
             throw th;

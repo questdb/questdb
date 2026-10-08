@@ -168,11 +168,9 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
                 Assert.assertEquals(2, model.getDynamicRangeList().size());
                 Assert.assertNull(model.getDynamicRangeList().getQuick(1));
                 Assert.assertFalse(model.isNonDeterministic());
-                Assert.assertTrue(model.isStableWithinExecution());
             }
 
-            assertRuntimeStabilityClassification(true);
-            assertRuntimeStabilityClassification(false);
+            assertNonDeterministicClassification();
         });
     }
 
@@ -604,9 +602,9 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
         }
     }
 
-    private static void assertRuntimeStabilityClassification(boolean isStableWithinExecution) {
+    private static void assertNonDeterministicClassification() {
         final ObjList<Function> dynamicFunctions = new ObjList<>();
-        dynamicFunctions.add(new StabilityFunction(isStableWithinExecution));
+        dynamicFunctions.add(new NonDeterministicFunction());
         dynamicFunctions.add(null);
         try (RuntimeIntervalModel model = new RuntimeIntervalModel(
                 ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
@@ -615,7 +613,6 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
                 dynamicFunctions
         )) {
             Assert.assertTrue(model.isNonDeterministic());
-            Assert.assertEquals(isStableWithinExecution, model.isStableWithinExecution());
         }
     }
 
@@ -786,12 +783,10 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
         }
     }
 
-    private static class StabilityFunction extends TimestampFunction {
-        private final boolean isStableWithinExecution;
+    private static class NonDeterministicFunction extends TimestampFunction {
 
-        private StabilityFunction(boolean isStableWithinExecution) {
+        private NonDeterministicFunction() {
             super(ColumnType.TIMESTAMP);
-            this.isStableWithinExecution = isStableWithinExecution;
         }
 
         @Override
@@ -802,11 +797,6 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
         @Override
         public boolean isNonDeterministic() {
             return true;
-        }
-
-        @Override
-        public boolean isStableWithinExecution() {
-            return isStableWithinExecution;
         }
     }
 }

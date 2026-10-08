@@ -34,8 +34,8 @@ public final class FunctionSourcePlan extends LogicalPlan {
     public static final ObjectFactory<FunctionSourcePlan> FACTORY = FunctionSourcePlan::new;
     private final OutputSchema recordSchema = new OutputSchema();
     private final IntList sourceColumnIndexes = new IntList();
+    private boolean hasExternalDataSource;
     private boolean isProjectable;
-    private boolean isSequenceStable;
     private CharSequence recordName;
 
     @Override
@@ -43,8 +43,8 @@ public final class FunctionSourcePlan extends LogicalPlan {
         super.clear();
         recordSchema.clear();
         sourceColumnIndexes.clear();
+        hasExternalDataSource = false;
         isProjectable = false;
-        isSequenceStable = false;
         recordName = null;
     }
 
@@ -61,6 +61,13 @@ public final class FunctionSourcePlan extends LogicalPlan {
 
     public IntList getSourceColumnIndexes() {
         return sourceColumnIndexes;
+    }
+
+    /**
+     * True when the table function reads a data source outside the database.
+     */
+    public boolean hasExternalDataSource() {
+        return hasExternalDataSource;
     }
 
     @Override
@@ -80,14 +87,6 @@ public final class FunctionSourcePlan extends LogicalPlan {
         return isProjectable;
     }
 
-    /**
-     * True when every evaluation within one execution yields the same rows in the same order, as the
-     * table function declares.
-     */
-    public boolean isSequenceStable() {
-        return isSequenceStable;
-    }
-
     public FunctionSourcePlan of(int position) {
         setPosition(position);
         return this;
@@ -98,12 +97,12 @@ public final class FunctionSourcePlan extends LogicalPlan {
         throw new IndexOutOfBoundsException("function source has no input: " + index);
     }
 
-    public void setProjectable(boolean isProjectable) {
-        this.isProjectable = isProjectable;
+    public void setExternalDataSource(boolean hasExternalDataSource) {
+        this.hasExternalDataSource = hasExternalDataSource;
     }
 
-    public void setSequenceStable(boolean isSequenceStable) {
-        this.isSequenceStable = isSequenceStable;
+    public void setProjectable(boolean isProjectable) {
+        this.isProjectable = isProjectable;
     }
 
     public void setRecordName(CharSequence recordName) {

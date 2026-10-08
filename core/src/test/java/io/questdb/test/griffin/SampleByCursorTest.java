@@ -675,8 +675,6 @@ public class SampleByCursorTest extends AbstractCairoTest {
             pooled.setPeriod("1h", null, 3, 'h', 4);
             pooled.setFrom(new ConstantExpression().ofTimestamp(1, ColumnType.TIMESTAMP_MICRO, 5));
             pooled.getFillTokens().add("42");
-            pooled.getFillPositions().add(6);
-            pooled.getAggregateSql().add("sum(v)");
             pooled.clear();
             Assert.assertEquals(-1, pooled.getTimestampColumnId());
             Assert.assertTrue(pooled.isTimestampRequired());
@@ -685,8 +683,6 @@ public class SampleByCursorTest extends AbstractCairoTest {
             Assert.assertNull(pooled.getPeriod());
             Assert.assertNull(pooled.getFrom());
             Assert.assertEquals(0, pooled.getFillTokens().size());
-            Assert.assertEquals(0, pooled.getFillPositions().size());
-            Assert.assertEquals(0, pooled.getAggregateSql().size());
         });
     }
 

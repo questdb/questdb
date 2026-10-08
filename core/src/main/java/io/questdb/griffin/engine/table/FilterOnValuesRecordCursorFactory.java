@@ -129,12 +129,6 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        return rowCursorFactory.isStableWithinExecution() && (filter == null || filter.isStableWithinExecution())
-                && partitionFrameCursorFactory.isStableWithinExecution();
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }

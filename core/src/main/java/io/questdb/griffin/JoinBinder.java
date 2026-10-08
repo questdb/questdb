@@ -26,12 +26,15 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
+import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
+import io.questdb.griffin.plan.logical.ForwardingPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
@@ -45,9 +48,10 @@ import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
-import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
+
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.BindContext.*;
 import static io.questdb.griffin.TemporalJoinBinder.isTemporalAnchor;
@@ -59,13 +63,8 @@ final class JoinBinder implements Mutable {
     private final IntList deferredJoinInputs = new IntList();
     private final ObjList<ExpressionNode> forwardJoinReferences = new ObjList<>();
     private final IntList forwardLeftJoinInputs = new IntList();
-    private final ObjList<QueryModel> hintAliasModels = new ObjList<>();
-    private final ObjList<CharSequence> hintAliases = new ObjList<>();
-    private final ObjList<ExpressionNode> joinFilterNodes = new ObjList<>();
     private final ObjList<ExpressionNode> joinOnNodes = new ObjList<>();
     private final JoinOrderSolver joinOrder;
-    private final ObjList<ExpressionNode> joinResidualNodes = new ObjList<>();
-    private final IntList joinResidualOrigins = new IntList();
     private final LateralBinder lateralBinder;
     private final IntList lateralDependencyInputs = new IntList();
     private final IntList lateralDependencyParents = new IntList();
@@ -88,21 +87,33 @@ final class JoinBinder implements Mutable {
         this.binder = binder;
         this.configuration = configuration;
         this.lateralBinder = lateralBinder;
-        this.joinOrder = new JoinOrderSolver(nonEquiNullingJoinInputs, nullingJoinBoundaries, tmpIds, stagedIndexes, bestOrder, roots);
+        this.joinOrder = new JoinOrderSolver(configuration.getSqlJoinContextPoolCapacity(), tmpIds, stagedIndexes, bestOrder, roots);
     }
 
     @Override
     public void clear() {
-        hintAliasModels.clear();
-        hintAliases.clear();
-        joinFilterNodes.clear();
+        deferredJoinInputs.clear();
+        forwardJoinReferences.clear();
+        forwardLeftJoinInputs.clear();
         joinOnNodes.clear();
         joinOrder.clear();
-        joinResidualNodes.clear();
-        forwardJoinReferences.clear();
-        joinResidualOrigins.clear();
         lateralDependencyInputs.clear();
         lateralDependencyParents.clear();
+        nonEquiNullingJoinInputs.clear();
+        nullingJoinBoundaries.clear();
+        isForwardInnerFiltered = false;
+        isForwardLeftKeyFiltered = false;
+    }
+
+    private static void bindTolerance(JoinPlan join, JoinInput step, QueryModel occurrence, int masterTimestampId) throws SqlException {
+        final ExpressionNode tolerance = occurrence.getAsOfJoinTolerance();
+        if (tolerance == null || step.getJoinType() != JoinKind.ASOF && step.getJoinType() != JoinKind.LT) {
+            return;
+        }
+        final OutputSchema output = join.getOutput();
+        final OutputSchema slaveOutput = step.getSourceOutput();
+        step.setToleranceInterval(tolerance(tolerance.token, tolerance.position,
+                output.getColumnType(output.getColumnIndexById(masterTimestampId)), slaveOutput.getColumnType(slaveOutput.getTimestampIndex())));
     }
 
     private static boolean canExtractJoinKey(JoinPlan join, int left, int right, int origin, boolean hasNonEquiNullingJoin) {
@@ -204,6 +215,59 @@ final class JoinBinder implements Mutable {
         return left == -1 ? right : right == -1 || left == right ? left : -2;
     }
 
+    private static long tolerance(CharSequence token, int position, int leftTimestampType, int rightTimestampType) throws SqlException {
+        final int k = TimestampSamplerFactory.findPositiveIntervalEndIndex(token, position, "tolerance");
+        assert token.length() > k;
+        final char unit = token.charAt(k);
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.getHigherPrecisionTimestampType(leftTimestampType, rightTimestampType));
+        if (unit == 'n') {
+            return timestampDriver.fromNanos(TimestampSamplerFactory.parsePositiveInterval(token, k, position, "tolerance", Integer.MAX_VALUE, unit));
+        }
+        final long multiplier = switch (unit) {
+            case 'U' -> timestampDriver.fromMicros(1);
+            case 'T' -> timestampDriver.fromMillis(1);
+            case 's' -> timestampDriver.fromSeconds(1);
+            case 'm' -> timestampDriver.fromMinutes(1);
+            case 'h' -> timestampDriver.fromHours(1);
+            case 'd' -> timestampDriver.fromDays(1);
+            case 'w' -> timestampDriver.fromWeeks(1);
+            default -> throw SqlException.$(position, "unsupported TOLERANCE unit [unit=").put(unit).put(']');
+        };
+        final int maxValue = (int) Math.min(Long.MAX_VALUE / multiplier, Integer.MAX_VALUE);
+        return TimestampSamplerFactory.parsePositiveInterval(token, k, position, "tolerance", maxValue, unit) * multiplier;
+    }
+
+    /**
+     * Validates the time series inputs, key types and ASOF/LT keys of a join step whose master is the join's
+     * prefix designating {@code masterTimestampId}.
+     */
+    private static void validateJoinStep(JoinPlan join, JoinInput step, int masterTimestampId) throws SqlException {
+        final JoinKind joinType = step.getJoinType();
+        final OutputSchema slaveOutput = step.getSourceOutput();
+        if (joinType.isTemporal()) {
+            validateTimeSeriesTimestamps(step.getPosition(), masterTimestampId, slaveOutput);
+        }
+        final OutputSchema output = join.getOutput();
+        final IntList masterIds = step.getMasterKeyColumnIds();
+        final IntList slaveIds = step.getSlaveKeyColumnIds();
+        for (int i = 0, n = masterIds.size(); i < n; i++) {
+            if (!isJoinKeyTypeCompatible(output.getColumnType(output.getColumnIndexById(masterIds.getQuick(i))),
+                    slaveOutput.getColumnType(slaveOutput.getColumnIndexById(slaveIds.getQuick(i))))) {
+                throw SqlException.$(step.getKeyPositions().getQuick(i), "join column type mismatch");
+            }
+        }
+        if (joinType != JoinKind.ASOF && joinType != JoinKind.LT) {
+            return;
+        }
+        if (masterIds.size() > 1) {
+            for (int i = 0, n = masterIds.size(); i < n; i++) {
+                if (masterIds.getQuick(i) == masterTimestampId || slaveIds.getQuick(i) == slaveOutput.getTimestampColumnId()) {
+                    throw SqlException.$(step.getPosition(), "ASOF/LT JOIN cannot use designated timestamp as a join key");
+                }
+            }
+        }
+    }
+
     private static void validateOuterJoinColumns(ExpressionNode expression, OutputSchema output) throws SqlException {
         if (expression == null) {
             return;
@@ -235,7 +299,7 @@ final class JoinBinder implements Mutable {
     }
 
     private void addLateralDependencies(JoinPlan join, int index, int outerColumnBase) {
-        final IntList outerColumnIds = ctx.functionBinder.getOuterColumnIds();
+        final IntList outerColumnIds = ctx.scope().outerColumnIds;
         for (int i = outerColumnBase, n = outerColumnIds.size(); i < n; i++) {
             final int columnId = outerColumnIds.getQuick(i);
             for (int k = 0; k < index; k++) {
@@ -321,10 +385,12 @@ final class JoinBinder implements Mutable {
             // Inner ON conjuncts bind per source in join order: master-only, slave-only, then joined.
             onFilter = appendInnerOnGroup(appendInnerOnGroup(appendInnerOnGroup(null, onFilter, join, 0), onFilter, join, 1), onFilter, join, 2);
         }
-        bindJoinOnResidual(onFilter, join, slave, source, master.getSourceOutput().getTimestampColumnId(), 1, executionContext);
+        validateJoinStep(join, slave, master.getSourceOutput().getTimestampColumnId());
+        bindJoinOnResidual(onFilter, join, slave, source, 1, executionContext);
+        bindTolerance(join, slave, rightModel, master.getSourceOutput().getTimestampColumnId());
         if (postFilter != null) {
-            slave.setPostJoinFilter(bindJoinConjunct(postFilter, join, source,
-                    1, -1, false, executionContext));
+            slave.setPostJoinFilter(bindJoinConjunct(postFilter, postFilter, join, source,
+                    1, -1, executionContext));
         }
         if (constantFilter != null) {
             addJoinConstantFilter(slave, bindJoinConstantFilter(constantFilter, join, source, executionContext), constantFilter.position);
@@ -339,149 +405,21 @@ final class JoinBinder implements Mutable {
 
     private void bindJoinConditions(JoinPlan join, QueryModel source, ExpressionNode where, int dependencyBase,
                                     SqlExecutionContext executionContext) throws SqlException {
-        joinOrder.of(join);
-        joinResidualNodes.clear();
-        joinResidualOrigins.clear();
-        joinOnNodes.clear();
-        joinOnNodes.setPos(join.getInputs().size());
-        joinFilterNodes.clear();
-        joinFilterNodes.setPos(join.getInputs().size());
-        deferredJoinInputs.clear();
-        forwardJoinReferences.clear();
-        if (!isForwardLeftKeyFiltered) {
-            forwardLeftJoinInputs.clear();
-        }
-        nonEquiNullingJoinInputs.clear();
-        nullingJoinBoundaries.clear();
+        final BindScope scope = ctx.scope();
         boolean hasBarriers = false;
         for (int i = 1, n = join.getInputs().size(); i < n; i++) {
-            final JoinKind type = join.getInputs().getQuick(i).getJoinType();
-            hasBarriers |= JoinOrderSolver.isBarrier(type);
-            if ((type == JoinKind.RIGHT_OUTER || type == JoinKind.FULL_OUTER) && i < source.getJoinModels().size()) {
-                final ExpressionNode criteria = source.getJoinModels().getQuick(i).getJoinCriteria();
-                if (criteria != null && !hasOwnJoinKey(criteria, join, i)) {
-                    nonEquiNullingJoinInputs.add(i);
-                }
-            }
+            hasBarriers |= JoinOrderSolver.isBarrier(join.getInputs().getQuick(i).getJoinType());
         }
-        final boolean hasNonEquiNullingJoin = nonEquiNullingJoinInputs.size() > 0;
         try {
-            ExpressionNode constantFilter = selectJoinConstantTerms(where, true);
-            collectJoinConditions(selectJoinConstantTerms(where, false), join, -1, hasBarriers, hasNonEquiNullingJoin);
-            final JoinInput master = join.getInputs().getQuick(0);
-            for (int i = dependencyBase, n = lateralDependencyInputs.size(); i < n; i++) {
-                joinOrder.addDependency(lateralDependencyParents.getQuick(i), lateralDependencyInputs.getQuick(i));
-            }
-            for (int i = 1, n = join.getInputs().size(); i < n; i++) {
-                final QueryModel occurrence = source.getJoinModels().getQuick(i);
-                final JoinInput slave = join.getInputs().getQuick(i);
-                final boolean isBarrier = JoinOrderSolver.isBarrier(slave.getJoinType());
-                ExpressionNode onCriteria = occurrence.getJoinCriteria();
-                if (hasBarriers && !isBarrier && isPostJoinFilterReference(onCriteria, join, i)) {
-                    collectJoinConditions(selectPostJoinFilterTerms(onCriteria, join, i, true), join, -1, true, hasNonEquiNullingJoin);
-                    onCriteria = selectPostJoinFilterTerms(onCriteria, join, i, false);
-                }
-                final boolean hasForwardReference = findForwardJoinReference(onCriteria, join, i) != null;
-                final boolean isDeferred = !isBarrier && hasForwardReference;
-                final boolean isNonEquiNullingJoin = nonEquiNullingJoinInputs.contains(i);
-                final boolean isForwardLeftJoin = hasForwardReference && slave.getJoinType() == JoinKind.LEFT_OUTER;
-                if (isBarrier && hasForwardReference && !isForwardLeftJoin) {
-                    throw forwardJoinReference(findForwardJoinReference(onCriteria, join, i));
-                }
-                if (isDeferred) {
-                    deferredJoinInputs.add(i);
-                }
-                if (hasBarriers && !isNonEquiNullingJoin) {
-                    collectJoinDependencies(onCriteria, join, i, isDeferred || isForwardLeftJoin);
-                }
-                if (isBarrier) {
-                    if (slave.getJoinType() == JoinKind.SPLICE) {
-                        validateSpliceOnAnalysis(onCriteria, join);
-                    }
-                    joinOnNodes.setQuick(i, collectJoinConditions(onCriteria, join, i, true, hasNonEquiNullingJoin));
-                    if (isNonEquiNullingJoin) {
-                        constrainNullingJoinPrefix(commaGroupStart(source, i), i);
-                        joinOrder.addLateInput(i);
-                        nullingJoinBoundaries.add(i);
-                    } else {
-                        final boolean isMasterNulling = slave.getJoinType().isMasterNulling();
-                        int prefixStart = isMasterNulling ? commaGroupStart(source, i)
-                                : slave.getJoinType() == JoinKind.LEFT_OUTER ? i - 1 : 0;
-                        // A preceding LEFT join may wait for this one through a forward reference.
-                        while (prefixStart > 0 && !isMasterNulling && forwardLeftJoinInputs.contains(prefixStart)) {
-                            prefixStart--;
-                        }
-                        // A LEFT join whose ON reads no column stays unanchored, so it trails the order.
-                        if (slave.getJoinType() != JoinKind.LEFT_OUTER || hasLiteral(onCriteria)) {
-                            joinOrder.addOrderingConstraint(prefixStart, i);
-                        }
-                        if (isForwardLeftJoin) {
-                            if (!forwardLeftJoinInputs.contains(i)) {
-                                forwardLeftJoinInputs.add(i);
-                            }
-                            constrainNullingJoinPrefix(commaGroupStart(source, i), i);
-                            joinOrder.addLateInput(i);
-                        }
-                        if (isMasterNulling) {
-                            constrainNullingJoinPrefix(prefixStart, i);
-                            for (int k = i + 1; k < n; k++) {
-                                final JoinKind type = join.getInputs().getQuick(k).getJoinType();
-                                if (type == JoinKind.INNER || type == JoinKind.CROSS || type.isMasterNulling()) {
-                                    joinOrder.addOrderingConstraint(i, k);
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    constantFilter = combineJoinPredicates(constantFilter, selectJoinConstantTerms(onCriteria, true));
-                    collectJoinConditions(selectJoinConstantTerms(onCriteria, false), join, i, hasBarriers, hasNonEquiNullingJoin);
-                }
-                final ObjList<ExpressionNode> shorthand = occurrence.getJoinColumns();
-                for (int k = 0, count = shorthand.size(); k < count; k++) {
-                    final ExpressionNode column = shorthand.getQuick(k);
-                    final int leftIndex = ctx.bindColumnIndex(column, master.getSourceOutput(), master.getBindingAlias());
-                    final int rightIndex = ctx.bindColumnIndex(column, slave.getSourceOutput(), slave.getBindingAlias());
-                    joinOrder.addEquality(0, master.getSourceOutput().getColumnId(leftIndex),
-                            ctx.qualifiedJoinName(master.getBindingAlias(), column.token), column.position,
-                            i, slave.getSourceOutput().getColumnId(rightIndex),
-                            ctx.qualifiedJoinName(slave.getBindingAlias(), column.token), column.position, i);
-                }
-            }
-            for (int i = 0, n = nullingJoinBoundaries.size(); i < n; i++) {
-                final int boundary = nullingJoinBoundaries.getQuick(i);
-                constrainNullingJoinConsumers(join, boundary, commaGroupStart(source, boundary));
-            }
-            if (!joinOrder.order()) {
-                final boolean wasForwardInnerFiltered = isForwardInnerFiltered;
-                final boolean wasForwardLeftKeyFiltered = isForwardLeftKeyFiltered;
-                if (!isForwardInnerFiltered && deferredJoinInputs.size() > 0) {
-                    isForwardInnerFiltered = true;
-                } else if (!isForwardLeftKeyFiltered && forwardLeftJoinInputs.size() > 0) {
-                    isForwardLeftKeyFiltered = true;
-                }
-                if (isForwardInnerFiltered != wasForwardInnerFiltered || isForwardLeftKeyFiltered != wasForwardLeftKeyFiltered) {
-                    try {
-                        bindJoinConditions(join, source, where, dependencyBase, executionContext);
-                    } finally {
-                        isForwardInnerFiltered = wasForwardInnerFiltered;
-                        isForwardLeftKeyFiltered = wasForwardLeftKeyFiltered;
-                    }
-                    return;
-                }
-                if (forwardJoinReferences.size() == 0) {
-                    throw new IllegalStateException("cyclic join dependencies without a forward ON reference");
-                }
-                throw forwardJoinReference(forwardJoinReferences.getQuick(0));
-            }
+            final ExpressionNode constantFilter = orderJoin(join, source, where, dependencyBase, hasBarriers);
             final ObjList<JoinInput> ordered = join.getOrderedInputs();
             int timestampId = ordered.getQuick(0).getSourceOutput().getTimestampColumnId();
             for (int i = 1, n = ordered.size(); i < n; i++) {
                 final JoinInput step = ordered.getQuick(i);
-                final ExpressionNode onFilter = joinOnNodes.getQuick(join.getInputs().indexOf(step));
-                if ((step.getJoinType() == JoinKind.ASOF || step.getJoinType() == JoinKind.LT) && timestampId < 0) {
-                    throw SqlException.$(step.getPosition(), "left side of time series join has no timestamp");
-                }
-                bindJoinOnResidual(onFilter, join, step, source, timestampId, i, executionContext);
+                final int index = join.getInputs().indexOf(step);
+                validateJoinStep(join, step, timestampId);
+                bindJoinOnResidual(joinOnNodes.getQuick(index), join, step, source, i, executionContext);
+                bindTolerance(join, step, source.getJoinModels().getQuick(index), timestampId);
                 if (step.getJoinType().isMasterNulling() && !join.hasExplicitTimestamp()) {
                     timestampId = -1;
                 }
@@ -504,12 +442,12 @@ final class JoinBinder implements Mutable {
                         }
                     }
                 }
-                joinResidualNodes.add(comparison);
-                joinResidualOrigins.add(origin);
+                scope.joinResidualNodes.add(comparison);
+                scope.joinResidualOrigins.add(origin);
             }
-            for (int i = 0, n = joinResidualNodes.size(); i < n; i++) {
-                final ExpressionNode predicate = joinResidualNodes.getQuick(i);
-                final int origin = joinResidualOrigins.getQuick(i);
+            for (int i = 0, n = scope.joinResidualNodes.size(); i < n; i++) {
+                final ExpressionNode predicate = scope.joinResidualNodes.getQuick(i);
+                final int origin = scope.joinResidualOrigins.getQuick(i);
                 int target = joinPredicateLastInput(predicate, join);
                 if (target < 0) {
                     target = ordered.size() - 1;
@@ -527,15 +465,15 @@ final class JoinBinder implements Mutable {
                         }
                     }
                 }
-                joinFilterNodes.setQuick(target, combineJoinPredicates(joinFilterNodes.getQuick(target), predicate));
+                scope.joinFilterNodes.setQuick(target, combineJoinPredicates(scope.joinFilterNodes.getQuick(target), predicate));
             }
-            for (int i = 0, n = joinFilterNodes.size(); i < n; i++) {
-                final ExpressionNode expression = joinFilterNodes.getQuick(i);
+            for (int i = 0, n = scope.joinFilterNodes.size(); i < n; i++) {
+                final ExpressionNode expression = scope.joinFilterNodes.getQuick(i);
                 if (expression != null) {
                     final JoinInput input = ordered.getQuick(i);
-                    final BoundExpression predicate = bindJoinConjunct(expression, join, source, i, -2, false, executionContext);
+                    final BoundExpression predicate = bindJoinConjunct(expression, expression, join, source, i, -2, executionContext);
                     if (i == 0) {
-                        final FilterPlan filter = ctx.filters.next().of(input.getInput(), predicate, expression.position);
+                        final FilterPlan filter = ctx.planNodes.filters.next().of(input.getInput(), predicate, expression.position);
                         filter.deriveOutput();
                         input.setInput(filter);
                     } else {
@@ -554,51 +492,52 @@ final class JoinBinder implements Mutable {
         } finally {
             joinOrder.clear();
             joinOnNodes.clear();
-            joinResidualNodes.clear();
-            joinResidualOrigins.clear();
-            joinFilterNodes.clear();
+            scope.joinResidualNodes.clear();
+            scope.joinResidualOrigins.clear();
+            scope.joinFilterNodes.clear();
             forwardJoinReferences.clear();
         }
     }
 
-    private BoundExpression bindJoinConjunct(ExpressionNode expression, JoinPlan join, QueryModel source,
-                                             int lastInput, int originalOnSource, boolean isAndArgument, SqlExecutionContext executionContext) throws SqlException {
+    /**
+     * Binds a conjunct of the conjunction, a WHERE clause or an ON condition, which is the conjunct itself when it
+     * stands alone.
+     */
+    private BoundExpression bindJoinConjunct(ExpressionNode expression, ExpressionNode conjunction, JoinPlan join, QueryModel source,
+                                             int lastInput, int originalOnSource, SqlExecutionContext executionContext) throws SqlException {
+        final BindScope scope = ctx.scope();
         if (expression.paramCount == 2 && SqlKeywords.isAndKeyword(expression.token)) {
-            final BoundExpression left = bindJoinConjunct(expression.lhs, join, source, lastInput, originalOnSource, true, executionContext);
-            final BoundExpression right = bindJoinConjunct(expression.rhs, join, source, lastInput, originalOnSource, true, executionContext);
+            final BoundExpression left = bindJoinConjunct(expression.lhs, conjunction, join, source, lastInput, originalOnSource, executionContext);
+            final BoundExpression right = bindJoinConjunct(expression.rhs, conjunction, join, source, lastInput, originalOnSource, executionContext);
             return ctx.expressionRewriter.combineConjunction(left, right, expression.position);
         }
+        final boolean isAndArgument = expression != conjunction;
         final int sourceIndex = joinExpressionSource(expression, join);
         if (sourceIndex >= 0 && LogicalPlans.canPushJoinFilter(join, sourceIndex, lastInput)
                 && binder.distributeSetFilter(expression, join.getInputs().getQuick(sourceIndex).getInput(), join.getOutput(),
                 sourceAlias(source), executionContext)) {
-            return ctx.constants.next().ofBoolean(true, expression.position);
+            return ctx.planNodes.constants.next().ofBoolean(true, expression.position);
         }
-        ctx.joinNativeTimestampIds.clear();
+        final IntHashSet nativeTimestampIds = scope.joinNativeTimestampIds;
+        nativeTimestampIds.clear();
         collectJoinTimestampScopes(expression, join, lastInput);
         // Native precision belongs to this conjunct, not to every use of a
         // column elsewhere in the predicate. A mixed-source OR stays intact.
-        BoundExpression predicate;
-        final int subqueryMark = ctx.level.getSubqueryCount();
-        try {
-            predicate = ctx.functionBinder.toBooleanSubquery(ctx.functionBinder.bindPredicate(expression,
-                    join.getOutput(), sourceAlias(source), ctx.joinNativeTimestampIds,
-                    isAndArgument ? ColumnType.BOOLEAN : ColumnType.UNDEFINED, executionContext));
-            if (predicate.getDataType() != ColumnType.BOOLEAN && (predicate.getDataType() != ColumnType.NULL || !isAndArgument)) {
-                final boolean isTableFilter = sourceIndex >= 0 && join.getInputs().getQuick(sourceIndex).getInput() instanceof ScanPlan
-                        && LogicalPlans.canPushJoinFilter(join, sourceIndex, lastInput);
-                predicate = ctx.nonBooleanConjunct(expression, predicate.getDataType(), predicate.getPosition(), isTableFilter,
-                        Math.max(sourceIndex, -1));
-            }
-        } catch (SqlException e) {
-            predicate = ctx.deferConjunct(e, expression, join.getOutput(), sourceAlias(source), Math.max(sourceIndex, -1), subqueryMark);
+        final BoundExpression predicate = ctx.functionBinder.toBooleanSubquery(ctx.functionBinder.bindPredicate(expression,
+                join.getOutput(), sourceAlias(source), nativeTimestampIds,
+                isAndArgument ? ColumnType.BOOLEAN : ColumnType.UNDEFINED, executionContext));
+        if (predicate.getDataType() != ColumnType.BOOLEAN && (predicate.getDataType() != ColumnType.NULL || !isAndArgument)) {
+            final int filterInput = joinFilterInput(expression, join, lastInput);
+            final boolean isTableFilter = filterInput >= 0 && join.getInputs().getQuick(filterInput).getInput() instanceof ScanPlan;
+            throw BindContext.nonBooleanConjunct(expression, predicate.getDataType(), predicate.getPosition(), isTableFilter,
+                    isAndArgument && countJoinFilterConjuncts(conjunction, filterInput, join, lastInput) > 1);
         }
         if (originalOnSource == -2) {
-            final int index = joinResidualNodes.indexOf(expression);
+            final int index = scope.joinResidualNodes.indexOf(expression);
             if (index < 0) {
                 return predicate;
             }
-            originalOnSource = joinResidualOrigins.getQuick(index);
+            originalOnSource = scope.joinResidualOrigins.getQuick(index);
         }
         join.getFilterConjuncts().add(predicate);
         join.getFilterConjunctOrigins().add(originalOnSource);
@@ -618,7 +557,7 @@ final class JoinBinder implements Mutable {
     }
 
     private void bindJoinOnResidual(ExpressionNode onFilter, JoinPlan join, JoinInput slave, QueryModel source,
-                                    int masterTimestampId, int lastInput, SqlExecutionContext executionContext) throws SqlException {
+                                    int lastInput, SqlExecutionContext executionContext) throws SqlException {
         if (onFilter == null) {
             return;
         }
@@ -628,13 +567,10 @@ final class JoinBinder implements Mutable {
             for (int i = 0, n = join.getInputs().size(); i < n; i++) {
                 validateSpliceOnSourceColumns(onFilter, join.getInputs().getQuick(i));
             }
-            slave.setUnsupportedOnExpression(Misc.getThreadLocalSink().put(onFilter).toString(), onFilter.position);
+            throw SqlException.$(onFilter.position, "unsupported SPLICE join expression [expr='").put(onFilter).put("']");
         } else if (joinType == JoinKind.ASOF || joinType == JoinKind.LT) {
-            if (masterTimestampId < 0 || hasPrecedingMasterNullingJoin(join, slave)) {
+            if (hasPrecedingMasterNullingJoin(join, slave)) {
                 throw SqlException.$(slave.getPosition(), "left side of time series join has no timestamp");
-            }
-            if (slave.getSourceOutput().getTimestampIndex() < 0) {
-                throw SqlException.$(slave.getPosition(), "right side of time series join has no timestamp");
             }
             onFilter = appendJoinConjuncts(null, onFilter);
             throw SqlException.$(onFilter.position, "unsupported ").put(joinType == JoinKind.ASOF ? "ASOF" : "LT")
@@ -643,8 +579,8 @@ final class JoinBinder implements Mutable {
             if (JoinOrderSolver.isBarrier(joinType)) {
                 validateOuterJoinColumns(onFilter, join.getOutput());
             }
-            slave.setOnResidual(bindJoinConjunct(onFilter, join, source,
-                    JoinOrderSolver.isBarrier(joinType) ? -1 : lastInput, join.getInputs().indexOf(slave), false, executionContext));
+            slave.setOnResidual(bindJoinConjunct(onFilter, onFilter, join, source,
+                    JoinOrderSolver.isBarrier(joinType) ? -1 : lastInput, join.getInputs().indexOf(slave), executionContext));
         }
     }
 
@@ -667,7 +603,7 @@ final class JoinBinder implements Mutable {
             hasUnnest |= type == QueryModel.JOIN_UNNEST;
         }
         final int dependencyBase = lateralDependencyInputs.size();
-        final JoinPlan join = ctx.joins.next().of(source.getModelPosition());
+        final JoinPlan join = ctx.planNodes.joins.next().of(source.getModelPosition());
         join.setExplicitTimestamp(source.hasExplicitTimestamp());
         for (int i = 0; i < sourceCount; i++) {
             final QueryModel occurrence = sources.getQuick(i);
@@ -684,7 +620,7 @@ final class JoinBinder implements Mutable {
             final JoinInput step;
             if (occurrence.getJoinType() == QueryModel.JOIN_UNNEST) {
                 final UnnestSpec spec = bindUnnest(occurrence, join.getOutput(), executionContext);
-                step = ctx.joinInputs.next().ofUnnest(spec, alias, occurrence.getJoinKeywordPosition());
+                step = ctx.planNodes.joinInputs.next().ofUnnest(spec, alias, occurrence.getJoinKeywordPosition());
                 if (spec.isStandalone()) {
                     join.getOutput().clear();
                 }
@@ -693,7 +629,7 @@ final class JoinBinder implements Mutable {
                 final boolean isDependent = QueryModel.isLateralJoin(occurrence.getJoinType());
                 final LogicalPlan input;
                 if (isDependent) {
-                    final int outerColumnBase = ctx.functionBinder.getOuterColumnIds().size();
+                    final int outerColumnBase = ctx.scope().outerColumnIds.size();
                     input = lateralBinder.bindLateral(source, join, i, executionContext);
                     addLateralDependencies(join, i, outerColumnBase);
                 } else {
@@ -702,13 +638,9 @@ final class JoinBinder implements Mutable {
                 if (hasTemporalJoin) {
                     retainImplicitTimestamp(input);
                 }
-                step = ctx.joinInputs.next().of(input, stepType, alias, occurrence.getJoinKeywordPosition());
+                step = ctx.planNodes.joinInputs.next().of(input, stepType, alias, occurrence.getJoinKeywordPosition());
                 step.setSubquery(occurrence.getNestedModel() != null);
                 step.setDependent(isDependent);
-            }
-            if (occurrence.getAsOfJoinTolerance() != null) {
-                final ExpressionNode tolerance = occurrence.getAsOfJoinTolerance();
-                step.setTolerance(tolerance.token, tolerance.position);
             }
             step.setHints(resolveJoinHints(source, occurrence));
             join.getInputs().add(step);
@@ -723,13 +655,14 @@ final class JoinBinder implements Mutable {
     }
 
     private UnnestSpec bindUnnest(QueryModel model, OutputSchema prefix, SqlExecutionContext executionContext) throws SqlException {
-        final UnnestSpec spec = ctx.unnestSpecs.next().of(model.isStandaloneUnnest(), model.isUnnestOrdinality());
+        final BindScope scope = ctx.scope();
+        final UnnestSpec spec = ctx.planNodes.unnestSpecs.next().of(model.isStandaloneUnnest(), model.isUnnestOrdinality());
         spec.getColumnAliases().addAll(model.getUnnestColumnAliases());
         final int outputCount = model.getUnnestOutputColumnCount();
         final int totalColumns = outputCount + (model.isUnnestOrdinality() ? 1 : 0);
         int aliasIndex = 0;
-        ctx.aliases.clear();
-        ctx.aliasSequences.clear();
+        scope.aliases.clear();
+        scope.aliasSequences.clear();
         for (int i = 0, n = model.getUnnestExpressions().size(); i < n; i++) {
             final ExpressionNode expression = model.getUnnestExpressions().getQuick(i);
             final BoundExpression bound;
@@ -767,7 +700,7 @@ final class JoinBinder implements Mutable {
                 for (int k = 0, count = names.size(); k < count; k++) {
                     final CharSequence name = aliasIndex < spec.getColumnAliases().size()
                             ? spec.getColumnAliases().getQuick(aliasIndex) : names.getQuick(k);
-                    spec.getOutput().add(ctx.nextColumnId++, ctx.createOutputName(name), types.getQuick(k), true);
+                    spec.getOutput().add(scope.nextColumnId++, ctx.createOutputName(name), types.getQuick(k), true);
                     aliasIndex++;
                 }
             } else {
@@ -790,14 +723,14 @@ final class JoinBinder implements Mutable {
                     defaultName.put("value").put(aliasIndex + 1);
                     name = defaultName.toImmutable();
                 }
-                spec.getOutput().add(ctx.nextColumnId++, ctx.createOutputName(name), outputType, true);
+                spec.getOutput().add(scope.nextColumnId++, ctx.createOutputName(name), outputType, true);
                 aliasIndex++;
             }
         }
         if (spec.hasOrdinality()) {
             final CharSequence name = spec.getColumnAliases().size() == totalColumns
                     ? spec.getColumnAliases().getQuick(outputCount) : "ordinality";
-            spec.getOutput().add(ctx.nextColumnId++, ctx.createOutputName(name), ColumnType.LONG, true);
+            spec.getOutput().add(scope.nextColumnId++, ctx.createOutputName(name), ColumnType.LONG, true);
         }
         return spec;
     }
@@ -805,6 +738,7 @@ final class JoinBinder implements Mutable {
     private ExpressionNode collectJoinConditions(
             ExpressionNode expression, JoinPlan join, int origin, boolean hasBarriers, boolean hasNonEquiNullingJoin
     ) throws SqlException {
+        final BindScope scope = ctx.scope();
         if (expression == null) {
             return null;
         }
@@ -833,8 +767,8 @@ final class JoinBinder implements Mutable {
         if (origin >= 0 && JoinOrderSolver.isBarrier(join.getInputs().getQuick(origin).getJoinType())) {
             return expression;
         }
-        joinResidualNodes.add(expression);
-        joinResidualOrigins.add(origin);
+        scope.joinResidualNodes.add(expression);
+        scope.joinResidualOrigins.add(origin);
         return null;
     }
 
@@ -893,6 +827,18 @@ final class JoinBinder implements Mutable {
                 joinOrder.addOrderingConstraint(i, boundary);
             }
         }
+    }
+
+    /**
+     * The number of conjuncts of the conjunction that join the filter of the given join input, or the residual
+     * filter for -1.
+     */
+    private int countJoinFilterConjuncts(ExpressionNode conjunction, int filterInput, JoinPlan join, int lastInput) throws SqlException {
+        if (conjunction.paramCount == 2 && SqlKeywords.isAndKeyword(conjunction.token)) {
+            return countJoinFilterConjuncts(conjunction.lhs, filterInput, join, lastInput)
+                    + countJoinFilterConjuncts(conjunction.rhs, filterInput, join, lastInput);
+        }
+        return joinFilterInput(conjunction, join, lastInput) == filterInput ? 1 : 0;
     }
 
     private ExpressionNode extractJoinKeys(ExpressionNode expression, JoinPlan join, JoinInput slave) throws SqlException {
@@ -978,8 +924,9 @@ final class JoinBinder implements Mutable {
     }
 
     private CharSequence hintAlias(QueryModel model) {
+        final BindScope scope = ctx.scope();
         final CharSequence name = model.getName();
-        return name != null ? name : hintAliases.getQuick(hintAliasModels.indexOf(model));
+        return name != null ? name : scope.hintAliases.getQuick(scope.hintAliasModels.indexOf(model));
     }
 
     private int innerOnGroup(ExpressionNode expression, JoinPlan join) throws SqlException {
@@ -1034,6 +981,14 @@ final class JoinBinder implements Mutable {
         return index;
     }
 
+    /**
+     * The index of the join input whose filter a conjunct of the conjunction joins, -1 for the residual filter.
+     */
+    private int joinFilterInput(ExpressionNode conjunct, JoinPlan join, int lastInput) throws SqlException {
+        final int sourceIndex = joinExpressionSource(conjunct, join);
+        return sourceIndex >= 0 && LogicalPlans.canPushJoinFilter(join, sourceIndex, lastInput) ? sourceIndex : -1;
+    }
+
     private CharSequence joinKeyName(ExpressionNode node, OutputSchema output, int index) {
         final CharSequence name = output.getColumnName(index);
         final int dot = Chars.indexOfLastUnquoted(node.token, '.');
@@ -1077,26 +1032,168 @@ final class JoinBinder implements Mutable {
         return last;
     }
 
+    /**
+     * Collects the join keys and ordering constraints of the join's ON conditions and WHERE clause and selects the
+     * join order, filtering forward references when an order without them is cyclic; returns the constant terms of the
+     * WHERE clause and the inner ON conditions.
+     */
+    private ExpressionNode orderJoin(JoinPlan join, QueryModel source, ExpressionNode where, int dependencyBase,
+                                     boolean hasBarriers) throws SqlException {
+        final BindScope scope = ctx.scope();
+        joinOrder.of(join);
+        scope.joinResidualNodes.clear();
+        scope.joinResidualOrigins.clear();
+        joinOnNodes.clear();
+        joinOnNodes.setPos(join.getInputs().size());
+        scope.joinFilterNodes.clear();
+        scope.joinFilterNodes.setPos(join.getInputs().size());
+        deferredJoinInputs.clear();
+        forwardJoinReferences.clear();
+        if (!isForwardLeftKeyFiltered) {
+            forwardLeftJoinInputs.clear();
+        }
+        nonEquiNullingJoinInputs.clear();
+        nullingJoinBoundaries.clear();
+        for (int i = 1, n = join.getInputs().size(); i < n; i++) {
+            final JoinKind type = join.getInputs().getQuick(i).getJoinType();
+            if ((type == JoinKind.RIGHT_OUTER || type == JoinKind.FULL_OUTER) && i < source.getJoinModels().size()) {
+                final ExpressionNode criteria = source.getJoinModels().getQuick(i).getJoinCriteria();
+                if (criteria != null && !hasOwnJoinKey(criteria, join, i)) {
+                    nonEquiNullingJoinInputs.add(i);
+                }
+            }
+        }
+        final boolean hasNonEquiNullingJoin = nonEquiNullingJoinInputs.size() > 0;
+        ExpressionNode constantFilter = selectJoinConstantTerms(where, true);
+        collectJoinConditions(selectJoinConstantTerms(where, false), join, -1, hasBarriers, hasNonEquiNullingJoin);
+        final JoinInput master = join.getInputs().getQuick(0);
+        for (int i = dependencyBase, n = lateralDependencyInputs.size(); i < n; i++) {
+            joinOrder.addDependency(lateralDependencyParents.getQuick(i), lateralDependencyInputs.getQuick(i));
+        }
+        for (int i = 1, n = join.getInputs().size(); i < n; i++) {
+            final QueryModel occurrence = source.getJoinModels().getQuick(i);
+            final JoinInput slave = join.getInputs().getQuick(i);
+            final boolean isBarrier = JoinOrderSolver.isBarrier(slave.getJoinType());
+            ExpressionNode onCriteria = occurrence.getJoinCriteria();
+            if (hasBarriers && !isBarrier && isPostJoinFilterReference(onCriteria, join, i)) {
+                collectJoinConditions(selectPostJoinFilterTerms(onCriteria, join, i, true), join, -1, true, hasNonEquiNullingJoin);
+                onCriteria = selectPostJoinFilterTerms(onCriteria, join, i, false);
+            }
+            final boolean hasForwardReference = findForwardJoinReference(onCriteria, join, i) != null;
+            final boolean isDeferred = !isBarrier && hasForwardReference;
+            final boolean isNonEquiNullingJoin = nonEquiNullingJoinInputs.contains(i);
+            final boolean isForwardLeftJoin = hasForwardReference && slave.getJoinType() == JoinKind.LEFT_OUTER;
+            if (isBarrier && hasForwardReference && !isForwardLeftJoin) {
+                throw forwardJoinReference(findForwardJoinReference(onCriteria, join, i));
+            }
+            if (isDeferred) {
+                deferredJoinInputs.add(i);
+            }
+            if (hasBarriers && !isNonEquiNullingJoin) {
+                collectJoinDependencies(onCriteria, join, i, isDeferred || isForwardLeftJoin);
+            }
+            if (isBarrier) {
+                if (slave.getJoinType() == JoinKind.SPLICE) {
+                    validateSpliceOnAnalysis(onCriteria, join);
+                }
+                joinOnNodes.setQuick(i, collectJoinConditions(onCriteria, join, i, true, hasNonEquiNullingJoin));
+                if (isNonEquiNullingJoin) {
+                    constrainNullingJoinPrefix(commaGroupStart(source, i), i);
+                    joinOrder.addLateInput(i);
+                    nullingJoinBoundaries.add(i);
+                } else {
+                    final boolean isMasterNulling = slave.getJoinType().isMasterNulling();
+                    int prefixStart = isMasterNulling ? commaGroupStart(source, i)
+                            : slave.getJoinType() == JoinKind.LEFT_OUTER ? i - 1 : 0;
+                    // A preceding LEFT join may wait for this one through a forward reference.
+                    while (prefixStart > 0 && !isMasterNulling && forwardLeftJoinInputs.contains(prefixStart)) {
+                        prefixStart--;
+                    }
+                    // A LEFT join whose ON reads no column stays unanchored, so it trails the order.
+                    if (slave.getJoinType() != JoinKind.LEFT_OUTER || hasLiteral(onCriteria)) {
+                        joinOrder.addOrderingConstraint(prefixStart, i);
+                    }
+                    if (isForwardLeftJoin) {
+                        if (!forwardLeftJoinInputs.contains(i)) {
+                            forwardLeftJoinInputs.add(i);
+                        }
+                        constrainNullingJoinPrefix(commaGroupStart(source, i), i);
+                        joinOrder.addLateInput(i);
+                    }
+                    if (isMasterNulling) {
+                        constrainNullingJoinPrefix(prefixStart, i);
+                        for (int k = i + 1; k < n; k++) {
+                            final JoinKind type = join.getInputs().getQuick(k).getJoinType();
+                            if (type == JoinKind.INNER || type == JoinKind.CROSS || type.isMasterNulling()) {
+                                joinOrder.addOrderingConstraint(i, k);
+                            }
+                        }
+                    }
+                }
+            } else {
+                constantFilter = combineJoinPredicates(constantFilter, selectJoinConstantTerms(onCriteria, true));
+                collectJoinConditions(selectJoinConstantTerms(onCriteria, false), join, i, hasBarriers, hasNonEquiNullingJoin);
+            }
+            final ObjList<ExpressionNode> shorthand = occurrence.getJoinColumns();
+            for (int k = 0, count = shorthand.size(); k < count; k++) {
+                final ExpressionNode column = shorthand.getQuick(k);
+                final int leftIndex = ctx.bindColumnIndex(column, master.getSourceOutput(), master.getBindingAlias());
+                final int rightIndex = ctx.bindColumnIndex(column, slave.getSourceOutput(), slave.getBindingAlias());
+                joinOrder.addEquality(0, master.getSourceOutput().getColumnId(leftIndex),
+                        ctx.qualifiedJoinName(master.getBindingAlias(), column.token), column.position,
+                        i, slave.getSourceOutput().getColumnId(rightIndex),
+                        ctx.qualifiedJoinName(slave.getBindingAlias(), column.token), column.position, i);
+            }
+        }
+        for (int i = 0, n = nullingJoinBoundaries.size(); i < n; i++) {
+            final int boundary = nullingJoinBoundaries.getQuick(i);
+            constrainNullingJoinConsumers(join, boundary, commaGroupStart(source, boundary));
+        }
+        if (joinOrder.order()) {
+            return constantFilter;
+        }
+        final boolean wasForwardInnerFiltered = isForwardInnerFiltered;
+        final boolean wasForwardLeftKeyFiltered = isForwardLeftKeyFiltered;
+        if (!isForwardInnerFiltered && deferredJoinInputs.size() > 0) {
+            isForwardInnerFiltered = true;
+        } else if (!isForwardLeftKeyFiltered && forwardLeftJoinInputs.size() > 0) {
+            isForwardLeftKeyFiltered = true;
+        }
+        if (isForwardInnerFiltered != wasForwardInnerFiltered || isForwardLeftKeyFiltered != wasForwardLeftKeyFiltered) {
+            try {
+                return orderJoin(join, source, where, dependencyBase, hasBarriers);
+            } finally {
+                isForwardInnerFiltered = wasForwardInnerFiltered;
+                isForwardLeftKeyFiltered = wasForwardLeftKeyFiltered;
+            }
+        }
+        if (forwardJoinReferences.size() == 0) {
+            throw new IllegalStateException("cyclic join dependencies without a forward ON reference");
+        }
+        throw forwardJoinReference(forwardJoinReferences.getQuick(0));
+    }
+
     private int resolveJoinHints(QueryModel master, QueryModel slave) {
+        final BindScope scope = ctx.scope();
         final CharSequence masterAlias = hintAlias(master);
         final CharSequence slaveAlias = hintAlias(slave);
         int hints = 0;
-        if (SqlHints.hasHintWithParams(ctx.currentHints, SqlHints.ASOF_LINEAR_HINT, masterAlias, slaveAlias)) {
+        if (SqlHints.hasHintWithParams(scope.currentHints, SqlHints.ASOF_LINEAR_HINT, masterAlias, slaveAlias)) {
             hints |= JoinInput.HINT_ASOF_LINEAR;
         }
-        if (SqlHints.hasHintWithParams(ctx.currentHints, SqlHints.ASOF_DENSE_HINT, masterAlias, slaveAlias)) {
+        if (SqlHints.hasHintWithParams(scope.currentHints, SqlHints.ASOF_DENSE_HINT, masterAlias, slaveAlias)) {
             hints |= JoinInput.HINT_ASOF_DENSE;
         }
-        if (SqlHints.hasHintWithParams(ctx.currentHints, SqlHints.ASOF_INDEX_HINT, masterAlias, slaveAlias)) {
+        if (SqlHints.hasHintWithParams(scope.currentHints, SqlHints.ASOF_INDEX_HINT, masterAlias, slaveAlias)) {
             hints |= JoinInput.HINT_ASOF_INDEX;
         }
-        if (SqlHints.hasHintWithParams(ctx.currentHints, SqlHints.ASOF_MEMOIZED_HINT, masterAlias, slaveAlias)) {
+        if (SqlHints.hasHintWithParams(scope.currentHints, SqlHints.ASOF_MEMOIZED_HINT, masterAlias, slaveAlias)) {
             hints |= JoinInput.HINT_ASOF_MEMOIZED;
         }
-        if (SqlHints.hasHintWithParams(ctx.currentHints, SqlHints.ASOF_MEMOIZED_DRIVEBY_HINT, masterAlias, slaveAlias)) {
+        if (SqlHints.hasHintWithParams(scope.currentHints, SqlHints.ASOF_MEMOIZED_DRIVEBY_HINT, masterAlias, slaveAlias)) {
             hints |= JoinInput.HINT_ASOF_MEMOIZED_DRIVEBY;
         }
-        if (SqlHints.hasHintWithParams(ctx.currentHints, SqlHints.MARKOUT_HORIZON_HINT, masterAlias, slaveAlias)) {
+        if (SqlHints.hasHintWithParams(scope.currentHints, SqlHints.MARKOUT_HORIZON_HINT, masterAlias, slaveAlias)) {
             hints |= JoinInput.HINT_MARKOUT_HORIZON;
         }
         return hints;
@@ -1116,8 +1213,8 @@ final class JoinBinder implements Mutable {
             final OutputSchema input = project.getInput().getOutput();
             final int timestampIndex = input.getTimestampIndex();
             if (timestampIndex >= 0) {
-                final int columnId = ctx.nextColumnId++;
-                project.getExpressions().add(ctx.columns.next().of(input.getColumnId(timestampIndex),
+                final int columnId = ctx.scope().nextColumnId++;
+                project.getExpressions().add(ctx.planNodes.columns.next().of(input.getColumnId(timestampIndex),
                         input.getColumnType(timestampIndex), project.getPosition()));
                 // An implicit timestamp belongs to the record layout, never the
                 // enclosing query's SQL name scope or wildcard expansion.
@@ -1126,9 +1223,8 @@ final class JoinBinder implements Mutable {
                 ctx.inheritTimestampBinding(input.getColumnId(timestampIndex), columnId);
             }
         } else if (plan instanceof FilterPlan || plan instanceof LimitPlan) {
-            final LogicalPlan input = plan.inputAt(0);
-            retainImplicitTimestamp(input);
-            plan.getOutput().copyFrom(input.getOutput());
+            retainImplicitTimestamp(plan.inputAt(0));
+            ((ForwardingPlan) plan).deriveOutput();
         }
         // Other operators establish their own ordering or equality contract.
         // In particular, never enlarge a DISTINCT or set-operation tuple.
@@ -1252,6 +1348,21 @@ final class JoinBinder implements Mutable {
         return hasBarrier;
     }
 
+    static boolean isJoinKeyTypeCompatible(int masterType, int slaveType) {
+        return masterType == slaveType
+                || ColumnType.isSymbolOrStringOrVarchar(masterType) && ColumnType.isSymbolOrStringOrVarchar(slaveType)
+                || ColumnType.isTimestamp(masterType) && ColumnType.isTimestamp(slaveType);
+    }
+
+    static void validateTimeSeriesTimestamps(int position, int masterTimestampId, OutputSchema slave) throws SqlException {
+        if (masterTimestampId < 0) {
+            throw SqlException.$(position, "left side of time series join has no timestamp");
+        }
+        if (slave.getTimestampIndex() < 0) {
+            throw SqlException.$(position, "right side of time series join has no timestamp");
+        }
+    }
+
     void addJoinOutput(JoinPlan join, OutputSchema output, CharSequence alias) {
         final OutputSchema target = join.getOutput();
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
@@ -1260,31 +1371,33 @@ final class JoinBinder implements Mutable {
         }
     }
 
-    LogicalPlan bindJoins(QueryModel model, QueryModel source, ExpressionNode where, SqlExecutionContext executionContext) throws SqlException {
-        return bindJoins(model, source, where, source.getJoinModels().size(), executionContext);
+    LogicalPlan bindJoins(QueryModel source, ExpressionNode where, SqlExecutionContext executionContext) throws SqlException {
+        return bindJoins(source, where, source.getJoinModels().size(), executionContext);
     }
 
-    LogicalPlan bindJoins(QueryModel model, QueryModel source, ExpressionNode where, int sourceCount,
+    LogicalPlan bindJoins(QueryModel source, ExpressionNode where, int sourceCount,
                           SqlExecutionContext executionContext) throws SqlException {
-        final boolean previous = ctx.isInsideJoin;
-        ctx.isInsideJoin = true;
+        final BindScope scope = ctx.scope();
+        final boolean previous = scope.isInsideJoin;
+        scope.isInsideJoin = true;
         try {
             return bindJoinSources(source, where, sourceCount, executionContext);
         } finally {
-            ctx.isInsideJoin = previous;
+            scope.isInsideJoin = previous;
         }
     }
 
     // Hints can name aliases assigned to unnamed subqueries before join rewriting.
     void collectHintAliases(QueryModel model) {
+        final BindScope scope = ctx.scope();
         if (model == null) {
             return;
         }
-        if (model.getName() == null && hintAliasModels.indexOf(model) < 0) {
-            hintAliasModels.add(model);
+        if (model.getName() == null && scope.hintAliasModels.indexOf(model) < 0) {
+            scope.hintAliasModels.add(model);
             final CharacterStoreEntry alias = ctx.characterStore.newEntry();
-            alias.put(QueryModel.SUB_QUERY_ALIAS_PREFIX).put(hintAliases.size());
-            hintAliases.add(alias.toImmutable());
+            alias.put(QueryModel.SUB_QUERY_ALIAS_PREFIX).put(scope.hintAliases.size());
+            scope.hintAliases.add(alias.toImmutable());
         }
         final ObjList<QueryModel> sources = model.getJoinModels();
         for (int i = 1, n = sources.size(); i < n; i++) {
@@ -1306,6 +1419,11 @@ final class JoinBinder implements Mutable {
         result.lhs = left;
         result.rhs = right;
         return result;
+    }
+
+    @TestOnly
+    int getJoinEqualityCapacity() {
+        return joinOrder.getEqualityCapacity();
     }
 
 }

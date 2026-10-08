@@ -27,6 +27,7 @@ package io.questdb.std;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Single-threaded object pool based on ObjList. The goal is to optimise intermediate allocation of objects.
@@ -44,21 +45,43 @@ public class ObjectPool<T extends Mutable> implements Mutable {
     private static final Log LOG = LogFactory.getLog(ObjectPool.class);
     private final ObjectFactory<T> factory;
     private final int initialSize;
+    private final int maxRetainedSize;
     private ObjList<T> list;
     private int pos = 0;
     private int size;
 
     public ObjectPool(@NotNull ObjectFactory<T> factory, int size) {
+        this(factory, size, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Creates a pool whose retained footprint does not depend on its peak use: {@link #clear()} and
+     * {@link #rewind(int)} clear the objects they release, so a kept object holds no reference into the work that
+     * released it, and {@link #clear()} drops every object past the first {@code maxRetainedSize}.
+     *
+     * @param maxRetainedSize the most objects the pool keeps once {@link #clear()} releases them
+     */
+    public ObjectPool(@NotNull ObjectFactory<T> factory, int size, int maxRetainedSize) {
+        assert maxRetainedSize >= size : "maxRetainedSize below the initial size";
         this.list = new ObjList<>(size);
         this.factory = factory;
         this.size = size;
         this.initialSize = size;
+        this.maxRetainedSize = maxRetainedSize;
         fill();
     }
 
     @Override
     public void clear() {
-        pos = 0;
+        rewind(0);
+        if (size > maxRetainedSize) {
+            trim();
+        }
+    }
+
+    @TestOnly
+    public int getCapacity() {
+        return size;
     }
 
     public int getPos() {
@@ -119,6 +142,22 @@ public class ObjectPool<T extends Mutable> implements Mutable {
         pos = 0;
     }
 
+    /**
+     * Returns every object handed out since {@link #getPos()} returned {@code mark}, so a nested user of the pool
+     * frees only what it took.
+     *
+     * @param mark a position {@link #getPos()} returned, not above the current position
+     */
+    public void rewind(int mark) {
+        assert mark >= 0 && mark <= pos : "rewind past the current position";
+        if (maxRetainedSize < Integer.MAX_VALUE) {
+            for (int i = mark; i < pos; i++) {
+                list.getQuick(i).clear();
+            }
+        }
+        pos = mark;
+    }
+
     private void expand() {
         fill();
         size <<= 1;
@@ -129,5 +168,10 @@ public class ObjectPool<T extends Mutable> implements Mutable {
         for (int i = 0; i < size; i++) {
             list.add(factory.newInstance());
         }
+    }
+
+    private void trim() {
+        list.remove(maxRetainedSize, size - 1);
+        size = maxRetainedSize;
     }
 }

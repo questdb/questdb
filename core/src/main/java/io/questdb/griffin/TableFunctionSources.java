@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.TableToken;
@@ -67,7 +68,7 @@ import java.io.Closeable;
 final class TableFunctionSources implements Closeable, Mutable {
     private final ObjList<ExpressionNode> expressions = new ObjList<>();
     private final FunctionParser parser;
-    private final ObjectPool<FunctionSourcePlan> plans = new ObjectPool<>(FunctionSourcePlan.FACTORY, 4);
+    private final ObjectPool<FunctionSourcePlan> plans;
     private final ObjList<FunctionSourcePlan> prepared = new ObjList<>();
     private final ResourceScope resources = new ResourceScope();
     private final ObjList<QueryModel> showModels = new ObjList<>();
@@ -75,29 +76,27 @@ final class TableFunctionSources implements Closeable, Mutable {
     private SqlParserCallback callback;
     private Path path;
 
-    TableFunctionSources(FunctionParser parser) {
+    TableFunctionSources(FunctionParser parser, ObjectPool<FunctionSourcePlan> plans) {
         this.parser = parser;
+        this.plans = plans;
     }
 
     @Override
     public void clear() {
-        // Preparation slots cannot survive reset or refer to reused pooled nodes.
-        for (int i = 0, n = prepared.size(); i < n; i++) {
-            prepared.getQuick(i).clear();
-        }
         prepared.clear();
         expressions.clear();
         showModels.clear();
         callback = null;
         slots.clear();
-        plans.clear();
         resources.clear();
     }
 
     @Override
     public void close() {
-        clear();
-        path = Misc.free(path);
+        final Throwable failure = Misc.clearBestEffort(null, this);
+        final Path ownedPath = path;
+        path = null;
+        CairoException.rethrowCleanupFailure(Misc.freeBestEffort(failure, ownedPath));
     }
 
     private static void describe(FunctionSourcePlan plan, RecordCursorFactory factory, int firstColumnId) {
@@ -112,7 +111,11 @@ final class TableFunctionSources implements Closeable, Mutable {
             plan.getSourceColumnIndexes().add(i);
         }
         output.setTimestampIndex(metadata.getTimestampIndex());
-        plan.setSequenceStable(factory.isStableWithinExecution());
+        describeSource(plan, factory);
+    }
+
+    private static void describeSource(FunctionSourcePlan plan, RecordCursorFactory factory) {
+        plan.setExternalDataSource(factory.usesExternalDataSource());
     }
 
     private static TableToken existingShowTable(QueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
@@ -121,6 +124,12 @@ final class TableFunctionSources implements Closeable, Mutable {
             throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
         }
         return tableToken;
+    }
+
+    private void closeSlot(int slot, Throwable primary) {
+        if (resources.isOwned(slot)) {
+            Misc.free(resources.detach(slot), primary);
+        }
     }
 
     private Path path() {
@@ -214,7 +223,7 @@ final class TableFunctionSources implements Closeable, Mutable {
             plan.setProjectable(function.getRecordCursorFactory() instanceof ProjectableRecordCursorFactory);
             return plan;
         } catch (Throwable th) {
-            resources.closeOwned(th);
+            closeSlot(slot, th);
             throw th;
         }
     }
@@ -235,8 +244,9 @@ final class TableFunctionSources implements Closeable, Mutable {
             if (!(function instanceof CursorFunction)) {
                 throw SqlException.$(expression.position, "function must return CURSOR");
             }
-            final RecordMetadata metadata = function.getRecordCursorFactory().getMetadata();
-            plan.setSequenceStable(function.getRecordCursorFactory().isStableWithinExecution());
+            final RecordCursorFactory factory = function.getRecordCursorFactory();
+            final RecordMetadata metadata = factory.getMetadata();
+            describeSource(plan, factory);
             final OutputSchema record = plan.getRecordSchema();
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 record.add(i, metadata.getColumnName(i), metadata.getColumnType(i), true);
@@ -246,7 +256,7 @@ final class TableFunctionSources implements Closeable, Mutable {
             plan.setRecordName(name);
             return plan;
         } catch (Throwable th) {
-            resources.closeOwned(th);
+            closeSlot(slot, th);
             throw th;
         }
     }
@@ -266,7 +276,7 @@ final class TableFunctionSources implements Closeable, Mutable {
             describe(plan, resources.function(slot).getRecordCursorFactory(), firstColumnId);
             return plan;
         } catch (Throwable th) {
-            resources.closeOwned(th);
+            closeSlot(slot, th);
             throw th;
         }
     }
@@ -287,8 +297,8 @@ final class TableFunctionSources implements Closeable, Mutable {
         final FunctionSourcePlan copy = plans.next().of(plan.getPosition());
         copy.getRecordSchema().copyFrom(plan.getRecordSchema());
         copy.getSourceColumnIndexes().addAll(plan.getSourceColumnIndexes());
+        copy.setExternalDataSource(plan.hasExternalDataSource());
         copy.setProjectable(plan.isProjectable());
-        copy.setSequenceStable(plan.isSequenceStable());
         copy.setRecordName(plan.getRecordName());
         prepared.add(copy);
         expressions.add(expressions.getQuick(index));

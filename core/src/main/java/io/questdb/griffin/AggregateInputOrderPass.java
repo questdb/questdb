@@ -32,7 +32,6 @@ import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
-import io.questdb.griffin.plan.logical.UnaryPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -94,9 +93,8 @@ final class AggregateInputOrderPass implements Mutable {
                 return plan;
             }
             case FilterPlan filter -> {
-                if (LogicalPlans.isOrderIndependent(filter.getPredicate()) && !LogicalPlans.hasDeferredConjunct(filter.getPredicate())
-                        && replaceWithUnorderedInput(filter)) {
-                    filter.deriveOutput();
+                if (LogicalPlans.isOrderIndependent(filter.getPredicate())) {
+                    filter.replaceInput(0, removeAggregateInputOrder(filter.getInput()));
                 }
                 return plan;
             }
@@ -133,11 +131,11 @@ final class AggregateInputOrderPass implements Mutable {
     /**
      * Returns whether the input or its designated timestamp changed.
      */
-    private boolean replaceWithUnorderedInput(UnaryPlan plan) {
-        final LogicalPlan input = plan.getInput();
+    private boolean replaceWithUnorderedInput(ProjectPlan project) {
+        final LogicalPlan input = project.getInput();
         final int timestampId = input.getOutput().getTimestampColumnId();
         final LogicalPlan replacement = removeAggregateInputOrder(input);
-        plan.replaceInput(0, replacement);
+        project.replaceInput(0, replacement);
         return input != replacement || timestampId != replacement.getOutput().getTimestampColumnId();
     }
 

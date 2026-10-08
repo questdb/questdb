@@ -74,11 +74,6 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        return true;
-    }
-
-    @Override
     public void prepareCursor(PageFrameCursor pageFrameCursor) {
         symbolKeys.clear();
 

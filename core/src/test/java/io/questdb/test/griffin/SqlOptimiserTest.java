@@ -4342,25 +4342,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               Aggregate
                                 keys: []
                                 values: [first(ts) AS FIRST]
-                                Project
-                                  columns: [ts]
-                                  Filter
-                                    predicate: x = 3
-                                    Scan
-                                      table: y
-                                      columns: [ts, x]
+                                Filter
+                                  predicate: x = 3
+                                  Scan
+                                    table: y
+                                    columns: [ts, x]
                             """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
+                            Async JIT Group By workers: 1
+                              vectorized: false
                               values: [first(ts)]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      filter: x=3
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: y
+                              filter: x=3
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
                             """);
         });
     }
@@ -4378,25 +4375,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               Aggregate
                                 keys: []
                                 values: [last(ts) AS LAST]
-                                Project
-                                  columns: [ts]
-                                  Filter
-                                    predicate: x = 3
-                                    Scan
-                                      table: y
-                                      columns: [ts, x]
+                                Filter
+                                  predicate: x = 3
+                                  Scan
+                                    table: y
+                                    columns: [ts, x]
                             """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
+                            Async JIT Group By workers: 1
+                              vectorized: false
                               values: [last(ts)]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      filter: x=3
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: y
+                              filter: x=3
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
                             """);
         });
     }
@@ -4414,25 +4408,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               Aggregate
                                 keys: []
                                 values: [max(ts) AS MAX]
-                                Project
-                                  columns: [ts]
-                                  Filter
-                                    predicate: x = 3
-                                    Scan
-                                      table: y
-                                      columns: [ts, x]
+                                Filter
+                                  predicate: x = 3
+                                  Scan
+                                    table: y
+                                    columns: [ts, x]
                             """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [max(ts)]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      filter: x=3
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: y
+                            Async JIT Group By workers: 1
+                              vectorized: false
+                              values: [max_designated(ts)]
+                              filter: x=3
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
                             """);
         });
     }
@@ -4450,25 +4441,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               Aggregate
                                 keys: []
                                 values: [min(ts) AS MIN]
-                                Project
-                                  columns: [ts]
-                                  Filter
-                                    predicate: x = 3
-                                    Scan
-                                      table: y
-                                      columns: [ts, x]
+                                Filter
+                                  predicate: x = 3
+                                  Scan
+                                    table: y
+                                    columns: [ts, x]
                             """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [min(ts)]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      filter: x=3
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: y
+                            Async JIT Group By workers: 1
+                              vectorized: false
+                              values: [min_designated(ts)]
+                              filter: x=3
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
                             """);
         });
     }
@@ -7948,25 +7936,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               Aggregate
                                 keys: []
                                 values: [first(ts) AS FIRST]
-                                Project
-                                  columns: [ts]
-                                  Filter
-                                    predicate: x = 3
-                                    Scan
-                                      table: y
-                                      columns: [ts, x]
+                                Filter
+                                  predicate: x = 3
+                                  Scan
+                                    table: y
+                                    columns: [ts, x]
                             """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
+                            Async JIT Group By workers: 1
+                              vectorized: false
                               values: [first(ts)]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      filter: x=3
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: y
+                              filter: x=3
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
                             """);
         });
     }
@@ -7984,25 +7969,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               Aggregate
                                 keys: []
                                 values: [last(ts) AS LAST]
-                                Project
-                                  columns: [ts]
-                                  Filter
-                                    predicate: x = 3
-                                    Scan
-                                      table: y
-                                      columns: [ts, x]
+                                Filter
+                                  predicate: x = 3
+                                  Scan
+                                    table: y
+                                    columns: [ts, x]
                             """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
+                            Async JIT Group By workers: 1
+                              vectorized: false
                               values: [last(ts)]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      filter: x=3
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: y
+                              filter: x=3
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
                             """);
         });
     }
@@ -8020,25 +8002,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               Aggregate
                                 keys: []
                                 values: [max(ts) AS MAX]
-                                Project
-                                  columns: [ts]
-                                  Filter
-                                    predicate: x = 3
-                                    Scan
-                                      table: y
-                                      columns: [ts, x]
+                                Filter
+                                  predicate: x = 3
+                                  Scan
+                                    table: y
+                                    columns: [ts, x]
                             """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [max(ts)]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      filter: x=3
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: y
+                            Async JIT Group By workers: 1
+                              vectorized: false
+                              values: [max_designated(ts)]
+                              filter: x=3
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
                             """);
         });
     }
@@ -8056,25 +8035,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               Aggregate
                                 keys: []
                                 values: [min(ts) AS MIN]
-                                Project
-                                  columns: [ts]
-                                  Filter
-                                    predicate: x = 3
-                                    Scan
-                                      table: y
-                                      columns: [ts, x]
+                                Filter
+                                  predicate: x = 3
+                                  Scan
+                                    table: y
+                                    columns: [ts, x]
                             """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [min(ts)]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      filter: x=3
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: y
+                            Async JIT Group By workers: 1
+                              vectorized: false
+                              values: [min_designated(ts)]
+                              filter: x=3
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
                             """);
         });
     }

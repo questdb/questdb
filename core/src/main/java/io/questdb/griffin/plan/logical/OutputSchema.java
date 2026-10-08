@@ -79,6 +79,36 @@ public final class OutputSchema implements Mutable {
         return this;
     }
 
+    /**
+     * Appends column {@code index} of {@code source} with every attribute: id, name, qualifier, type, nested
+     * schema, visibility, symbol-table capability and name protection. The designated timestamp is not touched.
+     */
+    public void addColumnFrom(OutputSchema source, int index) {
+        add(source.getColumnId(index), source.getColumnName(index), source.getColumnType(index), source.getMetadata(index),
+                source.isVisible(index), source.getColumnQualifier(index));
+        columnFlags.setQuick(getColumnCount() - 1, source.columnFlags.getQuick(index));
+    }
+
+    /**
+     * Appends every column of {@code source} as {@link #addColumnFrom} does.
+     */
+    public void addColumnsFrom(OutputSchema source) {
+        for (int i = 0, n = source.getColumnCount(); i < n; i++) {
+            addColumnFrom(source, i);
+        }
+    }
+
+    /**
+     * Appends every column of {@code source} under {@code qualifier}, the other attributes kept as
+     * {@link #addColumnFrom} keeps them.
+     */
+    public void addColumnsFrom(OutputSchema source, CharSequence qualifier) {
+        for (int i = 0, n = source.getColumnCount(); i < n; i++) {
+            addColumnFrom(source, i);
+            columnQualifiers.setQuick(getColumnCount() - 1, qualifier);
+        }
+    }
+
     @Override
     public void clear() {
         columnIds.clear();
@@ -175,6 +205,34 @@ public final class OutputSchema implements Mutable {
         }
     }
 
+    /**
+     * Keeps the columns at {@code indexes}, in that order, each with every attribute; the designated timestamp
+     * stays designated when it is kept, else the schema designates none.
+     */
+    public void retain(IntList indexes) {
+        final int count = getColumnCount();
+        final int timestampId = getTimestampColumnId();
+        final int n = indexes.size();
+        for (int i = 0; i < n; i++) {
+            addColumnFrom(this, indexes.getQuick(i));
+        }
+        for (int i = 0; i < n; i++) {
+            columnIds.setQuick(i, columnIds.getQuick(count + i));
+            columnMetadata.setQuick(i, columnMetadata.getQuick(count + i));
+            columnNames.setQuick(i, columnNames.getQuick(count + i));
+            columnQualifiers.setQuick(i, columnQualifiers.getQuick(count + i));
+            columnTypes.setQuick(i, columnTypes.getQuick(count + i));
+            columnFlags.setQuick(i, columnFlags.getQuick(count + i));
+        }
+        columnIds.setPos(n);
+        columnMetadata.setPos(n);
+        columnNames.setPos(n);
+        columnQualifiers.setPos(n);
+        columnTypes.setPos(n);
+        columnFlags.setPos(n);
+        setTimestampColumnId(timestampId);
+    }
+
     public void setColumnId(int index, int columnId) {
         if (columnId < 0) {
             throw new IllegalArgumentException("negative logical column ID");
@@ -247,6 +305,13 @@ public final class OutputSchema implements Mutable {
 
     private boolean isReferenceable(int index) {
         return (columnFlags.getQuick(index) & (VISIBLE | NAME_PROTECTED)) == VISIBLE;
+    }
+
+    /**
+     * Designates the column with the id, or none when the schema does not list it.
+     */
+    public void setTimestampColumnId(int columnId) {
+        timestampIndex = getColumnIndexById(columnId);
     }
 
     public void setTimestampIndex(int index) {

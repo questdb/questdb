@@ -32,7 +32,6 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
-import io.questdb.griffin.plan.logical.DeferredErrorExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.ProjectPlan;
@@ -55,15 +54,15 @@ public final class BoundExpressionRewriter implements Mutable {
     private final ObjectPool<FunctionExpression> functions;
     private final ObjectPool<OuterColumnExpression> outerColumns;
     private final ObjectPool<BindVariableExpression> parameters;
-    private final IntList tmpPositions;
     private final PreparedFunctions prepared;
-    private final ObjectPool<ObjList<BoundExpression>> rewriteArguments = new ObjectPool<>(ObjList::new, 8);
+    private final IntList tmpPositions;
+    private final ObjectPool<ObjList<BoundExpression>> rewriteArguments;
     private final ObjectPool<TypeExpression> types;
     private boolean isReplacementPlaced;
 
     /**
-     * Allocates descriptions from the given pools, which their owner empties; the temporary lists are borrowed for
-     * single calls only.
+     * Allocates descriptions from the given pools, which their owner empties, and retargets the given preparations;
+     * the temporary lists are borrowed for single calls only.
      */
     BoundExpressionRewriter(
             FunctionFactoryCache functionFactoryCache,
@@ -73,20 +72,22 @@ public final class BoundExpressionRewriter implements Mutable {
             ObjectPool<OuterColumnExpression> outerColumns,
             ObjectPool<BindVariableExpression> parameters,
             ObjectPool<TypeExpression> types,
-            PreparedFunctions prepared,
             ObjList<BoundExpression> tmpArguments,
-            IntList tmpPositions
+            IntList tmpPositions,
+            PreparedFunctions prepared,
+            int maxRetainedArgumentLists
     ) {
         this.functionFactoryCache = functionFactoryCache;
+        this.rewriteArguments = new ObjectPool<>(ObjList::new, 8, maxRetainedArgumentLists);
         this.columns = columns;
         this.constants = constants;
         this.functions = functions;
         this.outerColumns = outerColumns;
         this.parameters = parameters;
         this.types = types;
-        this.prepared = prepared;
         this.tmpArguments = tmpArguments;
         this.tmpPositions = tmpPositions;
+        this.prepared = prepared;
     }
 
     @Override
@@ -146,7 +147,7 @@ public final class BoundExpressionRewriter implements Mutable {
         final int rightFlags = right.getFunctionFlags();
         int flags = leftFlags & rightFlags & BoundExpression.CONSTANT;
         flags |= (leftFlags | rightFlags) & BoundExpression.NON_DETERMINISTIC;
-        flags |= LogicalPlans.weakerStability(LogicalPlans.stabilityFlags(left), LogicalPlans.stabilityFlags(right));
+        flags |= leftFlags & rightFlags & BoundExpression.STABLE_WITHIN_EXECUTION;
         if ((leftFlags & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) != 0
                 && (rightFlags & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) != 0
                 && ((leftFlags | rightFlags) & BoundExpression.RUNTIME_CONSTANT) != 0) {
@@ -170,13 +171,12 @@ public final class BoundExpressionRewriter implements Mutable {
      */
     private static int substitutedFlags(FunctionExpression call, ObjList<BoundExpression> arguments) {
         int flags = call.getFunctionFlags();
-        int combined = LogicalPlans.stabilityFlags(call);
         for (int i = 0, n = arguments.size(); i < n; i++) {
-            final BoundExpression argument = arguments.getQuick(i);
-            flags |= argument.getFunctionFlags() & BoundExpression.NON_DETERMINISTIC;
-            combined = LogicalPlans.weakerStability(combined, LogicalPlans.stabilityFlags(argument));
+            final int argumentFlags = arguments.getQuick(i).getFunctionFlags();
+            flags |= argumentFlags & BoundExpression.NON_DETERMINISTIC;
+            flags &= argumentFlags | ~BoundExpression.STABLE_WITHIN_EXECUTION;
         }
-        return flags & ~(BoundExpression.STABLE_WITHIN_EXECUTION | BoundExpression.STABLE_WITH_SUBQUERIES) | combined;
+        return flags;
     }
 
     private BoundExpression conjunction(FunctionFactoryDescriptor overload, BoundExpression left, BoundExpression right, int position) {
@@ -188,15 +188,13 @@ public final class BoundExpressionRewriter implements Mutable {
         }
         // Match the selected factory's constant branches without constructing a
         // disposable function or taking ownership of a prepared child instance.
-        // A false argument keeps a conjunct that raises an error when built: a
-        // deferred binding error or timestamp text that does not convert.
-        if (left instanceof ConstantExpression constant && (constant.getLongValue() != 0 || !LogicalPlans.hasGenerationError(right))) {
+        if (left instanceof ConstantExpression constant) {
             // TRUE returns the unchanged right function, even raw NULL. A false
             // argument instead makes the factory return BOOLEAN FALSE.
             return constant.getLongValue() != 0 ? right
                     : left.getDataType() == ColumnType.BOOLEAN ? left : constants.next().ofBoolean(false, position);
         }
-        if (right instanceof ConstantExpression constant && (constant.getLongValue() != 0 || !LogicalPlans.hasGenerationError(left))) {
+        if (right instanceof ConstantExpression constant) {
             return constant.getLongValue() != 0 ? left
                     : right.getDataType() == ColumnType.BOOLEAN ? right : constants.next().ofBoolean(false, position);
         }
@@ -234,7 +232,6 @@ public final class BoundExpressionRewriter implements Mutable {
             case TypeExpression type -> types.next().of(type.getDataType(), type.getPosition());
             // A cursor stays shared: the instantiator keys sub-query reuse across its positions on its identity.
             case CursorExpression cursor -> cursor;
-            case DeferredErrorExpression deferred -> deferred;
         };
     }
 

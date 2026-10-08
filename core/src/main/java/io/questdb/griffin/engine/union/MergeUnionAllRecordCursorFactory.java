@@ -123,16 +123,6 @@ public class MergeUnionAllRecordCursorFactory extends AbstractSetRecordCursorFac
         return false;
     }
 
-    @Override
-    public boolean isStableWithinExecution() {
-        for (int i = 0, n = sourceFactories.size(); i < n; i++) {
-            if (!sourceFactories.getQuick(i).isStableWithinExecution()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     /**
      * Creates the merge cursor when the factory is known to be executable, which is what the generator
      * does the moment it stops holding the factory open for flattening. Idempotent, and closes the

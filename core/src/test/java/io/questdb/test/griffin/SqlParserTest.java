@@ -9352,7 +9352,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select c.customerId, orderIdx, o.productId from " +
                         "customers c " +
                         "join (" +
-                        "orders where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`) latest on ts partition by customerId" +
+                        "orders where customerId > 0 latest on ts partition by customerId" +
                         ") o on c.customerId = o.customerId", 21, "Invalid column",
                 modelOf("customers").col("customerName", ColumnType.STRING).col("customerId", ColumnType.INT),
                 modelOf("orders").timestamp("ts").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
@@ -9362,7 +9362,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select c.customerId, orderId, o.productId2 from " +
                         "customers c " +
                         "join (" +
-                        "orders where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`) latest on ts partition by customerId" +
+                        "orders where customerId > 0 latest on ts partition by customerId" +
                         ") o on c.customerId = o.customerId", 30, "Invalid column",
                 modelOf("customers").col("customerName", ColumnType.STRING).col("customerId", ColumnType.INT),
                 modelOf("orders").timestamp("ts").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
@@ -9372,7 +9372,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select c.customerId, orderId, o2.productId from " +
                         "customers c " +
                         "join (" +
-                        "orders where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`) latest on ts partition by customerId" +
+                        "orders where customerId > 0 latest on ts partition by customerId" +
                         ") o on c.customerId = o.customerId", 30, "Invalid table name",
                 modelOf("customers").col("customerName", ColumnType.STRING).col("customerId", ColumnType.INT),
                 modelOf("orders").timestamp("ts").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
@@ -13949,15 +13949,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 GroupBy vectorized: false
                                   keys: [a]
                                   values: [sum(b)]
-                                    SelectedRecord
-                                        GroupBy vectorized: false
-                                          keys: [a,t]
-                                          values: [sum(b)]
-                                            Encode sort light
-                                              keys: [t]
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tab
+                                    GroupBy vectorized: false
+                                      keys: [a,t]
+                                      values: [sum(b)]
+                                        Encode sort light
+                                          keys: [t]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
                             """)
                     .returns("a\tsum\n");
             assertQuery("select a, sum(b) from (select a,sum(b) b from (tab order by t) timestamp(t) sample by 10m align to calendar order by b) order by a")
@@ -13968,15 +13967,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 GroupBy vectorized: false
                                   keys: [a]
                                   values: [sum(b)]
-                                    SelectedRecord
-                                        GroupBy vectorized: false
-                                          keys: [a,t]
-                                          values: [sum(b)]
-                                            Encode sort light
-                                              keys: [t]
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tab
+                                    GroupBy vectorized: false
+                                      keys: [a,t]
+                                      values: [sum(b)]
+                                        Encode sort light
+                                          keys: [t]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
                             """)
                     .returns("a\tsum\n");
         });

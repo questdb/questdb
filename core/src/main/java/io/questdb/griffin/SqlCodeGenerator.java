@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntityColumnFilter;
@@ -47,7 +46,6 @@ import io.questdb.griffin.engine.join.SharedRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.model.ExecutionModel;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -71,7 +69,6 @@ import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
-import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
@@ -107,44 +104,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final OutputSchema emptySchema;
     private final FilterFactoryGenerator filterGenerator;
     private final ObjList<GenerationFrame> generationFrames = new ObjList<>();
-    private final ObjectPool<IntList> intListPool = new ObjectPool<>(IntList::new, 4);
+    private final ListColumnFilter indexColumnFilter = new ListColumnFilter();
     private final MemoryCARW jitIRMem;
     private final JoinFactoryGenerator joinGenerator;
     private final LatestByFactoryGenerator latestByGenerator;
-    // this list is used to generate record sinks
-    private final ListColumnFilter listColumnFilterA = new ListColumnFilter();
-    private final LongList tmpLongs = new LongList();
     private final ProjectionFactoryGenerator projectionGenerator;
     private final RecordComparatorCompiler recordComparatorCompiler;
     private final SampleByFactoryGenerator sampleByGenerator;
     private final ScanFactoryGenerator scanGenerator;
-    private final StringSink tmpSink;
     private final SetOperationFactoryGenerator setOperationGenerator;
     private final SortFactoryGenerator sortGenerator;
+    private final LongList tmpLongs = new LongList();
+    private final StringSink tmpSink;
     private final WindowFactoryGenerator windowGenerator;
     private boolean fullFatJoins = false;
     private int generationDepth;
-
-    @TestOnly
-    public SqlCodeGenerator(
-            CairoConfiguration configuration,
-            FunctionParser functionParser
-    ) {
-        this(
-                configuration,
-                functionParser,
-                new CharacterStore(configuration.getSqlCharacterStoreCapacity(), configuration.getSqlCharacterStoreSequencePoolCapacity()),
-                new BytecodeAssembler(),
-                new EntityColumnFilter(),
-                new OutputSchema(),
-                new StringSink(),
-                new IntHashSet(),
-                new IntList(),
-                new IntList(),
-                new IntList(),
-                new IntList()
-        );
-    }
 
     public SqlCodeGenerator(
             CairoConfiguration configuration,
@@ -158,7 +132,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             IntList tmpIndexes,
             IntList tmpValues,
             IntList tmpMasterKeys,
-            IntList tmpSlaveKeys
+            IntList tmpSlaveKeys,
+            ObjectPool<SortPlan> sorts
     ) {
         try {
             this.configuration = configuration;
@@ -175,26 +150,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             jitIRMem.putByte((byte) 0);
             jitIRMem.truncate();
             final PageFrameReduceTaskFactory reduceTaskFactory = () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER);
-            final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            final ListColumnFilter listColumnFilterB = new ListColumnFilter();
-            final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-            final BitSet tmpSymbols = new BitSet();
             this.filterGenerator = new FilterFactoryGenerator(configuration, characterStore, jitIRMem, reduceTaskFactory, tmpSink,
                     tmpIndexes, tmpValues, tmpMasterKeys, tmpSlaveKeys, tmpLongs);
             this.aggregateGenerator = new AggregateFactoryGenerator(configuration, this, asm, emptySchema, entityColumnFilter,
-                    tmpIndexes, tmpValues);
-            this.joinGenerator = new JoinFactoryGenerator(configuration, this, filterGenerator, functionParser, asm, entityColumnFilter,
-                    keyTypes, valueTypes, listColumnFilterA, listColumnFilterB, reduceTaskFactory, tmpSink, tmpIndexes, tmpValues,
-                    tmpIds, tmpSymbols, tmpMasterKeys, tmpSlaveKeys);
-            this.latestByGenerator = new LatestByFactoryGenerator(configuration, this, asm, keyTypes, listColumnFilterA, tmpIndexes, tmpLongs);
+                    tmpIndexes, tmpValues, sorts);
+            this.joinGenerator = new JoinFactoryGenerator(configuration, this, filterGenerator, functionParser.getFunctionFactoryCache(), asm,
+                    entityColumnFilter, reduceTaskFactory, tmpSink, tmpIds, tmpMasterKeys, tmpSlaveKeys);
+            this.latestByGenerator = new LatestByFactoryGenerator(configuration, this, asm, tmpIndexes);
             this.projectionGenerator = new ProjectionFactoryGenerator(tmpIndexes, tmpValues);
-            this.sampleByGenerator = new SampleByFactoryGenerator(configuration, this, functionParser, asm, entityColumnFilter, intListPool,
-                    keyTypes, valueTypes, listColumnFilterA, recordComparatorCompiler);
+            this.sampleByGenerator = new SampleByFactoryGenerator(configuration, this, functionParser, asm, entityColumnFilter,
+                    recordComparatorCompiler);
             this.scanGenerator = new ScanFactoryGenerator(configuration, filterGenerator, latestByGenerator, emptySchema, reduceTaskFactory);
             this.sortGenerator = new SortFactoryGenerator(configuration, this, projectionGenerator, asm, emptySchema, entityColumnFilter,
-                    recordComparatorCompiler, listColumnFilterB);
-            this.setOperationGenerator = new SetOperationFactoryGenerator(configuration, this, sortGenerator, asm, entityColumnFilter, keyTypes, valueTypes,
-                    listColumnFilterB, tmpSymbols);
+                    recordComparatorCompiler, sorts);
+            this.setOperationGenerator = new SetOperationFactoryGenerator(configuration, this, sortGenerator, asm, entityColumnFilter);
             this.windowGenerator = new WindowFactoryGenerator(configuration, this, functionParser.getFunctionFactoryCache(), asm, entityColumnFilter, recordComparatorCompiler);
         } catch (Throwable th) {
             close();
@@ -216,8 +185,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0, n = generationFrames.size(); i < n; i++) {
             generationFrames.getQuick(i).clear();
         }
+        if (generationFrames.size() > BindScopeStack.MAX_RETAINED_DEPTH) {
+            generationFrames.remove(BindScopeStack.MAX_RETAINED_DEPTH, generationFrames.size() - 1);
+        }
         generationDepth = 0;
-        intListPool.clear();
     }
 
     @Override
@@ -226,6 +197,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         generationFrames.clear();
         Misc.free(jitIRMem);
         CairoException.rethrowCleanupFailure(failure);
+    }
+
+    @TestOnly
+    public int getGenerationFrameCount() {
+        return generationFrames.size();
     }
 
     /**
@@ -249,33 +225,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     public ListColumnFilter getIndexColumnFilter() {
-        return listColumnFilterA;
+        return indexColumnFilter;
     }
 
     public RecordComparatorCompiler getRecordComparatorCompiler() {
         return recordComparatorCompiler;
     }
 
-    public IntList toOrderIndices(RecordMetadata m, ObjList<ExpressionNode> orderBy, IntList orderByDirection) throws SqlException {
-        final IntList indices = intListPool.next();
-        for (int i = 0, n = orderBy.size(); i < n; i++) {
-            ExpressionNode tok = orderBy.getQuick(i);
-            int index = SqlUtil.getColumnIndexQuiet(m, tok.token);
-            if (index == -1) {
-                throw SqlException.invalidColumn(tok.position, tok.token);
+    private static RecordCursorFactory declareTimestamp(RecordCursorFactory base, int timestampIndex) {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        final IntList mapping;
+        try {
+            final RecordMetadata baseMetadata = base.getMetadata();
+            mapping = new IntList(baseMetadata.getColumnCount());
+            for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
+                metadata.add(baseMetadata.getColumnMetadata(i));
+                mapping.add(i);
             }
-
-            // shift index by 1 to use sign as sort direction
-            index++;
-
-            // negative column index means descending order of sort
-            if (orderByDirection.getQuick(i) == QueryModel.ORDER_DIRECTION_DESCENDING) {
-                index = -index;
-            }
-
-            indices.add(index);
+            metadata.setTimestampIndex(timestampIndex);
+        } catch (Throwable th) {
+            Misc.free(base, th);
+            throw th;
         }
-        return indices;
+        return new SelectedRecordCursorFactory(metadata, mapping, base);
     }
 
     private static boolean hasSortUnderStableProjects(LogicalPlan plan) {
@@ -300,24 +272,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (input instanceof LatestByPlan latest && latest.isTimestampOrderInherited()) {
             throw SqlException.$(latest.getPosition(), "TIMESTAMP column is required but not provided");
         }
-    }
-
-    private static RecordCursorFactory declareTimestamp(RecordCursorFactory base, int timestampIndex) {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        final IntList mapping;
-        try {
-            final RecordMetadata baseMetadata = base.getMetadata();
-            mapping = new IntList(baseMetadata.getColumnCount());
-            for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
-                metadata.add(baseMetadata.getColumnMetadata(i));
-                mapping.add(i);
-            }
-            metadata.setTimestampIndex(timestampIndex);
-        } catch (Throwable th) {
-            Misc.free(base, th);
-            throw th;
-        }
-        return new SelectedRecordCursorFactory(metadata, mapping, base);
     }
 
     private RecordCursorFactory generateUnary(
@@ -355,11 +309,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     inputOrderId = -1;
                 }
                 if (SortFactoryGenerator.hasNativeFilterInput(project)) {
-                    inputOrderAdvice = sortGenerator.remapOrderAdvice(frame, project, orderAdvice);
+                    inputOrderAdvice = sortGenerator.remapOrderAdvice(project, orderAdvice);
                     inputLimitAdvice = orderAdvice == null || inputOrderAdvice != null ? limitAdvice : null;
                 } else if (project.getInput() instanceof AggregatePlan || project.getInput() instanceof WindowPlan
                         || SortFactoryGenerator.hasOrderedJoinMasterInput(project)) {
-                    inputOrderAdvice = sortGenerator.remapOrderAdvice(frame, project, orderAdvice);
+                    inputOrderAdvice = sortGenerator.remapOrderAdvice(project, orderAdvice);
                 }
             }
             case SortPlan sort -> {
@@ -463,7 +417,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return projectionGenerator.generateProjection(frame, project, base, timestampIndex, executionContext);
             }
             case SortPlan sort -> {
-                return sortGenerator.generate(sort, base, null, null, 0, executionContext, frame.functionInstantiator);
+                return sortGenerator.generate(frame, sort, base, null, null, 0, executionContext);
             }
             case LimitPlan limit -> {
                 Function lo = null;
@@ -652,17 +606,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 projectionGenerator.setReferenceCounts(frame, root.getOutput(), 1);
                 projectionGenerator.collectColumnReferenceCounts(frame, root);
                 aggregateGenerator.countSharedConsumers(frame, root);
-                final RecordCursorFactory factory = generate(frame, root, executionContext);
-                final Throwable cleanup = frame.closePrepared(null);
-                if (cleanup != null) {
-                    Misc.free(factory, cleanup);
-                    CairoException.rethrowCleanupFailure(cleanup);
-                }
-                return factory;
-            } catch (Throwable e) {
-                final Throwable failure = frame.closePrepared(e);
-                assert failure == e;
-                throw e;
+                return generate(frame, root, executionContext);
             } finally {
                 frame.functionInstantiator = null;
                 frame.expressionRewriter = null;
@@ -695,7 +639,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final int index = project.getOutput().getColumnIndexById(requiredOrderColumnId);
                 yield windowGenerator.generateWindow(frame, window, project,
                         index >= 0 && project.getExpressions().getQuick(index) instanceof ColumnExpression column
-                                ? column.getColumnId() : -1, requiredScanDirection, sortGenerator.remapOrderAdvice(frame, project, orderAdvice),
+                                ? column.getColumnId() : -1, requiredScanDirection, sortGenerator.remapOrderAdvice(project, orderAdvice),
                         window.isSelectOrdered() && orderAdvice != null && orderAdvice.getInput() == plan,
                         orderByMnemonic, executionContext);
             }
@@ -710,7 +654,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case SampleByPlan sample -> sampleByGenerator.generateSampleBy(frame, sample, executionContext);
             case FillPlan fill -> {
                 final RecordCursorFactory base = generate(frame, fill.getInput(), executionContext);
-                yield sampleByGenerator.generateFill(fill, fill.getInput().getOutput(), base, frame.functionInstantiator, executionContext);
+                yield sampleByGenerator.generateFill(frame, fill, fill.getInput().getOutput(), base, executionContext);
             }
             case ScanPlan scan -> {
                 final int order = requiredOrderColumnId >= 0 && requiredOrderColumnId == scan.getOutput().getTimestampColumnId()

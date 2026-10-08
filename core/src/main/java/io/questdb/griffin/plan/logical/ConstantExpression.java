@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -43,7 +42,6 @@ public final class ConstantExpression extends BoundExpression {
     private long hh;
     private long hl;
     private boolean isLiteral;
-    private boolean isUnparsedTimestamp;
     private long lh;
     private long longValue;
     private FunctionExpression source;
@@ -56,7 +54,6 @@ public final class ConstantExpression extends BoundExpression {
         hl = 0;
         lh = 0;
         isLiteral = false;
-        isUnparsedTimestamp = false;
         source = null;
         longValue = 0;
         value = null;
@@ -107,7 +104,6 @@ public final class ConstantExpression extends BoundExpression {
     }
 
     public long getLongValue() {
-        assert !isUnparsedTimestamp;
         return longValue;
     }
 
@@ -142,18 +138,10 @@ public final class ConstantExpression extends BoundExpression {
      * Both constants hold the same value of the same type.
      */
     public boolean isSameValue(ConstantExpression that) {
-        return getDataType() == that.getDataType() && isUnparsedTimestamp == that.isUnparsedTimestamp && longValue == that.longValue && hh == that.hh && hl == that.hl && lh == that.lh
+        return getDataType() == that.getDataType() && longValue == that.longValue && hh == that.hh && hl == that.hl && lh == that.lh
                 && (value == that.value
                 || value instanceof CharSequence text && that.value instanceof CharSequence other && Chars.equals(text, other)
                 || value instanceof Utf8Sequence text && that.value instanceof Utf8Sequence other && Utf8s.equals(text, other));
-    }
-
-    /**
-     * The constant spells a TIMESTAMP with text that does not parse as one: it holds only that
-     * {@link #getTimestampText() text} and no value.
-     */
-    public boolean isUnparsedTimestamp() {
-        return isUnparsedTimestamp;
     }
 
     public ConstantExpression markLiteral() {
@@ -178,7 +166,6 @@ public final class ConstantExpression extends BoundExpression {
         lh = that.lh;
         longValue = that.longValue;
         isLiteral = that.isLiteral;
-        isUnparsedTimestamp = that.isUnparsedTimestamp;
         if (that.value == that.long256) {
             long256.copyFrom(that.long256);
             value = long256;
@@ -315,15 +302,6 @@ public final class ConstantExpression extends BoundExpression {
         configure(type, position, CONSTANT | STABLE_WITHIN_EXECUTION);
         longValue = value;
         this.value = null;
-        return this;
-    }
-
-    public ConstantExpression ofUnparsedTimestamp(CharSequence text, int type, int position) {
-        assert ColumnType.isTimestamp(type);
-        configure(type, position, CONSTANT | STABLE_WITHIN_EXECUTION);
-        longValue = Numbers.LONG_NULL;
-        value = Chars.toString(text);
-        isUnparsedTimestamp = true;
         return this;
     }
 

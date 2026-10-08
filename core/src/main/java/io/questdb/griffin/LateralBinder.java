@@ -30,6 +30,7 @@ import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 
 /**
@@ -40,11 +41,12 @@ import io.questdb.std.ObjectPool;
 final class LateralBinder implements Mutable {
     private final SqlBinder binder;
     private final BindContext ctx;
-    private final ObjectPool<OutputSchema> scopes = new ObjectPool<>(OutputSchema::new, 2);
+    private final ObjectPool<OutputSchema> scopes;
 
-    LateralBinder(BindContext ctx, SqlBinder binder) {
+    LateralBinder(BindContext ctx, SqlBinder binder, int maxRetainedScopes) {
         this.ctx = ctx;
         this.binder = binder;
+        this.scopes = new ObjectPool<>(OutputSchema::new, 2, maxRetainedScopes);
     }
 
     @Override
@@ -67,11 +69,12 @@ final class LateralBinder implements Mutable {
                 scope.setSymbolTableStatic(scope.getColumnCount() - 1, output.isSymbolTableStatic(c));
             }
         }
-        ctx.functionBinder.pushOuterScope(scope);
+        final ObjList<OutputSchema> outerScopes = ctx.scope().outerScopes;
+        outerScopes.add(scope);
         try {
             return binder.bindSource(source.getJoinModels().getQuick(index), executionContext);
         } finally {
-            ctx.functionBinder.popOuterScope();
+            outerScopes.remove(outerScopes.size() - 1);
         }
     }
 }

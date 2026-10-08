@@ -75,6 +75,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -82,13 +83,12 @@ import org.jetbrains.annotations.Nullable;
  * input ordering and the fusion of a keep-flag filter into a cached window.
  */
 final class WindowFactoryGenerator {
-    // Read-only: WindowMapSpec.of copies directions, and only an ordered window mutates or borrows its own list.
-    private static final IntList NO_DIRECTIONS = new IntList(0);
     private final BytecodeAssembler asm;
     private final SqlCodeGenerator codeGenerator;
     private final CairoConfiguration configuration;
     private final EntityColumnFilter entityColumnFilter;
     private final FunctionFactoryCache functionFactoryCache;
+    private final StringSink nameSink = new StringSink();
     private final RecordComparatorCompiler recordComparatorCompiler;
 
     WindowFactoryGenerator(
@@ -110,6 +110,10 @@ final class WindowFactoryGenerator {
     private static boolean hasNestedUnionAll(LogicalPlan plan) {
         return LogicalPlans.skipProjectsAndFilters(plan) instanceof SetOperationPlan operation
                 && operation.getOperation() == SetOperationKind.UNION_ALL;
+    }
+
+    private static boolean isFreeName(CharSequence name, RecordMetadata metadata, @Nullable RecordMetadata reserved) {
+        return metadata.getColumnIndexQuiet(name) < 0 && (reserved == null || reserved.getColumnIndexQuiet(name) < 0);
     }
 
     private static boolean isModelOrderPrefix(WindowSpec spec, @Nullable SortPlan modelOrder) {
@@ -171,13 +175,25 @@ final class WindowFactoryGenerator {
         return new SelectedRecordCursorFactory(renamed, mapping, base);
     }
 
-    private boolean hasGroupByWindowFunction(GenerationFrame frame, WindowPlan window) {
+    private boolean hasGroupByWindowFunction(WindowPlan window) {
         for (int i = 0, n = window.getFunctions().size(); i < n; i++) {
             if (functionFactoryCache.isGroupBy(window.getFunctions().getQuick(i).getName())) {
                 return true;
             }
         }
         return false;
+    }
+
+    private String uniqueName(CharSequence name, RecordMetadata metadata, @Nullable RecordMetadata reserved) {
+        if (isFreeName(name, metadata, reserved)) {
+            return Chars.toString(name);
+        }
+        int k = 1;
+        do {
+            nameSink.clear();
+            nameSink.put(name).put('_').put(k++);
+        } while (!isFreeName(nameSink, metadata, reserved));
+        return nameSink.toString();
     }
 
     /**
@@ -431,7 +447,7 @@ final class WindowFactoryGenerator {
                 direction = specDirection;
             }
         }
-        final int inputMnemonic = isModelOrder || orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT || hasGroupByWindowFunction(frame, window)
+        final int inputMnemonic = isModelOrder || orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT || hasGroupByWindowFunction(window)
                 ? OrderByMnemonic.ORDER_BY_INVARIANT : OrderByMnemonic.ORDER_BY_REQUIRED;
         final RecordCursorFactory base = codeGenerator.generate(frame, window.getInput(), executionContext, orderId,
                 orderId < 0 ? RecordCursorFactory.SCAN_DIRECTION_OTHER : direction,
@@ -485,12 +501,8 @@ final class WindowFactoryGenerator {
                 if (sources.indexOf(source, 0, i) < 0) {
                     chainMetadata.add(i, column);
                 } else {
-                    final String name = column.getColumnName();
-                    String unique = name;
-                    for (int k = 1; chainMetadata.getColumnIndexQuiet(unique) >= 0 || inputMetadata.getColumnIndexQuiet(unique) >= 0; k++) {
-                        unique = name + "_" + k;
-                    }
-                    chainMetadata.add(i, new TableColumnMetadata(unique, column.getColumnType(), column.getIndexType(),
+                    chainMetadata.add(i, new TableColumnMetadata(uniqueName(column.getColumnName(), chainMetadata, inputMetadata),
+                            column.getColumnType(), column.getIndexType(),
                             column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), column.getMetadata()));
                 }
                 if (source == inputMetadata.getTimestampIndex() && chainMetadata.getTimestampIndex() < 0) {
@@ -504,16 +516,17 @@ final class WindowFactoryGenerator {
         }
         for (int i = 0, n = sources.size(); i < n; i++) {
             if (sources.getQuick(i) < 0) {
-                final CharSequence name = chainSchema.getColumnName(i);
-                String unique = Chars.toString(name);
-                for (int k = 1; chainMetadata.getColumnIndexQuiet(unique) >= 0; k++) {
-                    unique = name + "_" + k;
-                }
-                chainMetadata.add(i, new TableColumnMetadata(unique, chainSchema.getColumnType(i), IndexType.NONE, 0, false, null));
+                chainMetadata.add(i, new TableColumnMetadata(uniqueName(chainSchema.getColumnName(i), chainMetadata, null),
+                        chainSchema.getColumnType(i), IndexType.NONE, 0, false, null));
             }
         }
-        final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-        final ArrayColumnTypes chainTypes = new ArrayColumnTypes();
+        final ArrayColumnTypes keyTypes = frame.windowKeyTypes;
+        final ArrayColumnTypes chainTypes = frame.windowChainTypes;
+        final IntList order = frame.windowOrder;
+        final IntList directions = frame.windowDirections;
+        final ObjList<WindowMapSpec> specs = frame.windowSpecs;
+        final ObjList<WindowFunction> specFunctions = frame.windowSpecFunctions;
+        final ObjList<TableColumnMetadata> windowMetadata = frame.windowMetadata;
         final ObjObjHashMap<IntList, ObjList<WindowFunction>> groups = frame.windowGroups;
         groups.clear();
         final boolean isLiveView = executionContext.isLiveViewCompile();
@@ -533,9 +546,9 @@ final class WindowFactoryGenerator {
                 final boolean isStreaming = pass == 0;
                 final OutputSchema bindSchema = isStreaming ? input : chainSchema;
                 final RecordMetadata bindMetadata = isStreaming ? inputMetadata : chainMetadata;
-                final ObjList<WindowMapSpec> specs = new ObjList<>();
-                final ObjList<WindowFunction> specFunctions = new ObjList<>();
-                final ObjList<TableColumnMetadata> windowMetadata = new ObjList<>();
+                specs.clear();
+                specFunctions.clear();
+                windowMetadata.clear();
                 ObjList<SymbolFunction> symbolFunctions = null;
                 boolean isAllWindowOutputFixedWidth = true;
                 boolean isCachedRequired = false;
@@ -556,8 +569,8 @@ final class WindowFactoryGenerator {
                 }
                 for (int i = 0, n = plan.getFunctions().size(); i < n; i++) {
                     final WindowSpec spec = plan.getSpecs().getQuick(i);
-                    final IntList order = new IntList(spec.getOrderByColumnIds().size());
-                    final IntList directions = spec.getOrderByColumnIds().size() == 0 ? NO_DIRECTIONS : new IntList(spec.getOrderByColumnIds().size());
+                    order.clear();
+                    directions.clear();
                     final ObjList<CharSequence> orderNames = new ObjList<>(spec.getOrderByNames().size());
                     for (int k = 0; k < spec.getOrderByColumnIds().size(); k++) {
                         final int index = bindSchema.getColumnIndexById(spec.getOrderByColumnIds().getQuick(k));
@@ -643,7 +656,7 @@ final class WindowFactoryGenerator {
                             }
                             ObjList<WindowFunction> group = groups.get(order);
                             if (group == null) {
-                                groups.put(order, group = new ObjList<>());
+                                groups.put(new IntList(order), group = new ObjList<>());
                             }
                             group.add(function);
                         } else {

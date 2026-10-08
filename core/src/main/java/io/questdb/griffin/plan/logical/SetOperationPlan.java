@@ -33,9 +33,9 @@ public final class SetOperationPlan extends LogicalPlan {
     public static final ObjectFactory<SetOperationPlan> FACTORY = SetOperationPlan::new;
     private final IntList remappedSymbolColumns = new IntList();
     private final IntList symbolColumns = new IntList();
+    private boolean isSymbolRestorationRequired;
     private LogicalPlan left;
     private SetOperationKind operation;
-    private boolean restoreSymbols;
     private LogicalPlan right;
     private int rightPosition = -1;
 
@@ -45,7 +45,7 @@ public final class SetOperationPlan extends LogicalPlan {
         left = null;
         right = null;
         operation = null;
-        restoreSymbols = false;
+        isSymbolRestorationRequired = false;
         rightPosition = -1;
         symbolColumns.clear();
     }
@@ -85,15 +85,15 @@ public final class SetOperationPlan extends LogicalPlan {
     }
 
     public boolean isSymbolRestorationRequired() {
-        return restoreSymbols;
+        return isSymbolRestorationRequired;
     }
 
-    public SetOperationPlan of(LogicalPlan left, LogicalPlan right, SetOperationKind operation, int leftPosition, int rightPosition, boolean restoreSymbols) {
+    public SetOperationPlan of(LogicalPlan left, LogicalPlan right, SetOperationKind operation, int leftPosition, int rightPosition, boolean isSymbolRestorationRequired) {
         this.left = Objects.requireNonNull(left);
         this.right = Objects.requireNonNull(right);
         this.operation = Objects.requireNonNull(operation);
         this.rightPosition = rightPosition;
-        this.restoreSymbols = restoreSymbols;
+        this.isSymbolRestorationRequired = isSymbolRestorationRequired;
         setPosition(leftPosition);
         return this;
     }

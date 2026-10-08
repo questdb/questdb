@@ -30,13 +30,11 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
-import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
-import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.Chars;
@@ -96,11 +94,6 @@ final class ProjectionMergePass {
             }
         }
         return true;
-    }
-
-    private static boolean isFilteredScan(LogicalPlan plan) {
-        plan = LogicalPlans.skipFilters(plan);
-        return plan instanceof ScanPlan;
     }
 
     /**
@@ -166,7 +159,6 @@ final class ProjectionMergePass {
             ids.setQuick(i, ((ColumnExpression) project.getExpressions().getQuick(project.getOutput().getColumnIndexById(ids.getQuick(i)))).getColumnId());
         }
         sort.replaceInput(0, project.getInput());
-        sort.deriveOutput();
         project.replaceInput(0, sort);
         if (sort.getOutput().getTimestampIndex() >= 0) {
             project.getOutput().setTimestampIndex(LogicalPlans.projectedColumnIndex(project, ids.getQuick(0)));
@@ -201,9 +193,7 @@ final class ProjectionMergePass {
      */
     private void absorbColumnProject(AggregatePlan aggregate) {
         final ProjectPlan inner = absorbableProject(aggregate.getInput());
-        // Over a table scan the projection stays: the generator's index-driven aggregate routes match that shape.
-        if (inner == null || isFilteredScan(inner.getInput()) || inner.getInput() instanceof GroupingPlan grouped
-                && grouped.hasSampleByBucket() && inner.getExpressions().size() < grouped.getOutput().getColumnCount()) {
+        if (inner == null) {
             return;
         }
         final ObjList<BoundExpression> keys = aggregate.getGroupingExpressions();
@@ -240,7 +230,6 @@ final class ProjectionMergePass {
         }
         project.replaceInput(0, sort.getInput());
         sort.replaceInput(0, collapseColumnProjects(project));
-        sort.getOutput().copyFrom(project.getOutput());
         return sort;
     }
 
@@ -347,11 +336,7 @@ final class ProjectionMergePass {
                 project.replaceInput(0, inner.getInput());
             } else {
                 boundary.replaceInput(0, inner.getInput());
-                input = project.getInput();
-                while (input instanceof LimitPlan) {
-                    input.getOutput().copyFrom(inner.getInput().getOutput());
-                    input = input.inputAt(0);
-                }
+                LogicalPlans.deriveLimits(project.getInput());
             }
         }
     }
@@ -372,10 +357,8 @@ final class ProjectionMergePass {
                 ids.setQuick(i, ((ColumnExpression) project.getExpressions().getQuick(project.getOutput().getColumnIndexById(ids.getQuick(i)))).getColumnId());
             }
             sort.replaceInput(0, aggregate);
-            sort.deriveOutput();
         }
         limit.replaceInput(0, below);
-        limit.deriveOutput();
         project.replaceInput(0, limit);
         return project;
     }

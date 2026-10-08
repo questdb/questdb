@@ -30,6 +30,7 @@ import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
+import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -65,10 +66,7 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
 
     @Test
     public void testBuiltFunctionTypeMatchesDeclaredResultType() throws Exception {
-        boolean isAssertEnabled = false;
-        //noinspection AssertWithSideEffects
-        assert isAssertEnabled = true;
-        Assert.assertTrue("the contract check needs -ea", isAssertEnabled);
+        Assert.assertTrue("the contract check needs -ea", FunctionParser.class.desiredAssertionStatus());
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t (

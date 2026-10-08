@@ -161,20 +161,6 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        if (isStatic()) {
-            return true;
-        }
-        for (int i = 0, n = dynamicRangeList.size(); i < n; i++) {
-            final Function function = dynamicRangeList.getQuick(i);
-            if (function != null && !function.isStableWithinExecution()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    @Override
     public boolean isStatic() {
         return dynamicRangeList == null || dynamicRangeList.size() == 0;
     }

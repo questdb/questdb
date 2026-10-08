@@ -1654,6 +1654,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         serialize("atimestampns < '2023-02'");
         assertIR("(i64 1675209600000000000L)(i64 atimestampns)(<)(ret)");
         serialize("atimestampns != '2023'");
+        assertIR("(i64 1672531200000000000L)(i64 atimestampns)(>=)(i64 1704067199999999999L)(i64 atimestampns)(<=)(&&)(!)(ret)");
+        serialize("atimestampns != '2023-01-01T00:00:00.000000000Z'");
         assertIR("(i64 1672531200000000000L)(i64 atimestampns)(<>)(ret)");
     }
 
@@ -2212,6 +2214,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         serialize("atimestamp < '2023-02'");
         assertIR("(i64 1675209600000000L)(i64 atimestamp)(<)(ret)");
         serialize("atimestamp != '2023'");
+        assertIR("(i64 1672531200000000L)(i64 atimestamp)(>=)(i64 1704067199999999L)(i64 atimestamp)(<=)(&&)(!)(ret)");
+        serialize("atimestamp != '2023-01-01T00:00:00.000000Z'");
         assertIR("(i64 1672531200000000L)(i64 atimestamp)(<>)(ret)");
     }
 

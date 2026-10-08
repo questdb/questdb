@@ -688,7 +688,7 @@ public class SqlBinderTest extends AbstractCairoTest {
                 assertFailure(compiler, "SELECT id FROM lp_rows WHERE lp_missing_fn(id) > 1", "unknown function name", -1);
                 assertFailure(compiler, "SELECT id AS missing FROM lp_rows ORDER BY lp_missing_fn(id)", "unknown function name", -1);
                 assertFailure(compiler, "SELECT lp_missing_agg(id) FROM lp_rows", "unknown function name", -1);
-                assertFailure(compiler, "SELECT id FROM lp_rows GROUP BY lp_missing_fn(id)", "column must appear in GROUP BY clause or aggregate function", -1);
+                assertFailure(compiler, "SELECT id FROM lp_rows GROUP BY lp_missing_fn(id)", "unknown function name", -1);
                 assertFailure(compiler, "SELECT DISTINCT lp_missing_fn(id) FROM lp_rows", "unknown function name", -1);
                 try (RecordCursorFactory factory = compiler.compile(
                         "SELECT id FROM lp_rows WHERE active ORDER BY id", sqlExecutionContext

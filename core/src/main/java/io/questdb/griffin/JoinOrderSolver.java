@@ -36,6 +36,7 @@ import io.questdb.std.IntSortedList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * The binding-time join-order constraint solver. The binder feeds it equi-join keys, ordering
@@ -46,17 +47,17 @@ import io.questdb.std.ObjectPool;
 final class JoinOrderSolver implements Mutable {
     private final ObjList<JoinKind> bestJoinTypes = new ObjList<>();
     private final IntList bestOrder;
-    private final IntList candidateOrder;
-    private final ObjectPool<Context> contextPool = new ObjectPool<>(Context::new, 8);
+    private final IntList candidateOrder = new IntList();
+    private final ObjectPool<Context> contextPool;
     private final ObjList<Context> contexts = new ObjList<>();
     private final ObjList<IntHashSet> dependencies = new ObjList<>();
-    private final ObjectPool<IntHashSet> dependencyPool = new ObjectPool<>(IntHashSet::new, 4);
-    private final ObjectPool<Equality> equalityPool = new ObjectPool<>(Equality::new, 8);
+    private final ObjectPool<IntHashSet> dependencyPool;
+    private final ObjectPool<Equality> equalityPool;
     private final ObjList<JoinKind> joinTypes = new ObjList<>();
     private final IntList lateInputs = new IntList();
     private final IntHashSet markedIndexes;
     private final IntList orderingConstraints = new IntList();
-    private final IntList pendingSources;
+    private final IntList pendingSources = new IntList();
     private final IntSortedList ready = new IntSortedList();
     private final IntList roots;
     private final ObjList<Equality> sourceFilters = new ObjList<>();
@@ -66,37 +67,30 @@ final class JoinOrderSolver implements Mutable {
     private JoinPlan join;
 
     /**
-     * Borrows two caller lists as temporary lists of {@link #order()}; the caller stops reading them once order() starts.
+     * Borrows the compiler's leaf temporaries as temporary lists of {@link #order()}.
      */
-    JoinOrderSolver(
-            IntList candidateOrder,
-            IntList pendingSources,
-            IntHashSet markedIndexes,
-            IntList stagedIndexes,
-            IntList bestOrder,
-            IntList roots
-    ) {
-        this.candidateOrder = candidateOrder;
-        this.pendingSources = pendingSources;
+    JoinOrderSolver(int maxRetainedContexts, IntHashSet markedIndexes, IntList stagedIndexes, IntList bestOrder, IntList roots) {
         this.markedIndexes = markedIndexes;
         this.stagedIndexes = stagedIndexes;
         this.bestOrder = bestOrder;
         this.roots = roots;
+        this.contextPool = new ObjectPool<>(Context::new, 8, maxRetainedContexts);
+        this.dependencyPool = new ObjectPool<>(IntHashSet::new, 4, maxRetainedContexts);
+        this.equalityPool = new ObjectPool<>(Equality::new, 8, maxRetainedContexts);
+    }
+
+    @TestOnly
+    int getEqualityCapacity() {
+        return equalityPool.getCapacity();
     }
 
     @Override
     public void clear() {
         candidateOrder.clear();
-        for (int i = 0, n = contextPool.getPos(); i < n; i++) {
-            contextPool.peekQuick(i).clear();
-        }
         contextPool.clear();
         contexts.clear();
         dependencies.clear();
         dependencyPool.clear();
-        for (int i = 0, n = equalityPool.getPos(); i < n; i++) {
-            equalityPool.peekQuick(i).clear();
-        }
         equalityPool.clear();
         joinTypes.clear();
         lateInputs.clear();
@@ -313,8 +307,7 @@ final class JoinOrderSolver implements Mutable {
             for (int i = 0; i < rootCount; i++) {
                 if (candidate != i) {
                     final int target = roots.getQuick(i);
-                    // Scans around the position in the roots list, not around the
-                    // target source ordinal; this fixes the tie behavior.
+                    // Scans around the position in the roots list, not around the target source ordinal.
                     for (int from = i - 1; from >= 0; from--) {
                         if (isBarrier(joinTypes.getQuick(from))) {
                             break;

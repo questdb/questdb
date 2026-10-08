@@ -27,6 +27,7 @@ package io.questdb.griffin.plan.logical;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 
@@ -61,11 +62,8 @@ public final class JoinInput implements Mutable {
     private BoundExpression onResidual;
     private int position = -1;
     private BoundExpression postJoinFilter;
-    private int tolerancePosition = -1;
-    private CharSequence toleranceToken;
+    private long toleranceInterval = Numbers.LONG_NULL;
     private UnnestSpec unnest;
-    private String unsupportedOnExpression;
-    private int unsupportedOnPosition = -1;
 
     @Override
     public void clear() {
@@ -87,11 +85,8 @@ public final class JoinInput implements Mutable {
         onResidual = null;
         position = -1;
         postJoinFilter = null;
-        tolerancePosition = -1;
+        toleranceInterval = Numbers.LONG_NULL;
         unnest = null;
-        toleranceToken = null;
-        unsupportedOnExpression = null;
-        unsupportedOnPosition = -1;
     }
 
     public CharSequence getBindingAlias() {
@@ -168,24 +163,16 @@ public final class JoinInput implements Mutable {
         return unnest == null ? input.getOutput() : unnest.getOutput();
     }
 
-    public int getTolerancePosition() {
-        return tolerancePosition;
-    }
-
-    public CharSequence getToleranceToken() {
-        return toleranceToken;
+    /**
+     * ASOF/LT TOLERANCE in the units of the higher-precision designated timestamp of the two sides, or
+     * {@link Numbers#LONG_NULL} when the join has none.
+     */
+    public long getToleranceInterval() {
+        return toleranceInterval;
     }
 
     public UnnestSpec getUnnest() {
         return unnest;
-    }
-
-    public String getUnsupportedOnExpression() {
-        return unsupportedOnExpression;
-    }
-
-    public int getUnsupportedOnPosition() {
-        return unsupportedOnPosition;
     }
 
     /**
@@ -257,14 +244,8 @@ public final class JoinInput implements Mutable {
         this.isSubquery = isSubquery;
     }
 
-    public void setTolerance(CharSequence token, int position) {
-        toleranceToken = token;
-        tolerancePosition = position;
-    }
-
-    public void setUnsupportedOnExpression(String expression, int position) {
-        unsupportedOnExpression = expression;
-        unsupportedOnPosition = position;
+    public void setToleranceInterval(long toleranceInterval) {
+        this.toleranceInterval = toleranceInterval;
     }
 
     /**

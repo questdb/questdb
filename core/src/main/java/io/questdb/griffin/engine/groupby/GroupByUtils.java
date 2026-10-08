@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -57,6 +58,24 @@ import io.questdb.griffin.engine.functions.columns.StrColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
+import io.questdb.griffin.engine.functions.constants.DateConstant;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
+import io.questdb.griffin.engine.functions.constants.FloatConstant;
+import io.questdb.griffin.engine.functions.constants.GeoByteConstant;
+import io.questdb.griffin.engine.functions.constants.GeoIntConstant;
+import io.questdb.griffin.engine.functions.constants.GeoLongConstant;
+import io.questdb.griffin.engine.functions.constants.GeoShortConstant;
+import io.questdb.griffin.engine.functions.constants.IPv4Constant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.NullArrayConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.SymbolConstant;
+import io.questdb.griffin.engine.functions.constants.UuidConstant;
+import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.engine.functions.groupby.SparklineGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction;
 import io.questdb.std.Misc;
@@ -332,6 +351,44 @@ public class GroupByUtils {
             }
         }
         return true;
+    }
+
+    /**
+     * The constant a FILL(NULL) gap row reads for a column of {@code type}, or null when no NULL constant exists.
+     */
+    public static @Nullable Function nullFillConstant(int type) {
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.INT -> IntConstant.NULL;
+            case ColumnType.IPv4 -> IPv4Constant.NULL;
+            case ColumnType.LONG -> LongConstant.NULL;
+            case ColumnType.FLOAT -> FloatConstant.NULL;
+            case ColumnType.DOUBLE -> DoubleConstant.NULL;
+            case ColumnType.BYTE -> ByteConstant.ZERO;
+            case ColumnType.SHORT -> ShortConstant.ZERO;
+            case ColumnType.GEOBYTE -> GeoByteConstant.NULL;
+            case ColumnType.GEOSHORT -> GeoShortConstant.NULL;
+            case ColumnType.GEOINT -> GeoIntConstant.NULL;
+            case ColumnType.GEOLONG -> GeoLongConstant.NULL;
+            case ColumnType.UUID -> UuidConstant.NULL;
+            case ColumnType.DATE -> DateConstant.NULL;
+            case ColumnType.LONG256 -> Long256NullConstant.INSTANCE;
+            case ColumnType.STRING -> StrConstant.NULL;
+            case ColumnType.VARCHAR -> VarcharConstant.NULL;
+            case ColumnType.SYMBOL -> SymbolConstant.NULL;
+            case ColumnType.TIMESTAMP -> ColumnType.getTimestampDriver(type).getTimestampConstantNull();
+            default -> {
+                if (ColumnType.isArray(type)) {
+                    yield new NullArrayConstant(type);
+                }
+                if (ColumnType.isDecimal(type)) {
+                    yield DecimalUtil.createNullDecimalConstant(
+                            ColumnType.getDecimalPrecision(type),
+                            ColumnType.getDecimalScale(type)
+                    );
+                }
+                yield null;
+            }
+        };
     }
 
     public static void setAllocator(ObjList<GroupByFunction> functions, GroupByAllocator allocator) {

@@ -31,7 +31,6 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
-import io.questdb.griffin.plan.logical.DeferredErrorExpression;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
@@ -424,9 +423,6 @@ final class FilterPushdownPass implements Mutable {
             }
             throw new IllegalStateException("join predicate input has changed");
         }
-        if (expression instanceof DeferredErrorExpression deferred) {
-            return deferred.getJoinInput();
-        }
         int source = -1;
         if (expression instanceof FunctionExpression function) {
             for (int i = 0, n = function.getArgumentCount(); i < n; i++) {
@@ -721,7 +717,7 @@ final class FilterPushdownPass implements Mutable {
             return context.getRewriter().replaceConjunction(call, hoistEarlierJoinConjuncts(join, call.argumentAt(0), position),
                     hoistEarlierJoinConjuncts(join, call.argumentAt(1), position));
         }
-        if (predicate == null || !LogicalPlans.isOrderIndependent(predicate) || LogicalPlans.hasDeferredConjunct(predicate)) {
+        if (predicate == null || !LogicalPlans.isOrderIndependent(predicate)) {
             return predicate;
         }
         final ObjList<JoinInput> ordered = join.getOrderedInputs();
@@ -895,7 +891,7 @@ final class FilterPushdownPass implements Mutable {
             if (input instanceof ProjectPlan project) {
                 // A projected timestamp CAST keeps scalar precision in its consumer's scope.
                 if (!canPushThroughProjection(filter.getPredicate(), project)) {
-                    if (!LogicalPlans.isOrderIndependent(filter.getPredicate()) || LogicalPlans.hasDeferredConjunct(filter.getPredicate())) {
+                    if (!LogicalPlans.isOrderIndependent(filter.getPredicate())) {
                         return result;
                     }
                     final BoundExpression movable = selectProjectionConjuncts(filter.getPredicate(), project, true);
@@ -930,7 +926,7 @@ final class FilterPushdownPass implements Mutable {
                 filter.deriveOutput();
                 continue;
             } else if (input instanceof SortPlan sort) {
-                if (!LogicalPlans.isOrderIndependent(filter.getPredicate()) || LogicalPlans.hasDeferredConjunct(filter.getPredicate())) {
+                if (!LogicalPlans.isOrderIndependent(filter.getPredicate())) {
                     final BoundExpression movable = selectOrderIndependentConjuncts(filter.getPredicate(), true);
                     if (movable == null) {
                         return result;
@@ -975,7 +971,7 @@ final class FilterPushdownPass implements Mutable {
                 return result;
             } else if (input instanceof AggregatePlan aggregate && !(aggregate.getInput() instanceof HorizonJoinPlan)) {
                 final ProjectPlan keys = groupingKeyView(aggregate);
-                if (keys == null || isUnstable(filter.getPredicate()) || LogicalPlans.hasDeferredConjunct(filter.getPredicate())) {
+                if (keys == null || isUnstable(filter.getPredicate())) {
                     return result;
                 }
                 final BoundExpression movable = selectKeyConjuncts(filter.getPredicate(), keys, true);
@@ -1001,7 +997,7 @@ final class FilterPushdownPass implements Mutable {
                 // conjuncts filter the aggregate input instead.
                 final LogicalPlan fillInput = input.inputAt(0);
                 final ProjectPlan keys = fillInput instanceof AggregatePlan aggregate ? groupingKeyView(aggregate) : null;
-                if (keys == null || !LogicalPlans.isOrderIndependent(filter.getPredicate()) || LogicalPlans.hasDeferredConjunct(filter.getPredicate())) {
+                if (keys == null || !LogicalPlans.isOrderIndependent(filter.getPredicate())) {
                     return result;
                 }
                 final BoundExpression movable = selectKeyConjuncts(filter.getPredicate(), keys, true);
@@ -1139,8 +1135,7 @@ final class FilterPushdownPass implements Mutable {
             final BoundExpression right = pushSetConjuncts(operation, call.argumentAt(1), timestampIndex);
             return context.getRewriter().replaceConjunction(call, left, right);
         }
-        if (isUnstable(predicate) || LogicalPlans.hasDeferredConjunct(predicate)
-                || singleColumnId(predicate) != operation.getOutput().getColumnId(timestampIndex)) {
+        if (isUnstable(predicate) || singleColumnId(predicate) != operation.getOutput().getColumnId(timestampIndex)) {
             return predicate;
         }
         final boolean isLeftPushed = pushSetBranch(operation, 0, predicate, timestampIndex);
@@ -1187,7 +1182,7 @@ final class FilterPushdownPass implements Mutable {
                     selectComputedProjectionConjuncts(call.argumentAt(1), project, isMovable));
         }
         final int leaves = projectedLeaves(predicate, project);
-        final boolean isPushable = LogicalPlans.isOrderIndependent(predicate) && !LogicalPlans.hasDeferredConjunct(predicate) && leaves != OTHER_LEAVES
+        final boolean isPushable = LogicalPlans.isOrderIndependent(predicate) && leaves != OTHER_LEAVES
                 && (leaves != OFFSET_LEAVES || !hasInputTimestamp(project));
         return isPushable == isMovable ? predicate : null;
     }
@@ -1222,7 +1217,7 @@ final class FilterPushdownPass implements Mutable {
                     selectOrderIndependentConjuncts(call.argumentAt(0), isMovable),
                     selectOrderIndependentConjuncts(call.argumentAt(1), isMovable));
         }
-        return (LogicalPlans.isOrderIndependent(predicate) && !LogicalPlans.hasDeferredConjunct(predicate)) == isMovable ? predicate : null;
+        return LogicalPlans.isOrderIndependent(predicate) == isMovable ? predicate : null;
     }
 
     private BoundExpression selectProjectionConjuncts(BoundExpression predicate, ProjectPlan project, boolean isMovable) {

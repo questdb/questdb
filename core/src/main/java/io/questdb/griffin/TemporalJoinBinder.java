@@ -25,6 +25,9 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
+import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.HorizonJoinContext;
 import io.questdb.griffin.model.PivotForColumn;
@@ -49,23 +52,20 @@ import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
-import io.questdb.std.IntList;
-import io.questdb.std.Mutable;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.BindContext.*;
 
-final class TemporalJoinBinder implements Mutable {
+final class TemporalJoinBinder {
     private final AggregateBinder aggregateBinder;
-    private final ObjList<ExpressionNode> aggregateNodes;
     private final SqlBinder binder;
     private final BindContext ctx;
     private final OutputSchema emptySchema;
     private final JoinBinder joinBinder;
     private final OrderBinder orderBinder;
-    private final IntList windowJoinAggregateSteps = new IntList();
 
     TemporalJoinBinder(
             BindContext ctx,
@@ -80,13 +80,45 @@ final class TemporalJoinBinder implements Mutable {
         this.emptySchema = emptySchema;
         this.orderBinder = orderBinder;
         this.aggregateBinder = aggregateBinder;
-        this.aggregateNodes = aggregateBinder.aggregateNodes;
         this.joinBinder = joinBinder;
     }
 
-    @Override
-    public void clear() {
-        windowJoinAggregateSteps.clear();
+    private static void bindHorizonOffsets(HorizonJoinPlan plan, HorizonJoinContext horizon, int timestampType, int maxOffsets) throws SqlException {
+        final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        final LongList offsets = plan.getOffsetValues();
+        if (horizon.getMode() == HorizonJoinContext.MODE_RANGE) {
+            final long from = horizonTimeValue(horizon.getRangeFrom().token, horizon.getRangeFromPosition(), driver);
+            final long to = horizonTimeValue(horizon.getRangeTo().token, horizon.getRangeTo().position, driver);
+            final long step = horizonTimeValue(horizon.getRangeStep().token, horizon.getRangeStepPosition(), driver);
+            if (step <= 0) {
+                throw SqlException.position(horizon.getRangeStepPosition()).put("STEP must be positive");
+            }
+            if (from > to) {
+                throw SqlException.position(horizon.getRangeFromPosition()).put("FROM must be less than or equal to TO");
+            }
+            final long count = (to - from) / step + 1;
+            if (count > maxOffsets) {
+                throw SqlException.position(horizon.getRangeFromPosition()).put("RANGE generates too many offsets [count=").put(count)
+                        .put(", max=").put(maxOffsets).put(']');
+            }
+            for (int i = 0; i < count; i++) {
+                offsets.add(from + i * step);
+            }
+            return;
+        }
+        final ObjList<ExpressionNode> list = horizon.getListOffsets();
+        if (list.size() > maxOffsets) {
+            throw SqlException.position(horizon.getAliasPosition()).put("LIST has too many offsets [count=").put(list.size())
+                    .put(", max=").put(maxOffsets).put(']');
+        }
+        for (int i = 0, n = list.size(); i < n; i++) {
+            final ExpressionNode offset = list.getQuick(i);
+            final long value = horizonTimeValue(offset.token, offset.position, driver);
+            if (i > 0 && value <= offsets.getLast()) {
+                throw SqlException.position(offset.position).put("LIST offsets must be monotonically increasing");
+            }
+            offsets.add(value);
+        }
     }
 
     /**
@@ -108,6 +140,29 @@ final class TemporalJoinBinder implements Mutable {
             return Numbers.parseInt(key.token);
         } catch (NumericException e) {
             return -1;
+        }
+    }
+
+    private static long horizonTimeValue(CharSequence token, int position, TimestampDriver timestampDriver) throws SqlException {
+        final int unitIndex = TimestampSamplerFactory.findIntervalEndIndex(token, position);
+        if (unitIndex == -1) {
+            return 0;
+        }
+        final char unit = token.charAt(unitIndex);
+        final long value = TimestampSamplerFactory.parseInterval(token, unitIndex, position);
+        try {
+            return switch (unit) {
+                case 'n' -> timestampDriver.fromNanos(value);
+                case 'U' -> timestampDriver.fromMicros(value);
+                case 'T' -> timestampDriver.fromMillis(value);
+                case 's' -> timestampDriver.fromSeconds(value);
+                case 'm' -> timestampDriver.fromMinutes(Math.toIntExact(value));
+                case 'h' -> timestampDriver.fromHours(Math.toIntExact(value));
+                case 'd' -> timestampDriver.fromDays(Math.toIntExact(value));
+                default -> throw SqlException.$(position, "unsupported HORIZON time unit [unit=").put(unit).put(']');
+            };
+        } catch (ArithmeticException e) {
+            throw SqlException.$(position, "HORIZON time value overflow");
         }
     }
 
@@ -235,6 +290,22 @@ final class TemporalJoinBinder implements Mutable {
         }
     }
 
+    private static void validateWindowJoinStep(WindowJoinStep step, OutputSchema master) throws SqlException {
+        JoinBinder.validateTimeSeriesTimestamps(step.getPosition(), master.getTimestampColumnId(), step.getSlave().getOutput());
+        final int timestampType = master.getColumnType(master.getTimestampIndex());
+        long lo = step.getLo();
+        long hi = step.getHi();
+        if (step.getLoExpression() == null && step.getLoTimeUnit() != 0) {
+            lo = WindowContextImpl.toTimestampUnits(timestampType, lo, step.getLoTimeUnit(), step.getLoPosition(), "start");
+        }
+        if (step.getHiExpression() == null && step.getHiTimeUnit() != 0) {
+            hi = WindowContextImpl.toTimestampUnits(timestampType, hi, step.getHiTimeUnit(), step.getHiPosition(), "end");
+        }
+        if (!step.isDynamic() && hi < lo * -1) {
+            throw SqlException.position(Math.max(step.getHiPosition(), step.getLoPosition())).put("WINDOW join hi value cannot be less than lo value");
+        }
+    }
+
     private static CharSequence windowJoinAggregateName(ExpressionNode node, QueryModel model) {
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
             final QueryColumn column = model.getBottomUpColumns().getQuick(i);
@@ -243,11 +314,6 @@ final class TemporalJoinBinder implements Mutable {
             }
         }
         return node.token;
-    }
-
-    private void addHorizonOffset(HorizonJoinPlan plan, ExpressionNode offset, int position) {
-        plan.getOffsets().add(offset.token);
-        plan.getOffsetPositions().add(position);
     }
 
     private void bindHorizonKeys(ExpressionNode criteria, HorizonJoinSlave step, OutputSchema master, CharSequence masterAlias,
@@ -637,6 +703,7 @@ final class TemporalJoinBinder implements Mutable {
 
     LogicalPlan bindHorizonJoin(QueryModel model, QueryModel source, ExpressionNode where,
                                 SqlExecutionContext executionContext) throws SqlException {
+        final BindScope scope = ctx.scope();
         final ObjList<QueryModel> sources = source.getJoinModels();
         final QueryModel last = sources.getLast();
         final int sourceCount = sources.size();
@@ -675,7 +742,7 @@ final class TemporalJoinBinder implements Mutable {
         if (where != null) {
             rejectHorizonWhere(where, master.getOutput(), masterAlias);
             final BoundExpression predicate = binder.bindPredicate(where, master, masterModel, executionContext);
-            final FilterPlan filter = ctx.filters.next().of(master, predicate, predicate.getPosition());
+            final FilterPlan filter = ctx.planNodes.filters.next().of(master, predicate, predicate.getPosition());
             filter.deriveOutput();
             master = filter;
         }
@@ -685,17 +752,14 @@ final class TemporalJoinBinder implements Mutable {
             throw SqlException.$(first.getJoinKeywordPosition(), "left side of time series join has no timestamp");
         }
         final CharSequence horizonAlias = GenericLexer.unquote(horizon.getAlias().token);
-        final HorizonJoinPlan plan = ctx.horizonJoinPlans.next().of(master, masterAlias, horizonAlias, horizon.getAliasPosition(),
-                horizon.getMode() == HorizonJoinContext.MODE_RANGE ? HorizonJoinPlan.MODE_RANGE : HorizonJoinPlan.MODE_LIST,
-                last.getJoinKeywordPosition());
+        final HorizonJoinPlan plan = ctx.planNodes.horizonJoinPlans.next().of(master, masterAlias, horizonAlias, last.getJoinKeywordPosition());
         if (horizon.getMode() == HorizonJoinContext.MODE_RANGE) {
-            addHorizonOffset(plan, horizon.getRangeFrom(), horizon.getRangeFromPosition());
-            addHorizonOffset(plan, horizon.getRangeTo(), horizon.getRangeTo().position);
-            addHorizonOffset(plan, horizon.getRangeStep(), horizon.getRangeStepPosition());
+            plan.getOffsets().add(horizon.getRangeFrom().token);
+            plan.getOffsets().add(horizon.getRangeTo().token);
+            plan.getOffsets().add(horizon.getRangeStep().token);
         } else {
             for (int i = 0, n = horizon.getListOffsets().size(); i < n; i++) {
-                final ExpressionNode offset = horizon.getListOffsets().getQuick(i);
-                addHorizonOffset(plan, offset, offset.position);
+                plan.getOffsets().add(horizon.getListOffsets().getQuick(i).token);
             }
         }
         final OutputSchema output = plan.getOutput();
@@ -705,8 +769,8 @@ final class TemporalJoinBinder implements Mutable {
             output.setSymbolTableStatic(i, masterOutput.isSymbolTableStatic(i));
         }
         output.setTimestampIndex(masterOutput.getTimestampIndex());
-        output.add(ctx.nextColumnId++, "offset", ColumnType.LONG, null, true, horizonAlias);
-        output.add(ctx.nextColumnId++, "timestamp", masterOutput.getColumnType(masterOutput.getTimestampIndex()), null, true, horizonAlias);
+        output.add(scope.nextColumnId++, "offset", ColumnType.LONG, null, true, horizonAlias);
+        output.add(scope.nextColumnId++, "timestamp", masterOutput.getColumnType(masterOutput.getTimestampIndex()), null, true, horizonAlias);
         for (int i = 0, n = selected.size(); i < n; i++) {
             rejectUnknownHorizonColumn(selected.getQuick(i).getAst(), output, horizonAlias);
         }
@@ -717,9 +781,10 @@ final class TemporalJoinBinder implements Mutable {
             final QueryModel occurrence = sources.getQuick(i);
             final CharSequence slaveAlias = sourceAlias(occurrence);
             final LogicalPlan slave = binder.bindSource(occurrence, executionContext);
-            final HorizonJoinSlave step = ctx.horizonJoinSlaves.next().of(slave, slaveAlias, occurrence.getJoinKeywordPosition());
+            final HorizonJoinSlave step = ctx.planNodes.horizonJoinSlaves.next().of(slave, slaveAlias, occurrence.getJoinKeywordPosition());
             plan.getSlaves().add(step);
             final OutputSchema slaveOutput = slave.getOutput();
+            JoinBinder.validateTimeSeriesTimestamps(step.getPosition(), masterOutput.getTimestampColumnId(), slaveOutput);
             for (int k = 0, m = slaveOutput.getColumnCount(); k < m; k++) {
                 output.add(slaveOutput.getColumnId(k), slaveOutput.getColumnName(k), slaveOutput.getColumnType(k),
                         slaveOutput.getMetadata(k), slaveOutput.isVisible(k), slaveAlias);
@@ -734,6 +799,18 @@ final class TemporalJoinBinder implements Mutable {
                 step.getKeyPositions().add(column.position);
             }
         }
+        bindHorizonOffsets(plan, horizon, masterOutput.getColumnType(masterOutput.getTimestampIndex()),
+                executionContext.getCairoEngine().getConfiguration().getSqlHorizonJoinMaxOffsets());
+        for (int s = 0, m = plan.getSlaves().size(); s < m; s++) {
+            final HorizonJoinSlave step = plan.getSlaves().getQuick(s);
+            final OutputSchema slaveOutput = step.getInput().getOutput();
+            for (int i = 0, n = step.getMasterKeyColumnIds().size(); i < n; i++) {
+                if (!JoinBinder.isJoinKeyTypeCompatible(masterOutput.getColumnType(masterOutput.getColumnIndexById(step.getMasterKeyColumnIds().getQuick(i))),
+                        slaveOutput.getColumnType(slaveOutput.getColumnIndexById(step.getSlaveKeyColumnIds().getQuick(i))))) {
+                    throw SqlException.$(step.getKeyPositions().getQuick(i), "join column type mismatch");
+                }
+            }
+        }
         return plan;
     }
 
@@ -741,6 +818,7 @@ final class TemporalJoinBinder implements Mutable {
             QueryModel model, ObjList<QueryColumn> aggregateColumns, ExpressionNode aggregates, QueryModel source,
             ExpressionNode where, SqlExecutionContext executionContext
     ) throws SqlException {
+        final BindScope bindScope = ctx.scope();
         final ObjList<QueryModel> sources = source.getJoinModels();
         final int first = windowJoinIndex(source);
         if (source.getSampleBy() != null) {
@@ -756,16 +834,16 @@ final class TemporalJoinBinder implements Mutable {
         final CharSequence masterAlias = first > 1 ? null : sourceAlias(masterModel);
         LogicalPlan master;
         if (first > 1) {
-            master = joinBinder.bindJoins(model, source, where, first, executionContext);
+            master = joinBinder.bindJoins(source, where, first, executionContext);
             where = null;
         } else {
             master = binder.bindSource(masterModel, executionContext);
         }
-        final WindowJoinPlan plan = ctx.windowJoinPlans.next().of(master, source.getModelPosition());
+        final WindowJoinPlan plan = ctx.planNodes.windowJoinPlans.next().of(master, source.getModelPosition());
         for (int i = first, n = sources.size(); i < n; i++) {
             final QueryModel occurrence = sources.getQuick(i);
             final LogicalPlan slave = binder.bindSource(occurrence, executionContext);
-            final WindowJoinStep step = ctx.windowJoinSteps.next().of(slave, masterAlias, sourceAlias(occurrence),
+            final WindowJoinStep step = ctx.planNodes.windowJoinSteps.next().of(slave, masterAlias, sourceAlias(occurrence),
                     occurrence.getWindowJoinContext().isIncludePrevailing(), occurrence.getJoinKeywordPosition());
             step.setTableSource(occurrence.getNestedModel() == null && occurrence.getTableNameExpr() != null
                     && occurrence.getTableNameExpr().type == ExpressionNode.LITERAL);
@@ -784,7 +862,7 @@ final class TemporalJoinBinder implements Mutable {
             if (predicate instanceof ConstantExpression constant && constant.getLongValue() == 0) {
                 isEmpty = true;
             } else {
-                final FilterPlan filter = ctx.filters.next().of(master, predicate, predicate.getPosition());
+                final FilterPlan filter = ctx.planNodes.filters.next().of(master, predicate, predicate.getPosition());
                 filter.deriveOutput();
                 master = filter;
                 plan.replaceInput(0, master);
@@ -801,7 +879,7 @@ final class TemporalJoinBinder implements Mutable {
         }
         output.setTimestampIndex(masterOutput.getTimestampIndex());
 
-        aggregateNodes.clear();
+        bindScope.aggregateNodes.clear();
         if (aggregates != null) {
             aggregateBinder.collectAggregateNodes(aggregates, true);
         } else {
@@ -809,14 +887,14 @@ final class TemporalJoinBinder implements Mutable {
                 aggregateBinder.collectAggregateNodes(aggregateColumns.getQuick(i).getAst(), true);
             }
         }
-        windowJoinAggregateSteps.clear();
-        for (int i = 0, n = aggregateNodes.size(); i < n; i++) {
-            windowJoinAggregateSteps.add(windowJoinStepOf(aggregateNodes.getQuick(i), plan, masterOutput));
+        bindScope.windowJoinAggregateSteps.clear();
+        for (int i = 0, n = bindScope.aggregateNodes.size(); i < n; i++) {
+            bindScope.windowJoinAggregateSteps.add(windowJoinStepOf(bindScope.aggregateNodes.getQuick(i), plan, masterOutput));
         }
-        ctx.aliases.clear();
-        ctx.aliasSequences.clear();
+        bindScope.aliases.clear();
+        bindScope.aliasSequences.clear();
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
-            ctx.aliases.add(output.getColumnName(i));
+            bindScope.aliases.add(output.getColumnName(i));
         }
         for (int s = 0, m = plan.getSteps().size(); s < m; s++) {
             final WindowJoinStep step = plan.getSteps().getQuick(s);
@@ -839,20 +917,23 @@ final class TemporalJoinBinder implements Mutable {
                 }
                 step.setFilter(filter);
             }
-            for (int i = 0, n = aggregateNodes.size(); i < n; i++) {
-                if (windowJoinAggregateSteps.getQuick(i) != s) {
+            for (int i = 0, n = bindScope.aggregateNodes.size(); i < n; i++) {
+                if (bindScope.windowJoinAggregateSteps.getQuick(i) != s) {
                     continue;
                 }
-                final ExpressionNode node = aggregateNodes.getQuick(i);
+                final ExpressionNode node = bindScope.aggregateNodes.getQuick(i);
                 final BoundExpression bound = ctx.functionBinder.bindGroupByExpression(node, scope, null, executionContext);
                 if (!(bound instanceof FunctionExpression function) || !function.isAggregate()) {
                     throw SqlException.$(node.position, "expected aggregate function");
                 }
-                final int columnId = ctx.nextColumnId++;
+                final int columnId = bindScope.nextColumnId++;
                 step.getAggregates().add(function);
                 step.getAggregateColumnIds().add(columnId);
                 output.add(columnId, ctx.createOutputName(windowJoinAggregateName(node, model)), function.getDataType(), false);
             }
+        }
+        for (int s = 0, m = plan.getSteps().size(); s < m; s++) {
+            validateWindowJoinStep(plan.getSteps().getQuick(s), masterOutput);
         }
         return plan;
     }
@@ -861,6 +942,7 @@ final class TemporalJoinBinder implements Mutable {
             QueryModel model, QueryModel source, ExpressionNode where,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        final BindScope scope = ctx.scope();
         final ObjList<ExpressionNode> groupBy = blockGroupBy(model, source);
         if (groupBy.size() > 0) {
             throw SqlException.$(groupBy.getQuick(0).position, "GROUP BY cannot be used with WINDOW JOIN");
@@ -868,22 +950,22 @@ final class TemporalJoinBinder implements Mutable {
         final WindowJoinPlan plan = bindWindowJoin(model, model.getBottomUpColumns(), null, source, where, executionContext);
         final OutputSchema output = plan.getOutput();
         final CharSequence masterAlias = plan.getSteps().getQuick(0).getMasterAlias();
-        final ObjList<ColumnExpression> aggregateColumns = ctx.substitutionColumns;
-        final ObjList<ExpressionNode> aggregateSources = ctx.substitutionNodes;
+        final ObjList<ColumnExpression> aggregateColumns = scope.substitutionColumns;
+        final ObjList<ExpressionNode> aggregateSources = scope.substitutionNodes;
         aggregateColumns.clear();
         aggregateSources.clear();
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
             collectWindowJoinAggregateOccurrences(model.getBottomUpColumns().getQuick(i).getAst(), plan, aggregateSources, aggregateColumns);
         }
-        ctx.aliases.clear();
-        ctx.aliasSequences.clear();
-        ctx.projectionAliasIndexes.clear();
-        final ProjectPlan project = ctx.projects.next().of(plan, model.getModelPosition());
-        ctx.sourceProjectionIndexes.setAll(output.getColumnCount(), -1);
+        scope.aliases.clear();
+        scope.aliasSequences.clear();
+        scope.projectionAliasIndexes.clear();
+        final ProjectPlan project = ctx.planNodes.projects.next().of(plan, model.getModelPosition());
+        scope.sourceProjectionIndexes.setAll(output.getColumnCount(), -1);
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
             final QueryColumn column = model.getBottomUpColumns().getQuick(i);
             final ExpressionNode expression = column.getAst();
-            if (isWildcard(expression)) {
+            if (expression.isWildcard()) {
                 for (int s = 0, m = plan.getSteps().size(); s < m; s++) {
                     final WindowJoinStep step = plan.getSteps().getQuick(s);
                     final OutputSchema slaveOutput = step.getSlave().getOutput();
@@ -911,7 +993,7 @@ final class TemporalJoinBinder implements Mutable {
             } else {
                 final BoundExpression bound = ctx.functionBinder.bind(expression, output, masterAlias, aggregateSources, aggregateColumns, executionContext);
                 ctx.addProjection(project, bound, null, column.getName(), true);
-                ctx.projectionAliasIndexes.add(project.getExpressions().size() - 1);
+                scope.projectionAliasIndexes.add(project.getExpressions().size() - 1);
             }
         }
         aggregateSources.clear();
@@ -925,20 +1007,21 @@ final class TemporalJoinBinder implements Mutable {
 
     void collectWindowJoinAggregateOccurrences(ExpressionNode node, WindowJoinPlan plan, ObjList<ExpressionNode> sources,
                                                ObjList<ColumnExpression> targets) {
+        final BindScope scope = ctx.scope();
         if (node == null) {
             return;
         }
         if (ctx.isAggregate(node)) {
             final int aggregate = aggregateBinder.findAggregate(node);
-            final WindowJoinStep step = plan.getSteps().getQuick(windowJoinAggregateSteps.getQuick(aggregate));
+            final WindowJoinStep step = plan.getSteps().getQuick(scope.windowJoinAggregateSteps.getQuick(aggregate));
             int ordinal = 0;
             for (int i = 0; i < aggregate; i++) {
-                if (windowJoinAggregateSteps.getQuick(i) == windowJoinAggregateSteps.getQuick(aggregate)) {
+                if (scope.windowJoinAggregateSteps.getQuick(i) == scope.windowJoinAggregateSteps.getQuick(aggregate)) {
                     ordinal++;
                 }
             }
             sources.add(node);
-            targets.add(ctx.columns.next().of(step.getAggregateColumnIds().getQuick(ordinal), step.getAggregates().getQuick(ordinal).getDataType(), node.position));
+            targets.add(ctx.planNodes.columns.next().of(step.getAggregateColumnIds().getQuick(ordinal), step.getAggregates().getQuick(ordinal).getDataType(), node.position));
             return;
         }
         collectWindowJoinAggregateOccurrences(node.lhs, plan, sources, targets);

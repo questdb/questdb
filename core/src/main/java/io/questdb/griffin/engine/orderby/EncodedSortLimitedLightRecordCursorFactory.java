@@ -124,13 +124,6 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        return (loFunction == null || loFunction.isStableWithinExecution())
-                && (hiFunction == null || hiFunction.isStableWithinExecution())
-                && base.isStableWithinExecution();
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }

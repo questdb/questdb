@@ -24,6 +24,8 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
+import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractCairoTest;
@@ -301,6 +303,28 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     40,
                     "Invalid date"
             );
+        });
+    }
+
+    @Test
+    public void testExtractThrowInsideOffsetFreesNestedModel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("CREATE TABLE bounds (lo TIMESTAMP) TIMESTAMP(lo) PARTITION BY DAY");
+            execute("INSERT INTO bounds VALUES ('2020-01-02')");
+            setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+            TestFaultFunctionFactory.armToFailAfterCompiles(0);
+            try {
+                assertExceptionNoLeakCheck(
+                        "SELECT * FROM trades " +
+                                "WHERE and_offset(timestamp = alloc_ts('2020-01-01T00:00:00.000000Z'::timestamp) " +
+                                "OR timestamp = (SELECT max(lo) FROM bounds WHERE test_fault()), 'h', 1)",
+                        150,
+                        "test_fault: injected compile failure"
+                );
+            } finally {
+                TestFaultFunctionFactory.disarm();
+            }
         });
     }
 

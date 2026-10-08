@@ -31,6 +31,7 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
+import io.questdb.griffin.plan.logical.ForwardingPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
@@ -252,6 +253,14 @@ final class WindowCsePass {
             window.getSpecs().remove(i);
             window.getFunctionColumnIds().removeIndex(i);
             removeColumn(window.getOutput(), columnId);
+            for (int k = ancestors.size() - 1, lo = ancestors.size() - consumerCount; k >= lo; k--) {
+                switch (ancestors.getQuick(k)) {
+                    case ForwardingPlan forwarding -> forwarding.deriveOutput();
+                    case WindowPlan consumer -> removeColumn(consumer.getOutput(), columnId);
+                    default -> {
+                    }
+                }
+            }
             i--;
         }
         if (window.getFunctions().size() == 0 && ancestors.size() > 0) {
@@ -305,17 +314,12 @@ final class WindowCsePass {
                     }
                     replaceColumn(window.getSpecs().getQuick(i).getOrderByColumnIds(), columnId, replacementId);
                 }
-                removeColumn(window.getOutput(), columnId);
             }
-            case FilterPlan filter -> {
-                filter.of(filter.getInput(), redirectReads(filter.getPredicate(), filter, columnId, replacementId), filter.getPosition());
-                removeColumn(filter.getOutput(), columnId);
+            case FilterPlan filter ->
+                    filter.of(filter.getInput(), redirectReads(filter.getPredicate(), filter, columnId, replacementId), filter.getPosition());
+            case SortPlan sort -> replaceColumn(sort.getColumnIds(), columnId, replacementId);
+            default -> {
             }
-            case SortPlan sort -> {
-                replaceColumn(sort.getColumnIds(), columnId, replacementId);
-                removeColumn(sort.getOutput(), columnId);
-            }
-            default -> removeColumn(consumer.getOutput(), columnId);
         }
     }
 

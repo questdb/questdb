@@ -139,38 +139,25 @@ final class SetOperationFactoryGenerator {
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_UNION_CONSTRUCTOR = UnionRecordCursorFactory::new;
     private final BytecodeAssembler asm;
-    private final ListColumnFilter branchSortKeys;
     private final SqlCodeGenerator codeGenerator;
     private final CairoConfiguration configuration;
     private final EntityColumnFilter entityColumnFilter;
-    private final ArrayColumnTypes keyTypes;
     private final SortFactoryGenerator sortGenerator;
-    private final ArrayColumnTypes valueTypes;
-    // a bitset of symbol columns serialised as strings by UNION, INTERSECT and EXCEPT record sinks
-    private final BitSet writeSymbolAsString;
     private SqlExecutionContext mergeCastContext;
     private final MergeUnionAllRecordCursorFactoryBuilder.CastFunctionFactory mergeCastFactory = this::generateMergeCastFunctions;
 
-    @Nullable SetOperationFactoryGenerator(
+    SetOperationFactoryGenerator(
             CairoConfiguration configuration,
             SqlCodeGenerator codeGenerator,
             SortFactoryGenerator sortGenerator,
             BytecodeAssembler asm,
-            EntityColumnFilter entityColumnFilter,
-            ArrayColumnTypes keyTypes,
-            ArrayColumnTypes valueTypes,
-            ListColumnFilter branchSortKeys,
-            BitSet writeSymbolAsString
+            EntityColumnFilter entityColumnFilter
     ) {
         this.configuration = configuration;
         this.codeGenerator = codeGenerator;
         this.sortGenerator = sortGenerator;
         this.asm = asm;
         this.entityColumnFilter = entityColumnFilter;
-        this.keyTypes = keyTypes;
-        this.branchSortKeys = branchSortKeys;
-        this.writeSymbolAsString = writeSymbolAsString;
-        this.valueTypes = valueTypes;
     }
 
     private static boolean canMergeUnionAll(
@@ -221,25 +208,25 @@ final class SetOperationFactoryGenerator {
             };
             case LONG -> switch (fromTag) {
                 case BYTE, SHORT, CHAR, INT, LONG -> numericColumn(fromTag, i);
-                default -> throw unsupportedCast(modelPosition, castFromMetadata, i, fromType, toType);
+                default -> throw unvalidatedCast();
             };
             case FLOAT -> switch (fromTag) {
                 case BYTE, SHORT, INT, LONG, FLOAT -> numericColumn(fromTag, i);
-                default -> throw unsupportedCast(modelPosition, castFromMetadata, i, fromType, toType);
+                default -> throw unvalidatedCast();
             };
             case DOUBLE -> switch (fromTag) {
                 case BYTE, SHORT, INT, LONG, FLOAT, DOUBLE -> numericColumn(fromTag, i);
-                default -> throw unsupportedCast(modelPosition, castFromMetadata, i, fromType, toType);
+                default -> throw unvalidatedCast();
             };
             case IPv4 -> {
                 if (fromTag != IPv4) {
-                    throw unsupportedCast(modelPosition, castFromMetadata, i, fromType, toType);
+                    throw unvalidatedCast();
                 }
                 yield IPv4Column.newInstance(i);
             }
             case DATE -> {
                 if (fromTag != DATE) {
-                    throw unsupportedCast(modelPosition, castFromMetadata, i, fromType, toType);
+                    throw unvalidatedCast();
                 }
                 yield DateColumn.newInstance(i);
             }
@@ -251,19 +238,18 @@ final class SetOperationFactoryGenerator {
                 assert fromTag == LONG128;
                 yield Long128Column.newInstance(i);
             }
-            case TIMESTAMP -> castToTimestamp(castFromMetadata, i, fromTag, fromType, toType, modelPosition);
-            case STRING -> castToString(castFromMetadata, i, fromTag, fromType, toType, modelPosition);
+            case TIMESTAMP -> castToTimestamp(i, fromTag, fromType, toType);
+            case STRING -> castToString(castFromMetadata, i, fromTag, fromType);
             case SYMBOL ->
                     new CastSymbolToStrFunctionFactory.Func(new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i)));
             case LONG256 -> Long256Column.newInstance(i);
-            case GEOBYTE, GEOSHORT, GEOINT, GEOLONG ->
-                    castToGeoHash(castFromMetadata, i, fromTag, fromType, toTag, toType, modelPosition);
+            case GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> castToGeoHash(i, fromTag, fromType, toTag, toType);
             case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 ->
-                    castToDecimal(executionContext, castFromMetadata, i, fromTag, fromType, toType, modelPosition);
+                    castToDecimal(executionContext, i, fromTag, fromType, toType);
             case BINARY -> BinColumn.newInstance(i);
-            case VARCHAR -> castToVarchar(castFromMetadata, i, fromTag, fromType, toType, modelPosition);
+            case VARCHAR -> castToVarchar(castFromMetadata, i, fromTag, fromType);
             case INTERVAL -> IntervalColumn.newInstance(i, toType);
-            case ARRAY -> castToArray(castFromMetadata, i, fromTag, fromType, toType, modelPosition);
+            case ARRAY -> castToArray(i, fromTag, fromType, toType, modelPosition);
             default -> {
                 assert false;
                 yield null;
@@ -271,30 +257,16 @@ final class SetOperationFactoryGenerator {
         };
     }
 
-    private static Function castToArray(
-            RecordMetadata castFromMetadata,
-            int i,
-            int fromTag,
-            int fromType,
-            int toType,
-            int modelPosition
-    ) throws SqlException {
+    private static Function castToArray(int i, int fromTag, int fromType, int toType, int modelPosition) {
         switch (fromTag) {
             case ARRAY: {
                 assert decodeArrayElementType(fromType) == DOUBLE;
                 assert decodeArrayElementType(toType) == DOUBLE;
                 final int fromDims = decodeWeakArrayDimensionality(fromType);
                 final int toDims = decodeWeakArrayDimensionality(toType);
-                if (toDims == -1) {
-                    throw SqlException.$(modelPosition, "cast to array bind variable type is not supported [column=")
-                            .put(castFromMetadata.getColumnName(i)).put(']');
-                }
+                assert toDims != -1 && fromDims <= toDims;
                 if (fromDims == toDims) {
                     return ArrayColumn.newInstance(i, fromType);
-                }
-                if (fromDims > toDims) {
-                    throw SqlException.$(modelPosition, "array cast to lower dimensionality is not supported [column=")
-                            .put(castFromMetadata.getColumnName(i)).put(']');
                 }
                 if (fromDims == -1) {
                     // must be a bind variable, i.e. weak dimensionality case
@@ -303,12 +275,7 @@ final class SetOperationFactoryGenerator {
                 return new CastDoubleArrayToDoubleArrayFunctionFactory.Func(ArrayColumn.newInstance(i, fromType), toType, toDims - fromDims);
             }
             case DOUBLE:
-                assert decodeArrayElementType(toType) == DOUBLE;
-                if (decodeWeakArrayDimensionality(toType) == -1) {
-                    throw SqlException
-                            .$(modelPosition, "cast to array bind variable type is not supported [column=").put(castFromMetadata.getColumnName(i))
-                            .put(']');
-                }
+                assert decodeArrayElementType(toType) == DOUBLE && decodeWeakArrayDimensionality(toType) != -1;
                 return new CastDoubleToDoubleArray.Func(DoubleColumn.newInstance(i), toType);
             default:
                 assert false;
@@ -316,15 +283,7 @@ final class SetOperationFactoryGenerator {
         }
     }
 
-    private static Function castToDecimal(
-            SqlExecutionContext executionContext,
-            RecordMetadata castFromMetadata,
-            int i,
-            int fromTag,
-            int fromType,
-            int toType,
-            int modelPosition
-    ) throws SqlException {
+    private static Function castToDecimal(SqlExecutionContext executionContext, int i, int fromTag, int fromType, int toType) throws SqlException {
         if (ColumnType.isDecimalType(fromTag)) {
             if (fromType == toType) {
                 return DecimalColumn.newInstance(i, fromType);
@@ -344,19 +303,11 @@ final class SetOperationFactoryGenerator {
                     CastStrToDecimalFunctionFactory.newInstance(executionContext.getDecimal256(), 0, toType, new StrColumn(i));
             case VARCHAR ->
                     CastVarcharToDecimalFunctionFactory.newInstance(executionContext.getDecimal256(), 0, toType, new VarcharColumn(i));
-            default -> throw unsupportedCast(modelPosition, castFromMetadata, i, fromType, toType);
+            default -> throw unvalidatedCast();
         };
     }
 
-    private static Function castToGeoHash(
-            RecordMetadata castFromMetadata,
-            int i,
-            int fromTag,
-            int fromType,
-            int toTag,
-            int toType,
-            int modelPosition
-    ) throws SqlException {
+    private static Function castToGeoHash(int i, int fromTag, int fromType, int toTag, int toType) throws SqlException {
         switch (fromTag) {
             case STRING:
                 return CastStrToGeoHashFunctionFactory.newInstance(0, toType, new StrColumn(i));
@@ -374,18 +325,11 @@ final class SetOperationFactoryGenerator {
                 }
                 // fall through
             default:
-                throw unsupportedCast(modelPosition, castFromMetadata, i, fromType, toType);
+                throw unvalidatedCast();
         }
     }
 
-    private static Function castToString(
-            RecordMetadata castFromMetadata,
-            int i,
-            int fromTag,
-            int fromType,
-            int toType,
-            int modelPosition
-    ) throws SqlException {
+    private static Function castToString(RecordMetadata castFromMetadata, int i, int fromTag, int fromType) {
         return switch (fromTag) {
             case BOOLEAN -> BooleanColumn.newInstance(i);
             case BYTE -> new CastByteToStrFunctionFactory.Func(ByteColumn.newInstance(i));
@@ -418,10 +362,10 @@ final class SetOperationFactoryGenerator {
             case DECIMAL128 -> new CastDecimalToStrFunctionFactory.Func128(DecimalColumn.newInstance(i, fromType));
             case DECIMAL256 -> new CastDecimalToStrFunctionFactory.Func(DecimalColumn.newInstance(i, fromType));
             case INTERVAL -> new CastIntervalToStrFunctionFactory.Func(IntervalColumn.newInstance(i, fromType));
-            case BINARY -> throw unsupportedCast(modelPosition, castFromMetadata, i, fromType, toType);
+            case BINARY -> throw unvalidatedCast();
             case ARRAY -> {
                 if (decodeArrayElementType(fromType) != DOUBLE) {
-                    throw unsupportedCast(modelPosition, castFromMetadata, i, fromType, toType);
+                    throw unvalidatedCast();
                 }
                 yield new CastDoubleArrayToStrFunctionFactory.Func(ArrayColumn.newInstance(i, fromType));
             }
@@ -430,31 +374,17 @@ final class SetOperationFactoryGenerator {
         };
     }
 
-    private static Function castToTimestamp(
-            RecordMetadata castFromMetadata,
-            int i,
-            int fromTag,
-            int fromType,
-            int toType,
-            int modelPosition
-    ) throws SqlException {
+    private static Function castToTimestamp(int i, int fromTag, int fromType, int toType) {
         return switch (fromTag) {
             case DATE -> new CastDateToTimestampFunctionFactory.Func(DateColumn.newInstance(i), toType);
             case TIMESTAMP -> fromType == toType
                     ? TimestampColumn.newInstance(i, fromType)
                     : new CastTimestampToTimestampFunctionFactory.Func(TimestampColumn.newInstance(i, fromType), fromType, toType);
-            default -> throw unsupportedCast(modelPosition, castFromMetadata, i, fromType, toType);
+            default -> throw unvalidatedCast();
         };
     }
 
-    private static Function castToVarchar(
-            RecordMetadata castFromMetadata,
-            int i,
-            int fromTag,
-            int fromType,
-            int toType,
-            int modelPosition
-    ) throws SqlException {
+    private static Function castToVarchar(RecordMetadata castFromMetadata, int i, int fromTag, int fromType) {
         return switch (fromTag) {
             case BOOLEAN -> BooleanColumn.newInstance(i);
             case BYTE -> new CastByteToVarcharFunctionFactory.Func(ByteColumn.newInstance(i));
@@ -484,10 +414,10 @@ final class SetOperationFactoryGenerator {
                     CastGeoHashToGeoHashFunctionFactory.getGeoIntToVarcharCastFunction(GeoIntColumn.newInstance(i, fromType), getGeoHashBits(fromType));
             case GEOLONG ->
                     CastGeoHashToGeoHashFunctionFactory.getGeoLongToVarcharCastFunction(GeoLongColumn.newInstance(i, fromType), getGeoHashBits(fromType));
-            case BINARY -> throw unsupportedCast(modelPosition, castFromMetadata, i, fromType, toType);
+            case BINARY -> throw unvalidatedCast();
             case ARRAY -> {
                 if (decodeArrayElementType(fromType) != DOUBLE) {
-                    throw unsupportedCast(modelPosition, castFromMetadata, i, fromType, toType);
+                    throw unvalidatedCast();
                 }
                 yield new CastDoubleArrayToVarcharFunctionFactory.Func(ArrayColumn.newInstance(i, fromType));
             }
@@ -567,11 +497,14 @@ final class SetOperationFactoryGenerator {
         };
     }
 
-    private static SqlException unsupportedCast(int position, RecordMetadata castFromMetadata, int index, int fromType, int toType) {
-        return SqlException.unsupportedCast(position, castFromMetadata.getColumnName(index), fromType, toType);
+    private static IllegalStateException unvalidatedCast() {
+        return new IllegalStateException("set operation cast is not validated");
     }
 
     private ObjList<Function> generateMergeCastFunctions(RecordMetadata toMetadata, RecordMetadata fromMetadata, int position) throws SqlException {
+        for (int i = 0, n = toMetadata.getColumnCount(); i < n; i++) {
+            SetOperationBinder.validateCast(fromMetadata.getColumnType(i), toMetadata.getColumnType(i), fromMetadata.getColumnName(i), position);
+        }
         return generateCastFunctions(mergeCastContext, toMetadata, fromMetadata, position);
     }
 
@@ -580,6 +513,7 @@ final class SetOperationFactoryGenerator {
      * ordering is advice; actual input metadata and directions must prove it.
      */
     private RecordCursorFactory generateOperation(
+            GenerationFrame frame,
             SetOperationPlan plan,
             RecordCursorFactory left,
             RecordCursorFactory right,
@@ -624,7 +558,7 @@ final class SetOperationFactoryGenerator {
             }
             isTransferred = true;
             final RecordCursorFactory result = generateSetOperation(
-                    plan.getOperation(), metadata, left, right, leftCasts, rightCasts,
+                    frame, plan.getOperation(), metadata, left, right, leftCasts, rightCasts,
                     isMerge, plan.getPosition(), plan.getRightPosition(), symbolColumns, executionContext
             );
             if (plan.getOperation().isUnion() && plan.isSymbolRestorationRequired()) {
@@ -649,6 +583,7 @@ final class SetOperationFactoryGenerator {
      * Consumes both factories and cast lists on entry. Metadata and symbol columns outlive the compiler.
      */
     private RecordCursorFactory generateSetOperation(
+            GenerationFrame frame,
             SetOperationKind operation,
             RecordMetadata metadata,
             RecordCursorFactory factoryA,
@@ -689,6 +624,9 @@ final class SetOperationFactoryGenerator {
                 case INTERSECT_ALL -> SET_INTERSECT_ALL_CONSTRUCTOR;
                 case UNION_ALL -> throw new IllegalArgumentException("set operation: " + operation);
             };
+            final ArrayColumnTypes keyTypes = frame.keyTypes;
+            final ArrayColumnTypes valueTypes = frame.valueTypes;
+            final BitSet writeSymbolAsString = frame.writeSymbolAsString;
             keyTypes.clear();
             valueTypes.clear();
             writeSymbolAsString.clear();
@@ -728,11 +666,13 @@ final class SetOperationFactoryGenerator {
     /**
      * Sorts a later UNION ALL branch that neither follows the requested timestamp order nor has its own ORDER BY.
      */
-    private RecordCursorFactory sortUnionBranch(RecordCursorFactory branch, LogicalPlan plan, int orderIndex, int direction) throws SqlException {
+    private RecordCursorFactory sortUnionBranch(GenerationFrame frame, RecordCursorFactory branch, LogicalPlan plan, int orderIndex, int direction)
+            throws SqlException {
         if (LogicalPlans.skipProjects(plan) instanceof SortPlan || branch.getMetadata().getTimestampIndex() != orderIndex
                 || branch.getScanDirection() == direction) {
             return branch;
         }
+        final ListColumnFilter branchSortKeys = frame.listColumnFilterB;
         final GenericRecordMetadata metadata;
         try {
             branchSortKeys.clear();
@@ -847,12 +787,12 @@ final class SetOperationFactoryGenerator {
             right = codeGenerator.generate(frame, operation.getRight(), executionContext, rightOrderId, requiredScanDirection, null, null, orderByMnemonic);
             if (orderIndex >= 0 && requiredScanDirection != RecordCursorFactory.SCAN_DIRECTION_OTHER
                     && isTimestampOrderPushable(operation, orderIndex)) {
-                right = sortUnionBranch(right, operation.getRight(), orderIndex, requiredScanDirection);
+                right = sortUnionBranch(frame, right, operation.getRight(), orderIndex, requiredScanDirection);
             }
         } catch (Throwable th) {
             Misc.free(left, th);
             throw th;
         }
-        return generateOperation(operation, left, right, executionContext, orderIndex, requiredScanDirection);
+        return generateOperation(frame, operation, left, right, executionContext, orderIndex, requiredScanDirection);
     }
 }

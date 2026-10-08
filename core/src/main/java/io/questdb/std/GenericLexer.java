@@ -29,6 +29,7 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayDeque;
 import java.util.Comparator;
@@ -57,9 +58,17 @@ public class GenericLexer implements ImmutableIterator<CharSequence>, Mutable {
     private CharSequence next = null;
 
     public GenericLexer(int poolCapacity) {
-        csPool = new ObjectPool<>(FloatingSequence::new, poolCapacity);
-        csPairPool = new ObjectPool<>(FloatingSequencePair::new, poolCapacity);
-        csTriplePool = new ObjectPool<>(FloatingSequenceTriple::new, poolCapacity);
+        this(poolCapacity, poolCapacity);
+    }
+
+    /**
+     * Creates a lexer whose sequence pools start at {@code initialPoolCapacity}, grow with the tokens a text needs and
+     * keep at most {@code maxRetainedPoolCapacity} sequences each once the lexer is reset.
+     */
+    public GenericLexer(int initialPoolCapacity, int maxRetainedPoolCapacity) {
+        csPool = new ObjectPool<>(FloatingSequence::new, initialPoolCapacity, maxRetainedPoolCapacity);
+        csPairPool = new ObjectPool<>(FloatingSequencePair::new, initialPoolCapacity, maxRetainedPoolCapacity);
+        csTriplePool = new ObjectPool<>(FloatingSequenceTriple::new, initialPoolCapacity, maxRetainedPoolCapacity);
         for (int i = 0, n = WHITESPACE.size(); i < n; i++) {
             defineSymbol(Chars.toString(WHITESPACE.get(i)));
         }
@@ -150,6 +159,11 @@ public class GenericLexer implements ImmutableIterator<CharSequence>, Mutable {
         }
         l.add(token);
         l.sort(COMPARATOR);
+    }
+
+    @TestOnly
+    public int getPoolCapacity() {
+        return csPool.getCapacity();
     }
 
     public CharSequence getContent() {

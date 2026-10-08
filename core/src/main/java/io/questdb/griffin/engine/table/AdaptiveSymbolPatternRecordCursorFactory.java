@@ -463,13 +463,6 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        return patternFilter.isStableWithinExecution() && indexDelegate.isStableWithinExecution()
-                && (coveringDelegate == null || coveringDelegate.isStableWithinExecution())
-                && scanDelegate.isStableWithinExecution() && dfcFactory.isStableWithinExecution();
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         // Same reasoning as getScanDirection(): the answer must hold for every delegate the runtime
         // could open. The covering merge cursor has no random access, so a covered pattern reports
@@ -883,11 +876,6 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         @Override
         public TableToken getTableToken() {
             return delegate.getTableToken();
-        }
-
-        @Override
-        public boolean isStableWithinExecution() {
-            return delegate.isStableWithinExecution();
         }
 
         @Override

@@ -70,6 +70,7 @@ final class FilterFactoryGenerator {
     private static final Log LOG = LogFactory.getLog(FilterFactoryGenerator.class);
     private final CairoConfiguration configuration;
     private final boolean enableJitDebug;
+    private final ObjList<Function> jitBindVarFunctions = new ObjList<>();
     private final MemoryCARW jitIRMem;
     private final CompiledFilterIRSerializer jitIRSerializer;
     private final PageFrameReduceTaskFactory reduceTaskFactory;
@@ -424,7 +425,7 @@ final class FilterFactoryGenerator {
         }
         CompiledFilter compiledFilter = null;
         CompiledCountOnlyFilter compiledCountOnlyFilter = null;
-        final ObjList<Function> bindVarFunctions = new ObjList<>();
+        ObjList<Function> bindVarFunctions = null;
         ObjList<Function> workers = null;
         Function limit = null;
         final int limitPosition;
@@ -434,7 +435,7 @@ final class FilterFactoryGenerator {
             try {
                 try (PageFrameCursor cursor = base.getPageFrameCursor(executionContext, ORDER_ANY)) {
                     final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
-                    jitIRSerializer.of(jitIRMem, executionContext, base.getMetadata(), input, cursor, bindVarFunctions);
+                    jitIRSerializer.of(jitIRMem, executionContext, base.getMetadata(), input, cursor, jitBindVarFunctions);
                     jitOptions = jitIRSerializer.serialize(predicate, forceScalar, enableJitDebug, enableJitNullChecks);
                 }
                 compiledFilter = new CompiledFilter();
@@ -456,6 +457,8 @@ final class FilterFactoryGenerator {
                     CairoException.rethrowCleanupFailure(cleanupFailure);
                 }
             }
+            bindVarFunctions = new ObjList<>(jitBindVarFunctions);
+            jitBindVarFunctions.clear();
 
             if (limitAdvice != null && limitAdvice.getHi() == null) {
                 limit = instantiator.instantiate(limitAdvice.getLo(), input, executionContext);
@@ -469,6 +472,8 @@ final class FilterFactoryGenerator {
             Throwable cleanup = Misc.freeBestEffort(null, compiledFilter);
             cleanup = Misc.freeBestEffort(cleanup, compiledCountOnlyFilter);
             cleanup = Misc.freeObjListBestEffort(cleanup, bindVarFunctions);
+            cleanup = Misc.freeObjListBestEffort(cleanup, jitBindVarFunctions);
+            jitBindVarFunctions.clear();
             cleanup = Misc.freeBestEffort(cleanup, limit);
             cleanup = Misc.freeObjListBestEffort(cleanup, workers);
             if (cleanup != null) {
@@ -487,6 +492,8 @@ final class FilterFactoryGenerator {
             Misc.free(compiledFilter, th);
             Misc.free(compiledCountOnlyFilter, th);
             Misc.freeObjList(bindVarFunctions, th);
+            Misc.freeObjList(jitBindVarFunctions, th);
+            jitBindVarFunctions.clear();
             Misc.free(filter, th);
             Misc.free(base, th);
             throw th;

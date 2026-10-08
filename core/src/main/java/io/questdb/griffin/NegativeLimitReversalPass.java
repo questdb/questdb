@@ -140,7 +140,6 @@ final class NegativeLimitReversalPass {
         }
         sort.markReversal();
         sort.replaceInput(0, source);
-        sort.deriveOutput();
         final BoundExpression count = lo.getDataType() == ColumnType.INT
                 ? constants.next().ofInt((int) -lo.getLongValue(), lo.getPosition())
                 : constants.next().ofLong(-lo.getLongValue(), lo.getPosition());
@@ -155,7 +154,6 @@ final class NegativeLimitReversalPass {
         }
         final LogicalPlan upper = upperBottom == limit ? lower : upperTop;
         restored.replaceInput(0, upper);
-        restored.deriveOutput();
         restoredSorts.add(restored);
         return restored;
     }

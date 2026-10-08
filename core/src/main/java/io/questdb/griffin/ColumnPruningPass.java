@@ -27,10 +27,10 @@ package io.questdb.griffin;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.DeferredErrorExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
+import io.questdb.griffin.plan.logical.ForwardingPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.GroupingPlan;
@@ -111,18 +111,6 @@ final class ColumnPruningPass implements Mutable {
         sharedSetOperations.clear();
     }
 
-    private static void addColumn(OutputSchema output, OutputSchema input, int index, CharSequence alias) {
-        output.add(input.getColumnId(index), input.getColumnName(index), input.getColumnType(index), input.getMetadata(index),
-                input.isVisible(index), alias);
-        output.setSymbolTableStatic(output.getColumnCount() - 1, input.isSymbolTableStatic(index));
-    }
-
-    private static void addColumns(OutputSchema output, OutputSchema input, CharSequence alias) {
-        for (int i = 0, n = input.getColumnCount(); i < n; i++) {
-            addColumn(output, input, i, alias);
-        }
-    }
-
     private static boolean isCountInputMaterialized(LogicalPlan input) {
         while (true) {
             switch (input) {
@@ -143,11 +131,6 @@ final class ColumnPruningPass implements Mutable {
             input = input.inputAt(0);
         }
     }
-
-    private static boolean isFailedAggregate(BoundExpression key) {
-        return key instanceof DeferredErrorExpression deferred && deferred.isAggregate();
-    }
-
 
     private static boolean isUnionAllChain(LogicalPlan plan) {
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
@@ -204,57 +187,42 @@ final class ColumnPruningPass implements Mutable {
                 retainedColumnIndexes.add(i);
             }
         }
-        boolean changed = false;
+        boolean isReordered = false;
         for (int i = 0, n = retainedColumnIndexes.size(); i < n; i++) {
-            changed |= retainedColumnIndexes.getQuick(i) != i;
+            isReordered |= retainedColumnIndexes.getQuick(i) != i;
         }
-        if (!changed) {
+        if (!isReordered) {
             return;
         }
-        tmpSchema.copyFrom(output);
-        output.clear();
+        output.retain(retainedColumnIndexes);
         for (int i = 0, n = retainedColumnIndexes.size(); i < n; i++) {
-            final int index = retainedColumnIndexes.getQuick(i);
-            output.add(tmpSchema.getColumnId(index), tmpSchema.getColumnName(index), tmpSchema.getColumnType(index),
-                    tmpSchema.getMetadata(index), tmpSchema.isVisible(index), tmpSchema.getColumnQualifier(index));
-            output.setSymbolTableStatic(i, tmpSchema.isSymbolTableStatic(index));
-            retainedColumnIndexes.setQuick(i, sourceIndexes.getQuick(index));
+            retainedColumnIndexes.setQuick(i, sourceIndexes.getQuick(retainedColumnIndexes.getQuick(i)));
         }
-        output.setTimestampIndex(output.getColumnIndexById(tmpSchema.getTimestampColumnId()));
         sourceIndexes.clear();
         sourceIndexes.addAll(retainedColumnIndexes);
-        tmpSchema.clear();
         alignedPath.clear();
         for (input = top; input != scan; input = input.inputAt(0)) {
             alignedPath.add(input);
         }
-        OutputSchema child = output;
         for (int k = alignedPath.size() - 1; k >= 0; k--) {
             final LogicalPlan node = alignedPath.getQuick(k);
-            final OutputSchema nodeOutput = node.getOutput();
-            final int timestampId = nodeOutput.getTimestampColumnId();
-            if (node instanceof WindowPlan) {
+            if (node instanceof WindowPlan window) {
                 // Window outputs follow its input columns, then its function columns.
+                final OutputSchema nodeOutput = window.getOutput();
+                final OutputSchema child = window.getInput().getOutput();
+                final int timestampId = nodeOutput.getTimestampColumnId();
                 tmpSchema.copyFrom(nodeOutput);
-                nodeOutput.clear();
-                for (int i = 0, n = child.getColumnCount(); i < n; i++) {
-                    nodeOutput.add(child.getColumnId(i), child.getColumnName(i), child.getColumnType(i),
-                            child.getMetadata(i), child.isVisible(i), child.getColumnQualifier(i));
-                    nodeOutput.setSymbolTableStatic(i, child.isSymbolTableStatic(i));
-                }
+                nodeOutput.copyFrom(child);
                 for (int i = 0, n = tmpSchema.getColumnCount(); i < n; i++) {
                     if (child.getColumnIndexById(tmpSchema.getColumnId(i)) < 0) {
-                        nodeOutput.add(tmpSchema.getColumnId(i), tmpSchema.getColumnName(i), tmpSchema.getColumnType(i),
-                                tmpSchema.getMetadata(i), tmpSchema.isVisible(i), tmpSchema.getColumnQualifier(i));
-                        nodeOutput.setSymbolTableStatic(nodeOutput.getColumnCount() - 1, tmpSchema.isSymbolTableStatic(i));
+                        nodeOutput.addColumnFrom(tmpSchema, i);
                     }
                 }
+                nodeOutput.setTimestampColumnId(timestampId);
                 tmpSchema.clear();
             } else {
-                nodeOutput.copyFrom(child);
+                ((ForwardingPlan) node).deriveOutput();
             }
-            nodeOutput.setTimestampIndex(nodeOutput.getColumnIndexById(timestampId));
-            child = nodeOutput;
         }
         alignedPath.clear();
         if (windowJoin != null) {
@@ -316,21 +284,12 @@ final class ColumnPruningPass implements Mutable {
         final OutputSchema output = project.getOutput();
         tmpExpressions.clear();
         tmpExpressions.addAll(expressions);
-        tmpSchema.copyFrom(output);
         expressions.clear();
-        output.clear();
         for (int i = 0, n = retainedColumnIndexes.size(); i < n; i++) {
-            final int index = retainedColumnIndexes.getQuick(i);
-            expressions.add(tmpExpressions.getQuick(index));
-            output.add(tmpSchema.getColumnId(index), tmpSchema.getColumnName(index), tmpSchema.getColumnType(index),
-                    tmpSchema.getMetadata(index), tmpSchema.isVisible(index), tmpSchema.getColumnQualifier(index));
-            output.setSymbolTableStatic(i, tmpSchema.isSymbolTableStatic(index));
-            if (index == tmpSchema.getTimestampIndex()) {
-                output.setTimestampIndex(i);
-            }
+            expressions.add(tmpExpressions.getQuick(retainedColumnIndexes.getQuick(i)));
         }
+        output.retain(retainedColumnIndexes);
         tmpExpressions.clear();
-        tmpSchema.clear();
     }
 
     private void pruneColumns(LogicalPlan plan) {
@@ -404,14 +363,11 @@ final class ColumnPruningPass implements Mutable {
                 tmpSchema.copyFrom(output);
                 output.copyFrom(input.getOutput());
                 for (int i = 0, n = window.getFunctionColumnIds().size(); i < n; i++) {
-                    final int columnId = window.getFunctionColumnIds().getQuick(i);
-                    final int index = tmpSchema.getColumnIndexById(columnId);
+                    final int index = tmpSchema.getColumnIndexById(window.getFunctionColumnIds().getQuick(i));
                     removeReplacedWindowColumn(output, tmpSchema.getColumnName(index));
-                    output.add(columnId, tmpSchema.getColumnName(index), tmpSchema.getColumnType(index),
-                            tmpSchema.getMetadata(index), tmpSchema.isVisible(index), tmpSchema.getColumnQualifier(index));
-                    output.setSymbolTableStatic(output.getColumnCount() - 1, tmpSchema.isSymbolTableStatic(index));
+                    output.addColumnFrom(tmpSchema, index);
                 }
-                output.setTimestampIndex(output.getColumnIndexById(timestampId));
+                output.setTimestampColumnId(timestampId);
                 tmpSchema.clear();
                 return;
             }
@@ -457,8 +413,8 @@ final class ColumnPruningPass implements Mutable {
                     }
                     final OutputSchema prefix = step.getOutput();
                     prefix.copyFrom(plan.getOutput());
-                    addColumns(prefix, input, step.getBindingAlias());
-                    prefix.setTimestampIndex(prefix.getColumnIndexById(joinTimestampId));
+                    prefix.addColumnsFrom(input, step.getBindingAlias());
+                    prefix.setTimestampColumnId(joinTimestampId);
                     plan.getOutput().copyFrom(prefix);
                 }
                 return;
@@ -580,8 +536,8 @@ final class ColumnPruningPass implements Mutable {
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     requiredColumnIds.add(keys.getQuick(i));
                 }
-                if (plan.inputAt(0) instanceof LatestByPlan || plan.inputAt(0) instanceof FilterPlan) {
-                    final LogicalPlan input = plan.inputAt(0);
+                if (sort.getInput() instanceof LatestByPlan || sort.getInput() instanceof FilterPlan) {
+                    final LogicalPlan input = sort.getInput();
                     final OutputSchema output = input.getOutput();
                     final ProjectPlan projection = narrowingProjects.next().of(input, plan.getPosition());
                     // Predicate and partition keys need not occupy the sorted record.
@@ -589,30 +545,25 @@ final class ColumnPruningPass implements Mutable {
                         final int columnId = output.getColumnId(i);
                         if (requiredColumnIds.contains(columnId)) {
                             projection.getExpressions().add(narrowingColumns.next().of(columnId, output.getColumnType(i), plan.getPosition()));
-                            projection.getOutput().add(columnId, output.getColumnName(i), output.getColumnType(i),
-                                    output.getMetadata(i), output.isVisible(i), output.getColumnQualifier(i));
-                            projection.getOutput().setSymbolTableStatic(projection.getOutput().getColumnCount() - 1, output.isSymbolTableStatic(i));
-                            if (i == output.getTimestampIndex()) {
-                                projection.getOutput().setTimestampIndex(projection.getOutput().getColumnCount() - 1);
-                            }
+                            projection.getOutput().addColumnFrom(output, i);
                         }
                     }
+                    projection.getOutput().setTimestampColumnId(output.getTimestampColumnId());
                     pruneColumns(input);
                     if (projection.getOutput().getColumnCount() < input.getOutput().getColumnCount()) {
-                        plan.replaceInput(0, projection);
+                        sort.replaceInput(0, projection);
+                    } else {
+                        sort.deriveOutput();
                     }
-                    plan.getOutput().copyFrom(plan.inputAt(0).getOutput());
-                    plan.getOutput().setTimestampIndex(plan.getOutput().getColumnIndexById(timestampId));
                     return;
                 }
             }
-            default -> {
+            case LimitPlan _ -> {
             }
         }
-        final LogicalPlan input = plan.inputAt(0);
-        pruneColumns(input);
-        plan.getOutput().copyFrom(input.getOutput());
-        plan.getOutput().setTimestampIndex(plan.getOutput().getColumnIndexById(timestampId));
+        final ForwardingPlan forwarding = (ForwardingPlan) plan;
+        pruneColumns(forwarding.getInput());
+        forwarding.deriveOutput();
     }
 
     private void pruneFillEntries(FillPlan fill) {
@@ -638,8 +589,6 @@ final class ColumnPruningPass implements Mutable {
                 targets.setQuick(retained, targets.getQuick(i));
                 sources.setQuick(retained, sources.getQuick(i));
                 modes.setQuick(retained, modes.getQuick(i));
-                fill.getPositions().setQuick(retained, fill.getPositions().getQuick(i));
-                fill.getSourcePositions().setQuick(retained, fill.getSourcePositions().getQuick(i));
                 fill.getTokens().setQuick(retained, fill.getTokens().getQuick(i));
                 fill.getValues().setQuick(retained++, fill.getValues().getQuick(i));
             }
@@ -647,8 +596,6 @@ final class ColumnPruningPass implements Mutable {
         targets.setPos(retained);
         sources.setPos(retained);
         modes.setPos(retained);
-        fill.getPositions().setPos(retained);
-        fill.getSourcePositions().setPos(retained);
         while (fill.getTokens().size() > retained) {
             fill.getTokens().popLast();
             fill.getValues().popLast();
@@ -669,8 +616,12 @@ final class ColumnPruningPass implements Mutable {
 
     private void pruneOutput(LogicalPlan plan) {
         final OutputSchema output = plan.getOutput();
-        tmpSchema.copyFrom(output);
-        output.clear();
+        retainedColumnIndexes.clear();
+        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
+            if (requiredColumnIds.contains(output.getColumnId(i))) {
+                retainedColumnIndexes.add(i);
+            }
+        }
         final IntList indexes = switch (plan) {
             case ScanPlan scan -> scan.getSourceColumnIndexes();
             case FunctionSourcePlan source -> source.getSourceColumnIndexes();
@@ -689,32 +640,25 @@ final class ColumnPruningPass implements Mutable {
         final int keyCount = keys == null ? 0 : keys.size();
         int keptKeyCount = 0;
         final ObjList<FunctionExpression> aggregates = aggregate == null ? null : aggregate.getAggregates();
-        for (int i = 0, n = tmpSchema.getColumnCount(); i < n; i++) {
-            if (requiredColumnIds.contains(tmpSchema.getColumnId(i))) {
-                final int index = output.getColumnCount();
-                if (indexes != null) {
-                    indexes.setQuick(index, indexes.getQuick(i));
-                }
-                if (expressions != null) {
-                    expressions.setQuick(index, expressions.getQuick(i));
-                }
-                if (updateTypes != null) {
-                    updateTypes.add(tmpUpdateTypes.getQuick(i));
-                }
-                if (keys != null && i < keyCount) {
-                    keys.setQuick(keptKeyCount++, keys.getQuick(i));
-                }
-                if (aggregates != null && i >= keyCount) {
-                    aggregates.setQuick(index - keptKeyCount, aggregates.getQuick(i - keyCount));
-                }
-                output.add(tmpSchema.getColumnId(i), tmpSchema.getColumnName(i), tmpSchema.getColumnType(i),
-                        tmpSchema.getMetadata(i), tmpSchema.isVisible(i), tmpSchema.getColumnQualifier(i));
-                output.setSymbolTableStatic(output.getColumnCount() - 1, tmpSchema.isSymbolTableStatic(i));
-                if (i == tmpSchema.getTimestampIndex()) {
-                    output.setTimestampIndex(index);
-                }
+        for (int index = 0, n = retainedColumnIndexes.size(); index < n; index++) {
+            final int i = retainedColumnIndexes.getQuick(index);
+            if (indexes != null) {
+                indexes.setQuick(index, indexes.getQuick(i));
+            }
+            if (expressions != null) {
+                expressions.setQuick(index, expressions.getQuick(i));
+            }
+            if (updateTypes != null) {
+                updateTypes.add(tmpUpdateTypes.getQuick(i));
+            }
+            if (keys != null && i < keyCount) {
+                keys.setQuick(keptKeyCount++, keys.getQuick(i));
+            }
+            if (aggregates != null && i >= keyCount) {
+                aggregates.setQuick(index - keptKeyCount, aggregates.getQuick(i - keyCount));
             }
         }
+        output.retain(retainedColumnIndexes);
         if (indexes != null) {
             indexes.setPos(output.getColumnCount());
         }
@@ -732,7 +676,6 @@ final class ColumnPruningPass implements Mutable {
                 aggregates.popLast();
             }
         }
-        tmpSchema.clear();
     }
 
     private void pruneUnionAll(SetOperationPlan plan) {
@@ -765,26 +708,13 @@ final class ColumnPruningPass implements Mutable {
                 projection.getExpressions().add(narrowingColumns.next().of(columnId, type, position));
                 // This edge only narrows an existing relation: pass through its
                 // column identities, without defining new expression occurrences.
-                projection.getOutput().add(columnId, inputSchema.getColumnName(index), type,
-                        inputSchema.getMetadata(index), inputSchema.isVisible(index), inputSchema.getColumnQualifier(index));
-                projection.getOutput().setSymbolTableStatic(projection.getOutput().getColumnCount() - 1, inputSchema.isSymbolTableStatic(index));
-                if (index == inputSchema.getTimestampIndex()) {
-                    projection.getOutput().setTimestampIndex(k);
-                }
+                projection.getOutput().addColumnFrom(inputSchema, index);
             }
+            projection.getOutput().setTimestampColumnId(inputSchema.getTimestampColumnId());
             plan.replaceInput(i, projection);
         }
         plan.remapSymbolColumns(retainedColumnIndexes);
-        tmpSchema.copyFrom(output);
-        output.clear();
-        for (int i = 0, n = retainedColumnIndexes.size(); i < n; i++) {
-            final int index = retainedColumnIndexes.getQuick(i);
-            output.add(tmpSchema.getColumnId(index), tmpSchema.getColumnName(index), tmpSchema.getColumnType(index),
-                    tmpSchema.getMetadata(index), tmpSchema.isVisible(index), tmpSchema.getColumnQualifier(index));
-            output.setSymbolTableStatic(i, tmpSchema.isSymbolTableStatic(index));
-        }
-        output.setTimestampIndex(output.getColumnIndexById(tmpSchema.getTimestampColumnId()));
-        tmpSchema.clear();
+        output.retain(retainedColumnIndexes);
     }
 
     private void rebuildHorizonJoinSchema(HorizonJoinPlan plan, int previousMasterCount) {
@@ -792,15 +722,14 @@ final class ColumnPruningPass implements Mutable {
         tmpSchema.copyFrom(output);
         output.clear();
         final OutputSchema master = plan.getMaster().getOutput();
-        addColumns(output, master, plan.getMasterAlias());
+        output.addColumnsFrom(master, plan.getMasterAlias());
         output.setTimestampIndex(master.getTimestampIndex());
         for (int i = previousMasterCount; i < previousMasterCount + 2; i++) {
-            output.add(tmpSchema.getColumnId(i), tmpSchema.getColumnName(i), tmpSchema.getColumnType(i),
-                    tmpSchema.getMetadata(i), tmpSchema.isVisible(i), tmpSchema.getColumnQualifier(i));
+            output.addColumnFrom(tmpSchema, i);
         }
         for (int s = 0, n = plan.getSlaves().size(); s < n; s++) {
             final HorizonJoinSlave slave = plan.getSlaves().getQuick(s);
-            addColumns(output, slave.getInput().getOutput(), slave.getAlias());
+            output.addColumnsFrom(slave.getInput().getOutput(), slave.getAlias());
         }
         tmpSchema.clear();
     }
@@ -810,18 +739,16 @@ final class ColumnPruningPass implements Mutable {
         tmpSchema.copyFrom(output);
         output.clear();
         final OutputSchema master = plan.getMaster().getOutput();
-        addColumns(output, master, plan.getSteps().getQuick(0).getMasterAlias());
+        output.addColumnsFrom(master, plan.getSteps().getQuick(0).getMasterAlias());
         output.setTimestampIndex(master.getTimestampIndex());
         for (int s = 0, m = plan.getSteps().size(); s < m; s++) {
             final WindowJoinStep step = plan.getSteps().getQuick(s);
             step.getMasterScope().copyFrom(output);
             final OutputSchema scope = step.getScope();
             scope.copyFrom(output);
-            addColumns(scope, step.getSlave().getOutput(), step.getSlaveAlias());
+            scope.addColumnsFrom(step.getSlave().getOutput(), step.getSlaveAlias());
             for (int i = 0, n = step.getAggregateColumnIds().size(); i < n; i++) {
-                final int index = tmpSchema.getColumnIndexById(step.getAggregateColumnIds().getQuick(i));
-                output.add(tmpSchema.getColumnId(index), tmpSchema.getColumnName(index), tmpSchema.getColumnType(index),
-                        tmpSchema.getMetadata(index), tmpSchema.isVisible(index), tmpSchema.getColumnQualifier(index));
+                output.addColumnFrom(tmpSchema, tmpSchema.getColumnIndexById(step.getAggregateColumnIds().getQuick(i)));
             }
         }
         tmpSchema.clear();
@@ -831,10 +758,8 @@ final class ColumnPruningPass implements Mutable {
         while (input instanceof ProjectPlan project && LogicalPlans.isColumnProjection(project)) {
             input = input.inputAt(0);
         }
-        if (input instanceof LimitPlan) {
-            final LogicalPlan child = removeCountInputProjections(input.inputAt(0));
-            input.replaceInput(0, child);
-            input.getOutput().copyFrom(child.getOutput());
+        if (input instanceof LimitPlan limit) {
+            limit.replaceInput(0, removeCountInputProjections(limit.getInput()));
         }
         return input;
     }
@@ -875,11 +800,7 @@ final class ColumnPruningPass implements Mutable {
                 aggregate.replaceInput(0, input);
             } else {
                 boundary.replaceInput(0, input);
-                candidate = aggregate.getInput();
-                while (candidate instanceof LimitPlan) {
-                    candidate.getOutput().copyFrom(input.getOutput());
-                    candidate = candidate.inputAt(0);
-                }
+                LogicalPlans.deriveLimits(aggregate.getInput());
             }
         }
     }
@@ -897,21 +818,12 @@ final class ColumnPruningPass implements Mutable {
     }
 
     /**
-     * Keys define the groups, so they stay. The column of an aggregate that failed to bind goes like any unread
-     * aggregate, except in a grouping none of whose columns is read, which keeps every column, so that code
-     * generation raises the error.
+     * Keys define the groups, so they stay.
      */
     private void requireGroupingKeys(AggregatePlan aggregate) {
-        final ObjList<BoundExpression> keys = aggregate.getGroupingExpressions();
         final OutputSchema output = aggregate.getOutput();
-        boolean isRead = false;
-        for (int i = 0, n = output.getColumnCount(); i < n && !isRead; i++) {
-            isRead = requiredColumnIds.contains(output.getColumnId(i));
-        }
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            if (!isFailedAggregate(keys.getQuick(i)) || !isRead) {
-                requiredColumnIds.add(output.getColumnId(i));
-            }
+        for (int i = 0, n = aggregate.getGroupingExpressions().size(); i < n; i++) {
+            requiredColumnIds.add(output.getColumnId(i));
         }
     }
 
@@ -926,7 +838,7 @@ final class ColumnPruningPass implements Mutable {
         final int keyCount = aggregate.getGroupingExpressions().size();
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             final int index = aggregate.getOutput().getColumnIndexById(((ColumnExpression) project.getExpressions().getQuick(i)).getColumnId());
-            if (index >= 0 && index < keyCount && !isFailedAggregate(aggregate.getGroupingExpressions().getQuick(index))) {
+            if (index >= 0 && index < keyCount) {
                 requiredColumnIds.add(project.getOutput().getColumnId(i));
             }
         }

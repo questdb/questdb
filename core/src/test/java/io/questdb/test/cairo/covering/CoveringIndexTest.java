@@ -16683,14 +16683,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
 
-            // The CTE introduces a SelectedRecord layer above the WHERE-driven
+            // The renaming CTE keeps a SelectedRecord layer above the WHERE-driven
             // CoveringIndex factory; the constant aggregate (avg(-1)) keeps the
             // group-by on the Async (parallel) keyed path rather than the
             // vectorised one. The key has to be non-NULL: a NULL-capable key gives
             // the factory a backup plan, and a factory carrying one withdraws the
             // page-frame cursor the Async path -- and so this regression -- needs.
-            String q = "WITH cte0 AS (SELECT * FROM t_bug9) "
-                    + "SELECT t0.k AS e0, avg(-1) AS a0 FROM cte0 t0 WHERE sym = 'a' "
+            String q = "WITH cte0 AS (SELECT sym, k AS kk, v, ts FROM t_bug9) "
+                    + "SELECT t0.kk AS e0, avg(-1) AS a0 FROM cte0 t0 WHERE sym = 'a' "
                     + "ORDER BY e0";
             assertQuery(q)
                     .noLeakCheck()
@@ -16716,8 +16716,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // The same query on the NULL key, to pin what the backup costs: the
             // covering factory reports no page-frame cursor, so the group-by falls to
             // the serial keyed path. The rows are the same either way.
-            String qNull = "WITH cte0 AS (SELECT * FROM t_bug9) "
-                    + "SELECT t0.k AS e0, avg(-1) AS a0 FROM cte0 t0 WHERE sym IS NULL "
+            String qNull = "WITH cte0 AS (SELECT sym, k AS kk, v, ts FROM t_bug9) "
+                    + "SELECT t0.kk AS e0, avg(-1) AS a0 FROM cte0 t0 WHERE sym IS NULL "
                     + "ORDER BY e0";
             assertQuery(qNull)
                     .noLeakCheck()
