@@ -558,7 +558,6 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         }
 
         if (asOfRowId != prevAsOfRowId) {
-            // A gap longer than the backward scans behind the switch costs more to scan forward.
             if (isForwardScanMode && filter != null
                     && asOfRowId - prevAsOfRowId > Math.max(backwardScanRows - bwdScanRowsAtPositionStart, bwdScanMinGap)) {
                 isForwardScanMode = false;
