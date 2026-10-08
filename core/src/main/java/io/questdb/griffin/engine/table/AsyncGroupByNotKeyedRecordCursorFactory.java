@@ -545,6 +545,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                         addressCache,
                         filterCtx.getDataAddresses(slotId),
                         filterCtx.getAuxAddresses(slotId),
+                        filterCtx.getValidityLists(slotId),
                         rows,
                         frameRowCount
                 );

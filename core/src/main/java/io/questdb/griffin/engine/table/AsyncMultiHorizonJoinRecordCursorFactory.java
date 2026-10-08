@@ -343,6 +343,7 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
                         addressCache,
                         filterCtx.getDataAddresses(slotId),
                         filterCtx.getAuxAddresses(slotId),
+                        filterCtx.getValidityLists(slotId),
                         rows,
                         frameRowCount
                 );

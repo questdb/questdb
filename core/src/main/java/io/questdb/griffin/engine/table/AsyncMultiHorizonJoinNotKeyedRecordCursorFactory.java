@@ -271,6 +271,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                         addressCache,
                         filterCtx.getDataAddresses(slotId),
                         filterCtx.getAuxAddresses(slotId),
+                        filterCtx.getValidityLists(slotId),
                         rows,
                         frameRowCount
                 );

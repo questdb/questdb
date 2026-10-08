@@ -358,6 +358,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                         addressCache,
                         filterCtx.getDataAddresses(slotId),
                         filterCtx.getAuxAddresses(slotId),
+                        filterCtx.getValidityLists(slotId),
                         rows,
                         frameRowCount
                 );

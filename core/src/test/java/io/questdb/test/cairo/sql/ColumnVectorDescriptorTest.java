@@ -99,8 +99,8 @@ public class ColumnVectorDescriptorTest extends AbstractCairoTest {
                     }
                 }
                 Assert.assertTrue(isOpen);
-                // four lists: data and aux addresses and sizes
-                Assert.assertEquals(4, failures);
+                // seven lists: data and aux addresses and sizes, and the three validity lists
+                Assert.assertEquals(7, failures);
             }
         });
     }
@@ -176,7 +176,8 @@ public class ColumnVectorDescriptorTest extends AbstractCairoTest {
                     PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration);
                     PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
                     DirectLongList dataAddresses = new DirectLongList(4, MemoryTag.NATIVE_DEFAULT);
-                    DirectLongList auxAddresses = new DirectLongList(4, MemoryTag.NATIVE_DEFAULT)
+                    DirectLongList auxAddresses = new DirectLongList(4, MemoryTag.NATIVE_DEFAULT);
+                    DirectLongList validityLists = new DirectLongList(12, MemoryTag.NATIVE_DEFAULT)
             ) {
                 cache.of(factory.getMetadata(), cursor.getColumnMapping(), cursor.isExternal());
                 pool.of(cache);
@@ -192,12 +193,12 @@ public class ColumnVectorDescriptorTest extends AbstractCairoTest {
                         final PageFrameMemory frameMemory = pool.navigateTo(frameIndex);
                         record.init(frameMemory);
                         record.setRowIndex(0);
-                        PageFrameReduceTask.populateJitAddresses(frameMemory, cache, dataAddresses, auxAddresses);
+                        PageFrameReduceTask.populateJitAddresses(frameMemory, cache, dataAddresses, auxAddresses, validityLists);
                         final ColumnVectorDescriptor columnVectors = frameMemory.getColumnVectorDescriptor();
                         for (int c = 0, n = columnVectors.getColumnCount(); c < n; c++) {
                             checksum += columnVectors.getDataSize(c) + columnVectors.getNullCount(c) + columnVectors.getNullPolicy(c).ordinal();
                         }
-                        checksum += record.getLong(1) + dataAddresses.size();
+                        checksum += record.getLong(1) + validityLists.size();
                         frameIndex++;
                     }
                     Assert.assertEquals(32, frameIndex);
@@ -245,8 +246,8 @@ public class ColumnVectorDescriptorTest extends AbstractCairoTest {
     @Test
     public void testReduceTaskReleasesListsOnFailedConstruction() throws Exception {
         assertMemoryLeak(() -> {
-            // raise the limit step by step until the task constructs: each failure on the way
-            // must leave nothing allocated
+            // raise the limit step by step until the task constructs: each failure on the way,
+            // the validity lists included, must leave nothing allocated
             int failures = 0;
             boolean isConstructed = false;
             final long used = Unsafe.getRssMemUsed();
@@ -263,6 +264,7 @@ public class ColumnVectorDescriptorTest extends AbstractCairoTest {
                     Unsafe.setRssMemLimit(0);
                 }
                 if (task != null) {
+                    Assert.assertEquals(3L * configuration.getPageFrameReduceColumnListCapacity(), task.getValidityLists().getCapacity());
                     task.close();
                     isConstructed = true;
                 }

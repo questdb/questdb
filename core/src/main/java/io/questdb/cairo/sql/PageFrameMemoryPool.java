@@ -1062,8 +1062,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
     /**
      * Points a descriptor at a decoded frame's buffers: Parquet row-group buffers, covered
-     * buffers or the zero list of an empty window. The buffers are per frame, so the column
-     * offset is 0.
+     * buffers or the zero list of an empty window. These frames carry no validity, so the
+     * validity lists stay null and every column answers validity address 0, bit offset 0 and
+     * NULL count -1. The buffers are per frame, so the column offset is 0.
      */
     private ColumnVectorDescriptor describeDecoded(
             ColumnVectorDescriptor descriptor,
@@ -1077,6 +1078,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 dataSizes,
                 auxAddresses,
                 auxSizes,
+                null,
+                null,
+                null,
                 addressCache.getColumnNullPolicies(),
                 0,
                 addressCache.getColumnCount()
