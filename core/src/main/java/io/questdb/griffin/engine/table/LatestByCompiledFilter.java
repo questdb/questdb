@@ -225,7 +225,8 @@ public class LatestByCompiledFilter extends BooleanFunction implements UnaryFunc
                 return;
             }
         }
-        if (dataAddresses.size() != columnCount) {
+        // An allocation failure can leave only one address table complete.
+        if (dataAddresses.size() != columnCount || auxAddresses.size() != columnCount) {
             dataAddresses.clear();
             auxAddresses.clear();
             for (int i = 0; i < columnCount; i++) {

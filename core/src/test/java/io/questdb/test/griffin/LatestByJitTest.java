@@ -414,6 +414,123 @@ public class LatestByJitTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWideProjectionWithSparseMetadataIndexes() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertMemoryLeak(() -> {
+            StringBuilder ddl = new StringBuilder("CREATE TABLE jit_sparse AS (SELECT (x % 2)::INT k, timestamp_sequence(0, 1) ts");
+            for (int i = 0; i < 40; i++) {
+                ddl.append(", x + ").append(i).append(" c").append(i);
+            }
+            ddl.append(" FROM long_sequence(4097)) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(ddl);
+            sqlExecutionContext.changePageFrameSizes(4097, 4097);
+            try {
+                for (boolean isReversed : new boolean[]{false, true}) {
+                    StringBuilder query = new StringBuilder("SELECT ");
+                    StringBuilder expected = new StringBuilder();
+                    for (int i = 0; i < 40; i++) {
+                        int column = isReversed ? 39 - i : i;
+                        if (i > 0) {
+                            query.append(',');
+                            expected.append('\t');
+                        }
+                        query.append('c').append(column);
+                        expected.append('c').append(column);
+                    }
+                    expected.append('\n');
+                    // Put both predicate columns late in query metadata, but change their physical indexes.
+                    int first = isReversed ? 7 : 32;
+                    int second = isReversed ? 0 : 39;
+                    query.append(" FROM jit_sparse WHERE c").append(first).append(" > 0 AND c")
+                            .append(second).append(" < ").append(4097 + second)
+                            .append(" AND c").append(first).append(" != 0 LATEST ON ts PARTITION BY k");
+                    for (long x = 4095; x <= 4096; x++) {
+                        for (int i = 0; i < 40; i++) {
+                            if (i > 0) {
+                                expected.append('\t');
+                            }
+                            expected.append(x + (isReversed ? 39 - i : i));
+                        }
+                        expected.append('\n');
+                    }
+                    for (int mode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_ENABLED}) {
+                        sqlExecutionContext.setJitMode(mode);
+                        try (RecordCursorFactory factory = select(query)) {
+                            Assert.assertEquals(mode != SqlJitMode.JIT_MODE_DISABLED, factory.usesCompiledFilter());
+                            batchCounter.reset();
+                            assertFactory(factory).withContext(sqlExecutionContext).expectSize().returns(expected);
+                            assertCompiledFilterRan(mode);
+                        }
+                    }
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
+    public void testSparseVarSizePredicatesWithIntervalAndReopen() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertMemoryLeak(() -> {
+            StringBuilder ddl = new StringBuilder("CREATE TABLE jit_sparse_var AS (SELECT (x % 2)::INT k, timestamp_sequence(0, 1) ts");
+            for (int i = 0; i < 32; i++) {
+                ddl.append(", x + ").append(i).append(" c").append(i);
+            }
+            ddl.append("""
+                    , CASE WHEN x % 2 = 0 THEN NULL ELSE 'abcdefghijklmno' END::VARCHAR vc,
+                    CASE WHEN x % 2 = 0 THEN NULL ELSE 'str' END::STRING st,
+                    from_base64(CASE WHEN x % 2 = 0 THEN NULL ELSE 'Ymlu' END) bn,
+                    CASE WHEN x % 2 = 0 THEN 'x' ELSE 'y' END::CHAR ch,
+                    '11111111-1111-1111-1111-111111111111'::UUID u
+                    FROM long_sequence(6145)) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute(ddl);
+            StringBuilder query = new StringBuilder("SELECT ");
+            StringBuilder header = new StringBuilder();
+            for (int i = 0; i < 32; i++) {
+                query.append('c').append(i).append(',');
+                header.append('c').append(i).append('\t');
+            }
+            query.append("""
+                    vc, st, bn, ch, u FROM jit_sparse_var
+                    WHERE ts >= '1970-01-01T00:00:00.001024' AND ts < '1970-01-02'
+                      AND ((vc IS NULL AND st IS NULL AND bn IS NULL AND ch = 'x')
+                        OR (vc IS NOT NULL AND st IS NOT NULL AND bn IS NOT NULL AND ch = 'y'))
+                      AND u = '11111111-1111-1111-1111-111111111111' AND c31 < :max
+                    LATEST ON ts PARTITION BY k
+                    """);
+            header.append("vc\tst\tbn\tch\tu\n");
+            sqlExecutionContext.changePageFrameSizes(8192, 8192);
+            try {
+                for (int mode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_ENABLED}) {
+                    sqlExecutionContext.setJitMode(mode);
+                    bindVariableService.setLong("max", 6177);
+                    try (RecordCursorFactory factory = select(query)) {
+                        Assert.assertEquals(mode != SqlJitMode.JIT_MODE_DISABLED, factory.usesCompiledFilter());
+                        for (long max : new long[]{6177, 4130, 6177}) {
+                            bindVariableService.setLong("max", max);
+                            StringBuilder expected = new StringBuilder(header);
+                            for (long x = max - 33; x <= max - 32; x++) {
+                                for (int i = 0; i < 32; i++) {
+                                    expected.append(x + i).append('\t');
+                                }
+                                expected.append(x % 2 == 0 ? "\t\t\tx\t" : "abcdefghijklmno\tstr\t00000000 62 69 6e\ty\t")
+                                        .append("11111111-1111-1111-1111-111111111111\n");
+                            }
+                            batchCounter.reset();
+                            assertFactory(factory).withContext(sqlExecutionContext).expectSize().returns(expected);
+                            assertCompiledFilterRan(mode);
+                        }
+                    }
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
     private void assertCompiledFilterRan(int jitMode) {
         if (jitMode == SqlJitMode.JIT_MODE_DISABLED) {
             Assert.assertEquals(0, batchCounter.jitBatches);
