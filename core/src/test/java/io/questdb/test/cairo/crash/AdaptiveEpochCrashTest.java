@@ -25,15 +25,45 @@
 package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8String;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.stream.Stream;
 
 /**
  * The crash oracle for the adaptive durable EPOCH (Plan 3B). Under
@@ -69,10 +99,30 @@ import java.util.List;
  *       fsync sequence (driven explicitly via {@code fsyncMaterializedState()}) → reopening must
  *       never silently corrupt (correct prefix, a loud error, or fewer rows — never a wrong value).</li>
  * </ol>
+ *
+ * <h3>Save-point rows</h3>
+ * The table-driven rows power off at every durability operation of a save point's publish, after every deletion of
+ * its removal, after a data-sync fault and with a fenced durable frontier. They judge only through recovery, never
+ * through the save point's file names or format: recovery accepts the state, every row the durable frontier covered
+ * reads back with its value, a write after recovery lands, a second recovery changes no file of the table, and a
+ * second power loss recovers the same rows.
  */
-public class AdaptiveEpochCrashTest extends AbstractCrashConsistencyTest {
+public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
 
+    private static final long DAY = 86_400_000_000L;
+    private static final long DAY0 = 1_704_067_200_000_000L; // 2024-01-01T00:00:00Z
+    private static final int EIO = 5;
+    // No periodic save point inside a row unless the row takes one.
+    private static final long EPOCH_INTERVAL_MS = 1_000_000_000L;
+    // Bounds a sweep whose crash point never stops firing.
+    private static final int MAX_SWEEP = 200;
     private static final int N = 6;  // rows used by the mid-epoch-fsync corruption scenario
+    private final List<String> rowFailures = new ArrayList<>();
+    private String commitMode;
+    private SavePointFaultFacade faultFf;
+    private int modeSwitches;
+    private long nextRowId;
+    private int rowCount;
 
     /**
      * The epoch makes the lazily-applied prefix durable across a crash.
@@ -204,7 +254,223 @@ public class AdaptiveEpochCrashTest extends AbstractCrashConsistencyTest {
         }
     }
 
+    /**
+     * A data-sync fault at every durability operation of an O3 write whose apply takes a save point; the operation
+     * completes on disk and then reports the error. Later O3 rewrites, a partition purge and a WAL purge follow
+     * before the power loss, so a save point the failed publish left valid on disk must still find its data.
+     */
+    @Test
+    public void testFaultOnSavePointSyncThenO3RewriteAndPurge() throws Exception {
+        runWithFaultFacade(() -> {
+            configureSavePoints();
+            for (int op = 1; op <= MAX_SWEEP; op++) {
+                final Scenario s = newScenario("f" + op);
+                insertRows(s, 0, 2);
+                insertRows(s, 1, 2);
+                drainWalQueue();
+                engine.releaseAllWalWriters();
+                publishSavePoint(s);
+                markDurableBaseline();
+                // The next apply rewrites the first day's partition and takes a save point.
+                tracker(s).setLastEpochTs(0);
+                faultFf.armFaultAt(faultFf.durabilityOpCount() + op);
+                tryInsertRows(s, 0, 2, true);
+                drainWalQueue();
+                final boolean faulted = !faultFf.isFaultArmed();
+                s.firedAt = faulted ? faultFf.faultedOp : null;
+                faultFf.disarm();
+                tryInsertRows(s, 0, 2, true);
+                drainWalQueue();
+                engine.releaseAllReaders();
+                purgePartitions();
+                purgeWal();
+                powerLossAndCheck(s, faulted ? "fault at durability operation " + op : "no fault");
+                if (!faulted) {
+                    break;
+                }
+            }
+            assertNoRowFailures();
+        });
+    }
+
+    /**
+     * A power loss after every durability operation and after every deletion of a save-point removal: the exit a
+     * non-adaptive restart performs on a table with two save points, whose WAL below the newer one was purged
+     * under its floor.
+     */
+    @Test
+    public void testPowerLossAfterEveryDeletionOfSavePointRemoval() throws Exception {
+        runWithFaultFacade(() -> {
+            configureSavePoints();
+            for (String exitMode : new String[]{"sync", "nosync"}) {
+                for (int deletions = 0; deletions < 2; deletions++) {
+                    for (int n = 1; n <= MAX_SWEEP; n++) {
+                        setCommitMode("adaptive");
+                        final Scenario s = newScenario("x_" + exitMode + "_" + deletions + "_" + n);
+                        insertRows(s, 0, 2);
+                        drainWalQueue();
+                        engine.releaseAllWalWriters();
+                        publishSavePoint(s);
+                        purgeWal();
+                        markDurableBaseline();
+                        insertRows(s, 1, 2);
+                        drainWalQueue();
+                        cleanRestart(s, exitMode);
+                        final Action exit = () -> {
+                            try (TableWriter ignore = getWriter(s.token)) {
+                                Assert.assertNotNull(ignore);
+                            }
+                        };
+                        final boolean crashed = deletions == 0 ? crashAtOperation(s, n, exit) : crashAfterRemoval(s, n, exit);
+                        final String label;
+                        if (crashed) {
+                            label = exitMode + " exit, power loss after " + (deletions == 0 ? "durability operation " : "deletion ") + n;
+                        } else {
+                            label = exitMode + " exit completed, then rows and a WAL purge";
+                            insertRows(s, 2, 2);
+                            drainWalQueue();
+                            purgeWal();
+                        }
+                        powerLossAndCheck(s, label);
+                        if (!crashed) {
+                            break;
+                        }
+                    }
+                }
+            }
+            assertNoRowFailures();
+        });
+    }
+
+    /**
+     * A power loss at every durability operation of a table's first save point (taken when a table created
+     * without one enrols at writer open), of its first periodic save point (a new generation) and of a later one
+     * (a generation rewritten in place). The last row of each sweep loses power after the save point, more rows
+     * and a WAL purge under the new floor.
+     */
+    @Test
+    public void testPowerLossAtEveryDurabilityOperationOfSavePoint() throws Exception {
+        runWithFaultFacade(() -> {
+            configureSavePoints();
+            for (int op = 1; op <= MAX_SWEEP; op++) {
+                setCommitMode("nosync");
+                final Scenario s = newScenario("e" + op);
+                insertRows(s, 0, 2);
+                insertRows(s, 1, 2);
+                drainWalQueue();
+                engine.releaseAllWalWriters();
+                markDurableBaseline();
+                s.markUnsyncedRowsDurable();
+                cleanRestart(s, "adaptive");
+                final boolean crashed = crashAtOperation(s, op, () -> {
+                    try (TableWriter ignore = getWriter(s.token)) {
+                        Assert.assertNotNull(ignore);
+                    }
+                });
+                if (!crashed) {
+                    insertRows(s, 2, 2);
+                    drainWalQueue();
+                    purgeWal();
+                }
+                powerLossAndCheck(s, crashed
+                        ? "first save point at enrolment, power loss after durability operation " + op
+                        : "first save point at enrolment completed, then rows and a WAL purge");
+                if (!crashed) {
+                    break;
+                }
+            }
+            for (int prior = 0; prior < 2; prior++) {
+                final String which = prior == 0 ? "first periodic save point" : "later periodic save point";
+                for (int op = 1; op <= MAX_SWEEP; op++) {
+                    setCommitMode("adaptive");
+                    final Scenario s = newScenario("p" + prior + "_" + op);
+                    insertRows(s, 0, 2);
+                    insertRows(s, 1, 2);
+                    drainWalQueue();
+                    engine.releaseAllWalWriters();
+                    for (int i = 0; i < prior; i++) {
+                        publishSavePoint(s);
+                        insertRows(s, 1, 2);
+                        drainWalQueue();
+                        engine.releaseAllWalWriters();
+                    }
+                    markDurableBaseline();
+                    final boolean crashed = crashAtOperation(s, op, () -> publishSavePoint(s));
+                    if (!crashed) {
+                        insertRows(s, 2, 2);
+                        drainWalQueue();
+                        purgeWal();
+                    }
+                    powerLossAndCheck(s, crashed
+                            ? which + ", power loss after durability operation " + op
+                            : which + " completed, then rows and a WAL purge under its floor");
+                    if (!crashed) {
+                        break;
+                    }
+                }
+            }
+            assertNoRowFailures();
+        });
+    }
+
+    /**
+     * A save point attempted after a flush of the table's sequencer log failed and fenced its durable frontier.
+     * The failed flush loses the log's unsynced pages for good, so no later sync makes them durable.
+     */
+    @Test
+    public void testSavePointWhileDurableFrontierFenced() throws Exception {
+        runWithFaultFacade(() -> {
+            configureSavePoints();
+            final Scenario s = newScenario("fenced");
+            insertRows(s, 0, 2);
+            drainWalQueue();
+            engine.releaseAllWalWriters();
+            publishSavePoint(s);
+            markDurableBaseline();
+            tracker(s).fenceDurableFrontier(CairoException.dataSyncFailure(EIO, "fdatasync"));
+            faultFf.freezeDurableContentUnder(tableDir(s).resolve(WalUtils.SEQ_DIR));
+            tryInsertRows(s, 1, 2, false);
+            drainWalQueue();
+            try {
+                publishSavePoint(s);
+            } catch (CairoException | CairoError ignore) {
+                // A fenced frontier may refuse the save point.
+            }
+            powerLossAndCheck(s, "save point attempted while the durable frontier is fenced");
+            assertNoRowFailures();
+        });
+    }
+
     // ---- helpers ----
+
+    private static long nowMs() {
+        return engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L;
+    }
+
+    private static java.nio.file.Path tableDir(Scenario s) {
+        return Paths.get(engine.getConfiguration().getDbRoot().toString(), s.token.getDirName());
+    }
+
+    private static Map<String, byte[]> tableFiles(Scenario s) {
+        final java.nio.file.Path dir = tableDir(s);
+        final Map<String, byte[]> files = new TreeMap<>();
+        try (Stream<java.nio.file.Path> stream = Files.walk(dir)) {
+            stream.filter(Files::isRegularFile).forEach(p -> {
+                try {
+                    files.put(dir.relativize(p).toString(), Files.readAllBytes(p));
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return files;
+    }
+
+    private static SeqTxnTracker tracker(Scenario s) {
+        return engine.getTableSequencerAPI().getTxnTracker(s.token);
+    }
 
     private static long tsOf(int i) {
         return 1_700_000_000_000_000L + (long) i * 1_000_000L;
@@ -259,6 +525,508 @@ public class AdaptiveEpochCrashTest extends AbstractCrashConsistencyTest {
             marker.of(p.$());
             Assert.assertTrue("epoch marker must exist + load", marker.tryLoad());
             Assert.assertEquals("epoch marker seqTxn", expectedSeqTxn, marker.getEpochSeqTxn());
+        }
+    }
+
+    private void assertNoRowFailures() {
+        if (!rowFailures.isEmpty()) {
+            Assert.fail(rowFailures.size() + " of " + rowCount + " rows failed:\n" + String.join("\n", rowFailures));
+        }
+    }
+
+    // Compares the table with the rows its scenario committed: every covered row reads back with its value, and any
+    // other row is one whose commit was not covered.
+    private String checkRows(Scenario s) {
+        final Map<Long, Long> actual = new TreeMap<>();
+        try (RecordCursorFactory factory = select("select ts, v from " + s.table)) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                final Record record = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    if (actual.put(record.getTimestamp(0), record.getLong(1)) != null) {
+                        return "row at ts=" + record.getTimestamp(0) + " reads back twice";
+                    }
+                }
+            }
+        } catch (Throwable th) {
+            return "read failed: " + th;
+        }
+        for (Map.Entry<Long, Long> e : s.expected.entrySet()) {
+            final Long value = actual.get(e.getKey());
+            if (!e.getValue().equals(value)) {
+                return "row v=" + e.getValue() + " at ts=" + e.getKey() + " reads back as " + value
+                        + " [expected=" + s.expected.size() + ", actual=" + actual.size() + ']';
+            }
+        }
+        for (Map.Entry<Long, Long> e : actual.entrySet()) {
+            if (!s.expected.containsKey(e.getKey())
+                    && !e.getValue().equals(s.optional.get(e.getKey()))
+                    && !e.getValue().equals(s.unsynced.get(e.getKey()))) {
+                return "unexpected row v=" + e.getValue() + " at ts=" + e.getKey();
+            }
+        }
+        return null;
+    }
+
+    // A stop and a start in the given mode: the sequencer, its WAL id generator and the writers reopen under it.
+    private void cleanRestart(Scenario s, String mode) {
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        engine.releaseAllWalWriters();
+        setCommitMode(mode);
+        restart(s);
+        new RecoveryCoordinator(engine).recover();
+    }
+
+    private void configureSavePoints() {
+        // A writer close takes no save point, and only the steps of a row take one.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, Long.MAX_VALUE);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+        setCommitMode("adaptive");
+        Assert.assertEquals(0, engine.getConfiguration().getAdaptiveCommitGroupWindowUs());
+        Assert.assertFalse(engine.getConfiguration().isAdaptiveEpochFlushOnClose());
+    }
+
+    private boolean crashAfterRemoval(Scenario s, int removal, Action action) throws Exception {
+        faultFf.armCrashAfterRemoval(removal);
+        try {
+            action.run();
+        } catch (Throwable th) {
+            if (faultFf.isRemovalCrashArmed()) {
+                throw th;
+            }
+        }
+        final boolean crashed = !faultFf.isRemovalCrashArmed();
+        s.firedAt = crashed ? faultFf.removedPath : null;
+        faultFf.disarm();
+        return crashed;
+    }
+
+    private boolean crashAtOperation(Scenario s, int op, Action action) throws Exception {
+        faultFf.armCrashAt(faultFf.durabilityOpCount() + op);
+        try {
+            action.run();
+        } catch (Throwable th) {
+            if (faultFf.isCrashArmed()) {
+                throw th;
+            }
+        }
+        final boolean crashed = !faultFf.isCrashArmed();
+        s.firedAt = crashed ? faultFf.lastDurabilityOp() : null;
+        faultFf.disarm();
+        return crashed;
+    }
+
+    private void dropScenario(Scenario s) {
+        try {
+            execute("drop table " + s.table);
+            drainWalQueue();
+            purgeWal();
+        } catch (Throwable th) {
+            LOG.error().$("could not drop scenario table [table=").$(s.table).$(", error=").$(th).I$();
+        }
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        engine.releaseAllWalWriters();
+    }
+
+    private void insertRows(Scenario s, int day, int count) {
+        insertRows(s, day, count, true, false);
+    }
+
+    // Commits one WAL transaction. A row is expected back after a power loss only when its commit succeeded under
+    // a durable mode and `covered` says the durable frontier covers it.
+    private void insertRows(Scenario s, int day, int count, boolean covered, boolean mayFail) {
+        final StringBuilder sql = new StringBuilder("insert into ").append(s.table).append(" values ");
+        final long[] ts = new long[count];
+        final long[] v = new long[count];
+        for (int i = 0; i < count; i++) {
+            v[i] = ++nextRowId;
+            ts[i] = DAY0 + day * DAY + v[i] * 1_000_000L;
+            sql.append(i > 0 ? ", " : "").append('(').append(ts[i]).append(", ").append(v[i]).append(')');
+        }
+        boolean committed = false;
+        try {
+            execute(sql);
+            committed = true;
+        } catch (Throwable th) {
+            if (!mayFail || th instanceof AssertionError) {
+                throw new AssertionError(th);
+            }
+        }
+        final Map<Long, Long> target = !committed || !covered
+                ? s.optional
+                : "nosync".equals(commitMode) ? s.unsynced : s.expected;
+        for (int i = 0; i < count; i++) {
+            target.put(ts[i], v[i]);
+        }
+    }
+
+    private Scenario newScenario(String table) throws Exception {
+        final Scenario s = new Scenario(table, new HashSet<>(faultFf.noCacheOpenFdsSnapshot()));
+        execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal");
+        s.token = engine.verifyTableName(table);
+        // No periodic save point unless a row's step takes one.
+        tracker(s).setLastEpochTs(nowMs());
+        return s;
+    }
+
+    private void powerLoss(Scenario s) {
+        faultFf.powerOff();
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        engine.releaseCrashOrphanedWriters();
+        engine.releaseCrashOrphanedWalWriters();
+        engine.releaseAllWalWriters();
+        engine.releaseInactiveTableSequencers();
+        engine.releaseAllWriters();
+        engine.releaseCrashOrphanedWriters();
+        reclaimLingeringNonCacheFds(s.fds);
+        faultFf.crash(engine.getConfiguration().getDbRoot());
+        restart(s);
+    }
+
+    // Judges one row: recovery after the power loss, the rows, a write after recovery, then a second power loss.
+    private void powerLossAndCheck(Scenario s, String label) {
+        rowCount++;
+        String failure;
+        try {
+            powerLoss(s);
+            failure = recoverAndCheck(s);
+            if (failure == null) {
+                insertRows(s, 3, 1);
+                drainWalQueue();
+                failure = checkRows(s);
+                if (failure != null) {
+                    failure = "after a write that followed recovery, " + failure;
+                }
+            }
+            // A NOSYNC instance promises nothing for the state it applied after recovery.
+            if (failure == null && !"nosync".equals(commitMode)) {
+                powerLoss(s);
+                failure = recoverAndCheck(s);
+                if (failure != null) {
+                    failure = "after a second power loss, " + failure;
+                }
+            }
+        } catch (Throwable th) {
+            failure = "unexpected " + th;
+        }
+        final int trackedFiles = faultFf.trackedFileCount();
+        LOG.info().$("save point crash row [table=").$(s.table).$(", row=").$(label).$(", firedAt=").$(s.firedAt)
+                .$(", expected=").$(s.expected.size()).$(", optional=").$(s.optional.size())
+                .$(", result=").$(failure == null ? "ok" : failure).$(", trackedFiles=").$(trackedFiles).I$();
+        if (failure != null) {
+            rowFailures.add(s.table + " [" + label + ", at " + s.firedAt + "]: " + failure);
+        }
+        dropScenario(s);
+    }
+
+    private void publishSavePoint(Scenario s) {
+        try (TableWriter w = getWriter(s.token)) {
+            w.advanceDurableEpoch(nowMs());
+        }
+    }
+
+    private void purgePartitions() {
+        try (O3PartitionPurgeJob job = new O3PartitionPurgeJob(engine, 1)) {
+            //noinspection StatementWithEmptyBody
+            while (job.run()) {
+            }
+        }
+    }
+
+    // A WAL purge with a clock that always passes the purge interval, so the broad sweep runs.
+    private void purgeWal() {
+        engine.releaseAllWalWriters();
+        final long step = engine.getConfiguration().getWalPurgeInterval() * 1000L + 1_000_000L;
+        final long[] tick = {1L};
+        final MicrosecondClock clock = () -> (tick[0] += step);
+        try (WalPurgeJob job = new WalPurgeJob(engine, engine.getConfiguration().getFilesFacade(), clock)) {
+            job.run();
+            job.run();
+        }
+    }
+
+    // Recovery must accept the state, a second recovery after a restart must change no file of the table, and the
+    // table must then apply its WAL and read back every covered row.
+    private String recoverAndCheck(Scenario s) {
+        try {
+            new RecoveryCoordinator(engine).recover();
+        } catch (Throwable th) {
+            return "recovery refused: " + th.getMessage();
+        }
+        final Map<String, byte[]> afterFirst = tableFiles(s);
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        restart(s);
+        try {
+            new RecoveryCoordinator(engine).recover();
+        } catch (Throwable th) {
+            return "second recovery refused: " + th.getMessage();
+        }
+        final Map<String, byte[]> afterSecond = tableFiles(s);
+        final List<String> changed = new ArrayList<>();
+        for (Map.Entry<String, byte[]> e : afterSecond.entrySet()) {
+            if (!Arrays.equals(e.getValue(), afterFirst.get(e.getKey()))) {
+                changed.add(e.getKey());
+            }
+        }
+        for (String name : afterFirst.keySet()) {
+            if (!afterSecond.containsKey(name)) {
+                changed.add(name);
+            }
+        }
+        if (!changed.isEmpty()) {
+            return "a second recovery changed " + changed;
+        }
+        engine.notifyWalTxnRepublisher(s.token);
+        drainWalQueue();
+        if (engine.getTableSequencerAPI().isSuspended(s.token)) {
+            return "table suspended after recovery, " + checkRows(s);
+        }
+        return checkRows(s);
+    }
+
+    // What a fresh process starts with: no suspension, a new scoreboard and tracker, no data-sync failure.
+    private void restart(Scenario s) {
+        if (engine.getTableSequencerAPI().isSuspended(s.token)) {
+            tracker(s).setUnsuspended();
+        }
+        engine.getTxnScoreboardPool().remove(s.token);
+        engine.getTableSequencerAPI().resetForReboot(s.token);
+        if (engine.getTableSequencerAPI().isSuspended(s.token)) {
+            tracker(s).setUnsuspended();
+        }
+        engine.resetDurabilityFailure();
+    }
+
+    private void runWithFaultFacade(TestUtils.LeakProneCode body) throws Exception {
+        assumeCrashHarnessSupported();
+        faultFf = new SavePointFaultFacade();
+        crashFf = faultFf;
+        faultFf.setDbRoot(root);
+        assertMemoryLeak(faultFf, body);
+    }
+
+    // Switches the instance mode and checks the configuration reports it. The test harness drops a pending
+    // configuration change when a property is set again to the value it already has, so the epoch interval, set
+    // last, takes a value no earlier switch used.
+    private void setCommitMode(String mode) {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
+        final long epochIntervalMs = EPOCH_INTERVAL_MS + ++modeSwitches;
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, epochIntervalMs);
+        Assert.assertEquals(mode, CommitMode.toString(engine.getConfiguration().getCommitMode()));
+        Assert.assertEquals(epochIntervalMs, engine.getConfiguration().getAdaptiveEpochIntervalMs());
+        commitMode = mode;
+    }
+
+    private void tryInsertRows(Scenario s, int day, int count, boolean covered) {
+        insertRows(s, day, count, covered, true);
+    }
+
+    @FunctionalInterface
+    private interface Action {
+        void run() throws Exception;
+    }
+
+    /**
+     * Adds to the crash model: power off once a crash fires, so nothing after it becomes durable; a crash after the
+     * n-th file deletion; a data-sync fault reported after a durability operation took effect; and files whose
+     * durable content stays what it was, as after a failed flush whose pages the kernel dropped.
+     */
+    private static final class SavePointFaultFacade extends CrashFaultFilesFacade {
+        private final Map<String, byte[]> frozenContent = new HashMap<>();
+        String faultedOp;
+        String removedPath;
+        private int faultAtOp = -1;
+        private boolean poweredOff;
+        private int removalCrashAt = -1;
+        private int removals;
+
+        @Override
+        public void crash(CharSequence dbRoot) {
+            super.crash(dbRoot);
+            for (Map.Entry<String, byte[]> e : frozenContent.entrySet()) {
+                final java.nio.file.Path file = Paths.get(e.getKey());
+                if (Files.exists(file)) {
+                    try (FileChannel ch = FileChannel.open(file, StandardOpenOption.WRITE)) {
+                        ch.write(ByteBuffer.wrap(e.getValue()), 0);
+                        ch.truncate(e.getValue().length);
+                        ch.force(true);
+                    } catch (IOException ex) {
+                        throw new UncheckedIOException(ex);
+                    }
+                }
+            }
+            frozenContent.clear();
+            disarm();
+            poweredOff = false;
+        }
+
+        @Override
+        public void fdatasync(long fd) {
+            if (!poweredOff) {
+                try {
+                    super.fdatasync(fd);
+                } catch (CrashSimulationError e) {
+                    poweredOff = true;
+                    throw e;
+                }
+                faultAfter("fdatasync");
+            }
+        }
+
+        @Override
+        public void fsync(long fd) {
+            if (!poweredOff) {
+                try {
+                    super.fsync(fd);
+                } catch (CrashSimulationError e) {
+                    poweredOff = true;
+                    throw e;
+                }
+                faultAfter("fsync");
+            }
+        }
+
+        @Override
+        public void fsyncAndClose(long fd) {
+            if (poweredOff) {
+                close(fd);
+                return;
+            }
+            try {
+                super.fsyncAndClose(fd);
+            } catch (CrashSimulationError e) {
+                poweredOff = true;
+                throw e;
+            }
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            if (!poweredOff) {
+                try {
+                    super.msync(addr, len, async);
+                } catch (CrashSimulationError e) {
+                    poweredOff = true;
+                    throw e;
+                }
+                if (!async) {
+                    faultAfter("msync");
+                }
+            }
+        }
+
+        @Override
+        public boolean removeQuiet(LPSZ name) {
+            final boolean removed = super.removeQuiet(name);
+            if (removed && removalCrashAt > 0 && ++removals >= removalCrashAt) {
+                removalCrashAt = -1;
+                removedPath = Utf8String.newInstance(name).toString();
+                poweredOff = true;
+                throw new CrashSimulationError(durabilityOpCount());
+            }
+            return removed;
+        }
+
+        @Override
+        public int syncFileRange(long fd, long offset, long nbytes, int flags) {
+            if (poweredOff) {
+                return 0;
+            }
+            try {
+                return super.syncFileRange(fd, offset, nbytes, flags);
+            } catch (CrashSimulationError e) {
+                poweredOff = true;
+                throw e;
+            }
+        }
+
+        @Override
+        public void syncfs(long fd) {
+            if (!poweredOff) {
+                try {
+                    super.syncfs(fd);
+                } catch (CrashSimulationError e) {
+                    poweredOff = true;
+                    throw e;
+                }
+                faultAfter("syncfs");
+            }
+        }
+
+        void armCrashAfterRemoval(int removal) {
+            removals = 0;
+            removalCrashAt = removal;
+        }
+
+        void armFaultAt(int op) {
+            faultAtOp = op;
+        }
+
+        void disarm() {
+            armCrashAt(-1);
+            faultAtOp = -1;
+            removalCrashAt = -1;
+        }
+
+        void freezeDurableContentUnder(java.nio.file.Path dir) {
+            try (Stream<java.nio.file.Path> stream = Files.walk(dir)) {
+                stream.filter(Files::isRegularFile).forEach(p -> {
+                    final String key = p.toAbsolutePath().toString();
+                    final byte[] durable = durableContentOf(key);
+                    frozenContent.put(key, durable != null ? durable.clone() : new byte[0]);
+                });
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+
+        String lastDurabilityOp() {
+            final List<String> log = durabilityOpLog();
+            return log.isEmpty() ? null : log.get(log.size() - 1);
+        }
+
+        boolean isFaultArmed() {
+            return faultAtOp > 0;
+        }
+
+        boolean isRemovalCrashArmed() {
+            return removalCrashAt > 0;
+        }
+
+        void powerOff() {
+            poweredOff = true;
+        }
+
+        private void faultAfter(String operation) {
+            if (faultAtOp > 0 && durabilityOpCount() >= faultAtOp) {
+                faultAtOp = -1;
+                faultedOp = lastDurabilityOp();
+                throw CairoException.dataSyncFailure(EIO, operation);
+            }
+        }
+    }
+
+    private static final class Scenario {
+        final Map<Long, Long> expected = new TreeMap<>();
+        final Set<Long> fds;
+        final Map<Long, Long> optional = new TreeMap<>();
+        final String table;
+        final Map<Long, Long> unsynced = new TreeMap<>();
+        String firedAt;
+        TableToken token;
+
+        Scenario(String table, Set<Long> fds) {
+            this.table = table;
+            this.fds = fds;
+        }
+
+        void markUnsyncedRowsDurable() {
+            expected.putAll(unsynced);
+            unsynced.clear();
         }
     }
 }
