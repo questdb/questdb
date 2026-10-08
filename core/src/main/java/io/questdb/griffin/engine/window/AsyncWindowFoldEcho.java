@@ -25,6 +25,7 @@
 
 package io.questdb.griffin.engine.window;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
 import io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory;
@@ -40,7 +41,7 @@ import io.questdb.std.Misc;
  * or a frame rebuilt from warm-up rows, would add the same values in another order; the fold and
  * the replay add them in the serial order, so the values are the serial ones, bit for bit.
  */
-public class AsyncWindowFoldEcho extends SumDoubleWindowFunctionFactory.SumOverUnboundedRowsFrameFunction {
+public class AsyncWindowFoldEcho extends SumDoubleWindowFunctionFactory.SumOverUnboundedRowsFrameFunction implements KeyRunWindowFunction {
     private final BaseWindowFunction function;
     private double value;
 
@@ -67,5 +68,25 @@ public class AsyncWindowFoldEcho extends SumDoubleWindowFunctionFactory.SumOverU
     @Override
     public double getDouble(Record rec) {
         return value;
+    }
+
+    @Override
+    public Function getKeyRunArgument() {
+        return arg;
+    }
+
+    @Override
+    public boolean isKeyRunSupported() {
+        return true;
+    }
+
+    // a key run computes the stand-in as a row does: each row's argument
+    @Override
+    public void keyRunNext(Record record) {
+        value = arg.getDouble(record);
+    }
+
+    @Override
+    public void keyRunStart() {
     }
 }

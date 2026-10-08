@@ -885,7 +885,7 @@ public class WindowChainTest extends AbstractCairoTest {
         assertSplitOp(engine, ctx, singleKey[7], AsyncWindowSplitPlan.OP_FOLD);
         for (String table : new String[]{"d", "u"}) {
             final String[] manyKeys = {
-                    // a bounded frame of DOUBLE over several keys keeps its keys whole
+                    // a bounded frame of DOUBLE over several keys, replayed key by key
                     "SELECT sym, time, a FROM (SELECT sym, time, avg(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) a FROM " + table + ") ORDER BY sym, time, a",
                     "SELECT sym, time, a, l FROM (SELECT sym, time, sum(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) a, lag(v) OVER (PARTITION BY sym ORDER BY time) l FROM " + table + " WHERE sym IN ('BIG', 'K1', 'K2')) ORDER BY sym, time, a, l",
                     "SELECT sym, time, mn, mx FROM (SELECT sym, time, min(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) mn, max(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) mx FROM " + table + ") ORDER BY sym, time, mn, mx",
@@ -911,6 +911,7 @@ public class WindowChainTest extends AbstractCairoTest {
                     tolerance
             );
         }
+        assertSplitOp(engine, ctx, "SELECT sym, time, a FROM (SELECT sym, time, avg(v) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) a FROM d) ORDER BY sym, time, a", AsyncWindowSplitPlan.OP_REPLAY);
         // the exception's plans do split keys and carry the sums
         assertSplitOp(engine, ctx, "SELECT sym, time, s FROM (SELECT sym, time, sum(x) OVER (PARTITION BY sym ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM d WHERE sym IN ('BIG', 'K1', 'K2')) ORDER BY sym, time, s", AsyncWindowSplitPlan.OP_ADD);
         // slices of the whole table, a running sum folded

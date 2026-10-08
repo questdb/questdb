@@ -1187,6 +1187,13 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
          * {@link #streamRow}.
          */
         /**
+         * The record the functions read, positioned on the row {@link #streamRow} computed last.
+         */
+        Record getFunctionInput() {
+            return functionInput;
+        }
+
+        /**
          * The window's own function of an output column, before any step.
          */
         Function getFunction(int columnIndex) {

@@ -118,6 +118,11 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     private final double[] foldSums;
     // OP_REPLAY: each replayed column's function, the query thread's own, see applyCarry()
     private final ReplayableWindowFunction[] replayFunctions;
+    // whether a column is replayed, see AsyncWindowSplitPlan.OP_REPLAY
+    private final boolean hasReplay;
+    // OP_REPLAY: the rows of ownerRows at which a key starts, ascending, see refillPrefix()
+    private final LongList ownerKeyStarts = new LongList();
+    private int ownerKeyStartIndex;
     private final long chainMaxPages;
     private final long chainPageSize;
     private final ColumnTypes columnTypes;
@@ -209,12 +214,15 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         this.foldSums = new double[splitPlan.getPrefixCount()];
         this.foldCounted = new boolean[splitPlan.getPrefixCount()];
         this.replayFunctions = new ReplayableWindowFunction[splitPlan.getPrefixCount()];
+        boolean hasReplay = false;
         for (int j = 0, n = splitPlan.getPrefixCount(); j < n; j++) {
             if (splitPlan.getPrefixOp(j) == AsyncWindowSplitPlan.OP_REPLAY) {
                 // the window's own function, which computed the rows before the tasks too
                 replayFunctions[j] = (ReplayableWindowFunction) atom.getSlot(-1).getFunction(splitPlan.getPrefixColumn(j));
+                hasReplay = true;
             }
         }
+        this.hasReplay = hasReplay;
         this.taskRows = configuration.getSqlParallelWindowTaskRows();
         this.maxKeyRows = Math.max(taskRows, configuration.getSqlParallelWindowMaxKeyRows());
         // the prefix: no more than min.rows, which also gates the parallel plan, see prefix.rows
@@ -421,7 +429,18 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                 // streamed row by row, as the serial window computes it
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 final AsyncWindowAtom.Slot owner = atom.getSlot(-1);
+                if (hasReplay) {
+                    replayOwnerKeyStart();
+                }
                 final boolean kept = owner.streamRow(ownerRows, ownerPos++);
+                if (hasReplay) {
+                    // the replay's state takes the row the function computed, see applyCarry()
+                    for (int j = 0, n = replayFunctions.length; j < n; j++) {
+                        if (replayFunctions[j] != null) {
+                            replayFunctions[j].replayPrefixRow(owner.getFunctionInput());
+                        }
+                    }
+                }
                 if (ownerPos == ownerRows.size() && carry.length > 0) {
                     if (groupSplit) {
                         captureGroupCarry();
@@ -623,26 +642,51 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         final int n = carry.length;
         final boolean continues = task.continuesKey;
         for (int j = 0; j < n; j++) {
-            final int op = splitPlan.getPrefixOp(j);
-            if (op == AsyncWindowSplitPlan.OP_FOLD) {
+            if (splitPlan.getPrefixOp(j) == AsyncWindowSplitPlan.OP_FOLD) {
                 // the running sums, from the key's sum before the task, or from scratch
                 final double before = continues ? Double.longBitsToDouble(carry[j]) : Double.NaN;
                 foldSums[j] = Double.isNaN(before) ? 0.0 : before;
                 foldCounted[j] = !Double.isNaN(before);
-            } else if (op == AsyncWindowSplitPlan.OP_REPLAY && !continues) {
-                // A key the task starts: the frame starts afresh. The rows the function computed
-                // before a task that continues the key, on this thread or replayed here, are the
-                // key's rows before the task's, in order: its state is the serial one.
-                replayFunctions[j].toTop();
             }
         }
+        // A replayed frame goes through every row of the task, in walk order, starting afresh at
+        // each key the task starts. A key the task continues goes on from the state the key's
+        // rows before the task's left: the rows this thread computed itself (see
+        // replayPrefixRow()) or replayed here, task by task, in walk order.
+        final long rowCount = hasReplay ? task.emittedRows : task.firstKeyRows;
+        final LongList keyStarts = task.keyStarts;
+        // a continued key's start is among the warm-up rows, or at the task's first row when
+        // there are none: either way not a start here
+        int keyStartIndex = continues ? 1 : 0;
+        long nextKeyStart = keyStartIndex < keyStarts.size() ? keyStarts.getQuick(keyStartIndex) - task.emitFrom : Long.MAX_VALUE;
         long offset = 0;
-        for (long r = 0, hi = task.firstKeyRows; r < hi; r++) {
+        for (long r = 0; r < rowCount; r++) {
+            if (r == nextKeyStart) {
+                // equal starts are keys without rows
+                do {
+                    keyStartIndex++;
+                    nextKeyStart = keyStartIndex < keyStarts.size() ? keyStarts.getQuick(keyStartIndex) - task.emitFrom : Long.MAX_VALUE;
+                } while (nextKeyStart == r);
+                for (int j = 0; j < n; j++) {
+                    if (replayFunctions[j] != null) {
+                        replayFunctions[j].replayKeyStart();
+                    }
+                }
+            }
+            final boolean firstKey = r < task.firstKeyRows;
             for (int j = 0; j < n; j++) {
                 final int type = splitPlan.getPrefixType(j);
                 final int op = splitPlan.getPrefixOp(j);
                 final long address = chain.getAddress(offset, splitPlan.getPrefixColumn(j));
-                if (op == AsyncWindowSplitPlan.OP_FOLD) {
+                if (op == AsyncWindowSplitPlan.OP_REPLAY) {
+                    // the worker output the row's argument: the function computes the row from it
+                    final ReplayableWindowFunction function = replayFunctions[j];
+                    function.replayNext(Unsafe.getDouble(address));
+                    Unsafe.putDouble(address, function.getReplayedValue());
+                } else if (!firstKey) {
+                    // the carries and folds are the first key's
+                    continue;
+                } else if (op == AsyncWindowSplitPlan.OP_FOLD) {
                     // as SumOverUnboundedRowsFrameFunction.computeNext() adds, in the same order
                     final double value = Unsafe.getDouble(address);
                     if (Numbers.isFinite(value)) {
@@ -650,11 +694,6 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                         foldCounted[j] = true;
                     }
                     Unsafe.putDouble(address, foldCounted[j] ? foldSums[j] : Double.NaN);
-                } else if (op == AsyncWindowSplitPlan.OP_REPLAY) {
-                    // the worker output the row's argument: the function computes the row from it
-                    final ReplayableWindowFunction function = replayFunctions[j];
-                    function.replayNext(Unsafe.getDouble(address));
-                    Unsafe.putDouble(address, function.getReplayedValue());
                 } else if (!continues) {
                     // a key the task starts needs no carry
                     continue;
@@ -665,6 +704,22 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                 }
             }
             offset = chain.getNextRecordOffset(offset);
+        }
+    }
+
+    // OP_REPLAY: before the owner streams the row at ownerPos, starts the replays afresh when a
+    // key starts there.
+    private void replayOwnerKeyStart() {
+        if (ownerKeyStartIndex < ownerKeyStarts.size() && ownerKeyStarts.getQuick(ownerKeyStartIndex) == ownerPos) {
+            // equal starts are keys without rows
+            do {
+                ownerKeyStartIndex++;
+            } while (ownerKeyStartIndex < ownerKeyStarts.size() && ownerKeyStarts.getQuick(ownerKeyStartIndex) == ownerPos);
+            for (int j = 0, n = replayFunctions.length; j < n; j++) {
+                if (replayFunctions[j] != null) {
+                    replayFunctions[j].replayKeyStart();
+                }
+            }
         }
     }
 
@@ -1024,6 +1079,8 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     // boundary unless keys split, once min.rows rows have been streamed.
     private void refillPrefix() {
         ownerRows.clear();
+        ownerKeyStarts.clear();
+        ownerKeyStartIndex = 0;
         ownerPos = 0;
         final long chunkRows = nextChunkRows;
         nextChunkRows = Math.min(taskRows, 2 * chunkRows);
@@ -1038,6 +1095,9 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             final boolean continued = first && walkKeyOpen;
             first = false;
             final long keyLo = ownerRows.size();
+            if (!continued) {
+                ownerKeyStarts.add(keyLo);
+            }
             final int status = keyMajorCursor.collectKeyRows(ownerRows, chunkRows - ownerRows.size());
             if (status == KeyMajorPageFrameRecordCursor.COLLECT_ROW_LIMIT) {
                 walkKeyOpen = true;
@@ -1067,6 +1127,8 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         }
         shrinkIfOversized(ownerRows, taskRows);
         ownerRows.clear();
+        ownerKeyStarts.clear();
+        ownerKeyStartIndex = 0;
         ownerPos = 0;
         headStreamPos = keyMajorCursor.collectKeyFrames(headKey, headStreamPos, ownerRows, taskRows);
         largeKeyRowsStreamed += ownerRows.size();
@@ -1128,6 +1190,8 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         if (ownerRows != null) {
             ownerRows.clear();
         }
+        ownerKeyStarts.clear();
+        ownerKeyStartIndex = 0;
         if (warmRows != null) {
             warmRows.clear();
         }

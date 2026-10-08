@@ -321,7 +321,7 @@ public class AsyncWindowTest extends AbstractCairoTest {
                             "avg(asize+bsize) over (partition by [sym] rows between 4 preceding and current row)]\n" +
                             "  keyShards: sym\n" +
                             "  keyRuns: true\n" +
-                            "  keySplit: warmup 4 rows\n" +
+                            "  keySplit: warmup 4 rows, frame replayed\n" +
                             "    FilterOnValues symbolOrder: asc\n" +
                             "      keyMajor: true\n" +
                             "        Cursor-order scan\n"
@@ -973,10 +973,11 @@ public class AsyncWindowTest extends AbstractCairoTest {
     }
 
     /**
-     * Split keys may add floating-point values in another order than the serial window: the
-     * {@code sum} and {@code avg} columns of a plan that splits keys must agree within a relative
-     * 1e-12 of the largest magnitude in their column, which bounds what reordering the additions
-     * can change. Every other value, also of a split plan, must be the serial one exactly.
+     * Every value must be the serial one bit for bit, but for the one documented exception: a
+     * running DOUBLE sum under PARTITION BY that a carry adds over a key split across tasks
+     * (OP_ADD), which may differ in its own column within a relative 1e-12 of the largest
+     * magnitude in it, which bounds what reordering the additions can change. A replayed frame
+     * (OP_REPLAY) and a fold are exact.
      */
     private static void assertSameWithinUlps(String query, RecordCursorFactory factory, String expected, String actual) {
         final String[] expectedLines = expected.split("\n");
@@ -985,15 +986,15 @@ public class AsyncWindowTest extends AbstractCairoTest {
         final RecordMetadata metadata = factory.getMetadata();
         final int columnCount = metadata.getColumnCount();
         final AsyncWindowRecordCursorFactory asyncFactory = findAsyncFactory(factory);
-        final boolean splits = asyncFactory.getSplitPlan().getMode() != AsyncWindowSplitPlan.MODE_NONE;
+        final AsyncWindowSplitPlan plan = asyncFactory.getSplitPlan();
         final boolean[] tolerant = new boolean[columnCount];
         final double[] magnitude = new double[columnCount];
-        for (int c = 0; c < columnCount; c++) {
-            final int asyncColumn = asyncFactory.getMetadata().getColumnIndexQuiet(metadata.getColumnName(c));
-            if (splits && asyncColumn > -1 && asyncFactory.getFunctions().getQuick(asyncColumn) instanceof WindowFunction wf) {
-                final int type = ColumnType.tagOf(metadata.getColumnType(c));
-                tolerant[c] = (type == ColumnType.DOUBLE || type == ColumnType.FLOAT)
-                        && ("sum".equals(wf.getName()) || "avg".equals(wf.getName()));
+        for (int p = 0, n = plan.getPrefixCount(); p < n; p++) {
+            if (plan.getPrefixOp(p) == AsyncWindowSplitPlan.OP_ADD && ColumnType.tagOf(plan.getPrefixType(p)) == ColumnType.DOUBLE) {
+                final int column = metadata.getColumnIndexQuiet(asyncFactory.getMetadata().getColumnName(plan.getPrefixColumn(p)));
+                if (column > -1) {
+                    tolerant[column] = true;
+                }
             }
         }
         for (int i = 1; i < expectedLines.length; i++) {

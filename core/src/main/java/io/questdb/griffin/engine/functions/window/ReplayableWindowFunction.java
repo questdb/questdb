@@ -25,6 +25,8 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.sql.Record;
+
 /**
  * A streaming DOUBLE window function whose value at a row depends only on the values of its
  * argument up to that row, taken in order. A copy of it on another thread can then hand its
@@ -41,8 +43,8 @@ public interface ReplayableWindowFunction {
     double getReplayedValue();
 
     /**
-     * Whether the function's value depends only on its argument's values, in order: no
-     * partition, no timestamp.
+     * Whether the function's value depends only on its argument's values, in order, within its
+     * partition: no timestamp, and a frame the replay can hold.
      */
     boolean isReplayable();
 
@@ -53,7 +55,14 @@ public interface ReplayableWindowFunction {
     void replayNext(double value);
 
     /**
-     * Starts the function afresh, as for the first row of a partition.
+     * Starts the replay afresh: the next value replayed is its partition's first.
      */
-    void toTop();
+    void replayKeyStart();
+
+    /**
+     * Takes a row the function has just computed itself, from {@code record}, into the replay's
+     * state, so that a replay that continues its partition goes on from it. A no-op for a
+     * function whose replay state is its own state.
+     */
+    void replayPrefixRow(Record record);
 }

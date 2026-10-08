@@ -65,7 +65,9 @@ import java.util.Collection;
  *     <li>through the functions' maps, as before key runs ({@code cairo.sql.parallel.window.key.runs.enabled}
  *     off), which must equal them bit for bit whatever the split, since both compute a split key the
  *     same way;</li>
- *     <li>the serial window, which they must equal bit for bit when no key is split.</li>
+ *     <li>the serial window, which they must equal bit for bit, also when keys are split: a
+ *     split replays a bounded DOUBLE frame (OP_REPLAY) or rebuilds an exact one from warm-up rows.
+ *     The one exception, a running DOUBLE sum a carry adds (OP_ADD), is compared whole only.</li>
  * </ul>
  * The fixture holds NULLs in every column, zero denominators, -0.0 and keys of every size.
  */
@@ -324,7 +326,7 @@ public class AsyncWindowKeyRunTest extends AbstractCairoTest {
                 }
                 final String serial = bits(engine, sqlExecutionContext, query, false, false);
                 final String parallel = bits(engine, sqlExecutionContext, query, true, false);
-                if (findSplitMode(engine, sqlExecutionContext, query) == AsyncWindowSplitPlan.MODE_NONE) {
+                if (!hasInexactCarry(engine, sqlExecutionContext, query)) {
                     TestUtils.assertEquals(query, serial, parallel);
                 }
             }
@@ -495,14 +497,22 @@ public class AsyncWindowKeyRunTest extends AbstractCairoTest {
         return lines.toString();
     }
 
-    private static int findSplitMode(CairoEngine engine, SqlExecutionContext ctx, String query) throws Exception {
+    // Whether the plan splits keys and carries a running DOUBLE sum, the one documented inexact split.
+    private static boolean hasInexactCarry(CairoEngine engine, SqlExecutionContext ctx, String query) throws Exception {
         ctx.setParallelWindowEnabled(true);
         try (RecordCursorFactory factory = engine.select(query, ctx)) {
-            return findAsyncFactory(factory).getSplitPlan().getMode();
+            final AsyncWindowSplitPlan plan = findAsyncFactory(factory).getSplitPlan();
+            for (int i = 0, n = plan.getPrefixCount(); i < n; i++) {
+                if (plan.getPrefixOp(i) == AsyncWindowSplitPlan.OP_ADD && ColumnType.tagOf(plan.getPrefixType(i)) == ColumnType.DOUBLE) {
+                    return true;
+                }
+            }
+            return false;
         } finally {
             ctx.setParallelWindowEnabled(false);
         }
     }
+
 
     // Every value of every row as the bits a reader gets from the record.
     private static void printBits(RecordCursor cursor, RecordMetadata metadata, StringSink sink) {
@@ -611,7 +621,7 @@ public class AsyncWindowKeyRunTest extends AbstractCairoTest {
             ctx.setParallelWindowEnabled(false);
         }
         final String serial = bits(engine, ctx, query, false, false);
-        if (findSplitMode(engine, ctx, query) == AsyncWindowSplitPlan.MODE_NONE) {
+        if (!hasInexactCarry(engine, ctx, query)) {
             TestUtils.assertEquals(query, serial, keyRuns);
         }
         // no key split: one task takes every key whole

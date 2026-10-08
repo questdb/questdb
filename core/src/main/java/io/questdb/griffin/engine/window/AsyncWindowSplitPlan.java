@@ -60,11 +60,10 @@ import io.questdb.std.Numbers;
  *     on the order of additions;</li>
  *     <li>a running DOUBLE sum of a single key, which the query's thread folds in order
  *     ({@link #OP_FOLD});</li>
- *     <li>a bounded frame's DOUBLE {@code avg} or {@code sum} of a single key, which the query's
- *     thread replays with the serial function itself ({@link #OP_REPLAY}): the serial function's
+ *     <li>a bounded frame's DOUBLE {@code avg} or {@code sum}, which the query's thread replays
+ *     with the serial function's own arithmetic ({@link #OP_REPLAY}): the serial function's
  *     running sum carries the rounding of the key's whole history, which warm-up rows cannot
- *     rebuild. Over several keys such a frame keeps its keys whole, unless its argument is a
- *     whole number.</li>
+ *     rebuild. A frame whose argument is a whole number is rebuilt from warm-up rows, exactly.</li>
  * </ul>
  */
 public class AsyncWindowSplitPlan implements Plannable {
@@ -82,11 +81,12 @@ public class AsyncWindowSplitPlan implements Plannable {
     public static final int OP_MAX = 2;
     public static final int OP_MIN = 1;
     /**
-     * A bounded frame's DOUBLE avg or sum of a single key (see
+     * A bounded frame's DOUBLE avg or sum (see
      * {@link io.questdb.griffin.engine.functions.window.ReplayableWindowFunction}) whose workers
      * output each row's argument (see {@link AsyncWindowFoldEcho}) and whose query thread computes
-     * the frame over them, in order, with its own copy of the function, which also computed the
-     * rows before them: exact. Needs no warm-up rows.
+     * the frame over every row, in walk order, with its own copy of the function, which also took
+     * the rows it computed itself before the tasks: the serial operations in the serial order,
+     * exact. Starts afresh at each key a task starts; needs no warm-up rows.
      */
     public static final int OP_REPLAY = 5;
     private final int mode;

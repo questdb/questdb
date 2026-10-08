@@ -14254,7 +14254,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw th;
         }
         // shards never split a key: each holds its keys' state from round to round
-        final AsyncWindowSplitPlan splitPlan = shardMode ? AsyncWindowSplitPlan.NONE : classifyKeySplit(columns, functions, taskRows, singleKey, singleKey, singleKey, null);
+        // a frame of whole numbers is rebuilt exactly from warm-up rows, which the workers compute
+        final boolean[] exactArgs = new boolean[functions.size()];
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (columns.getQuick(i).isWindowExpression()
+                    && functions.getQuick(i) instanceof BaseWindowFunction windowFunction
+                    && windowFunction.getWindowArgument() != null) {
+                exactArgs[i] = isWholeNumberType(windowFunction.getWindowArgument().getType());
+            }
+        }
+        final AsyncWindowSplitPlan splitPlan = shardMode ? AsyncWindowSplitPlan.NONE : classifyKeySplit(columns, functions, taskRows, singleKey, singleKey, true, exactArgs);
         // the workers of a folded or replayed column output its argument, see AsyncWindowFoldEcho
         swapInFoldEchoes(splitPlan, perWorkerFunctions);
         if (shardMode) {
@@ -14586,11 +14595,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * Every split is exact but a running DOUBLE sum under PARTITION BY ({@code OP_ADD}), see
      * {@link AsyncWindowSplitPlan}. A bounded frame's DOUBLE avg or sum is not rebuilt exactly by
      * warm-up rows, since the serial function's running sum carries the rounding of the whole key:
-     * it is replayed over a single key, when {@code allowReplay}, and keeps keys whole otherwise,
-     * unless its argument is a whole number.
+     * it is replayed by the query's thread, when {@code allowReplay} (a key-major walk), and keeps
+     * keys whole otherwise, unless its argument is a whole number.
      *
      * @param allowFold   whether a single key's running DOUBLE sum may be folded
-     * @param allowReplay whether a single key's bounded frame may be replayed
+     * @param allowReplay whether a bounded frame may be replayed, see {@link AsyncWindowSplitPlan#OP_REPLAY}
      * @param exactArgs   per output column, whether its window's argument is known to be a whole
      *                    number, so that adding it is exact in any order; null for none known
      */
@@ -14644,7 +14653,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         && !isExactArg) {
                     // warm-up rows would rebuild the frame's running sum from the frame alone
                     if (allowReplay
-                            && ac.getPartitionBy().size() == 0
                             && functions.getQuick(i) instanceof ReplayableWindowFunction replayable
                             && replayable.isReplayable()) {
                         prefixColumns.add(i);
