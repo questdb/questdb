@@ -566,7 +566,7 @@ public final class FunctionBinder implements Mutable {
                 if (isAstRewritable()) {
                     rewriteAndOffsets(node);
                 }
-                compileTimestampBetweenLowerBound(node, executionContext);
+                bindTimestampBetweenLowerBound(node, executionContext);
             }
             scope.bindingRoot = node;
             Function function = parser.parseFunction(node, executionContext, this);
@@ -598,8 +598,8 @@ public final class FunctionBinder implements Mutable {
             scope.bindingRoot = null;
             ctx.planNodes.rewindSyntheticNodes(syntheticNodeMark);
             scope.currentPreparation = null;
-            scope.compiledLowerBound = null;
-            scope.compiledLowerBoundNode = null;
+            scope.boundLowerBound = null;
+            scope.boundLowerBoundNode = null;
             scope.expressionInput = null;
             scope.expressionInputAlias = null;
             arguments.clear();
@@ -768,14 +768,14 @@ public final class FunctionBinder implements Mutable {
     }
 
     /**
-     * Timestamp interval analysis compiles a sub-query BETWEEN bound pair low bound first.
+     * Timestamp interval analysis binds a sub-query BETWEEN bound pair low bound first.
      */
-    private void compileTimestampBetweenLowerBound(ExpressionNode node, SqlExecutionContext executionContext) throws SqlException {
+    private void bindTimestampBetweenLowerBound(ExpressionNode node, SqlExecutionContext executionContext) throws SqlException {
         final ExpressionNode lo = findTimestampBetweenLowerBound(node);
         if (lo != null) {
             final BindScope scope = ctx.scope();
-            scope.compiledLowerBound = subqueryCompiler.compileSubquery(lo.queryModel, lo.position, executionContext);
-            scope.compiledLowerBoundNode = lo;
+            scope.boundLowerBound = subqueryCompiler.bindSubquery(lo.queryModel, lo.position, executionContext);
+            scope.boundLowerBoundNode = lo;
         }
     }
 
@@ -888,11 +888,6 @@ public final class FunctionBinder implements Mutable {
             return intervalText;
         }
         return text;
-    }
-
-    private boolean isConstantText(ObjList<Function> args, int index) {
-        return args.getQuick(index).isConstant() && ColumnType.isVarcharOrString(args.getQuick(index).getType())
-                && arguments.getQuick(index) instanceof ConstantExpression;
     }
 
     private boolean isNativeTimestampColumn(int columnId) {
@@ -1520,12 +1515,12 @@ public final class FunctionBinder implements Mutable {
     Function createCursorFunction(ExpressionNode node, SqlExecutionContext executionContext) throws SqlException {
         final BindScope scope = ctx.scope();
         final Subquery subquery;
-        if (node == scope.compiledLowerBoundNode) {
-            subquery = scope.compiledLowerBound;
-            scope.compiledLowerBound = null;
-            scope.compiledLowerBoundNode = null;
+        if (node == scope.boundLowerBoundNode) {
+            subquery = scope.boundLowerBound;
+            scope.boundLowerBound = null;
+            scope.boundLowerBoundNode = null;
         } else {
-            subquery = subqueryCompiler.compileSubquery(node.queryModel, node.position, executionContext);
+            subquery = subqueryCompiler.bindSubquery(node.queryModel, node.position, executionContext);
         }
         scope.currentPreparation.isRebuildRequired = true;
         push(nextCursor().of(subquery, node.position), leafMark());
@@ -1797,74 +1792,9 @@ public final class FunctionBinder implements Mutable {
     }
 
     /**
-     * A {@code !=} or {@code <>} comparison of a TIMESTAMP with constant STRING or VARCHAR text that spells an
-     * interval wider than one value binds as the negation of the single-interval IN of that text, so the comparison
-     * excludes the interval wherever it runs: a string literal that spells an interval rather than a timestamp, and
-     * text that spells a partial timestamp, such as {@code '2024-01'}, which excludes the whole month. Returns the
-     * NOT node over the IN node to bind in place of the comparison, with the arguments in IN order, or null for any
-     * other call. Raises the parse error of a string literal that spells neither a timestamp nor an interval.
-     */
-    ExpressionNode timestampExclusion(ExpressionNode node, ObjList<Function> args, IntList positions,
-                                      SqlExecutionContext executionContext) throws SqlException {
-        if (args == null || args.size() != 2 || !isNotEqualsOperator(node.token)) {
-            return null;
-        }
-        final int textIndex = isConstantText(args, 1) ? 1 : isConstantText(args, 0) ? 0 : -1;
-        if (textIndex < 0 || ColumnType.tagOf(args.getQuick(1 - textIndex).getType()) != ColumnType.TIMESTAMP) {
-            return null;
-        }
-        final BoundExpression argument = arguments.getQuick(textIndex);
-        final CharSequence text = literalText(argument);
-        if (text == null) {
-            return null;
-        }
-        final TimestampDriver driver = ColumnType.getTimestampDriver(args.getQuick(1 - textIndex).getType());
-        final boolean isTimestamp = isTimestampText(driver, text);
-        if (!isTimestamp && !isStringLiteral(args, textIndex)) {
-            return null;
-        }
-        final CharSequence seq = intervalSpelling(argument, text);
-        final int lo = seq == text ? 0 : 1;
-        parsedIntervals.clear();
-        try {
-            IntervalUtils.parseTickExpr(driver, executionContext.getCairoEngine().getConfiguration(), seq, lo, seq.length() - lo,
-                    argument.getPosition(), parsedIntervals, IntervalOperation.INTERSECT, intervalSink, true);
-        } catch (SqlException e) {
-            if (isTimestamp) {
-                return null;
-            }
-            throw e;
-        }
-        final boolean isPoint = parsedIntervals.size() == 0
-                || parsedIntervals.size() == 2 && parsedIntervals.getQuick(0) == parsedIntervals.getQuick(1);
-        parsedIntervals.clear();
-        if (isTimestamp && isPoint) {
-            return null;
-        }
-        if (textIndex == 0) {
-            final Function operand = args.getQuick(1);
-            args.setQuick(1, args.getQuick(0));
-            args.setQuick(0, operand);
-            final int position = positions.getQuick(1);
-            positions.setQuick(1, positions.getQuick(0));
-            positions.setQuick(0, position);
-            arguments.setQuick(0, arguments.getQuick(1));
-            arguments.setQuick(1, argument);
-        }
-        final ExpressionNode in = ctx.planNodes.syntheticNodes.next().of(ExpressionNode.SET_OPERATION, "in", node.precedence, node.position);
-        in.paramCount = 2;
-        in.lhs = textIndex == 0 ? node.rhs : node.lhs;
-        in.rhs = textIndex == 0 ? node.lhs : node.rhs;
-        final ExpressionNode not = ctx.planNodes.syntheticNodes.next().of(ExpressionNode.OPERATION, "not", node.precedence, node.position);
-        not.paramCount = 1;
-        not.rhs = in;
-        return not;
-    }
-
-    /**
      * The error of a comparison of a TIMESTAMP with constant text that does not parse as a timestamp. Interval
      * extraction over a designated timestamp once raised these messages, so a comparison reports them wherever it
-     * binds: {@code =} and a {@code !=} or {@code <>} of text other than a string literal report
+     * binds: {@code =}, {@code !=} and {@code <>} report
      * {@code invalid timestamp} for a literal, otherwise {@code Invalid date [str=text]}, and for text with
      * {@code ;} {@code not a timestamp, use IN keyword with intervals} for a literal, otherwise
      * {@code Not a date, use IN keyword with intervals}; a range comparison reports {@code Invalid date [str=text]}

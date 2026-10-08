@@ -106,41 +106,39 @@ public class DesignatedTimestampIntervalLiteralTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDesignatedExclusionParsesIntervals() throws Exception {
+    public void testDesignatedExclusionReportsEqualityErrors() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            assertError("SELECT * FROM x WHERE ts != 'abc'", 28, "Invalid date: abc");
-            assertError("SELECT * FROM x WHERE ts != ''", 28, "Invalid date: ");
-            assertError("SELECT * FROM x WHERE ts != '1583077401000000'", 28, "Invalid date: 1583077401000000");
-            assertError("SELECT * FROM x WHERE ts != '2015-02-23T10:00:55.000Z;30m;10;z'", 28, "Count not a number");
-            assertError("SELECT * FROM x WHERE ts != '2015-02-23T10:00:55.000Z;30m;x;5'", 28, "Period not a number");
-            assertError("SELECT * FROM x WHERE ts != '2014-03-01T12:30:00.000Z;x'", 28, "Expected number before unit 'x'");
-            assertError("SELECT * FROM xn WHERE ts != 'abc'", 29, "Invalid date: abc");
-            assertError("SELECT * FROM x WHERE NOT (ts = 'abc')", 32, "Invalid date: abc");
+            assertError("SELECT * FROM x WHERE ts != 'abc'", 28, "invalid timestamp");
+            assertError("SELECT * FROM x WHERE ts != ''", 28, "invalid timestamp");
+            assertError("SELECT * FROM x WHERE ts <> '2015-02-23T10:00:55.000Z;30m'", 28, "not a timestamp, use IN keyword with intervals");
+            assertError("SELECT * FROM x WHERE '2014-03-01T12:30:00.000Z;x' != ts", 22, "not a timestamp, use IN keyword with intervals");
+            assertError("SELECT * FROM xn WHERE ts != 'abc'", 29, "invalid timestamp");
+            assertError("SELECT * FROM x WHERE NOT (ts = 'abc')", 32, "invalid timestamp");
         });
     }
 
     @Test
-    public void testDesignatedExclusionSubtractsIntervalLiteral() throws Exception {
+    public void testDesignatedExclusionSubtractsPoint() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             final String row = """
                     ts\tts2\tv
                     2014-01-02T12:30:00.000000Z\t2014-01-02T12:30:00.000000Z\t1
                     """;
-            assertQuery("SELECT * FROM x WHERE ts != '2015-02-23T10:00:55.000Z;30m'").noLeakCheck().timestamp("ts").returns(row);
-            assertQuery("SELECT * FROM x WHERE ts <> '2015-02-23T10:00:55.000Z;30m'").noLeakCheck().timestamp("ts").returns(row);
-            assertQuery("SELECT * FROM x WHERE '2015-02-23T10:00:55.000Z;30m' != ts").noLeakCheck().timestamp("ts").returns(row);
-            assertQuery("SELECT * FROM x WHERE ts != '2014-01-02T12:00;1h'").noLeakCheck().timestamp("ts").returns("ts\tts2\tv\n");
-            assertQuery("SELECT * FROM x WHERE NOT (ts = '2014-01-02T12:00;1h')").noLeakCheck().timestamp("ts").returns("ts\tts2\tv\n");
-            assertQuery("SELECT * FROM xn WHERE ts != '2014-01-02T12:00;1h'").noLeakCheck().timestamp("ts").returns("ts\tts2\tv\n");
-            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE b.ts != '2014-01-02T12:00;1h'").noLeakCheck()
+            assertQuery("SELECT * FROM x WHERE ts != '2014-01-02T12'").noLeakCheck().timestamp("ts").returns(row);
+            assertQuery("SELECT * FROM x WHERE ts <> '2014-01-02T12'").noLeakCheck().timestamp("ts").returns(row);
+            assertQuery("SELECT * FROM x WHERE '2014-01-02T12' != ts").noLeakCheck().timestamp("ts").returns(row);
+            assertQuery("SELECT * FROM x WHERE ts != '2014-01-02T12:30'").noLeakCheck().timestamp("ts").returns("ts\tts2\tv\n");
+            assertQuery("SELECT * FROM x WHERE NOT (ts = '2014-01-02T12:30')").noLeakCheck().timestamp("ts").returns("ts\tts2\tv\n");
+            assertQuery("SELECT * FROM xn WHERE ts != '2014-01-02T12:30'").noLeakCheck().timestamp("ts").returns("ts\tts2\tv\n");
+            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE b.ts != '2014-01-02T12:30'").noLeakCheck()
                     .timestamp("ts").noRandomAccess().returns("ts\tts2\tv\tts1\tts21\tv1\n");
-            assertQuery("SELECT * FROM x WHERE ts != '2014-01-02T12:00;1h'").noLeakCheck().assertsPlan("""
+            assertQuery("SELECT * FROM x WHERE ts != '2014-01-02T12:30'").noLeakCheck().assertsPlan("""
                     PageFrame
                         Row forward scan
                         Interval forward scan on: x
-                          intervals: [("MIN","2014-01-02T11:59:59.999999Z"),("2014-01-02T13:00:00.000000Z","MAX")]
+                          intervals: [("MIN","2014-01-02T12:29:59.999999Z"),("2014-01-02T12:30:00.000001Z","MAX")]
                     """);
             assertQuery("SELECT ts FROM (SELECT ts, ts = 'abc' b FROM x)").noLeakCheck().fails(32, "invalid timestamp");
         });
@@ -180,7 +178,8 @@ public class DesignatedTimestampIntervalLiteralTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck("UPDATE x SET v = 2 WHERE ts = 'abc'", 30, "invalid timestamp");
             assertExceptionNoLeakCheck("UPDATE x SET v = 2 WHERE ts < 'abc'", 30, "Invalid date [str='abc']");
             assertExceptionNoLeakCheck("UPDATE x SET v = 2 WHERE ts2 = 'abc'", 31, "invalid timestamp");
-            execute("UPDATE x SET v = 2 WHERE ts != '2014-01-02T12:00;1h'");
+            assertExceptionNoLeakCheck("UPDATE x SET v = 2 WHERE ts != '2014-01-02T12:00;1h'", 31, "not a timestamp, use IN keyword with intervals");
+            execute("UPDATE x SET v = 2 WHERE ts != '2014-01-02T12:30'");
             assertQuery("SELECT * FROM x WHERE ts2 = 'abc'::symbol").noLeakCheck().fails(33, "Invalid date [str=abc]");
             assertQuery("SELECT * FROM xn WHERE ts2 = 'abc'::symbol").noLeakCheck().fails(34, "Invalid date [str=abc]");
             assertQuery("SELECT * FROM x WHERE ts = '2014-01-02T12:30:00.000Z'::symbol").noLeakCheck().timestamp("ts").returns("""
@@ -252,7 +251,8 @@ public class DesignatedTimestampIntervalLiteralTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             assertError("SELECT * FROM x WHERE ts2 = 'abc'", 28, "invalid timestamp");
-            assertQuery("SELECT * FROM x WHERE ts2 != '2014-01-02T12:00;1h'").noLeakCheck().timestamp("ts").returns("ts\tts2\tv\n");
+            assertError("SELECT * FROM x WHERE ts2 != '2014-01-02T12:00;1h'", 29, "not a timestamp, use IN keyword with intervals");
+            assertQuery("SELECT * FROM x WHERE ts2 != '2014-01-02T12:30'").noLeakCheck().timestamp("ts").returns("ts\tts2\tv\n");
             assertError("SELECT * FROM x WHERE ts2 IN ('abc', 'def')", 37, "Invalid date");
             assertError("SELECT * FROM x WHERE ts2 NOT IN ('2014', 'def')", 42, "Invalid date");
             assertError("SELECT * FROM x WHERE ts2 BETWEEN 'abc' AND 'def'", 34, "Invalid date");
@@ -289,14 +289,15 @@ public class DesignatedTimestampIntervalLiteralTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             assertError("SELECT * FROM (SELECT * FROM x LIMIT 1) WHERE ts = 'abc'", 51, "invalid timestamp");
-            assertQuery("SELECT * FROM (SELECT * FROM x LIMIT 1) WHERE ts != '2014-01-02T12:00;1h'").noLeakCheck().timestamp("ts").returns("ts\tts2\tv\n");
+            assertError("SELECT * FROM (SELECT * FROM x LIMIT 1) WHERE ts != '2014-01-02T12:00;1h'", 52, "not a timestamp, use IN keyword with intervals");
+            assertQuery("SELECT * FROM (SELECT * FROM x LIMIT 1) WHERE ts != '2014-01-02T12:30'").noLeakCheck().timestamp("ts").returns("ts\tts2\tv\n");
             assertError("SELECT * FROM (SELECT * FROM x LIMIT 1) WHERE ts IN ('2014', 'abc')", 61, "Invalid date");
             assertError("SELECT * FROM (SELECT * FROM x LIMIT 1) WHERE ts BETWEEN 'abc' AND '2014'", 57, "Invalid date");
             assertError("SELECT * FROM x a LEFT JOIN x b ON a.v = b.v WHERE b.ts = 'abc'", 58, "invalid timestamp");
             assertError("SELECT * FROM x a ASOF JOIN x b WHERE b.ts < 'abc'", 45, "Invalid date [str='abc']");
             assertError("SELECT * FROM x a SPLICE JOIN x b WHERE b.ts = 'abc'", 47, "invalid timestamp");
             assertError("SELECT * FROM x WHERE ts = 'abc' OR v = 1", 27, "invalid timestamp");
-            assertQuery("SELECT * FROM x WHERE ts != '2014-01-02T12:00;1h' OR v = 1").noLeakCheck().timestamp("ts").returns("""
+            assertQuery("SELECT * FROM x WHERE ts != '2014-01-02T12:30' OR v = 1").noLeakCheck().timestamp("ts").returns("""
                     ts\tts2\tv
                     2014-01-02T12:30:00.000000Z\t2014-01-02T12:30:00.000000Z\t1
                     """);

@@ -1089,16 +1089,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             @Transient IntList argPositions
     ) throws SqlException {
         if (binding != null) {
-            final ExpressionNode exclusion;
             try {
                 binding.validateSubsampleArguments(node, args, argPositions);
-                exclusion = binding.timestampExclusion(node, args, argPositions, sqlExecutionContext);
             } catch (Throwable th) {
                 Misc.freeObjList(args, th);
                 throw th;
-            }
-            if (exclusion != null) {
-                return createNegatedIn(exclusion, args, argPositions);
             }
         }
         final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
@@ -1383,19 +1378,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return binding == null
                 ? createFunction(candidateDescriptor, node.position, node.token, args, argPositions, sqlExecutionContext)
                 : binding.createFunction(candidateDescriptor, node, args, argPositions, sqlExecutionContext);
-    }
-
-    /**
-     * Builds the NOT over the single-interval IN the binder binds a TIMESTAMP exclusion of interval text as.
-     */
-    private Function createNegatedIn(ExpressionNode not, @Transient ObjList<Function> args, @Transient IntList argPositions) throws SqlException {
-        final Function in = createFunction(not.rhs, args, argPositions);
-        binding.beginArguments(1);
-        args.clear();
-        args.add(in);
-        argPositions.clear();
-        argPositions.add(not.rhs.position);
-        return createFunction(not, args, argPositions);
     }
 
     @Nullable

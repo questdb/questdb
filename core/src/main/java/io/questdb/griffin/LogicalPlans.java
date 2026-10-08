@@ -153,6 +153,35 @@ final class LogicalPlans {
     }
 
     /**
+     * Adds the ids of the input columns the expression reads that the sink does not hold yet, in the order a
+     * projection reads them: a call's column arguments before its nested ones, the last argument of three or more
+     * first.
+     */
+    static void collectInputColumnIds(BoundExpression expression, OutputSchema input, IntList sink) {
+        if (expression instanceof ColumnExpression column) {
+            final int columnId = column.getColumnId();
+            if (input.getColumnIndexById(columnId) >= 0 && sink.indexOf(columnId, 0, sink.size()) < 0) {
+                sink.add(columnId);
+            }
+        } else if (expression instanceof FunctionExpression call) {
+            final int count = call.getArgumentCount();
+            for (int i = count < 3 ? count - 1 : count - 2; i >= 0; i--) {
+                if (call.argumentAt(i) instanceof ColumnExpression) {
+                    collectInputColumnIds(call.argumentAt(i), input, sink);
+                }
+            }
+            if (count >= 3) {
+                collectInputColumnIds(call.argumentAt(count - 1), input, sink);
+            }
+            for (int i = 0, n = count < 3 ? count : count - 1; i < n; i++) {
+                if (!(call.argumentAt(i) instanceof ColumnExpression)) {
+                    collectInputColumnIds(call.argumentAt(i), input, sink);
+                }
+            }
+        }
+    }
+
+    /**
      * Adds the ids of the outer columns the expression reads, with repeats.
      */
     static void collectOuterColumnIds(BoundExpression expression, IntList sink) {

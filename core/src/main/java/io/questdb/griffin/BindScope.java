@@ -28,7 +28,6 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.Subquery;
@@ -118,8 +117,8 @@ final class BindScope implements Mutable {
     final LongList withinPrefixes = new LongList();
     ExpressionNode aggregateRoot;
     ExpressionNode bindingRoot;
-    Subquery compiledLowerBound;
-    ExpressionNode compiledLowerBoundNode;
+    Subquery boundLowerBound;
+    ExpressionNode boundLowerBoundNode;
     LowerCaseCharSequenceObjHashMap<CharSequence> currentHints;
     PreparedFunctions.Entry currentPreparation;
     OutputSchema expressionInput;
@@ -200,8 +199,8 @@ final class BindScope implements Mutable {
         withinPrefixes.clear();
         aggregateRoot = null;
         bindingRoot = null;
-        compiledLowerBound = null;
-        compiledLowerBoundNode = null;
+        boundLowerBound = null;
+        boundLowerBoundNode = null;
         currentHints = null;
         currentPreparation = null;
         expressionInput = null;
@@ -223,21 +222,16 @@ final class BindScope implements Mutable {
      */
     static final class TranslatingAliases implements Mutable {
         private final IntHashSet columnIds = new IntHashSet();
+        private final IntList inputColumnIds = new IntList();
         private final LowerCaseCharSequenceHashSet names = new LowerCaseCharSequenceHashSet();
         private final LowerCaseCharSequenceIntHashMap sequences = new LowerCaseCharSequenceIntHashMap();
 
         @Override
         public void clear() {
             columnIds.clear();
+            inputColumnIds.clear();
             names.clear();
             sequences.clear();
-        }
-
-        private void addColumn(ColumnExpression column, OutputSchema input, CharacterStore store) {
-            final int index = input.getColumnIndexById(column.getColumnId());
-            if (index >= 0) {
-                add(column.getColumnId(), input.getColumnName(index), store);
-            }
         }
 
         CharSequence add(int columnId, CharSequence name, CharacterStore store) {
@@ -249,25 +243,12 @@ final class BindScope implements Mutable {
             return alias;
         }
 
-        // Names columns in the order of ProjectionFactoryGenerator.collectProjectionInputIds.
         void addArguments(BoundExpression expression, OutputSchema input, CharacterStore store) {
-            if (expression instanceof ColumnExpression column) {
-                addColumn(column, input, store);
-            } else if (expression instanceof FunctionExpression call) {
-                final int count = call.getArgumentCount();
-                for (int i = count < 3 ? count - 1 : count - 2; i >= 0; i--) {
-                    if (call.argumentAt(i) instanceof ColumnExpression column) {
-                        addColumn(column, input, store);
-                    }
-                }
-                if (count >= 3) {
-                    addArguments(call.argumentAt(count - 1), input, store);
-                }
-                for (int i = 0, n = count < 3 ? count : count - 1; i < n; i++) {
-                    if (!(call.argumentAt(i) instanceof ColumnExpression)) {
-                        addArguments(call.argumentAt(i), input, store);
-                    }
-                }
+            inputColumnIds.clear();
+            LogicalPlans.collectInputColumnIds(expression, input, inputColumnIds);
+            for (int i = 0, n = inputColumnIds.size(); i < n; i++) {
+                final int columnId = inputColumnIds.getQuick(i);
+                add(columnId, input.getColumnName(input.getColumnIndexById(columnId)), store);
             }
         }
     }

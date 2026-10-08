@@ -181,31 +181,6 @@ final class ProjectionFactoryGenerator {
         }
     }
 
-    private void collectProjectionInputIds(BoundExpression expression, OutputSchema input) {
-        if (expression instanceof ColumnExpression column) {
-            final int columnId = column.getColumnId();
-            if (input.getColumnIndexById(columnId) >= 0 && projectionInputIds.indexOf(columnId, 0, projectionInputIds.size()) < 0) {
-                projectionInputIds.add(columnId);
-            }
-        } else if (expression instanceof FunctionExpression call) {
-            final int count = call.getArgumentCount();
-            // Immediate column arguments come before nested ones, the last argument of three or more first.
-            for (int i = count < 3 ? count - 1 : count - 2; i >= 0; i--) {
-                if (call.argumentAt(i) instanceof ColumnExpression) {
-                    collectProjectionInputIds(call.argumentAt(i), input);
-                }
-            }
-            if (count >= 3) {
-                collectProjectionInputIds(call.argumentAt(count - 1), input);
-            }
-            for (int i = 0, n = count < 3 ? count : count - 1; i < n; i++) {
-                if (!(call.argumentAt(i) instanceof ColumnExpression)) {
-                    collectProjectionInputIds(call.argumentAt(i), input);
-                }
-            }
-        }
-    }
-
     private RecordCursorFactory generateVirtualProjection(GenerationFrame frame, ProjectPlan project, RecordCursorFactory base, int timestampIndex,
                                                           SqlExecutionContext executionContext) throws SqlException {
         final int count = project.getExpressions().size();
@@ -315,7 +290,7 @@ final class ProjectionFactoryGenerator {
         }
         projectionInputIds.clear();
         for (int i = 0, n = projectionOrder.size(); i < n; i++) {
-            collectProjectionInputIds(expressions.getQuick(projectionOrder.getQuick(i)), input);
+            LogicalPlans.collectInputColumnIds(expressions.getQuick(projectionOrder.getQuick(i)), input, projectionInputIds);
         }
         final OutputSchema master = windowJoin.getMaster().getOutput();
         final int index = master.getTimestampIndex();

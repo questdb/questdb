@@ -846,8 +846,8 @@ public class SqlBinderTest extends AbstractCairoTest {
             }
             final String nanoLiteral = "'2020-01-01T00:00:00.000000001Z'";
             assertRows("SELECT id FROM lp_partial WHERE ts=" + nanoLiteral, "id\n");
-            assertRows("SELECT id FROM lp_partial WHERE ts!='2020'", "id\n");
-            assertRows("SELECT id FROM lp_partial WHERE ts!='2020-01'", "id\n3\n");
+            assertRows("SELECT id FROM lp_partial WHERE ts!='2020'", "id\n2\n3\n");
+            assertRows("SELECT id FROM lp_partial WHERE ts!='2020-01'", "id\n2\n3\n");
             assertRows("SELECT id FROM (SELECT id, ts AS renamed FROM lp_partial) WHERE renamed=" + nanoLiteral, "id\n");
             assertRows("SELECT id FROM (SELECT id, ts AS a, ts AS b FROM lp_partial) WHERE b=" + nanoLiteral, "id\n");
             assertRows("SELECT id FROM (SELECT id, ts::timestamp AS renamed FROM lp_partial) WHERE renamed=" + nanoLiteral, "id\n");

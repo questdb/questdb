@@ -37,7 +37,7 @@ interface SubqueryCompiler {
     /**
      * Binds a sub-query of the query binding now with the scope one depth deeper and returns it.
      */
-    Subquery compileSubquery(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException;
+    Subquery bindSubquery(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException;
 
     /**
      * Binds, optimises and generates a sub-query whose rows binding consumes; the caller owns the factory.

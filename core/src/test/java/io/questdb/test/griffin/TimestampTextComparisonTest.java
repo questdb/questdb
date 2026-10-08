@@ -74,8 +74,8 @@ public class TimestampTextComparisonTest extends AbstractCairoTest {
                 assertError(table, "ts < 'abc'::symbol", 10, "Invalid date [str=abc]");
                 assertError(table, "ts != 'a;b'::symbol", 11, "Not a date, use IN keyword with intervals");
                 assertError(table, "ts != '2024-01;' || '1d'", 17, "Not a date, use IN keyword with intervals");
-                assertError(table, "ts != 'abc'", 6, "Invalid date: abc");
-                assertError(table, "ts <> '1583077401000000'", 6, "Invalid date: 1583077401000000");
+                assertError(table, "ts != 'abc'", 6, "invalid timestamp");
+                assertError(table, "ts <> '1583077401000000'", 6, "invalid timestamp");
                 assertError(table, "ts IN ('2024-01;1d', 'abc')", 21, "Invalid date");
                 assertError(table, "ts IN ('abc', 'def')", 14, "Invalid date");
                 assertError(table, "ts IN ('$today', '2024')", 7, "Invalid date");
@@ -117,31 +117,26 @@ public class TimestampTextComparisonTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             for (String table : TABLES) {
-                assertSameOnEveryPath(table, "ts != '2024-01'", """
-                        v
-                        3
-                        4
-                        5
-                        """, "[(\"MIN\",\"2023-12-31T23:59:59.999999Z\"),(\"2024-02-01T00:00:00.000000Z\",\"MAX\")]");
-                assertSameOnEveryPath(table, "'2024-01' <> ts", """
-                        v
-                        3
-                        4
-                        5
-                        """, "[(\"MIN\",\"2023-12-31T23:59:59.999999Z\"),(\"2024-02-01T00:00:00.000000Z\",\"MAX\")]");
-                assertSameOnEveryPath(table, "ts != '2024-01'::varchar", """
-                        v
-                        3
-                        4
-                        5
-                        """, "[(\"MIN\",\"2023-12-31T23:59:59.999999Z\"),(\"2024-02-01T00:00:00.000000Z\",\"MAX\")]");
+                assertSameOnEveryPath(table, "ts != '2024-01'", ALL,
+                        "[(\"MIN\",\"2023-12-31T23:59:59.999999Z\"),(\"2024-01-01T00:00:00.000001Z\",\"MAX\")]");
+                assertSameOnEveryPath(table, "'2024-01' <> ts", ALL,
+                        "[(\"MIN\",\"2023-12-31T23:59:59.999999Z\"),(\"2024-01-01T00:00:00.000001Z\",\"MAX\")]");
+                assertSameOnEveryPath(table, "ts != '2024-01'::varchar", ALL,
+                        "[(\"MIN\",\"2023-12-31T23:59:59.999999Z\"),(\"2024-01-01T00:00:00.000001Z\",\"MAX\")]");
                 assertSameOnEveryPath(table, "ts != '2024-01-31T23'", """
                         v
                         1
                         3
                         4
                         5
-                        """, "[(\"MIN\",\"2024-01-31T22:59:59.999999Z\"),(\"2024-02-01T00:00:00.000000Z\",\"MAX\")]");
+                        """, "[(\"MIN\",\"2024-01-31T22:59:59.999999Z\"),(\"2024-01-31T23:00:00.000001Z\",\"MAX\")]");
+                assertSameOnEveryPath(table, "ts != '2024-03'", """
+                        v
+                        1
+                        2
+                        3
+                        5
+                        """, "[(\"MIN\",\"2024-02-29T23:59:59.999999Z\"),(\"2024-03-01T00:00:00.000001Z\",\"MAX\")]");
                 assertSameOnEveryPath(table, "ts != '2024-03-01T00:00:00.000000Z'", """
                         v
                         1
@@ -212,22 +207,42 @@ public class TimestampTextComparisonTest extends AbstractCairoTest {
     public void testExclusionOfIntervalText() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            final String outside = """
-                    v
-                    3
-                    4
-                    5
-                    """;
             for (String table : TABLES) {
-                assertSameEverywhere(table, "ts != '2024-01;1d'", outside, "intervals: [(\"MIN\",\"2023-12-31T23:59:59.999999");
-                assertSameEverywhere(table, "ts <> '2024-01;1d'", outside, "intervals: [(\"MIN\",\"2023-12-31T23:59:59.999999");
-                assertSameEverywhere(table, "'2024-01;1d' != ts", outside, "intervals: [(\"MIN\",\"2023-12-31T23:59:59.999999");
-                assertQuery("SELECT v FROM " + table + " WHERE t2 != '2024-01;1d'").noLeakCheck().returns(outside);
-                assertQuery("SELECT v FROM " + table + " WHERE dateadd('d', 1, ts) != '2024-01;1d'").noLeakCheck().returns("""
+                assertError(table, "ts != '2024-01;1d'", 6, "not a timestamp, use IN keyword with intervals");
+                assertError(table, "ts <> '2024-01;1d'", 6, "not a timestamp, use IN keyword with intervals");
+                assertError(table, "'2024-01;1d' != ts", 0, "not a timestamp, use IN keyword with intervals");
+                assertError(table, "t2 != '2024-01;1d'", 6, "not a timestamp, use IN keyword with intervals");
+                assertError(table, "dateadd('d', 1, ts) != '2024-01;1d'", 23, "not a timestamp, use IN keyword with intervals");
+                assertSameOnEveryPath(table, "ts NOT IN '2024-01;1d'", """
                         v
-                        2
                         3
                         4
+                        5
+                        """, "[(\"MIN\",\"2023-12-31T23:59:59.999999Z\"),(\"2024-02-01T00:00:00.000000Z\",\"MAX\")]");
+            }
+        });
+    }
+
+    @Test
+    public void testNegatedEqualityMatchesExclusion() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            for (String table : TABLES) {
+                final String expected = """
+                        v	b
+                        1	true
+                        2	true
+                        3	true
+                        4	false
+                        5	true
+                        """;
+                assertQuery("SELECT v, NOT (ts = '2024-03') b FROM " + table).noLeakCheck().expectSize().returns(expected);
+                assertQuery("SELECT v, ts != '2024-03' b FROM " + table).noLeakCheck().expectSize().returns(expected);
+                assertQuery("SELECT v FROM " + table + " WHERE NOT (ts = '2024-03')").noLeakCheck().returns("""
+                        v
+                        1
+                        2
+                        3
                         5
                         """);
             }

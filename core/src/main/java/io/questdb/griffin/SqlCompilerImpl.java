@@ -224,24 +224,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final BindScopeStack scopes = new BindScopeStack();
     private final ObjectPool<ExpressionNode> sqlNodePool;
     private final ObjList<Subquery> subqueries = new ObjList<>();
-    private final SubqueryCompiler subqueryCompiler = new SubqueryCompiler() {
-        @Override
-        public Subquery compileSubquery(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
-            return SqlCompilerImpl.this.compileSubquery(model, position, executionContext);
-        }
-
-        @Override
-        public RecordCursorFactory compileSubqueryFactory(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
-            return SqlCompilerImpl.this.compileSubqueryFactory(model, position, executionContext);
-        }
-
-        @Override
-        public RecordCursorFactory generateSubqueryConsumer(Subquery subquery, boolean isConsumer, SqlExecutionContext executionContext) throws SqlException {
-            return SqlCompilerImpl.this.generateSubqueryConsumer(subquery, isConsumer, executionContext);
-        }
-    };
-    private final ObjList<SubqueryResult> subqueryResults = new ObjList<>();
     private final ObjList<Subquery> subqueryResultKeys = new ObjList<>();
+    private final ObjList<SubqueryResult> subqueryResults = new ObjList<>();
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final IntHashSet tmpIds = new IntHashSet();
@@ -263,6 +247,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private boolean isSingleQueryMode = true;
     private LogicalPlan root;
     private int subqueryScopeStart = -1;
+    private final SubqueryCompiler subqueryCompiler = new SubqueryCompiler() {
+        @Override
+        public Subquery bindSubquery(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
+            return SqlCompilerImpl.this.bindSubquery(model, position, executionContext);
+        }
+
+        @Override
+        public RecordCursorFactory compileSubqueryFactory(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
+            return SqlCompilerImpl.this.compileSubqueryFactory(model, position, executionContext);
+        }
+
+        @Override
+        public RecordCursorFactory generateSubqueryConsumer(Subquery subquery, boolean isConsumer, SqlExecutionContext executionContext) throws SqlException {
+            return SqlCompilerImpl.this.generateSubqueryConsumer(subquery, isConsumer, executionContext);
+        }
+    };
 
     public SqlCompilerImpl(CairoEngine engine) {
         try {
@@ -4170,7 +4170,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } finally {
             functionParser.swapSubqueryCompiler(previous);
         }
-        optimisePlan(executionContext);
+        optimise(executionContext);
         boundModel = model;
     }
 
@@ -5912,7 +5912,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * Optimises and authorizes every sub-query bound so far, in the order their binding finished, then the
      * statement's bound plan: every query of the statement is authorized before any of its factories is generated.
      */
-    private void optimisePlan(SqlExecutionContext executionContext) throws SqlException {
+    private void optimise(SqlExecutionContext executionContext) throws SqlException {
         optimiseSubqueries(executionContext);
         root = optimiser.optimise(root, binder.getNextColumnId(), executionContext);
         authorizeColumnAccess(executionContext, root);
@@ -6397,7 +6397,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * Binds a sub-query of the query binding now with the scope one depth deeper and returns it. The statement
      * optimises it, in the order binding finished, before the statement itself.
      */
-    Subquery compileSubquery(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
+    Subquery bindSubquery(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
         final BindScope scope = scopes.push();
         final LogicalPlan subqueryRoot;
         final boolean isWindowContextPushed = !executionContext.getWindowContext().isEmpty();
@@ -6426,7 +6426,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      */
     RecordCursorFactory compileSubqueryFactory(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
         final int first = subqueries.size();
-        final Subquery subquery = compileSubquery(model, position, executionContext);
+        final Subquery subquery = bindSubquery(model, position, executionContext);
         for (int i = first, n = subqueries.size(); i < n; i++) {
             optimiseSubquery(subqueries.getQuick(i), executionContext);
         }
