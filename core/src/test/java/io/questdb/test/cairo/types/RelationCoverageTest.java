@@ -180,12 +180,14 @@ public class RelationCoverageTest extends AbstractCairoTest {
     public void testUnionHasACastForEveryAdmittedPair() throws Exception {
         // the union matrix (SqlCodeGenerator.getUnionCastType) gives every pair of column types a
         // union type, with STRING as the fallback, and SqlCodeGenerator.generateCastFunction then
-        // converts each branch to it or refuses the pair ("unsupported cast", a loud refusal and
-        // no gap). A branch cell that yields no cast function, or that reaches the internal
-        // "no UNION cast" error or an assertion, is a gap: the branch would lose its cast and its
-        // later columns would shift. Every cell the matrix produces is asked directly, so a cell
-        // that returns nothing counts as well as one that throws, and types no table stores
-        // (INTERVAL, VARCHAR_SLICE) take part, since a query can still produce them.
+        // converts each branch to it or refuses the pair ("unsupported cast"). A refusal is a gap
+        // when the relation rules admit the branch into the union type (W or C), since UNION then
+        // refuses a pair its own type admits; otherwise it is a loud refusal and no gap. A branch
+        // cell that yields no cast function, or that reaches the internal "no UNION cast" error or
+        // an assertion, is a gap: the branch would lose its cast and its later columns would shift.
+        // Every cell the matrix produces is asked directly, so a cell that returns nothing counts
+        // as well as one that throws, and types no table stores (INTERVAL, VARCHAR_SLICE) take
+        // part, since a query can still produce them.
         final Method generateCastFunction = SqlCodeGenerator.class.getDeclaredMethod(
                 "generateCastFunction",
                 SqlExecutionContext.class,
@@ -221,7 +223,38 @@ public class RelationCoverageTest extends AbstractCairoTest {
                         }
                     }
                 }
+                // the existing types' known gaps: W admits the branch into the union type, but the
+                // union type's cell converts only some of the types that widen to it, so UNION
+                // refuses the pair
                 assertGaps("""
+                        CHAR with DOUBLE: unsupported cast to DOUBLE, which the relations admit
+                        CHAR with FLOAT: unsupported cast to FLOAT, which the relations admit
+                        DATE with DOUBLE: unsupported cast to DOUBLE, which the relations admit
+                        DATE with FLOAT: unsupported cast to FLOAT, which the relations admit
+                        DATE with INT: unsupported cast to DATE, which the relations admit
+                        DATE with LONG: unsupported cast to DATE, which the relations admit
+                        DOUBLE with CHAR: unsupported cast to DOUBLE, which the relations admit
+                        DOUBLE with DATE: unsupported cast to DOUBLE, which the relations admit
+                        DOUBLE with TIMESTAMP: unsupported cast to DOUBLE, which the relations admit
+                        DOUBLE with TIMESTAMP_NS: unsupported cast to DOUBLE, which the relations admit
+                        FLOAT with CHAR: unsupported cast to FLOAT, which the relations admit
+                        FLOAT with DATE: unsupported cast to FLOAT, which the relations admit
+                        FLOAT with TIMESTAMP: unsupported cast to FLOAT, which the relations admit
+                        FLOAT with TIMESTAMP_NS: unsupported cast to FLOAT, which the relations admit
+                        INT with DATE: unsupported cast to DATE, which the relations admit
+                        INT with TIMESTAMP: unsupported cast to TIMESTAMP, which the relations admit
+                        INT with TIMESTAMP_NS: unsupported cast to TIMESTAMP_NS, which the relations admit
+                        LONG with DATE: unsupported cast to DATE, which the relations admit
+                        LONG with TIMESTAMP: unsupported cast to TIMESTAMP, which the relations admit
+                        LONG with TIMESTAMP_NS: unsupported cast to TIMESTAMP_NS, which the relations admit
+                        TIMESTAMP with DOUBLE: unsupported cast to DOUBLE, which the relations admit
+                        TIMESTAMP with FLOAT: unsupported cast to FLOAT, which the relations admit
+                        TIMESTAMP with INT: unsupported cast to TIMESTAMP, which the relations admit
+                        TIMESTAMP with LONG: unsupported cast to TIMESTAMP, which the relations admit
+                        TIMESTAMP_NS with DOUBLE: unsupported cast to DOUBLE, which the relations admit
+                        TIMESTAMP_NS with FLOAT: unsupported cast to FLOAT, which the relations admit
+                        TIMESTAMP_NS with INT: unsupported cast to TIMESTAMP_NS, which the relations admit
+                        TIMESTAMP_NS with LONG: unsupported cast to TIMESTAMP_NS, which the relations admit
                         """, gaps);
             }
         });
@@ -236,8 +269,8 @@ public class RelationCoverageTest extends AbstractCairoTest {
         return false;
     }
 
-    // null when the cast cell converts the branch or refuses it with "unsupported cast"; the
-    // failure otherwise
+    // null when the cast cell converts the branch, or refuses with "unsupported cast" a branch the
+    // relation rules do not admit into the union type; the failure otherwise
     private static String unionCastGap(Method generateCastFunction, SqlCodeGenerator codeGenerator, int fromType, int unionType) throws Exception {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("c", fromType, IndexType.NONE, 0, false, null));
@@ -251,7 +284,9 @@ public class RelationCoverageTest extends AbstractCairoTest {
         } catch (InvocationTargetException e) {
             final Throwable cause = e.getCause();
             if (cause instanceof SqlException sqlException && Chars.contains(sqlException.getFlyweightMessage(), "unsupported cast")) {
-                return null;
+                return ColumnType.isBuiltInWideningCast(fromType, unionType)
+                        ? "unsupported cast to " + ColumnType.nameOf(unionType) + ", which the relations admit"
+                        : null;
             }
             return cause.getClass().getSimpleName() + " " + cause.getMessage();
         }

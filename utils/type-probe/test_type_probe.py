@@ -526,9 +526,9 @@ class WorklistTest(unittest.TestCase):
         self.assertEqual(('implement-pair', 'RecordToRowCopierUtils.copyOpcode'), item('sql.insert_convert'))
 
     def test_coverage_failure_naming_two_methods_gives_two_items(self):
-        # ProtocolOpcodeCoverageTest lists every opcode function that does not handle the type
+        # a coverage test that lists every function that does not handle the type
         message = 'expected:<[]> but was:<[fixedTargetOpcode: nn_int is not handled, columnKind: nn_int is not handled]>'
-        failure = tp.Failure('io.questdb.test.cutlass.ProtocolOpcodeCoverageTest', 'testOpcodeFunctionsHandleEveryType', message, message)
+        failure = tp.Failure('io.questdb.test.cairo.types.GeneratedAccessorCoverageTest', 'testCopierRunsForEveryType', message, message)
         items = tp.failure_items(failure, real_sites(), self.facts)
         self.assertEqual(['ILP column kind', 'ParquetColumnTypeConverter.fixedTargetOpcode value-test'], sorted(i.site for i in items))
 

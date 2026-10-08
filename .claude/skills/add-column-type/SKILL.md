@@ -30,8 +30,10 @@ before the first edit.
   rows of a `storage.alter` item. README section 6, "Some answers go where no single place names
   them", says where. Log such an edit against the item it answers.
 - Never edit a recording, a golden table or a test's expectation to make an item go away. A kit or
-  coverage item is work on the type, at the site it names. The one expected list a type writes is
-  `FunctionReachTest`'s, and only for reaches it states as meant.
+  coverage item is work on the type, at the site it names. The expected lists a type writes are
+  its own lines: `FunctionReachTest`'s (reaches it states as meant, refused and untried calls it
+  has read), the `+ <TYPE>` lines of `TypeRelationGoldenTest` (its relations, read cell by cell)
+  and its rows in the other tag tables the kit step runs, each once its answer is decided.
 - Never declare a guarded-site refusal (`refused_sites`) to silence an item without saying so in
   the edit log: a declared refusal is a deliberate answer, "this type is refused here". One label
   can cover several paths: `ILP column kind` covers ILP over TCP, HTTP and UDP.
@@ -110,12 +112,10 @@ Exit 0 does not cover these; check each by hand before reporting done:
 - Rust unit tests. `ColumnTypeTag::VALUES` (`core/rust/qdb-core/src/col_type.rs`) and
   `test_lookup_driver` (`col_driver/mod.rs`) list the tags by hand, so their tests skip a new type
   without failing. Add it to both and run `cargo test --lib` in `core/rust/qdb-core`.
-- `TypeRelationGoldenTest`. Its tables cover every tag, so the new tag adds a row and a column;
-  run it and add them, reading each cell against the type's relations.
 - Places a type reaches through a relation (a UNION or CASE with a column of another type), not
   through its own tag: `RelationCoverageTest` reports an admitted pair without an implementation,
-  but not one the code refuses with "unsupported cast"; try the type's UNION and CASE with each
-  type its relations admit.
+  and a UNION pair built-in widening admits that the code refuses with "unsupported cast"; other
+  refusals it does not report, so try the type's UNION and CASE with each type its relations admit.
 
 ## The worklist format
 

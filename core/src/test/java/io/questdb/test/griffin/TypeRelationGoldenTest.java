@@ -50,8 +50,10 @@ import io.questdb.griffin.engine.groupby.GroupByColumnSink;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.types.TypeConformanceTypes;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -1501,14 +1503,22 @@ public class TypeRelationGoldenTest {
     private static String renderBoolean(Relation<Boolean> relation) {
         final StringSink sink = new StringSink();
         renderHeader(sink, 1);
-        for (int from = 0; from < TYPES.length; from++) {
-            renderRowLabel(sink, from);
-            for (int to = 0; to < TYPES.length; to++) {
-                try {
-                    sink.put(relation.apply(TYPES[from], TYPES[to]) ? 'X' : '.');
-                } catch (Throwable e) {
-                    sink.put('!');
-                }
+        for (int r = 0; r < Rows.EXISTING.length; r++) {
+            renderRowLabel(sink, r, Rows.EXISTING[r]);
+            for (int to : Rows.EXISTING) {
+                sink.put(booleanCell(relation, Rows.EXISTING[r], to));
+            }
+            sink.put('\n');
+        }
+        for (int later : Rows.LATER) {
+            renderLaterLabel(sink, later, "row");
+            for (int to : Rows.EXISTING) {
+                sink.put(booleanCell(relation, later, to));
+            }
+            sink.put(' ').put(booleanCell(relation, later, later)).put('\n');
+            renderLaterLabel(sink, later, "column");
+            for (int from : Rows.EXISTING) {
+                sink.put(booleanCell(relation, from, later));
             }
             sink.put('\n');
         }
@@ -1516,10 +1526,10 @@ public class TypeRelationGoldenTest {
     }
 
     private static void renderHeader(StringSink sink, int cellWidth) {
-        // two header lines: tens and ones of the column index
+        // two header lines: tens and ones of the column number
         for (int digitLine = 0; digitLine < 2; digitLine++) {
             sink.put("                 ");
-            for (int col = 0; col < TYPES.length; col++) {
+            for (int col = 0; col < Rows.EXISTING.length; col++) {
                 for (int pad = 1; pad < cellWidth; pad++) {
                     sink.put(' ');
                 }
@@ -1530,24 +1540,34 @@ public class TypeRelationGoldenTest {
         }
     }
 
+    // a type registered later: its line below a table, its row (to the existing types, then to
+    // itself) or its column (from the existing types)
+    private static void renderLaterLabel(StringSink sink, int index, String what) {
+        final String label = "+ " + LABELS[index] + ' ' + what;
+        sink.put(label);
+        for (int i = label.length(); i < 17; i++) {
+            sink.put(' ');
+        }
+    }
+
     private static String renderOverloadDistance() {
         // overloadDistance takes tags, not encoded types; a row lists every signature type the
         // row type may be passed as, closest first, as name=distance; unlisted cells are OVERLOAD_NONE
         final StringSink sink = new StringSink();
-        for (short from = 0; from <= ColumnType.MAX_TAG; from++) {
-            renderRowLabel(sink, from);
-            for (int distance = ColumnType.OVERLOAD_FULL; distance < ColumnType.OVERLOAD_NONE; distance++) {
-                boolean anyLeft = false;
-                for (short to = 1; to <= ColumnType.MAX_TAG; to++) {
-                    final int d = ColumnType.overloadDistance(from, to);
-                    if (d == distance) {
-                        sink.put(' ').put(LABELS[to]).put('=').put(d);
-                    } else if (d > distance && d != ColumnType.OVERLOAD_NONE) {
-                        anyLeft = true;
-                    }
-                }
-                if (!anyLeft) {
-                    break;
+        for (int r = 0; r < Rows.EXISTING.length && Rows.EXISTING[r] <= ColumnType.MAX_TAG; r++) {
+            renderRowLabel(sink, r, Rows.EXISTING[r]);
+            renderOverloadRow(sink, (short) Rows.EXISTING[r], false);
+            sink.put('\n');
+        }
+        for (int later : Rows.LATER) {
+            renderLaterLabel(sink, later, "row");
+            renderOverloadRow(sink, (short) later, true);
+            sink.put('\n');
+            renderLaterLabel(sink, later, "column");
+            for (int from : Rows.EXISTING) {
+                final int d = from <= ColumnType.MAX_TAG ? ColumnType.overloadDistance((short) from, (short) later) : ColumnType.OVERLOAD_NONE;
+                if (d != ColumnType.OVERLOAD_NONE) {
+                    sink.put(' ').put(LABELS[from]).put('=').put(d);
                 }
             }
             sink.put('\n');
@@ -1555,16 +1575,37 @@ public class TypeRelationGoldenTest {
         return finish(sink);
     }
 
+    // the signature types a value of tag `from` may be passed as, closest first; the types
+    // registered later are left out, except the row type itself when it is one
+    private static void renderOverloadRow(StringSink sink, short from, boolean isLater) {
+        for (int distance = ColumnType.OVERLOAD_FULL; distance < ColumnType.OVERLOAD_NONE; distance++) {
+            boolean anyLeft = false;
+            for (short to = 1; to <= ColumnType.MAX_TAG; to++) {
+                if (Rows.isLater(to) && !(isLater && to == from)) {
+                    continue;
+                }
+                final int d = ColumnType.overloadDistance(from, to);
+                if (d == distance) {
+                    sink.put(' ').put(LABELS[to]).put('=').put(d);
+                } else if (d > distance && d != ColumnType.OVERLOAD_NONE) {
+                    anyLeft = true;
+                }
+            }
+            if (!anyLeft) {
+                break;
+            }
+        }
+    }
+
     private static String renderPerType(Relation1<String> relation) {
         final StringSink sink = new StringSink();
-        for (int i = 0; i < TYPES.length; i++) {
-            renderRowLabel(sink, i);
-            try {
-                sink.put(relation.apply(TYPES[i]));
-            } catch (Throwable e) {
-                sink.put('!');
-            }
-            sink.put('\n');
+        for (int r = 0; r < Rows.EXISTING.length; r++) {
+            renderRowLabel(sink, r, Rows.EXISTING[r]);
+            sink.put(perTypeCell(relation, Rows.EXISTING[r])).put('\n');
+        }
+        for (int later : Rows.LATER) {
+            renderLaterLabel(sink, later, "");
+            sink.put(perTypeCell(relation, later)).put('\n');
         }
         return finish(sink);
     }
@@ -1572,29 +1613,35 @@ public class TypeRelationGoldenTest {
     private static String renderSparse(Relation<String> relation) {
         // a row lists name=value for every cell with a value, in type set order
         final StringSink sink = new StringSink();
-        for (int from = 0; from < TYPES.length; from++) {
-            renderRowLabel(sink, from);
-            for (int to = 0; to < TYPES.length; to++) {
-                String value;
-                try {
-                    value = relation.apply(TYPES[from], TYPES[to]);
-                } catch (Throwable e) {
-                    value = "!";
-                }
-                if (value != null) {
-                    sink.put(' ').put(LABELS[to]).put('=').put(value);
-                }
+        for (int r = 0; r < Rows.EXISTING.length; r++) {
+            renderRowLabel(sink, r, Rows.EXISTING[r]);
+            for (int to : Rows.EXISTING) {
+                putSparseCell(sink, relation, Rows.EXISTING[r], to, to);
+            }
+            sink.put('\n');
+        }
+        for (int later : Rows.LATER) {
+            renderLaterLabel(sink, later, "row");
+            for (int to : Rows.EXISTING) {
+                putSparseCell(sink, relation, later, to, to);
+            }
+            putSparseCell(sink, relation, later, later, later);
+            sink.put('\n');
+            renderLaterLabel(sink, later, "column");
+            for (int from : Rows.EXISTING) {
+                putSparseCell(sink, relation, from, later, from);
             }
             sink.put('\n');
         }
         return finish(sink);
     }
 
-    private static void renderRowLabel(StringSink sink, int index) {
-        if (index < 10) {
+    // the row number counts the existing types only, so a type registered later moves no row
+    private static void renderRowLabel(StringSink sink, int number, int index) {
+        if (number < 10) {
             sink.put(' ');
         }
-        sink.put(index).put(' ').put(LABELS[index]);
+        sink.put(number).put(' ').put(LABELS[index]);
         for (int i = LABELS[index].length(); i < 14; i++) {
             sink.put(' ');
         }
@@ -1604,33 +1651,85 @@ public class TypeRelationGoldenTest {
         final StringSink sink = new StringSink();
         final StringSink notes = new StringSink();
         renderHeader(sink, 3);
-        for (int from = 0; from < TYPES.length; from++) {
-            renderRowLabel(sink, from);
-            for (int to = 0; to < TYPES.length; to++) {
-                String cell;
-                try {
-                    final int type = relation.apply(TYPES[from], TYPES[to]);
-                    final int index = indexOf(type);
-                    if (index > -1) {
-                        cell = Integer.toString(index);
-                    } else if (type == -1) {
-                        cell = "-";
-                    } else {
-                        cell = "#";
-                        notes.put("# ").put(LABELS[from]).put(" x ").put(LABELS[to]).put(" -> ").put(typeLabel(type)).put('\n');
-                    }
-                } catch (Throwable e) {
-                    cell = "!";
-                }
-                for (int pad = cell.length(); pad < 3; pad++) {
-                    sink.put(' ');
-                }
-                sink.put(cell);
+        for (int r = 0; r < Rows.EXISTING.length; r++) {
+            renderRowLabel(sink, r, Rows.EXISTING[r]);
+            for (int to : Rows.EXISTING) {
+                putTypeCell(sink, notes, relation, Rows.EXISTING[r], to);
+            }
+            sink.put('\n');
+        }
+        for (int later : Rows.LATER) {
+            renderLaterLabel(sink, later, "row");
+            for (int to : Rows.EXISTING) {
+                putTypeCell(sink, notes, relation, later, to);
+            }
+            sink.put(' ');
+            putTypeCell(sink, notes, relation, later, later);
+            sink.put('\n');
+            renderLaterLabel(sink, later, "column");
+            for (int from : Rows.EXISTING) {
+                putTypeCell(sink, notes, relation, from, later);
             }
             sink.put('\n');
         }
         sink.put(notes);
         return finish(sink);
+    }
+
+    private static char booleanCell(Relation<Boolean> relation, int from, int to) {
+        try {
+            return relation.apply(TYPES[from], TYPES[to]) ? 'X' : '.';
+        } catch (Throwable e) {
+            return '!';
+        }
+    }
+
+    private static String perTypeCell(Relation1<String> relation, int index) {
+        try {
+            return relation.apply(TYPES[index]);
+        } catch (Throwable e) {
+            return "!";
+        }
+    }
+
+    // name=value of one cell, named by the type `named`, when the cell has a value
+    private static void putSparseCell(StringSink sink, Relation<String> relation, int from, int to, int named) {
+        String value;
+        try {
+            value = relation.apply(TYPES[from], TYPES[to]);
+        } catch (Throwable e) {
+            value = "!";
+        }
+        if (value != null) {
+            sink.put(' ').put(LABELS[named]).put('=').put(value);
+        }
+    }
+
+    // a result type as its row number, "-" for none, "#" with a note for a type outside the set
+    // and "*" with a note for a type registered later
+    private static void putTypeCell(StringSink sink, StringSink notes, Relation<Integer> relation, int from, int to) {
+        String cell;
+        try {
+            final int type = relation.apply(TYPES[from], TYPES[to]);
+            final int index = indexOf(type);
+            if (index > -1 && !Rows.isLaterIndex(index)) {
+                cell = Integer.toString(Rows.numberOf(index));
+            } else if (index > -1) {
+                cell = "*";
+                notes.put("* ").put(LABELS[from]).put(" x ").put(LABELS[to]).put(" -> ").put(LABELS[index]).put('\n');
+            } else if (type == -1) {
+                cell = "-";
+            } else {
+                cell = "#";
+                notes.put("# ").put(LABELS[from]).put(" x ").put(LABELS[to]).put(" -> ").put(typeLabel(type)).put('\n');
+            }
+        } catch (Throwable e) {
+            cell = "!";
+        }
+        for (int pad = cell.length(); pad < 3; pad++) {
+            sink.put(' ');
+        }
+        sink.put(cell);
     }
 
     private static String typeLabel(int type) {
@@ -1650,5 +1749,45 @@ public class TypeRelationGoldenTest {
     @FunctionalInterface
     private interface Relation1<T> {
         T apply(int type) throws Exception;
+    }
+
+    /**
+     * The rows and columns of the tables: the existing types of the sweep, numbered as if no type
+     * were registered later, so their lines read the same whatever type a later PR adds; and the
+     * types registered later, each shown below a table as its own row and column, which are the
+     * lines such a type's PR adds to the expected tables once it has decided its relations.
+     */
+    private static final class Rows {
+        static final int[] EXISTING;
+        static final int[] LATER;
+        private static final int[] NUMBER = new int[TYPES.length];
+
+        static {
+            final IntList existing = new IntList();
+            final IntList later = new IntList();
+            for (int i = 0; i < TYPES.length; i++) {
+                if (isLater(ColumnType.tagOf(TYPES[i]))) {
+                    NUMBER[i] = -1;
+                    later.add(i);
+                } else {
+                    NUMBER[i] = existing.size();
+                    existing.add(i);
+                }
+            }
+            EXISTING = existing.toArray();
+            LATER = later.toArray();
+        }
+
+        static boolean isLater(short tag) {
+            return TypeConformanceTypes.isLaterTag(tag);
+        }
+
+        static boolean isLaterIndex(int index) {
+            return NUMBER[index] < 0;
+        }
+
+        static int numberOf(int index) {
+            return NUMBER[index];
+        }
     }
 }

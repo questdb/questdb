@@ -36,6 +36,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.IntShortHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.types.TypeConformanceTypes;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -98,10 +99,14 @@ public class FunctionFactoryDescriptorTest {
 
     @Test
     public void testSignatureCharTable() {
-        // Pins the character of every tag. A new tag appears here as a new row; a tag without a
-        // character shows '-' and cannot be named by any factory signature.
+        // Pins the character of every existing tag; a tag without a character shows '-' and cannot
+        // be named by any factory signature. A type registered later is left out: its character is a
+        // type driver answer, which javac names for it.
         final StringSink table = new StringSink();
         for (ColumnTypeTag tag : ColumnTypeTag.values()) {
+            if (TypeConformanceTypes.isLaterTag(tag.code())) {
+                continue;
+            }
             final char c = FunctionFactoryDescriptor.signatureChar(tag);
             table.put(tag.name()).put(' ');
             if (c == FunctionFactoryDescriptor.NO_SIGNATURE_CHAR) {

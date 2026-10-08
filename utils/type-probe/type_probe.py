@@ -44,8 +44,13 @@ SUREFIRE_DIR = 'core/target/surefire-reports'
 GROUPS = ('build-java', 'build-rust', 'build-c', 'refusal', 'kit', 'coverage', 'namesake')
 DECISIONS = ('name-yourself', 'implement-pair', 'add-writer-arm', 'fill-driver-answer', 'declare-or-admit', 'decide-place')
 COVERAGE_TESTS = (
-    'RelationCoverageTest', 'ProtocolOpcodeCoverageTest', 'GeneratedAccessorCoverageTest', 'FunctionReachTest',
+    'RelationCoverageTest', 'GeneratedAccessorCoverageTest', 'FunctionReachTest',
     'RelationRulesTest', 'TypeDriverTest', 'OverloadSoundnessTest', 'ColumnConversionSoundnessTest',
+    # tables of decisions outside the type drivers, which a new tag reaches: the relations, the
+    # tag numbers, the bind type of a CAST, the query engine's type sets, the decimal loaders, and
+    # the bind-variable setters
+    'TypeRelationGoldenTest', 'ColumnTypeTest', 'CastBindVariableTypeTest', 'QueryEngineTypeFactsTest', 'DecimalUtilTest',
+    'BindVariableServiceImplTest',
 )
 # the kit paths that hold an invariant for a type with no recording: every path of the kit
 KIT_PATHS = ('storage.*', 'sql.*', 'ingest.*', 'http.*', 'pg.*', 'lv.*')

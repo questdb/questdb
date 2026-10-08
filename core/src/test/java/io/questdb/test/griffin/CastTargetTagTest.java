@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.griffin.ExpressionParser;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.types.TypeConformanceTypes;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -38,7 +39,8 @@ import java.lang.reflect.Method;
  * constant in {@code FunctionParser.createConstant} (the cast target of {@code cast(x as T)}), and
  * whether {@code ExpressionParser} refuses {@code T} as a cast target, from a value and from {@code
  * null}. Both read the tag's type driver, with the pseudo-type and compatibility cases written
- * out, and this table pins their answers.
+ * out, and this table pins their answers. A type registered later is left out: its type driver's
+ * answers are the ones javac names for it.
  * <p>
  * Cell notation: {@code X} true, {@code .} false. The predicates are package-private, hence
  * reflection.
@@ -55,6 +57,9 @@ public class CastTargetTagTest {
         final StringSink sink = new StringSink();
         sink.put("tag           typeConst castFromValue castFromNull\n");
         for (ColumnTypeTag tag : ColumnTypeTag.values()) {
+            if (TypeConformanceTypes.isLaterTag(tag.code())) {
+                continue;
+            }
             sink.put(tag.name());
             for (int i = tag.name().length(); i < 14; i++) {
                 sink.put(' ');

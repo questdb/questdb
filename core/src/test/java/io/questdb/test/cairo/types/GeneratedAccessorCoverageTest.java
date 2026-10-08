@@ -39,24 +39,18 @@ import io.questdb.cairo.RecordSinkSPI;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.idx.CoveringCompressor;
-import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
-import io.questdb.cairo.sql.CoveredColumnDecoder;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopierUtils;
-import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.RecordComparator;
-import io.questdb.griffin.engine.groupby.GroupByColumnSink;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
-import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Decimal128;
@@ -74,32 +68,32 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Map;
 import java.util.Set;
 
 /**
- * Coverage of the per-type record-access code: the code generated per type and the opcode functions
- * whose consumers javac cannot check. Every type of the conformance kit takes part, the types
+ * Coverage of the code generated per type. Every type of the conformance kit takes part, the types
  * registered later included ({@link TypeConformanceTypes}), so a type registered later fails here
- * unless every generator runs for it and every opcode function handles it.
+ * unless every generator runs for it. The opcode functions whose consumers javac cannot check are
+ * {@code TypeRelationGoldenTest}'s per-row tables, which show a later type's answers as its own row.
  * <p>
  * The generators ({@link RecordSinkFactory}, {@link RecordValueSinkFactory}, {@link
  * RecordToRowCopierUtils}, {@link RecordComparatorCompiler}) build code for one column of the type,
- * in every sink and copier kind, and the test runs it over a record that answers every getter. The
- * opcode functions are called by reflection, as {@code TypeRelationGoldenTest} does; one that
- * throws or returns its "unhandled" value fails the test, unless the type is on that function's
- * list below. The lists name the existing types a site does not handle, each for a reason; a type
- * registered later is on none of them, and a listed type that becomes handled fails too, so the
- * lists cannot drift.
+ * in every sink and copier kind, and the test runs it over a record that answers every getter. A
+ * generator that throws fails the test, unless the type is on that generator's list below. The
+ * lists name the existing types a generator does not handle, each for a reason; a type registered
+ * later is on none of them, and a listed type that becomes handled fails too, so the lists cannot
+ * drift.
  */
 public class GeneratedAccessorCoverageTest extends AbstractCairoTest {
     private static final Set<String> INTERVALS = Set.of("INTERVAL", "INTERVAL(us)", "INTERVAL(ns)");
-    // the generators build code in each of these kinds (0 picks by size)
+    // the copier kinds that differ for one column: the chunked copier, and the by-size choice, fall
+    // back to the single-method copier for a column that fits one method
+    private static final int[] COPIER_KINDS = {
+            RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD,
+            RecordToRowCopierUtils.COPIER_TYPE_LOOPING
+    };
+    // the record sink kinds (0 picks by size)
     private static final int[] KINDS = {
             0,
             RecordSinkFactory.SINK_TYPE_SINGLE_METHOD,
@@ -128,7 +122,7 @@ public class GeneratedAccessorCoverageTest extends AbstractCairoTest {
         // not column types: intervals and VARCHAR_SLICE have no same-type arm
         final Set<String> unhandled = with(Set.of(NOT_STORED), INTERVALS);
         assertMemoryLeak(() -> {
-            for (int kind : KINDS) {
+            for (int kind : COPIER_KINDS) {
                 assertCoverage("copier kind " + kind, unhandled, entry -> {
                     final GenericRecordMetadata metadata = metadataOf(entry.columnType);
                     final EntityColumnFilter filter = new EntityColumnFilter();
@@ -146,78 +140,6 @@ public class GeneratedAccessorCoverageTest extends AbstractCairoTest {
                 });
             }
         });
-    }
-
-    @Test
-    public void testOpcodeFunctionsHandleEveryType() throws Exception {
-        final Map<String, Set<String>> unhandled = new HashMap<>();
-        unhandled.put("sinkOpcode", Set.of(NOT_STORED));
-        // the fixed-width types a covered read writes, and the four var-size types
-        unhandled.put("coveredOpcode", with(Set.of(NOT_STORED), INTERVALS));
-        // the SQL event carries no SYMBOL, LONG256, LONG128 or INTERVAL bind variable
-        unhandled.put("bindValueOpcode", with(Set.of("SYMBOL", "LONG256", "LONG128", NOT_STORED), INTERVALS));
-        unhandled.put("copyOpcode", with(Set.of(NOT_STORED), INTERVALS));
-        // UPDATE rejects a LONG256 column at its first row
-        unhandled.put("updateOpcode", with(Set.of("LONG256", NOT_STORED), INTERVALS));
-        unhandled.put("comparatorOpcode", with(Set.of("BINARY", "DOUBLE[]", "DOUBLE[][]", NOT_STORED), INTERVALS));
-        unhandled.put("keyKind", with(Set.of("BINARY", "DOUBLE[]", "DOUBLE[][]", NOT_STORED), INTERVALS));
-        // sort-key materialization holds fixed-width values only, IPv4 and the 16- and 32-byte
-        // integers excepted
-        unhandled.put("materializeOpcode", with(Set.of("STRING", "SYMBOL", "LONG256", "BINARY", "UUID", "LONG128",
-                "IPv4", "VARCHAR", "DOUBLE[]", "DOUBLE[][]", NOT_STORED), INTERVALS));
-        // covering sidecars hold fixed-width values only
-        unhandled.put("codecKind", with(Set.of("STRING", "BINARY", "VARCHAR", "DOUBLE[]", "DOUBLE[][]", NOT_STORED), INTERVALS));
-        // the checkpoint key codec has slots up to 8 bytes and no decimal arm
-        unhandled.put("byteSizeOfType", with(Set.of("STRING", "LONG256", "BINARY", "UUID", "LONG128", "VARCHAR",
-                "DOUBLE[]", "DOUBLE[][]", "DECIMAL8", "DECIMAL16", "DECIMAL32", "DECIMAL64", "DECIMAL128", "DECIMAL256",
-                "DECIMAL(5,2)", "DECIMAL(18,3)", NOT_STORED), INTERVALS));
-
-        final Method sink = method(RecordSinkFactory.class, "sinkOpcode", int.class, String.class);
-        final Method covered = method(CoveredColumnDecoder.class, "coveredOpcode", int.class);
-        final Class<?> walEventWriter = Class.forName("io.questdb.cairo.wal.WalEventWriter");
-        final Method bind = method(walEventWriter, "bindValueOpcode", int.class);
-        final Method copy = method(RecordToRowCopierUtils.class, "copyOpcode", int.class, int.class);
-        final Method update = method(UpdateOperatorImpl.class, "updateOpcode", int.class);
-        final Method comparator = method(RecordComparatorCompiler.class, "comparatorOpcode", int.class);
-        final Method keyKind = method(SortKeyEncoder.class, "keyKind", int.class);
-        final Method materialize = method(Class.forName("io.questdb.griffin.engine.orderby.SortKeyMaterializingRecordCursor"), "materializeOpcode", int.class);
-        final Method codec = method(CoveringCompressor.class, "codecKind", int.class);
-        final Method slot = method(LiveViewSnapshotKeyCodec.class, "byteSizeOfType", int.class);
-
-        final StringBuilder failures = new StringBuilder();
-        for (int i = 0, n = TypeConformanceTypes.ALL.size(); i < n; i++) {
-            final TypeConformanceTypes.Entry entry = TypeConformanceTypes.ALL.getQuick(i);
-            final int type = entry.columnType;
-            check(failures, unhandled, "sinkOpcode", entry, () -> (int) sink.invoke(null, type, "column") == constant(RecordSinkFactory.class, "SINK_NONE"));
-            check(failures, unhandled, "coveredOpcode", entry, () -> (int) covered.invoke(null, type) == CoveredColumnDecoder.COVERED_NONE);
-            check(failures, unhandled, "bindValueOpcode", entry, () -> (int) bind.invoke(null, type) == constant(walEventWriter, "BIND_VALUE_NONE"));
-            check(failures, unhandled, "copyOpcode", entry, () -> (int) copy.invoke(null, type, type) == constant(RecordToRowCopierUtils.class, "COPY_NONE"));
-            check(failures, unhandled, "updateOpcode", entry, () -> (int) update.invoke(null, type) == constant(UpdateOperatorImpl.class, "UPDATE_NONE"));
-            check(failures, unhandled, "comparatorOpcode", entry, () -> {
-                comparator.invoke(null, type);
-                return false;
-            });
-            // a later type that does not order like its family has no key kind by design (the
-            // guard in keyKind): ORDER BY takes the comparator, which comparatorOpcode checks
-            check(failures, unhandled, "keyKind", entry, () -> (int) keyKind.invoke(null, type) == constant(SortKeyEncoder.class, "KIND_NONE")
-                    && !(entry.isLater() && !PhysicalDescriptor.isOrderedLikeFamily(PhysicalDescriptor.storedTypeDriverOf(type))));
-            check(failures, unhandled, "materializeOpcode", entry, () -> {
-                materialize.invoke(null, type);
-                return false;
-            });
-            check(failures, unhandled, "codecKind", entry, () -> {
-                codec.invoke(null, type);
-                return false;
-            });
-            check(failures, unhandled, "byteSizeOfType", entry, () -> (int) slot.invoke(null, type) < 0);
-            // the group-by column sink appends nothing for a type without an arm: its tag must be
-            // the one the type's accessor family is named after, so the type has an arm exactly
-            // when its family has one
-            if (!NOT_STORED.equals(entry.label) && GroupByColumnSink.argTag(type) != PhysicalDescriptor.accessorOpcodeOf(type)) {
-                failures.append("argTag: ").append(entry.label).append(" is not its accessor family's\n");
-            }
-        }
-        Assert.assertEquals("", failures.toString());
     }
 
     @Test
@@ -289,22 +211,6 @@ public class GeneratedAccessorCoverageTest extends AbstractCairoTest {
         Assert.assertEquals("", failures.toString());
     }
 
-    private static void check(StringBuilder failures, Map<String, Set<String>> unhandled, String function, TypeConformanceTypes.Entry entry, UnhandledCheck check) {
-        boolean isUnhandled;
-        try {
-            isUnhandled = check.isUnhandled();
-        } catch (InvocationTargetException e) {
-            isUnhandled = true;
-        } catch (Exception e) {
-            throw new AssertionError(e);
-        }
-        if (isUnhandled != unhandled.get(function).contains(entry.label)) {
-            failures.append(function).append(": ").append(entry.label)
-                    .append(isUnhandled ? " is not handled" : " is handled but listed as unhandled")
-                    .append('\n');
-        }
-    }
-
     private static CairoConfiguration configurationOf(int kind) {
         return new CairoConfigurationWrapper(configuration) {
             @Override
@@ -314,23 +220,11 @@ public class GeneratedAccessorCoverageTest extends AbstractCairoTest {
         };
     }
 
-    private static int constant(Class<?> clazz, String name) throws ReflectiveOperationException {
-        final Field field = clazz.getDeclaredField(name);
-        field.setAccessible(true);
-        return field.getInt(null);
-    }
-
     // one column of the type; a SYMBOL column has a symbol table that is not static
     private static GenericRecordMetadata metadataOf(int columnType) {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("c", columnType, IndexType.NONE, 0, false, null));
         return metadata;
-    }
-
-    private static Method method(Class<?> clazz, String name, Class<?>... parameterTypes) throws NoSuchMethodException {
-        final Method method = clazz.getDeclaredMethod(name, parameterTypes);
-        method.setAccessible(true);
-        return method;
     }
 
     private static Set<String> with(Set<String> a, Set<String> b) {
@@ -342,11 +236,6 @@ public class GeneratedAccessorCoverageTest extends AbstractCairoTest {
     @FunctionalInterface
     private interface EntryCheck {
         void run(TypeConformanceTypes.Entry entry) throws Exception;
-    }
-
-    @FunctionalInterface
-    private interface UnhandledCheck {
-        boolean isUnhandled() throws Exception;
     }
 
     /**

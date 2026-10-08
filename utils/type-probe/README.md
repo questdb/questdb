@@ -182,8 +182,14 @@ site of `places.tsv`, a `pg_oid` that names no constant, or a new wire kind whos
   `NAME | DDL | NULL policy | paths | tier | refused sites`. The kit checks a type it has no
   recording for by invariants: values read back as written, NULL behaves as the policy says, rows
   order by the tier, a query compiles or fails naming the type, and a declared site refuses it. The
-  coverage tests report an admitted pair, opcode or function without an implementation, and
-  `FunctionReachTest` each function and operator the type reaches through its implicit casts.
+  coverage tests report an admitted pair, opcode or function without an implementation;
+  `FunctionReachTest` lists each function and operator the type reaches through its implicit
+  casts, each call the family-arm guard refuses, and each function with a slot it does not try
+  (variadic, a DECIMAL or GEOHASH family, a window function). The tables of decisions outside the
+  type drivers fail for a new tag until its rows are added: `TypeRelationGoldenTest` (each table
+  prints the type as its own `+ <TYPE> row` and `column` lines below it), `ColumnTypeTest`,
+  `CastBindVariableTypeTest`, `QueryEngineTypeFactsTest`, `DecimalUtilTest` and the setter pairs of
+  `BindVariableServiceImplTest`.
 - **Native.** The decode of an unknown tag code refuses the type at the Parquet boundary until the
   tag has its arm in `TryFrom<u8>` for `ColumnTypeTag` (`col_type.rs`), which the kit's Parquet paths
   report. cargo checks qdbr only once qdb-core compiles, so the run after qdb-core's items are worked
@@ -366,8 +372,8 @@ libraries: a CI workflow does, on request. Its native builds check that the code
 the kit the tree's native code (section 4). The build lists the tag switches of
 `OverloadSoundnessTest` and `ColumnConversionSoundnessTest`; the kit step runs both with the
 coverage tests, so an answer there that a later edit makes stale comes back as a coverage item.
-`TypeRelationGoldenTest` records the relation tables over every tag, so a new tag changes them; the
-tool does not run it, and its new row and column are the type PR's to add.
+`TypeRelationGoldenTest` prints a type registered later as its own row and column lines below each
+table; the type PR adds those lines to the expected tables once it has decided its relations.
 
 What the audit cannot tell:
 
