@@ -249,17 +249,28 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             // Position record at current row
             timeFrameCursor.recordAtRowIndex(record, rowIndex);
 
-            if (filter == null || filter.getBool(record)) {
-                // Add key to map only if not already present (we want latest/highest rowId)
-                final MapKey slaveKey = keyToRowIdMap.withKey();
-                slaveKey.put(record, slaveAsOfJoinMapSink);
-                slaveKey.commit();
-                final long slaveHash = slaveKey.hash();
+            // Add key to map only if not already present (we want latest/highest rowId)
+            final MapKey slaveKey = keyToRowIdMap.withKey();
+            slaveKey.put(record, slaveAsOfJoinMapSink);
+            slaveKey.commit();
+            final long slaveHash = slaveKey.hash();
+            final boolean isKeyResolved;
+            if (filter == null) {
                 final MapValue value = slaveKey.createValue(slaveHash);
                 if (value.isNew()) {
                     value.putLong(0, currentRowId);
                 }
+                isKeyResolved = true;
+            } else if (slaveKey.findValue() != null) {
+                isKeyResolved = true;
+            } else if (filter.getBool(record)) {
+                slaveKey.createValue(slaveHash).putLong(0, currentRowId);
+                isKeyResolved = true;
+            } else {
+                isKeyResolved = false;
+            }
 
+            if (isKeyResolved) {
                 // Fast path: only check for master key match when hashes match
                 // This eliminates N-1 redundant master key lookups
                 if (slaveHash == masterHash) {

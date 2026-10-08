@@ -283,10 +283,8 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
                 helper.of(cursor, null);
                 Assert.assertEquals(10, helper.findKeyedAsOfMatch(8_300, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
                 Assert.assertEquals(8_291, trace.visits);
-                // The deep hit switches to a forward scan over the one-row gap.
                 Assert.assertEquals(10, helper.findKeyedAsOfMatch(8_301, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
                 Assert.assertEquals(8_292, trace.visits);
-                // A gap longer than that scan returns to backward lookups instead of scanning 21,699 rows.
                 Assert.assertEquals(30_000, helper.findKeyedAsOfMatch(30_000, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
                 Assert.assertEquals(8_293, trace.visits);
                 Assert.assertEquals(30_010, helper.findKeyedAsOfMatch(30_010, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
@@ -309,11 +307,12 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
                  )) {
                 helper.of(cursor, null);
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1000, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
-                Assert.assertEquals(1001, trace.visits);
+                Assert.assertEquals(1001, trace.rows);
+                Assert.assertEquals(1, trace.visits);
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1010, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
                 Assert.assertEquals(1010, helper.findKeyedAsOfMatch(1010, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1020, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
-                Assert.assertEquals(1021, trace.visits);
+                Assert.assertEquals(1021, trace.rows);
             }
         });
     }
@@ -331,28 +330,28 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
                  )) {
                 helper.of(cursor, null);
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1000, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
-                Assert.assertEquals(1001, trace.visits);
+                Assert.assertEquals(1001, trace.rows);
 
                 // A later master frame scans only the rows above the recorded miss.
                 helper.toTop();
                 map.clear();
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1010, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
-                Assert.assertEquals(1011, trace.visits);
+                Assert.assertEquals(1011, trace.rows);
                 Assert.assertEquals(1010, helper.findKeyedAsOfMatch(1010, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
 
                 // An out-of-order master frame below the recorded miss scans nothing for the key.
                 helper.toTop();
                 map.clear();
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(500, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
-                Assert.assertEquals(1011, trace.visits);
+                Assert.assertEquals(1011, trace.rows);
                 Assert.assertEquals(500, helper.findKeyedAsOfMatch(500, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
-                Assert.assertEquals(1012, trace.visits);
+                Assert.assertEquals(1012, trace.rows);
 
                 // A new cursor drops the recorded misses.
                 helper.of(cursor, null);
                 map.clear();
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(100, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
-                Assert.assertEquals(1113, trace.visits);
+                Assert.assertEquals(1113, trace.rows);
             }
         });
     }
@@ -377,28 +376,28 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
                 helper.of(cursor, null);
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1000, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1000, otherMissingKey, KEY_SINK, KEY_SINK, map, null, breaker));
-                Assert.assertEquals(1001, trace.visits);
+                Assert.assertEquals(1001, trace.rows);
 
                 helper.toTop();
                 map.clear();
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(2000, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
-                Assert.assertEquals(2001, trace.visits);
+                Assert.assertEquals(2001, trace.rows);
                 // A bounded miss stays below the cost floor; the second key was answered by the exhausted
                 // prefix at 1000 and has no record, so it scans to the start once and is bounded after.
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(2001, otherMissingKey, KEY_SINK, KEY_SINK, map, null, breaker));
-                Assert.assertEquals(4003, trace.visits);
+                Assert.assertEquals(4003, trace.rows);
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(2002, otherMissingKey, KEY_SINK, KEY_SINK, map, null, breaker));
-                Assert.assertEquals(4004, trace.visits);
+                Assert.assertEquals(4004, trace.rows);
 
                 // A shallow miss then a one-row gap must not lock a far lookup into a forward scan.
                 helper.of(cursor, null);
                 map.clear();
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(63, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
-                Assert.assertEquals(4068, trace.visits);
+                Assert.assertEquals(4068, trace.rows);
                 Assert.assertEquals(64, helper.findKeyedAsOfMatch(64, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
-                Assert.assertEquals(4069, trace.visits);
+                Assert.assertEquals(4069, trace.rows);
                 Assert.assertEquals(4095, helper.findKeyedAsOfMatch(4095, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
-                Assert.assertEquals(4070, trace.visits);
+                Assert.assertEquals(4070, trace.rows);
             }
         });
     }
@@ -768,6 +767,7 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
 
         @Override
         public void recordAtRowIndex(Record record, long rowIndex) {
+            trace.rows++;
             this.record.rowIndex = rowIndex;
         }
 
@@ -842,6 +842,7 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
         private String expectedMethod;
         private boolean isTimestampTrace;
         private int opens;
+        private int rows;
         private int visits;
 
         void visit() {
