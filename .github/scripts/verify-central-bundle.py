@@ -40,6 +40,25 @@ RUST_NATIVE_PATHS = {
 SIDECARS = (".asc", ".md5", ".sha1", ".sha256", ".sha512")
 
 
+def consumer_visible_nodes(pom):
+    """Every POM node except those inside a profile that has no <activation>.
+
+    A profile without an activation block runs only with an explicit -P on the
+    publisher's own build (local-client, the reactor-only client override), so a
+    SNAPSHOT inside it never reaches a consumer. A profile with an activation
+    block (OS, JDK, property) can switch on in a consumer's resolution and is
+    scanned like the rest of the POM.
+    """
+    namespace = pom.tag[: pom.tag.index("}") + 1] if pom.tag.startswith("{") else ""
+    skipped = {
+        id(node)
+        for profile in pom.iter(f"{namespace}profile")
+        if profile.find(f"{namespace}activation") is None
+        for node in profile.iter()
+    }
+    return (node for node in pom.iter() if id(node) not in skipped)
+
+
 def fail(message: str) -> None:
     print(f"ERROR: {message}", file=sys.stderr)
     raise SystemExit(1)
@@ -99,7 +118,7 @@ def main() -> None:
                 )
 
             pom = element_tree.fromstring(bundle.read(pom_entry))
-            if any("SNAPSHOT" in (node.text or "") for node in pom.iter()):
+            if any("SNAPSHOT" in (node.text or "") for node in consumer_visible_nodes(pom)):
                 fail("Central bundled POM contains a SNAPSHOT dependency")
 
             bundled_jar = bundle.read(main_jar_entry)

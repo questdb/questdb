@@ -17,7 +17,8 @@ https://github.com/questdb/questdb/releases: set its tag to the intended
 version, choose the option that creates the tag on publish, and write the
 release notes in the style of the previous releases. Do not create the git
 tag by hand. The release workflow uploads the archives to this draft and
-publishes it; without the draft, `publish-github` fails at `gh release view`.
+publishes it; without the draft, `publish-github` fails when it tries to
+upload the first archive to the missing release.
 
 Then prepare the tag:
 
@@ -39,10 +40,13 @@ rule inside the `maven-central-release` profile.
 
 Pushing the tag starts the release workflow, which publishes GitHub assets,
 Maven Central, and AMIs without further input. If the tag's POM still pins a
-SNAPSHOT client or any other SNAPSHOT dependency, the Central job fails at
-`requireReleaseDeps` before it uploads anything. Do not repair the tag with
-`local-client`, a substituted branch jar, or a tag move. Correct the
-dependency and prepare a new patch version instead.
+SNAPSHOT client or any other SNAPSHOT dependency, the Central job fails before
+it uploads anything: `requireReleaseDeps` rejects a resolved SNAPSHOT
+dependency, and `verify-central-bundle.py` rejects any other SNAPSHOT text a
+consumer could see in the bundled POM (the `local-client` profile is exempt,
+since it has no activation block and only an explicit `-P` can select it). Do
+not repair the tag with `local-client`, a substituted branch jar, or a tag
+move. Correct the dependency and prepare a new patch version instead.
 
 ## Select verified package inputs
 
@@ -118,8 +122,9 @@ answers with a deployment ID, which every later request uses:
 3. The job polls until Central reports `PUBLISHED` (up to 40 minutes).
 
 The upload and the publish request each run once, without retries. Only the
-read-only status polls retry, and only on DNS, connect, timeout, and
-send/receive failures or HTTP 408, 429, and 5xx. Every failure path prints the
+read-only status polls retry, and only on transport-level curl failures
+(DNS, connect, timeout, TLS handshake, empty reply, HTTP/2 stream, partial
+transfer, send/receive) or HTTP 408, 429, 500, 502, 503, and 504. Every failure path prints the
 deployment ID for the recovery table below.
 
 Do not add `local-client`. The active-profile Central gate, staged native

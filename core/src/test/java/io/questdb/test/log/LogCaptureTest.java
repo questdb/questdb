@@ -100,13 +100,9 @@ public class LogCaptureTest {
     }
 
     /**
-     * A record logged before stop() must be in the capture after stop() returns,
-     * even when the logging worker has not delivered it yet. The worker is parked
-     * inside an interceptor installed before the capture starts; start() then
-     * swaps in the capture's interceptor and its own drain times out against the
-     * parked worker. MARKER is logged after that and the worker is released only
-     * once stop() is already waiting, so without the drain in stop() MARKER
-     * reaches the console after the interceptor is gone.
+     * A record logged before stop() must be captured even when the logging worker
+     * has not delivered it yet: the worker is parked until stop() is already
+     * waiting, so without the drain in stop() MARKER reaches the console instead.
      */
     @Test
     public void testStopDrainsRecordsEnqueuedBeforeIt() throws Exception {
@@ -131,15 +127,14 @@ public class LogCaptureTest {
                     parked.await(30, TimeUnit.SECONDS)
             );
 
-            // start() drains against the parked worker and gives up after its
-            // 2-second deadline; the release below lands after that.
-            final long startedAt = System.currentTimeMillis();
+            // start() drains against the parked worker and gives up after
+            // DRAIN_TIMEOUT_MS. The release is scheduled only after that, so it
+            // lands while stop() below is draining.
             capture.start();
             LOG.advisory().$(MARKER).$();
 
-            final long releaseAt = startedAt + 2_500;
             releaser = new Thread(() -> {
-                Os.sleep(Math.max(0, releaseAt - System.currentTimeMillis()));
+                Os.sleep(RELEASE_DELAY_MS);
                 release.countDown();
             }, "log-capture-test-releaser");
             releaser.start();

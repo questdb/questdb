@@ -210,6 +210,7 @@ jobs:
         run: |
           cd core/rust/qdbr
           cargo build --release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           rustc --version --verbose | Out-File -Encoding ascii "$env:GITHUB_WORKSPACE\.rust-version-windows"
       - id: rust-metadata
         shell: bash
@@ -885,10 +886,11 @@ jobs:
               status_curl_exit=0
             else
               status_curl_exit=$?
-              # Only failures that cannot have changed anything are retried:
-              # DNS, connect, timeout, and send/receive errors on a read-only poll.
+              # The poll is read-only, so every transport-level curl failure is
+              # retried: DNS, connect, HTTP/2 stream, partial transfer, timeout,
+              # TLS handshake, empty reply, and send/receive errors.
               case "${status_curl_exit}" in
-                6|7|28|55|56)
+                6|7|16|18|28|35|52|55|56|92)
                   echo "retrying transient read-only status poll after curl exit ${status_curl_exit} (attempt ${attempt})"
                   echo "Central deployment ID for recovery: ${DEPLOYMENT_ID}"
                   if [[ "${attempt}" -lt "${validation_attempts}" ]]; then
@@ -1015,10 +1017,11 @@ jobs:
               status_curl_exit=0
             else
               status_curl_exit=$?
-              # Only failures that cannot have changed anything are retried:
-              # DNS, connect, timeout, and send/receive errors on a read-only poll.
+              # The poll is read-only, so every transport-level curl failure is
+              # retried: DNS, connect, HTTP/2 stream, partial transfer, timeout,
+              # TLS handshake, empty reply, and send/receive errors.
               case "${status_curl_exit}" in
-                6|7|28|55|56)
+                6|7|16|18|28|35|52|55|56|92)
                   echo "retrying transient read-only status poll after curl exit ${status_curl_exit} (attempt ${attempt})"
                   echo "Central deployment ID for recovery: ${DEPLOYMENT_ID}"
                   if [[ "${attempt}" -lt "${post_publish_attempts}" ]]; then

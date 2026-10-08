@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Verify a committed, prebuilt native library still loads on an old glibc.
+# Verify a prebuilt native library still loads on an old glibc.
 #
 # Invoked inside an old-glibc container (amazonlinux:2 on x86-64, almalinux:8
 # on aarch64) by the "C++ glibc check" step of the binary smoke-test job in

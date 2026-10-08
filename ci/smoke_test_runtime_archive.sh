@@ -23,10 +23,17 @@ archive="${1:?usage: smoke_test_runtime_archive.sh <runtime-archive.tar.gz>}"
 work_dir="$(mktemp -d)"
 server_pid=""
 launcher=""
+# questdb.sh finds its server by process label; a per-run tag keeps start and
+# stop from seeing a stale server on a self-hosted agent.
+process_tag="smoke-$$"
+# A private HTTP port, so the query cannot be answered by another QuestDB that
+# happens to listen on 9000 on the same host. QDB_* variables override server.conf.
+http_port="$((20000 + RANDOM % 20000))"
+export QDB_HTTP_BIND_TO="127.0.0.1:${http_port}"
 
 stop_server() {
     if [[ -n "${launcher}" ]]; then
-        "${launcher}" stop > /dev/null 2>&1 || true
+        "${launcher}" stop -t "${process_tag}" > /dev/null 2>&1 || true
     elif [[ -n "${server_pid}" ]]; then
         kill "${server_pid}" > /dev/null 2>&1 || true
         wait "${server_pid}" 2>/dev/null || true
@@ -38,7 +45,9 @@ stop_server() {
 # between runs. Failure output is printed before the exit that triggers this.
 cleanup() {
     stop_server
-    rm -rf "${work_dir}"
+    # Best effort: a leftover directory must not turn a passed smoke test into a
+    # failed step through the EXIT trap's status.
+    rm -rf "${work_dir}" || echo "warning: could not remove ${work_dir}" >&2
 }
 trap cleanup EXIT
 
@@ -59,7 +68,7 @@ mkdir -p "${root}/log"
 
 if [[ -x "${dist_dir}/bin/questdb.sh" ]]; then
     launcher="${dist_dir}/bin/questdb.sh"
-    "${launcher}" start -d "${root}"
+    "${launcher}" start -d "${root}" -t "${process_tag}"
 else
     java_binary="${dist_dir}/bin/java"
     [[ -x "${java_binary}" ]] || java_binary="${dist_dir}/bin/java.exe"
@@ -87,7 +96,7 @@ fi
 response="${work_dir}/exp.out"
 answered=0
 for _ in $(seq 1 60); do
-    if curl -fsS -G --data-urlencode "query=SELECT 1 AS smoke" "http://127.0.0.1:9000/exp" -o "${response}"; then
+    if curl -fsS -G --data-urlencode "query=SELECT 1 AS smoke" "http://127.0.0.1:${http_port}/exp" -o "${response}"; then
         answered=1
         break
     fi

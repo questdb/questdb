@@ -338,7 +338,10 @@ assert_failure central-duplicate-entry \
 grep -F "duplicates=['org/questdb/questdb/9.9.9/questdb-9.9.9.pom']" "${temp_dir}/central-duplicate-entry.out" > /dev/null \
     || fail "Central verifier did not name the duplicate entry"
 
-# mode: valid | snapshot-pom (a SNAPSHOT dependency in the bundled POM) | other-jar (bundled jar differs from the verified jar)
+# mode: valid | snapshot-pom (a SNAPSHOT dependency in the bundled POM)
+#     | inactive-profile-snapshot-pom (a SNAPSHOT only inside a profile without <activation>: allowed)
+#     | activated-profile-snapshot-pom (a SNAPSHOT inside an OS-activated profile: rejected)
+#     | other-jar (bundled jar differs from the verified jar)
 create_complete_central_bundle() {
     local bundle_path="$1"
     local main_jar="$2"
@@ -354,6 +357,10 @@ base = f"org/questdb/questdb/{version}/"
 pom = b"<project><version>9.9.9</version></project>"
 if mode == "snapshot-pom":
     pom = b"<project><version>9.9.9</version><dependencies><dependency><version>1.0.0-SNAPSHOT</version></dependency></dependencies></project>"
+if mode == "inactive-profile-snapshot-pom":
+    pom = b"<project><version>9.9.9</version><profiles><profile><id>local-client</id><properties><questdb.client.version>1.0.0-SNAPSHOT</questdb.client.version></properties></profile></profiles></project>"
+if mode == "activated-profile-snapshot-pom":
+    pom = b"<project><version>9.9.9</version><profiles><profile><id>platform</id><activation><os><family>unix</family></os></activation><properties><questdb.client.version>1.0.0-SNAPSHOT</questdb.client.version></properties></profile></profiles></project>"
 jar = open(main_jar, "rb").read()
 if mode == "other-jar":
     jar = jar + b"-not-the-verified-jar"
@@ -382,6 +389,18 @@ assert_failure central-snapshot-pom \
     "${central_bundle_verifier}" "${snapshot_central_bundle}" "${temp_dir}/valid.jar" "${valid_stage}" --version 9.9.9
 grep -F 'Central bundled POM contains a SNAPSHOT dependency' "${temp_dir}/central-snapshot-pom.out" > /dev/null \
     || fail "Central verifier did not reject a bundled POM with a SNAPSHOT dependency"
+
+inactive_profile_central_bundle="${temp_dir}/central-inactive-profile-snapshot-pom.zip"
+create_complete_central_bundle "${inactive_profile_central_bundle}" "${temp_dir}/valid.jar" inactive-profile-snapshot-pom
+"${central_bundle_verifier}" "${inactive_profile_central_bundle}" "${temp_dir}/valid.jar" "${valid_stage}" --version 9.9.9 > "${temp_dir}/central-inactive-profile.out" \
+    || fail "Central verifier rejected a SNAPSHOT that only an explicit -P profile could see"
+
+activated_profile_central_bundle="${temp_dir}/central-activated-profile-snapshot-pom.zip"
+create_complete_central_bundle "${activated_profile_central_bundle}" "${temp_dir}/valid.jar" activated-profile-snapshot-pom
+assert_failure central-activated-profile-snapshot-pom \
+    "${central_bundle_verifier}" "${activated_profile_central_bundle}" "${temp_dir}/valid.jar" "${valid_stage}" --version 9.9.9
+grep -F 'Central bundled POM contains a SNAPSHOT dependency' "${temp_dir}/central-activated-profile-snapshot-pom.out" > /dev/null \
+    || fail "Central verifier did not reject a SNAPSHOT inside an OS-activated profile"
 
 other_jar_central_bundle="${temp_dir}/central-other-jar.zip"
 create_complete_central_bundle "${other_jar_central_bundle}" "${temp_dir}/valid.jar" other-jar
@@ -626,8 +645,13 @@ def step_dict_named(job, name):
     raise SystemExit(f"release workflow has no step named {name!r}")
 
 
+def shell_code(text):
+    """The run text without full-line comments, so a token check cannot be met by a comment."""
+    return "\n".join(line for line in str(text).splitlines() if not line.lstrip().startswith("#"))
+
+
 def step_named(job, name):
-    return str(step_dict_named(job, name).get("run", ""))
+    return shell_code(step_dict_named(job, name).get("run", ""))
 
 workflow = workflow_path.read_text()
 workflow_document = yaml.load(workflow, Loader=yaml.BaseLoader)
@@ -684,12 +708,12 @@ if "gh release upload \"${tag_name}\" artifacts/*.gz" in workflow:
 if "  release:\n" in workflow:
     raise SystemExit("workflow retains the combined release job")
 
+TAG_PUSH_GUARD = "${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}"
 for job_name in ("publish-github", "publish-website", "publish-maven-central", "publish-ami"):
     job = jobs.get(job_name)
     if not isinstance(job, dict):
         raise SystemExit(f"release workflow has no {job_name} job")
-    condition = job.get("if")
-    if not isinstance(condition, str) or "github.event_name == 'push'" not in condition or "startsWith(github.ref, 'refs/tags/')" not in condition:
+    if job.get("if") != TAG_PUSH_GUARD:
         raise SystemExit(f"{job_name} does not have the exact tag-push publication guard")
 
 central_job = jobs["publish-maven-central"]
@@ -800,6 +824,7 @@ observation = str(observation_step.get("run", "")) if observation_step is not No
 preflight_central = step_named(central_job, "Refuse to redeploy an existing Central version")
 graal_install = step_named(central_job, "Install GraalVM Community 25.0.2")
 central_job_text = str(central_job)
+central_code_text = "\n".join(shell_code(step.get("run", "")) for step in central_steps if isinstance(step, dict))
 
 
 def curl_invocation_count(command):
@@ -852,11 +877,11 @@ recovery_message = "Central deployment ID for recovery: ${DEPLOYMENT_ID}"
 
 def has_status_retry_contract(command, deadline, waiting_state, success_state):
     return (
-        has_exact_case_alternatives(command, "status_curl_exit", ("6|7|28|55|56", "*"))
+        has_exact_case_alternatives(command, "status_curl_exit", ("6|7|16|18|28|35|52|55|56|92", "*"))
         and case_branch_has(
             command,
             "status_curl_exit",
-            "6|7|28|55|56",
+            "6|7|16|18|28|35|52|55|56|92",
             "retrying transient read-only status poll",
             recovery_message,
             "continue",
@@ -928,15 +953,15 @@ def assert_central_oracle_helper_fixtures():
             raise SystemExit("Central timeout helper accepted a longer limit")
 
     approved_retry_case = '''case "${status_curl_exit}" in
-    6|7|28|55|56)
+    6|7|16|18|28|35|52|55|56|92)
         ;;
     *)
         ;;
 esac'''
-    extra_retry_case = approved_retry_case.replace("6|7|28|55|56", "6|7|28|55|56|60")
-    if not has_exact_case_alternatives(approved_retry_case, "status_curl_exit", ("6|7|28|55|56", "*")):
+    extra_retry_case = approved_retry_case.replace("6|7|16|18|28|35|52|55|56|92", "6|7|16|18|28|35|52|55|56|92|60")
+    if not has_exact_case_alternatives(approved_retry_case, "status_curl_exit", ("6|7|16|18|28|35|52|55|56|92", "*")):
         raise SystemExit("Central retry helper rejected the approved curl alternatives")
-    if has_exact_case_alternatives(extra_retry_case, "status_curl_exit", ("6|7|28|55|56", "*")):
+    if has_exact_case_alternatives(extra_retry_case, "status_curl_exit", ("6|7|16|18|28|35|52|55|56|92", "*")):
         raise SystemExit("Central retry helper accepted curl 60")
 
 
@@ -961,7 +986,7 @@ central_identity_ok = (
         )
     )
     and dry_run.index("verify-central-bundle.py") < dry_run.index("sha256sum")
-    and central_job_text.count("mvn -B -pl core -am deploy") == 1
+    and len(re.findall(r"\bmvn\b[^\n]*\bdeploy\b", central_code_text)) == 1
     and upload_step.get("id") == "upload"
     and "mvn -B" not in upload
     and upload_step.get("env", {}).get("BUNDLE_PATH") == "${{ steps.bundle.outputs.bundle_path }}"
@@ -974,6 +999,7 @@ central_identity_ok = (
             "sha256sum",
             '== "${BUNDLE_SHA256}"',
             "-X POST",
+            "-w '%{http_code}'",
             "--form",
             "bundle=@${BUNDLE_PATH};type=application/octet-stream",
             "https://central.sonatype.com/api/v1/publisher/upload?publishingType=USER_MANAGED",
@@ -997,6 +1023,7 @@ central_identity_ok = (
         required in validation
         for required in (
             "validation_attempts=20",
+            "-w '%{http_code}'",
             "validation_interval_seconds=30",
             'seq 1 "${validation_attempts}"',
             "-X POST",
@@ -1019,7 +1046,7 @@ central_identity_ok = (
             "Central reported FAILED for ${DEPLOYMENT_ID}",
             "unexpected Central deployment state",
             "status_curl_exit=$?",
-            "6|7|28|55|56)",
+            "6|7|16|18|28|35|52|55|56|92)",
             "408|429|500|502|503|504)",
             "retrying transient read-only status poll",
             "permanent status curl failure",
@@ -1044,6 +1071,7 @@ central_identity_ok = (
         for required in (
             '"${VALIDATED}" != "true"',
             "-X POST",
+            "-w '%{http_code}'",
             "/api/v1/publisher/deployment/${DEPLOYMENT_ID}",
             'Authorization: Bearer ${token}',
             'http_code}" != "204"',
@@ -1059,6 +1087,7 @@ central_identity_ok = (
         required in observation
         for required in (
             "post_publish_attempts=80",
+            "-w '%{http_code}'",
             "post_publish_interval_seconds=30",
             'seq 1 "${post_publish_attempts}"',
             "-X POST",
@@ -1081,7 +1110,7 @@ central_identity_ok = (
             "Central reported FAILED for ${DEPLOYMENT_ID}",
             "unexpected Central deployment state",
             "status_curl_exit=$?",
-            "6|7|28|55|56)",
+            "6|7|16|18|28|35|52|55|56|92)",
             "408|429|500|502|503|504)",
             "retrying transient read-only status poll",
             "permanent status curl failure",
@@ -1174,12 +1203,35 @@ ami_credential_order = (
     "Refuse to replace an existing release AMI",
     "Deploy AMI without destructive replacement",
 )
+ami_checkout_index = next(
+    (
+        index
+        for index, step in enumerate(ami_job.get("steps", []))
+        if isinstance(step, dict) and str(step.get("uses", "")).startswith("actions/checkout@")
+    ),
+    None,
+)
+ami_oidc_index = next(
+    (
+        index
+        for index, step in enumerate(ami_job.get("steps", []))
+        if isinstance(step, dict) and step.get("name") == "Configure AWS credentials for AMI publication"
+    ),
+    None,
+)
 ami_credentials_ok = (
     isinstance(ami_env, dict)
     and bool(str(ami_env.get("AWS_DEFAULT_REGION", "")).strip())
-    # No long-lived access keys anywhere in the workflow, at any scope.
+    # No long-lived access keys anywhere in the workflow, at any scope, under
+    # either the environment-variable or the action-input spelling.
     and "AWS_ACCESS_KEY_ID" not in workflow
     and "AWS_SECRET_ACCESS_KEY" not in workflow
+    and "aws-access-key-id" not in workflow
+    and "aws-secret-access-key" not in workflow
+    and ami_checkout_index is not None
+    and ami_oidc_index is not None
+    and ami_checkout_index < ami_oidc_index
+    and ami_oidc_with.get("role-duration-seconds") == "14400"
     and ami_job.get("permissions") == {"contents": "read", "id-token": "write"}
     and ami_oidc_step is not None
     # The same pin as the Central job, so the Actions policy allows one action.
@@ -1269,11 +1321,16 @@ for stable_id, job_name, runner, step_name, native_path in native_load_requireme
         None,
     )
     load_index = producer_steps.index(load_step) if load_step in producer_steps else None
-    load_command = str(load_step.get("run", "")) if load_step is not None else ""
+    load_command = shell_code(load_step.get("run", "")) if load_step is not None else ""
     native_load_ok = (
         isinstance(producer_job, dict)
         and producer_job.get("runs-on") == runner
         and load_index is not None
+        # No condition, no tolerated failure, no exception swallowing.
+        and load_step.get("if") is None
+        and load_step.get("continue-on-error") is None
+        and "try:" not in load_command
+        and "except" not in load_command
         and upload_index is not None
         and load_index < upload_index
         and all(
@@ -1551,13 +1608,28 @@ PY
 #!/usr/bin/env bash
 set -euo pipefail
 output=/dev/null
+method=GET
+authorization=""
+write_out=""
 arguments=("$@")
 for ((index = 0; index < ${#arguments[@]}; index++)); do
-    if [[ "${arguments[index]}" == "-o" ]]; then
-        output="${arguments[index + 1]}"
-    fi
+    case "${arguments[index]}" in
+        -o) output="${arguments[index + 1]}" ;;
+        -X) method="${arguments[index + 1]}" ;;
+        -w) write_out="${arguments[index + 1]}" ;;
+        -H) [[ "${arguments[index + 1]}" == Authorization:* ]] && authorization="${arguments[index + 1]}" ;;
+    esac
 done
 printf '%s\n' "$*" >> "${CENTRAL_FAKE_CALLS}"
+# The step derives http_code from -w; without it the variable would hold the body.
+[[ "${write_out}" == '%{http_code}' ]] || { echo "fake curl: missing -w '%{http_code}'" >&2; exit 2; }
+# Every Central Publisher API call the workflow makes is an authenticated POST.
+if [[ "${authorization}" != "Authorization: Bearer ${CENTRAL_FAKE_TOKEN}" ]]; then
+    printf 'unauthorized' > "${output}"; printf '401'; exit 0
+fi
+if [[ "${method}" != "POST" ]]; then
+    printf 'method not allowed' > "${output}"; printf '405'; exit 0
+fi
 IFS='|' read -r exit_code http_code body < "${CENTRAL_FAKE_QUEUE}"
 if [[ "$(wc -l < "${CENTRAL_FAKE_QUEUE}")" -gt 1 ]]; then
     sed -i 1d "${CENTRAL_FAKE_QUEUE}"
@@ -1583,6 +1655,7 @@ SH
                 CENTRAL_FAKE_QUEUE="${queue}" CENTRAL_FAKE_CALLS="${call_log}" \
                 GITHUB_OUTPUT="${step_output}" GITHUB_REF_NAME=9.9.9 \
                 MAVEN_CENTRAL_USERNAME=fixture-user MAVEN_CENTRAL_PASSWORD=fixture-password \
+                CENTRAL_FAKE_TOKEN="$(printf '%s:%s' fixture-user fixture-password | base64 | tr -d '\n')" \
                 "$@" bash "${steps_dir}/${step}.sh"
         ) > "${step_log}" 2>&1
     }

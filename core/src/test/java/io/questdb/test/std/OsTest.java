@@ -128,10 +128,9 @@ public class OsTest {
         // The host Rust library needs no assertion here: Os.<clinit> already fails class load when it is absent.
         // rust-maven-plugin copies the crate's CLI binaries next to it; the build must have removed them.
         final String hostPlatformDir = "/io/questdb/bin/" + Os.name + '-' + Os.archName + '/';
-        assertNotShipped(hostPlatformDir + "pm_inspect");
-        assertNotShipped(hostPlatformDir + "pm_generate");
-        assertNotShipped(hostPlatformDir + "pm_inspect.exe");
-        assertNotShipped(hostPlatformDir + "pm_generate.exe");
+        final String executableSuffix = Os.isWindows() ? ".exe" : "";
+        assertNotShipped(hostPlatformDir + "pm_inspect" + executableSuffix);
+        assertNotShipped(hostPlatformDir + "pm_generate" + executableSuffix);
     }
 
     @Test
