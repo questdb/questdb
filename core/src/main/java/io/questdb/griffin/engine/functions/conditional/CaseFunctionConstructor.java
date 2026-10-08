@@ -29,5 +29,5 @@ import io.questdb.std.ObjList;
 
 @FunctionalInterface
 interface CaseFunctionConstructor {
-    Function getInstance(int position, CaseFunctionPicker picker, ObjList<Function> args, int returnType);
+    Function getInstance(int position, CaseFunctionPicker picker, ObjList<Function> args, int returnType, CaseBranches.Values branches);
 }

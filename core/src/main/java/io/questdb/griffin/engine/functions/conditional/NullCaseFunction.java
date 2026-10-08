@@ -40,7 +40,7 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public record NullCaseFunction(ObjList<Function> args) implements CaseFunction {
+public record NullCaseFunction(ObjList<Function> args, CaseBranches.Values branches) implements CaseFunction {
 
     @Override
     public ArrayView getArray(Record rec) {

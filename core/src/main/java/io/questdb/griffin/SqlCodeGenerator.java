@@ -79,7 +79,6 @@ import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
 import io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
@@ -96,6 +95,7 @@ import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToVarcharFunction
 import io.questdb.griffin.engine.functions.cast.CastDoubleToDoubleArray;
 import io.questdb.griffin.engine.functions.cast.CastDoubleToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastFunction;
 import io.questdb.griffin.engine.functions.cast.CastFloatToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastFloatToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
@@ -151,7 +151,7 @@ import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
-import io.questdb.griffin.engine.functions.conditional.CaseFunction;
+import io.questdb.griffin.engine.functions.conditional.CaseBranches;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
@@ -14312,7 +14312,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     // Whether a value is never negative: a non-negative integer constant or NULL, an input column
-    // known to be, or a CASE that picks only such values. A NULL counts: a running sum skips it.
+    // known to be, a cast that keeps every value's sign, or a CASE whose every value is such (read
+    // by role, see CaseBranches). A NULL counts: a running sum skips it.
     private static boolean isNonNegativeValue(Function function, @Nullable boolean[] inputNonNegative, int reservedSlots, boolean[] ownNonNegative) {
         if (function instanceof ColumnFunction cf && !(function instanceof WindowFunction)) {
             final int index = cf.getColumnIndex();
@@ -14335,37 +14336,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
         }
-        // a numeric cast keeps a value's sign, and NULL stays NULL
-        if (function instanceof UnaryFunction cast
-                && function.getClass().getName().contains("Cast")
-                && isNumericForSign(function.getType())
-                && isNumericForSign(cast.getArg().getType())) {
+        // A cast to a type as wide keeps a value's sign, and NULL stays NULL. A narrowing one
+        // does not: LONG 3e9 is a negative INT.
+        if (function instanceof CastFunction cast && isNonNarrowingNumericCast(cast.getArg().getType(), function.getType())) {
             return isNonNegativeValue(cast.getArg(), inputNonNegative, reservedSlots, ownNonNegative);
         }
-        if (function instanceof CaseFunction cf) {
-            // condition, value, ..., [else]: the values are at odd positions, and else is last
-            final ObjList<Function> args = cf.args();
-            final int n = args.size();
-            for (int i = 1; i < n; i += 2) {
-                if (!isNonNegativeValue(args.getQuick(i), inputNonNegative, reservedSlots, ownNonNegative)) {
+        if (function instanceof CaseBranches caseBranches) {
+            final ObjList<Function> thenValues = caseBranches.getThenValues();
+            for (int i = 0, n = thenValues.size(); i < n; i++) {
+                if (!isNonNegativeValue(thenValues.getQuick(i), inputNonNegative, reservedSlots, ownNonNegative)) {
                     return false;
                 }
             }
-            return n % 2 == 0 || isNonNegativeValue(args.getQuick(n - 1), inputNonNegative, reservedSlots, ownNonNegative);
+            return isNonNegativeValue(caseBranches.getElseValue(), inputNonNegative, reservedSlots, ownNonNegative);
         }
         return false;
     }
 
-    private static boolean isNumericForSign(int type) {
-        return switch (ColumnType.tagOf(type)) {
-            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT,
-                 ColumnType.DOUBLE -> true;
-            default -> false;
-        };
-    }
-
     // Whether a value is never NULL: a constant that is not NULL, an input column known to be, a
-    // widening numeric cast of such a value, or a CASE whose every value, and an ELSE, are such.
+    // widening numeric cast of such a value, or a CASE whose every value, ELSE included, is such
+    // (read by role, see CaseBranches: a CASE without ELSE has a NULL constant there).
     private static boolean isNonNullValue(Function function, @Nullable boolean[] inputNonNull, int reservedSlots, boolean[] ownNonNull) {
         if (function instanceof ColumnFunction cf && !(function instanceof WindowFunction)) {
             final int index = cf.getColumnIndex();
@@ -14383,25 +14373,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 default -> false;
             };
         }
-        if (function instanceof UnaryFunction cast
-                && function.getClass().getName().contains("Cast")
-                && isWideningNumericCast(cast.getArg().getType(), function.getType())) {
+        if (function instanceof CastFunction cast && isWideningNumericCast(cast.getArg().getType(), function.getType())) {
             return isNonNullValue(cast.getArg(), inputNonNull, reservedSlots, ownNonNull);
         }
-        if (function instanceof CaseFunction cf) {
-            // condition, value, ..., else: the values are at odd positions, and else is last
-            final ObjList<Function> args = cf.args();
-            final int n = args.size();
-            if (n % 2 == 0) {
-                // no ELSE: NULL when no condition holds
-                return false;
-            }
-            for (int i = 1; i < n; i += 2) {
-                if (!isNonNullValue(args.getQuick(i), inputNonNull, reservedSlots, ownNonNull)) {
+        if (function instanceof CaseBranches caseBranches) {
+            final ObjList<Function> thenValues = caseBranches.getThenValues();
+            for (int i = 0, n = thenValues.size(); i < n; i++) {
+                if (!isNonNullValue(thenValues.getQuick(i), inputNonNull, reservedSlots, ownNonNull)) {
                     return false;
                 }
             }
-            return isNonNullValue(args.getQuick(n - 1), inputNonNull, reservedSlots, ownNonNull);
+            return isNonNullValue(caseBranches.getElseValue(), inputNonNull, reservedSlots, ownNonNull);
         }
         return false;
     }
@@ -14412,6 +14394,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final int from = numericRank(fromType);
         final int to = numericRank(toType);
         return from > 0 && from <= 4 && to > from;
+    }
+
+    // Whether a cast from one numeric type to another keeps every value's sign: to a type as wide
+    // or wider, where a value is rounded at most, never wrapped.
+    private static boolean isNonNarrowingNumericCast(int fromType, int toType) {
+        final int from = numericRank(fromType);
+        return from > 0 && numericRank(toType) >= from;
     }
 
     // BYTE 1, SHORT 2, INT 3, LONG 4, FLOAT 5, DOUBLE 6, 0 for any other type.
