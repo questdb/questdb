@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.fuzz;
 
+import io.questdb.PropertyKey;
 import io.questdb.std.Rnd;
 import org.junit.Test;
 
@@ -61,6 +62,43 @@ public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
                 rnd.nextBoolean(), 1000, 5 + rnd.nextInt(100),
                 20, 10, 200, rnd.nextInt(1000), 1
         );
+        runFuzz(rnd);
+    }
+
+    @Test
+    public void testReplaceOnFormatParquetTable() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        setCreateWalAsParquet(true);
+        setFuzzProbabilities(
+                0.01, 0.2, 0.1, 0.01,
+                0.02, 0.02, 0.02, 0,
+                1.0, 0.01, 0.01,
+                0, 0, 0, 0, 0,
+                0.5, 0.05, 0
+        );
+        setFuzzCounts(
+                rnd.nextBoolean(), 1000, 5 + rnd.nextInt(100),
+                20, 10, 200, rnd.nextInt(100), 1
+        );
+        setSmallParquetRowGroups(rnd);
+        runFuzz(rnd);
+    }
+
+    @Test
+    public void testReplaceWithParquetConversions() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        setFuzzProbabilities(
+                0.01, 0.2, 0.1, 0.01,
+                0.02, 0.02, 0.02, 0,
+                1.0, 0.01, 0.01,
+                0.2, 0.02, 0, 0, 0,
+                0.5, 0.05, 0
+        );
+        setFuzzCounts(
+                rnd.nextBoolean(), 1000, 5 + rnd.nextInt(100),
+                20, 10, 200, rnd.nextInt(100), 1
+        );
+        setSmallParquetRowGroups(rnd);
         runFuzz(rnd);
     }
 
@@ -118,5 +156,13 @@ public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
                 20, 10, 200, rnd.nextInt(1000), 1
         );
         runFuzz(rnd);
+    }
+
+    // Fuzz partitions hold ~100 rows, far below the default parquet row group size, so
+    // each partition would be a single row group: every replace would rewrite it, and a
+    // row group fully covered by a replace window (DROP) could not occur. A few rows per
+    // row group spreads replace windows across row groups and exercises in-place merges.
+    private void setSmallParquetRowGroups(Rnd rnd) {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 5 + rnd.nextInt(30));
     }
 }
