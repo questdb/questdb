@@ -106,6 +106,9 @@ public class WindowChainProofTest extends AbstractCairoTest {
                     {BASE, "CASE up WHEN 1 THEN -1 ELSE 10000000000 END"},
                     {BASE, "big::int"},
                     {BASE, "CASE WHEN up = 1 THEN big::int ELSE 0 END"},
+                    // small enough to be carried rather than folded: 40000 is a negative SHORT
+                    {BASE, "cast(CASE WHEN up = 1 THEN 40000 ELSE 0 END AS short)"},
+                    {BASE, "cast(CASE WHEN up = 1 THEN 200 ELSE 1 END AS byte)"},
             };
             for (String[] value : refused) {
                 final String grouped = grouped(value);
@@ -264,6 +267,16 @@ public class WindowChainProofTest extends AbstractCairoTest {
             // a bounded frame of them, which warm-up rows would rebuild from the frame alone
             assertMatchesSerial(lagged + "SELECT time, avg(CASE WHEN price > lp THEN 1000000000000001 ELSE 0 END) OVER (ORDER BY time ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) a FROM w0");
             assertMatchesSerial(lagged + "SELECT time, sum(CASE WHEN price > lp THEN 3000000000000001 ELSE 1 END) OVER (ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) a FROM w0");
+            // the large value in the ELSE
+            final String inElse = lagged + ", w1 AS (SELECT time, price, size, sum(CASE WHEN price > lp THEN 0 ELSE 1000000000000001 END) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM w0) ";
+            assertMatchesSerial(inElse + "SELECT time, s FROM w1");
+            assertMatchesSerial(inElse + "SELECT s, count() c, sum(size) z FROM w1");
+            // such sums are folded, and so is a sum of INT values, which may pass 2^53 by 2^22 rows
+            assertSplitOp(q + "SELECT time, s FROM w1", AsyncWindowSplitPlan.OP_FOLD);
+            assertSplitOp(inElse + "SELECT time, s FROM w1", AsyncWindowSplitPlan.OP_FOLD);
+            final String ints = lagged + ", w1 AS (SELECT time, size, sum(CASE WHEN price > lp THEN size::int ELSE 0 END) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM w0) SELECT time, s FROM w1";
+            assertMatchesSerial(ints);
+            assertSplitOp(ints, AsyncWindowSplitPlan.OP_FOLD);
             // a running count is a LONG, and so is its carry: exact whatever its size
             final String counted = lagged + ", w1 AS (SELECT time, size, sum(CASE WHEN price > lp THEN 1 ELSE 0 END) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM w0) ";
             assertMatchesSerial(counted + "SELECT s, count() c, sum(size) z FROM w1");
