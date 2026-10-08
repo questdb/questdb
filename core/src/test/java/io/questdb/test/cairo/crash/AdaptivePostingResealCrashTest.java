@@ -64,6 +64,8 @@ import java.util.stream.Stream;
 public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
     private static final long DAY = 86_400_000_000L;
     private static final long DAY1 = 1_704_067_200_000_000L; // 2024-01-01T00:00:00Z
+    // No periodic save point inside a test.
+    private static final long EPOCH_INTERVAL_MS = 1_000_000_000L;
     private static final String EPOCH_METRIC = "questdb_wal_adaptive_epoch_advances_total";
     private static final long HOUR = 3_600_000_000L;
     private static final int PASSES = 4;
@@ -72,6 +74,7 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
     // The sealed posting files of the covering column s and the plain column k of the three-day table.
     private static final Pattern SEALED_FILE_S_K = Pattern.compile("[sk]\\.(pv|pc\\d+)\\..*");
     private static final int SYMBOLS = 4;
+    private int modeSwitches;
 
     @Test
     public void testCrashBeforeNextSavePointRecoversFromLastSavePoint() throws Exception {
@@ -209,7 +212,7 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                     {"sync", "sync"},
                     {"nosync", "adaptive"}
             }) {
-                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+                setCommitMode("adaptive");
                 final String name = modes[0] + ", then " + modes[1];
                 final String table = "t_" + modes[0] + "_" + modes[1];
                 execute("CREATE TABLE " + table + " (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (v), v LONG) "
@@ -235,10 +238,10 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                 }
                 kill(token);
                 // Recovery follows the table's enrolment, not the instance mode, so the mode can change after it.
-                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, modes[0]);
+                setCommitMode(modes[0]);
                 for (int start = 1; start <= 2; start++) {
                     if (start == 2) {
-                        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, modes[1]);
+                        setCommitMode(modes[1]);
                         kill(token);
                         // Only the control stays adaptive through the first start, so only it is pinned again.
                         final boolean control = "adaptive".equals(modes[0]);
@@ -300,7 +303,7 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                     insertAndApply("t", row(DAY1 + DAY + 12 * HOUR, 6), job);
                 }
             }
-            node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setCommitMode("nosync");
             kill(token);
             try (PostingSealPurgeJob ignore = new PostingSealPurgeJob(engine)) {
                 assertSavePointRowsThroughIndex();
@@ -480,7 +483,7 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
 
     private static void setUpAdaptive() {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1_000_000_000L);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, EPOCH_INTERVAL_MS);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, Long.MAX_VALUE);
         // A crash takes no save point at writer close.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
@@ -807,5 +810,16 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         } finally {
             node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, Long.MAX_VALUE);
         }
+    }
+
+    // Switches the instance mode and checks that the configuration reports it. The test harness drops a pending
+    // configuration change when a property is set again to the value it already has, so the epoch interval, set last,
+    // takes a value no earlier switch of the test used.
+    private void setCommitMode(String mode) {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
+        final long epochIntervalMs = EPOCH_INTERVAL_MS + ++modeSwitches;
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, epochIntervalMs);
+        Assert.assertEquals(mode, CommitMode.toString(engine.getConfiguration().getCommitMode()));
+        Assert.assertEquals(epochIntervalMs, engine.getConfiguration().getAdaptiveEpochIntervalMs());
     }
 }
