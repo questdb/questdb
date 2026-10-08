@@ -801,7 +801,7 @@ public final class TableUtils {
                 columnVersion,
                 truncateVersion
         );
-        txMem.setTruncateSize(TX_BASE_HEADER_SIZE + TX_RECORD_HEADER_SIZE);
+        txMem.setTruncateSize(TX_BASE_HEADER_SIZE + calculateTxRecordSize(symbolMapCount * Long.BYTES, 0));
     }
 
     public static LPSZ dFile(Path path, @NotNull CharSequence columnName, long columnTxn) {
