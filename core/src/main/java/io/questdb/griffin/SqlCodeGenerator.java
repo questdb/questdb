@@ -246,6 +246,7 @@ import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinMemoizedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsyncAsOfJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.ChainedSymbolShortCircuit;
@@ -532,6 +533,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> sumConstructors = new IntObjHashMap<>();
     public static boolean ALLOW_FUNCTION_MEMOIZATION = true;
     private final ArrayColumnTypes arrayColumnTypes = new ArrayColumnTypes();
+    // the plan-time row estimates of the ASOF JOIN being compiled, each read once
+    private final AsOfJoinRowEstimates asOfJoinRowEstimates = new AsOfJoinRowEstimates();
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final CairoConfiguration configuration;
     private final boolean enableJitDebug;
@@ -778,6 +781,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             whereClauseParsers.remove(MAX_RETAINED_WHERE_CLAUSE_PARSERS, whereClauseParsers.size() - 1);
         }
         whereClauseParserDepth = 0;
+        // drop the references to the factories of the last ASOF JOIN compiled
+        asOfJoinRowEstimates.of(null, null, null);
         groupByBaseModel = null;
         symbolEstimator.clear();
         intListPool.clear();
@@ -6883,6 +6888,271 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return unionAllFactory;
     }
 
+    // The #7423 auto-select of a single-symbol keyed ASOF JOIN: a reason string when the master is
+    // confidently small relative to the slave (Indexed when the slave symbol is indexed, else
+    // Memoized), null otherwise.
+    // The choice is made from the row counts when the query compiles. A cached
+    // factory keeps it until it is compiled again, so a master that has grown
+    // since (e.g. a "today" interval compiled just after midnight) stays on the
+    // algorithm picked for its old size. The rows are the same either way.
+    private @Nullable String asOfAutoSmallMasterReason(
+            IQueryModel model,
+            RecordMetadata slaveMetadata,
+            int slaveSymbolColumnIndex
+    ) {
+        if (!configuration.isSqlAsOfAutoAlgoEnabled()) {
+            return null;
+        }
+        final long masterLimit = masterLimitOrMinus1(model.getJoinModels().getQuick(0));
+        final boolean isSlaveIndexed = slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex);
+        final long slaveN;
+        final long effMaster;
+        final int bp;
+        if (isSlaveIndexed) {
+            // a slave written as a subquery is a projection over its table
+            slaveN = asOfJoinRowEstimates.getSlaveRows();
+            // The index path costs one lookup per master row, so it is sized by the
+            // rows the master returns: the rows its intervals select, not its table.
+            effMaster = capByLimit(asOfJoinRowEstimates.getMasterRows(), masterLimit);
+            bp = IndexType.isPosting(slaveMetadata.getColumnIndexType(slaveSymbolColumnIndex))
+                    ? configuration.getSqlAsOfIndexPostingMaxMasterBp()
+                    : configuration.getSqlAsOfIndexMaxMasterBp();
+        } else {
+            // Memoized keeps the estimates it had (whole tables, no projections): its cost
+            // depends on how far back each key's predecessor lies, not on the master row
+            // count alone, and a time-sliced or symbol-filtered master is where it loses
+            // to Dense.
+            slaveN = asOfJoinRowEstimates.getSlaveTableRows();
+            effMaster = capByLimit(asOfJoinRowEstimates.getMasterTableRows(), masterLimit);
+            bp = configuration.getSqlAsOfIndexMaxMasterBp();
+        }
+        if (slaveN > 0 && effMaster >= 0 && effMaster * 10000L <= slaveN * (long) bp) {
+            return "auto:master~" + effMaster + " slave~" + slaveN + " bp<=" + bp;
+        }
+        return null;
+    }
+
+    // The automatic choice of Async AsOf Join declines a master that is small against the slave:
+    // its per-open setup and per-frame prevailing lookups are not repaid, and the serial plans read
+    // only the slave rows near the master's. Sized by the rows the master's intervals select (an
+    // interval-pruned master over a big table is small) against the slave's rows, with the #7423
+    // threshold of the unindexed slave; filtered slaves included (the slave's table rows bound it).
+    private boolean isParallelAsOfMasterSmall(IQueryModel model) {
+        final long masterLimit = masterLimitOrMinus1(model.getJoinModels().getQuick(0));
+        final long effMaster = capByLimit(asOfJoinRowEstimates.getMasterRows(), masterLimit);
+        final long slaveN = asOfJoinRowEstimates.getSlaveRows();
+        return slaveN > 0 && effMaster >= 0 && effMaster * 10000L <= slaveN * (long) configuration.getSqlAsOfIndexMaxMasterBp();
+    }
+
+    // A keyed ASOF JOIN on one SYMBOL column whose master gives page frames (a table scan, possibly
+    // behind a stealable filter) and whose slave gives time frames (a table or a projection of one,
+    // possibly behind a filter on the key column alone) can join the master's page frames in
+    // parallel: Async AsOf Join. Chosen by the asof_parallel hint, or automatically when no other
+    // ASOF hint is given and the serial plan would be the forward-scan Dense default or the
+    // filtered back-scan: the #7423 small-master choice (Indexed / Memoized) is kept.
+    // Returns null, owning nothing, when the join does not qualify. Otherwise the factory owns the
+    // master's and the slave's page-frame factories and the join metadata.
+    private @Nullable RecordCursorFactory generateParallelAsOfJoin(
+            IQueryModel model,
+            RecordCursorFactory master,
+            RecordMetadata masterMetadata,
+            CharSequence masterAlias,
+            RecordCursorFactory slave,
+            RecordMetadata slaveMetadata,
+            CharSequence slaveAlias,
+            JoinRecordMetadata joinMetadata,
+            SymbolShortCircuit symbolShortCircuit,
+            long toleranceInterval,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final boolean hasParallelHint = SqlHints.hasAsOfParallelHint(model, masterAlias, slaveAlias);
+        if (!hasParallelHint && (SqlHints.hasAsOfDenseHint(model, masterAlias, slaveAlias)
+                || SqlHints.hasAsOfFastHint(model, masterAlias, slaveAlias)
+                || SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias)
+                || SqlHints.hasAsOfMemoizedHint(model, masterAlias, slaveAlias)
+                || SqlHints.hasAsOfMemoizedDrivebyHint(model, masterAlias, slaveAlias))) {
+            return null;
+        }
+        if (!configuration.isSqlParallelAsOfJoinEnabled() || !executionContext.isParallelWindowJoinEnabled()) {
+            return null;
+        }
+        if (!isSingleSymbolJoin(symbolShortCircuit, listColumnFilterA)) {
+            return null;
+        }
+        final int masterKeyIndex = listColumnFilterB.getColumnIndexFactored(0);
+        final int slaveKeyIndex = listColumnFilterA.getColumnIndexFactored(0);
+        if (masterMetadata.getColumnType(masterKeyIndex) != ColumnType.SYMBOL
+                || !masterMetadata.isSymbolTableStatic(masterKeyIndex)
+                || slaveMetadata.getColumnType(slaveKeyIndex) != ColumnType.SYMBOL
+                || !slaveMetadata.isSymbolTableStatic(slaveKeyIndex)) {
+            return null;
+        }
+        if (masterMetadata.getTimestampIndex() < 0 || slaveMetadata.getTimestampIndex() < 0
+                || master.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD
+                || slave.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD) {
+            return null;
+        }
+
+        final boolean isMasterSteal = !master.supportsPageFrameCursor()
+                && master.supportsFilterStealing()
+                && master.getFilter() != null
+                && master.getBaseFactory() != null
+                && master.getBaseFactory().supportsPageFrameCursor();
+        if (!master.supportsPageFrameCursor() && !isMasterSteal) {
+            return null;
+        }
+
+        // the factory whose filter on the slave's key column is stolen, null for none; the key
+        // column's index in the metadata that filter reads (the table's, under a projection)
+        RecordCursorFactory slaveFilterFactory = null;
+        int slaveFilterKeyIndex = -1;
+        if (!slave.supportsTimeFrameCursor()) {
+            // a filter on the slave's key column alone becomes a set of keys that cannot join; it
+            // may sit under a projection
+            final RecordCursorFactory candidate = slave.isProjection() ? slave.getBaseFactory() : slave;
+            final int candidateKeyIndex = slave.isProjection() && slave.getColumnCrossIndex() != null
+                    ? slave.getColumnCrossIndex().getQuick(slaveKeyIndex)
+                    : slaveKeyIndex;
+            if (candidate != null
+                    && (candidate == slave || slave.getColumnCrossIndex() != null)
+                    && candidate.supportsFilterStealing()
+                    && candidate.getFilter() != null
+                    && candidate.getBaseFactory() != null
+                    && candidate.getBaseFactory().supportsTimeFrameCursor()) {
+                final ExpressionNode slaveFilterExpr = candidate.getStealFilterExpr();
+                if (slaveFilterExpr != null
+                        && !hasSubQuery(slaveFilterExpr)
+                        && !hasRandomFunction(slaveFilterExpr)
+                        && !candidate.getFilter().isNonDeterministic()
+                        && !candidate.getFilter().isRandom()) {
+                    final IntHashSet slaveFilterColumns = new IntHashSet();
+                    collectColumnIndexes(sqlNodeStack, candidate.getBaseFactory().getMetadata(), slaveFilterExpr, slaveFilterColumns);
+                    if (slaveFilterColumns.size() == 1 && slaveFilterColumns.contains(candidateKeyIndex)) {
+                        slaveFilterFactory = candidate;
+                        slaveFilterKeyIndex = candidateKeyIndex;
+                    }
+                }
+            }
+            if (slaveFilterFactory == null) {
+                return null;
+            }
+        }
+        final boolean isSlaveSteal = slaveFilterFactory != null;
+
+        final String selectReason;
+        if (hasParallelHint) {
+            selectReason = "hint";
+        } else {
+            if (executionContext.getSharedQueryWorkerCount() < 2) {
+                // one worker: the per-frame span setup and prevailing lookups are not repaid
+                return null;
+            }
+            if (!isSlaveSteal && asOfAutoSmallMasterReason(model, slaveMetadata, slaveKeyIndex) != null) {
+                // a confidently small master: the index or memoized scan
+                return null;
+            }
+            if (isParallelAsOfMasterSmall(model)) {
+                // a master small against the slave, by the rows its intervals select, whatever the
+                // slave's filter: the serial plan, which reads only the slave rows near the master's
+                return null;
+            }
+            selectReason = "auto";
+        }
+
+        final int workerCount = executionContext.getSharedQueryWorkerCount();
+        CompiledFilter compiledFilter = null;
+        MemoryCARW bindVarMemory = null;
+        ObjList<Function> bindVarFunctions = null;
+        Function masterFilter = null;
+        IntHashSet masterFilterUsedColumnIndexes = null;
+        ObjList<Function> perWorkerMasterFilters = null;
+        boolean isMasterKeyFilter = false;
+        RecordCursorFactory masterBase = master;
+        RecordCursorFactory slaveBase = slave;
+        final AsyncAsOfJoinRecordCursorFactory factory;
+        try {
+            // Everything that can fail runs before the filters change hands: until adoptFilters(),
+            // the filter factories own their filters and their bases, and the caller frees them on
+            // a failure. halfClose() releases only the filter factories' own frame machinery, and
+            // repeating it when the caller closes them is idempotent.
+            if (isMasterSteal) {
+                compiledFilter = master.getCompiledFilter();
+                bindVarMemory = master.getBindVarMemory();
+                bindVarFunctions = master.getBindVarFunctions();
+                masterFilter = master.getFilter();
+                final ExpressionNode masterFilterExpr = master.getStealFilterExpr();
+                masterBase = master.getBaseFactory();
+                masterFilterUsedColumnIndexes = new IntHashSet();
+                collectColumnIndexes(sqlNodeStack, masterBase.getMetadata(), masterFilterExpr, masterFilterUsedColumnIndexes);
+                // a deterministic filter on the master's key alone also tells which keys can join
+                isMasterKeyFilter = masterFilterUsedColumnIndexes.size() == 1
+                        && masterFilterUsedColumnIndexes.contains(masterKeyIndex)
+                        && !hasSubQuery(masterFilterExpr)
+                        && !hasRandomFunction(masterFilterExpr)
+                        && !masterFilter.isNonDeterministic()
+                        && !masterFilter.isRandom();
+                perWorkerMasterFilters = compileWorkerFiltersConditionally(
+                        executionContext,
+                        masterFilter,
+                        workerCount,
+                        masterFilterExpr,
+                        masterBase.getMetadata()
+                );
+                master.halfClose();
+            }
+            if (isSlaveSteal) {
+                // the slave's rows, without the filter: the filter's base, under the projection if any
+                slaveBase = slaveFilterFactory == slave
+                        ? slave.getBaseFactory()
+                        : new SelectedRecordCursorFactory(slave.getMetadata(), slave.getColumnCrossIndex(), slaveFilterFactory.getBaseFactory());
+                slaveFilterFactory.halfClose();
+            }
+            // the join's tasks are heavy: smaller master page frames spread them over the workers
+            masterBase.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
+            factory = new AsyncAsOfJoinRecordCursorFactory(
+                    executionContext.getCairoEngine(),
+                    configuration,
+                    executionContext.getMessageBus(),
+                    joinMetadata,
+                    masterBase,
+                    slaveBase,
+                    masterKeyIndex,
+                    slaveKeyIndex,
+                    toleranceInterval,
+                    masterFilter != null,
+                    reduceTaskFactory,
+                    workerCount,
+                    selectReason
+            );
+        } catch (Throwable th) {
+            Misc.freeObjList(perWorkerMasterFilters, th);
+            Misc.free(symbolShortCircuit, th);
+            throw th;
+        }
+        // nothing below can fail
+        Function slaveKeyFilter = null;
+        if (isSlaveSteal) {
+            slaveKeyFilter = slaveFilterFactory.getFilter();
+            // runs once per slave key, through the Java filter: the compiled form is not used
+            Misc.free(slaveFilterFactory.getCompiledFilter());
+            Misc.free(slaveFilterFactory.getBindVarMemory());
+            Misc.freeObjList(slaveFilterFactory.getBindVarFunctions());
+        }
+        factory.adoptFilters(
+                compiledFilter,
+                bindVarMemory,
+                bindVarFunctions,
+                masterFilter,
+                perWorkerMasterFilters,
+                masterFilterUsedColumnIndexes,
+                isMasterKeyFilter,
+                slaveKeyFilter,
+                slaveFilterKeyIndex
+        );
+        Misc.free(symbolShortCircuit);
+        return factory;
+    }
+
     private RecordCursorFactory generateJoinAsof(
             final boolean isSelfJoin,
             final IQueryModel model,
@@ -6920,6 +7190,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int joinColumnSplit = masterMetadata.getColumnCount();
                 JoinContext slaveContext = slaveModel.getJoinContext();
                 if (!hasLinearHint) {
+                    asOfJoinRowEstimates.of(master, slave, executionContext);
+                    final RecordCursorFactory parallelJoin = generateParallelAsOfJoin(
+                            model,
+                            master,
+                            masterMetadata,
+                            masterAlias,
+                            slave,
+                            slaveMetadata,
+                            slaveAlias,
+                            joinMetadata,
+                            symbolShortCircuit,
+                            toleranceInterval,
+                            executionContext
+                    );
+                    if (parallelJoin != null) {
+                        return parallelJoin;
+                    }
                     if (slave.supportsTimeFrameCursor()) {
                         boolean isSingleSymbolJoin = isSingleSymbolJoin(symbolShortCircuit, listColumnFilterA);
                         boolean hasDenseHint = SqlHints.hasAsOfDenseHint(model, masterAlias, slaveModel.getName());
@@ -7019,50 +7306,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // indexed (O(master lookups) vs Dense O(slave scan)), otherwise memoized (fast on
                             // sparse/illiquid symbols, dense-ts-cliff guarded). Unknown estimate -> fall
                             // through to Dense (do no harm).
-                            // The choice is made from the row counts when the query compiles. A cached
-                            // factory keeps it until it is compiled again, so a master that has grown
-                            // since (e.g. a "today" interval compiled just after midnight) stays on the
-                            // algorithm picked for its old size. The rows are the same either way.
-                            if (configuration.isSqlAsOfAutoAlgoEnabled()) {
-                                final long masterLimit = masterLimitOrMinus1(model.getJoinModels().getQuick(0));
-                                final boolean isSlaveIndexed = slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex);
-                                final long slaveN;
-                                final long effMaster;
-                                final int bp;
-                                if (isSlaveIndexed) {
-                                    // a slave written as a subquery is a projection over its table
-                                    slaveN = estimateRowCount(slave, executionContext);
-                                    // The index path costs one lookup per master row, so it is sized by the
-                                    // rows the master returns: the rows its intervals select, not its table.
-                                    effMaster = capByLimit(estimateRowCount(master, executionContext), masterLimit);
-                                    bp = IndexType.isPosting(slaveMetadata.getColumnIndexType(slaveSymbolColumnIndex))
-                                            ? configuration.getSqlAsOfIndexPostingMaxMasterBp()
-                                            : configuration.getSqlAsOfIndexMaxMasterBp();
-                                } else {
-                                    // Memoized keeps the estimates it had (whole tables, no projections): its cost
-                                    // depends on how far back each key's predecessor lies, not on the master row
-                                    // count alone, and a time-sliced or symbol-filtered master is where it loses
-                                    // to Dense.
-                                    slaveN = estimateBaseRowCount(slave, executionContext);
-                                    effMaster = capByLimit(estimateBaseRowCount(master, executionContext), masterLimit);
-                                    bp = configuration.getSqlAsOfIndexMaxMasterBp();
-                                }
-                                if (slaveN > 0 && effMaster >= 0 && effMaster * 10000L <= slaveN * (long) bp) {
-                                    if (isSlaveIndexed) {
-                                        return new AsOfJoinIndexedRecordCursorFactory(
-                                                configuration,
-                                                joinMetadata,
-                                                master,
-                                                slave,
-                                                joinColumnSplit,
-                                                slaveSymbolColumnIndex,
-                                                symbolJoinKeyMapping,
-                                                slaveContext,
-                                                toleranceInterval,
-                                                "auto:master~" + effMaster + " slave~" + slaveN + " bp<=" + bp
-                                        );
-                                    }
-                                    return new AsOfJoinMemoizedRecordCursorFactory(
+                            final String autoSmallMaster = asOfAutoSmallMasterReason(model, slaveMetadata, slaveSymbolColumnIndex);
+                            if (autoSmallMaster != null) {
+                                if (slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex)) {
+                                    return new AsOfJoinIndexedRecordCursorFactory(
                                             configuration,
                                             joinMetadata,
                                             master,
@@ -7072,9 +7319,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             symbolJoinKeyMapping,
                                             slaveContext,
                                             toleranceInterval,
-                                            false
+                                            autoSmallMaster
                                     );
                                 }
+                                return new AsOfJoinMemoizedRecordCursorFactory(
+                                        configuration,
+                                        joinMetadata,
+                                        master,
+                                        slave,
+                                        joinColumnSplit,
+                                        slaveSymbolColumnIndex,
+                                        symbolJoinKeyMapping,
+                                        slaveContext,
+                                        toleranceInterval,
+                                        false
+                                );
                             }
                             // Default single-symbol ASOF: forward-scan DenseSingleSymbol. Resilient to
                             // symbol cardinality and timestamp density (O(n), no per-master back-scan cliff).
@@ -19019,6 +19278,62 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     @FunctionalInterface
     interface ModelOperator {
         void operate(ObjectPool<ExpressionNode> pool, IQueryModel model);
+    }
+
+    /**
+     * The plan-time row estimates of an ASOF JOIN's two sides (see {@link #estimateRowCount} and
+     * {@link #estimateBaseRowCount}), each computed on first use and kept for the join being
+     * compiled: the parallel choice and the serial #7423 choice read the same estimates, which
+     * open table readers to count rows.
+     */
+    private class AsOfJoinRowEstimates {
+        private static final long UNKNOWN = Long.MIN_VALUE;
+        private SqlExecutionContext executionContext;
+        private RecordCursorFactory master;
+        private long masterRows;
+        private long masterTableRows;
+        private RecordCursorFactory slave;
+        private long slaveRows;
+        private long slaveTableRows;
+
+        // the rows the master returns: the rows its intervals select, else its table's
+        long getMasterRows() {
+            if (masterRows == UNKNOWN) {
+                masterRows = estimateRowCount(master, executionContext);
+            }
+            return masterRows;
+        }
+
+        long getMasterTableRows() {
+            if (masterTableRows == UNKNOWN) {
+                masterTableRows = estimateBaseRowCount(master, executionContext);
+            }
+            return masterTableRows;
+        }
+
+        long getSlaveRows() {
+            if (slaveRows == UNKNOWN) {
+                slaveRows = estimateRowCount(slave, executionContext);
+            }
+            return slaveRows;
+        }
+
+        long getSlaveTableRows() {
+            if (slaveTableRows == UNKNOWN) {
+                slaveTableRows = estimateBaseRowCount(slave, executionContext);
+            }
+            return slaveTableRows;
+        }
+
+        void of(RecordCursorFactory master, RecordCursorFactory slave, SqlExecutionContext executionContext) {
+            this.master = master;
+            this.slave = slave;
+            this.executionContext = executionContext;
+            masterRows = UNKNOWN;
+            masterTableRows = UNKNOWN;
+            slaveRows = UNKNOWN;
+            slaveTableRows = UNKNOWN;
+        }
     }
 
     /**

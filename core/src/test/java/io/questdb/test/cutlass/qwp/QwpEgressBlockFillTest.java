@@ -127,6 +127,29 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testAsyncAsOfJoin() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = start(asOfEnv())) {
+                serverMain.execute("create table q as (select timestamp_sequence(120000000, 1000000) ts, rnd_symbol(40, 1, 3, 5) sym, " +
+                        "rnd_symbol('A', 'B', null) ex, case when x % 13 = 0 then null else x * 1.5 end bid, x::int sz, " +
+                        "rnd_varchar('p', 'q', null) v, (x % 7 = 0) ok from long_sequence(30000)) timestamp(ts) partition by hour BYPASS WAL");
+                serverMain.execute("create table t as (select timestamp_sequence(0, 3700000) ts, rnd_symbol(50, 1, 3, 5) sym, " +
+                        "x px from long_sequence(9000)) timestamp(ts) partition by hour BYPASS WAL");
+                final String all = "select /*+ asof_parallel(t q) */ t.ts, t.sym, t.px, q.ts qts, q.sym qsym, q.ex, q.bid, q.sz, q.v, q.ok " +
+                        "from t asof join q on (sym)";
+                final String filtered = "select /*+ asof_parallel(t q) */ t.ts, t.px, q.bid, q.ex, q.sym from t asof join q on (sym) where t.px % 3 = 0";
+                final String tolerance = "select /*+ asof_parallel(t q) */ t.sym, q.bid, q.ok from t asof join q on (sym) tolerance 5s";
+                for (String sql : new String[]{all, filtered, tolerance}) {
+                    assertPlanContains(serverMain, sql, "Async AsOf Join");
+                }
+                final String[] sqls = {all, filtered, tolerance, all + " limit 5, 700"};
+                assertBlockFillMatchesRowFill(sqls, "?qwp_max_batch_rows=99", 0, -1);
+                assertBlockFillMatchesRowFill(sqls, "", 0, -1);
+            }
+        });
+    }
+
+    @Test
     public void testAsyncFilter() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = start(filterEnv())) {
@@ -613,6 +636,16 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
     private static String describe(List<byte[]> frames, int index) {
         final byte[] f = frames.get(index);
         return "frame " + index + " of " + frames.size() + ", kind 0x" + Integer.toHexString(f[QwpConstants.HEADER_SIZE] & 0xFF) + ", " + f.length + " bytes";
+    }
+
+    private static String[] asOfEnv() {
+        return new String[]{
+                PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS.getEnvVarName(), "1000",
+                PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS.getEnvVarName(), "64",
+                PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS.getEnvVarName(), "500",
+                PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS.getEnvVarName(), "64",
+                PropertyKey.SHARED_QUERY_WORKER_COUNT.getEnvVarName(), "2",
+        };
     }
 
     private static String[] filterEnv() {
