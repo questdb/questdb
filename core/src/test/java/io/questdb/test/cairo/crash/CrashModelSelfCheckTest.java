@@ -332,6 +332,105 @@ public class CrashModelSelfCheckTest extends AbstractTest {
         }
     }
 
+    /**
+     * Test 11 — a ranged sync persists its range only.
+     * Page 0 of A is written through its own mapping and released with msync(MS_ASYNC) + munmap, as a paged
+     * WAL column releases a page. Page 1 is written through a second mapping and msync(MS_SYNC)'d, which on
+     * Linux is a RANGE fsync: it writes back the dirty pages of that range only. After a crash page 1
+     * survives and page 0 must not. A model that snapshots the whole file on a ranged sync is too lenient:
+     * it would keep page 0 and hide a missing flush of every page released before the commit.
+     */
+    @Test
+    public void test11_rangedMsyncPersistsItsRangeOnly() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        ff.modelSharedJournal = false;
+        final String dir = temp.newFolder("model11").getAbsolutePath();
+        try (Path a = new Path().of(dir).concat("a.d")) {
+            final long fd = writeTwoPagesReleasingFirst(ff, a);
+            final long page1 = ff.mmap(fd, Files.PAGE_SIZE, Files.PAGE_SIZE, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+            ff.msync(page1, Files.PAGE_SIZE, false); // MS_SYNC of page 1 only
+            ff.munmap(page1, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
+            ff.close(fd);
+            ff.crash(dir);
+            final byte[] got = readBack(ff, a, 2 * (int) Files.PAGE_SIZE);
+            assertPage("test11: the MS_SYNC'd page 1 must survive", got, 1, true);
+            assertPage("test11: page 0, released with MS_ASYNC and never synced, must be lost", got, 0, false);
+        }
+    }
+
+    /**
+     * Test 12 — sync_file_range persists its range only (with a journal commit after it).
+     * Same two pages; page 1 gets msync(MS_ASYNC) + sync_file_range over its own range, and a shared-journal
+     * fdatasync of another file journals the extent. Page 1 survives; page 0, never written back, must not.
+     */
+    @Test
+    public void test12_rangedSyncFileRangePersistsItsRangeOnly() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String dir = temp.newFolder("model12").getAbsolutePath();
+        try (Path a = new Path().of(dir).concat("a.d"); Path b = new Path().of(dir).concat("b.d")) {
+            final long fd = writeTwoPagesReleasingFirst(ff, a);
+            final long page1 = ff.mmap(fd, Files.PAGE_SIZE, Files.PAGE_SIZE, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+            ff.msync(page1, Files.PAGE_SIZE, true);
+            ff.syncFileRange(fd, Files.PAGE_SIZE, Files.PAGE_SIZE, Files.SYNC_FILE_RANGE_WRITE | Files.SYNC_FILE_RANGE_WAIT_AFTER);
+            ff.munmap(page1, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
+            final Mapped mb = mapAndFill(ff, b, PRIOR);
+            ff.fdatasync(mb.fd); // shared journal: journals A's drained extent too
+            unmapAndClose(ff, mb);
+            ff.close(fd);
+            ff.crash(dir);
+            final byte[] got = readBack(ff, a, 2 * (int) Files.PAGE_SIZE);
+            assertPage("test12: the drained page 1 must survive", got, 1, true);
+            assertPage("test12: page 0, released with MS_ASYNC and never written back, must be lost", got, 0, false);
+        }
+    }
+
+    /**
+     * Test 13 — fdatasync persists pages released before it.
+     * Same two pages, page 1 left with msync(MS_ASYNC), then fdatasync(A): it writes back every dirty page of
+     * the file, mapped or already unmapped, so both pages survive. This is the WAL commit barrier covering
+     * the pages released during the transaction; a model failing it is too strict.
+     */
+    @Test
+    public void test13_fdatasyncPersistsReleasedPages() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        ff.modelSharedJournal = false;
+        final String dir = temp.newFolder("model13").getAbsolutePath();
+        try (Path a = new Path().of(dir).concat("a.d")) {
+            final long fd = writeTwoPagesReleasingFirst(ff, a);
+            final long page1 = ff.mmap(fd, Files.PAGE_SIZE, Files.PAGE_SIZE, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+            ff.msync(page1, Files.PAGE_SIZE, true);
+            ff.fdatasync(fd);
+            ff.munmap(page1, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
+            ff.close(fd);
+            ff.crash(dir);
+            final byte[] got = readBack(ff, a, 2 * (int) Files.PAGE_SIZE);
+            assertPage("test13: page 0 must survive the file's fdatasync", got, 0, true);
+            assertPage("test13: page 1 must survive the file's fdatasync", got, 1, true);
+        }
+    }
+
+    /**
+     * Test 14 — fsync persists a store made through a mapping that was never msync'd.
+     * A is written through a mapping and unmapped with no msync (as a null backfill writes a column through
+     * its own mapping), then fsync(A). fsync writes back every dirty page of the file, so A survives. A model
+     * that only counts msync'd or write()-n bytes as written is too strict: it drops A and blames a later,
+     * unrelated flush for making it durable.
+     */
+    @Test
+    public void test14_fsyncPersistsUnsyncedMappedStore() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        ff.modelSharedJournal = false;
+        final String dir = temp.newFolder("model14").getAbsolutePath();
+        try (Path a = new Path().of(dir).concat("a.d")) {
+            final Mapped ma = mapAndFill(ff, a, NEW);
+            ff.munmap(ma.addr, SIZE, MemoryTag.MMAP_DEFAULT); // deliberately no msync
+            ff.fsync(ma.fd);
+            ff.close(ma.fd);
+            ff.crash(dir);
+            assertAllBytes("test14: fsync must persist a store made through an unsynced mapping", ff, a, NEW);
+        }
+    }
+
     // === helpers ===
 
     private static final class Mapped {
@@ -391,21 +490,60 @@ public class CrashModelSelfCheckTest extends AbstractTest {
         Assert.assertFalse(msg + " (file unexpectedly still holds the under-test bytes)", allEqual);
     }
 
+    /**
+     * Assert that OS page {@code page} of {@code got} holds only {@code NEW} ({@code present}), or not only it.
+     */
+    private static void assertPage(String msg, byte[] got, int page, boolean present) {
+        boolean allNew = true;
+        for (int i = page * (int) Files.PAGE_SIZE, n = i + (int) Files.PAGE_SIZE; i < n; i++) {
+            if (got[i] != NEW) {
+                allNew = false;
+                break;
+            }
+        }
+        Assert.assertEquals(msg, present, allNew);
+    }
+
     private static byte[] readBack(CrashFaultFilesFacade ff, Path path) {
+        return readBack(ff, path, SIZE);
+    }
+
+    private static byte[] readBack(CrashFaultFilesFacade ff, Path path, int size) {
         long rd = ff.openRO(path.$());
         Assert.assertTrue("reopen RO failed, fd=" + rd, rd > 0);
-        long buf = Unsafe.malloc(SIZE, MemoryTag.NATIVE_DEFAULT);
+        long buf = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            long n = ff.read(rd, buf, SIZE, 0);
-            byte[] out = new byte[SIZE];
-            for (int i = 0; i < SIZE; i++) {
-                // bytes past EOF (file rolled back shorter than SIZE) read as 0 -> treated as "not the marker".
+            long n = ff.read(rd, buf, size, 0);
+            byte[] out = new byte[size];
+            for (int i = 0; i < size; i++) {
+                // bytes past EOF (file rolled back shorter than size) read as 0 -> treated as "not the marker".
                 out[i] = i < n ? Unsafe.getUnsafe().getByte(buf + i) : 0;
             }
             return out;
         } finally {
-            Unsafe.free(buf, SIZE, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(buf, size, MemoryTag.NATIVE_DEFAULT);
             ff.close(rd);
         }
+    }
+
+    /**
+     * Open A, reserve two OS pages, write page 0 through its own mapping and release it as a paged WAL column
+     * does (msync(MS_ASYNC), then munmap), then write page 1 through a second mapping and unmap it unsynced.
+     * Returns the open fd; the caller maps page 1 again to sync it.
+     */
+    private static long writeTwoPagesReleasingFirst(CrashFaultFilesFacade ff, Path path) {
+        final long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+        Assert.assertTrue("openRW failed, fd=" + fd, fd > 0);
+        Assert.assertTrue("allocate failed", ff.allocate(fd, 2 * Files.PAGE_SIZE));
+        final long page0 = ff.mmap(fd, Files.PAGE_SIZE, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+        Assert.assertNotEquals("mmap failed", -1L, page0);
+        Unsafe.getUnsafe().setMemory(page0, Files.PAGE_SIZE, NEW);
+        ff.msync(page0, Files.PAGE_SIZE, true);
+        ff.munmap(page0, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
+        final long page1 = ff.mmap(fd, Files.PAGE_SIZE, Files.PAGE_SIZE, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+        Assert.assertNotEquals("mmap failed", -1L, page1);
+        Unsafe.getUnsafe().setMemory(page1, Files.PAGE_SIZE, NEW);
+        ff.munmap(page1, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
+        return fd;
     }
 }
