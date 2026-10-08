@@ -935,7 +935,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     srcTimestampSize = srcDataMax * 8L;
                     // negative fd indicates descriptor reuse
                     srcTimestampFd = -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
-                    srcTimestampAddr = mapRWToPage(ff, -srcTimestampFd, srcTimestampSize, MemoryTag.MMAP_O3);
+                    srcTimestampAddr = mapRW(ff, -srcTimestampFd, srcTimestampSize, MemoryTag.MMAP_O3);
                 } else {
                     srcTimestampSize = srcDataMax * 8L;
                     // out of order data is going into archive partition
@@ -953,7 +953,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // also track the fd that we need to eventually close
                     // Open src timestamp column as RW in case append happens
                     srcTimestampFd = openRW(ff, dFile(path, metadata.getColumnName(timestampIndex), COLUMN_NAME_TXN_NONE), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-                    srcTimestampAddr = mapRWToPage(ff, srcTimestampFd, srcTimestampSize, MemoryTag.MMAP_O3);
+                    srcTimestampAddr = mapRW(ff, srcTimestampFd, srcTimestampSize, MemoryTag.MMAP_O3);
                     dataTimestampHi = Unsafe.getLong(srcTimestampAddr + srcTimestampSize - Long.BYTES);
                 }
                 dataTimestampLo = Unsafe.getLong(srcTimestampAddr);

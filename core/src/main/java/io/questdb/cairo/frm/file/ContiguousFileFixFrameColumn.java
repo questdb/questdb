@@ -83,7 +83,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             if (sourceHi > 0) {
                 long sourceFd = sourceColumn.getPrimaryFd();
                 long size = (sourceHi - sourceLo) << shl;
-                TableUtils.allocateDiskSpaceToPage(ff, fd, (appendOffsetRowCount << shl) + size);
+                TableUtils.allocateDiskSpace(ff, fd, (appendOffsetRowCount << shl) + size);
                 if (mixedIOFlag) {
                     if (ff.copyData(sourceFd, fd, sourceLo << shl, appendOffsetRowCount << shl, size) != size) {
                         throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(fd)
@@ -132,7 +132,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         assert sourceColumnTop >= 0;
 
         if (sourceColumnTop > 0) {
-            TableUtils.allocateDiskSpaceToPage(ff, fd, (rowCount + sourceColumnTop) << shl);
+            TableUtils.allocateDiskSpace(ff, fd, (rowCount + sourceColumnTop) << shl);
             long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, rowCount << shl, sourceColumnTop << shl, true, MEMORY_TAG);
             try {
                 TableUtils.setNull(columnType, mappedAddress, sourceColumnTop);

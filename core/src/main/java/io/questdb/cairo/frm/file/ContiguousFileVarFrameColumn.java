@@ -109,7 +109,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                 long srcDataSize = columnTypeDriver.getDataVectorSize(srcAuxMemAddr, sourceLo, sourceHi - 1);
                 if (srcDataSize > 0) {
                     assert srcDataSize < 1L << 40;
-                    TableUtils.allocateDiskSpaceToPage(ff, dataFd, targetDataOffset + srcDataSize);
+                    TableUtils.allocateDiskSpace(ff, dataFd, targetDataOffset + srcDataSize);
                     if (mixedIOFlag) {
                         if (ff.copyData(sourceColumn.getPrimaryFd(), dataFd, srcDataOffset, targetDataOffset, srcDataSize) != srcDataSize) {
                             throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(dataFd)
@@ -149,7 +149,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                 }
 
                 final long dstAuxOffset = columnTypeDriver.getAuxVectorOffset(appendOffsetRowCount);
-                TableUtils.allocateDiskSpaceToPage(ff, auxFd, dstAuxOffset + srcAuxMemSize);
+                TableUtils.allocateDiskSpace(ff, auxFd, dstAuxOffset + srcAuxMemSize);
                 final long dstAuxAddr = TableUtils.mapAppendColumnBuffer(ff, auxFd, dstAuxOffset, srcAuxMemSize, true, MEMORY_TAG);
                 try {
                     columnTypeDriver.shiftCopyAuxVector(
@@ -191,7 +191,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             long targetDataOffset = getDataAppendOffsetBytes(rowCount);
             long srcDataSize = sourceColumnTop * columnTypeDriver.getDataVectorMinEntrySize();
             if (srcDataSize > 0) {
-                TableUtils.allocateDiskSpaceToPage(ff, dataFd, targetDataOffset + srcDataSize);
+                TableUtils.allocateDiskSpace(ff, dataFd, targetDataOffset + srcDataSize);
 
                 // Set nulls in variable file
                 long targetDataMemAddr = TableUtils.mapAppendColumnBuffer(ff, dataFd, targetDataOffset, srcDataSize, true, MEMORY_TAG);
@@ -213,7 +213,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             // Set pointers to nulls
             long srcAuxSize = columnTypeDriver.getAuxVectorSize(sourceColumnTop);
             long dstAuxOffset = columnTypeDriver.getAuxVectorSize(rowCount);
-            TableUtils.allocateDiskSpaceToPage(ff, auxFd, dstAuxOffset + srcAuxSize);
+            TableUtils.allocateDiskSpace(ff, auxFd, dstAuxOffset + srcAuxSize);
             long targetAuxMemAddr = TableUtils.mapAppendColumnBuffer(ff, auxFd, dstAuxOffset, srcAuxSize, true, MEMORY_TAG);
             try {
                 // We need to write pointer to nulls in aux vector.

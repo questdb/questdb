@@ -1795,8 +1795,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             Assert.assertNotEquals("destination column file was never opened for write", -1, dstFd.get());
             Assert.assertTrue("destination column data file was never mapped read-write", dstMappedForWrite.get());
             Assert.assertEquals(
-                    "ff.allocate() must reserve the exact destination byte size before mapping",
-                    2L * Long.BYTES,
+                    "ff.allocate() must reserve the destination byte size, rounded up to a page, before mapping",
+                    Files.ceilPageSize(2L * Long.BYTES),
                     allocatedSizeForDst.get()
             );
             Assert.assertFalse(
