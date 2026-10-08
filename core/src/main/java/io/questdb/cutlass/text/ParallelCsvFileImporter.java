@@ -895,10 +895,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                 types.setQuick(i, BadTimestampAdapter.INSTANCE);
                             }
                         }
-                        case BINARY -> throw TextException.$("cannot import text into BINARY column [index=").put(i).put(']');
-                        case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, FLOAT, DOUBLE, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT,
-                             GEOLONG, UUID, LONG128, IPV4, VARCHAR, ARRAY, INTERVAL, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
-                             DECIMAL128, DECIMAL256 ->
+                        case BINARY ->
+                                throw TextException.$("cannot import text into BINARY column [index=").put(i).put(']');
+                        case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, FLOAT, DOUBLE, STRING, SYMBOL, LONG256, GEOBYTE,
+                             GEOSHORT, GEOINT, GEOLONG, UUID, LONG128, IPV4, VARCHAR, ARRAY, INTERVAL, DECIMAL8,
+                             DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 ->
                                 types.setQuick(i, typeManager.getTypeAdapter(columnType));
                         // a type without a wire kind gets no adapter: getTypeAdapter() refuses it
                         case null -> types.setQuick(i, typeManager.getTypeAdapter(columnType));
