@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.join;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -418,6 +419,61 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMemoryLimitInsideFrameFallsBackToSerialJoin() throws Exception {
+        // The parallel way's key arrays fit the limit, the workers' per-key state (60k joinable keys,
+        // 1.4 MB per slot) does not all fit: a worker that the tracker refuses leaves its frame to the
+        // query's thread, which joins the rest serially. The rows must be those without a limit.
+        AsyncAsOfJoinAtom.KEYS_MODE = AsyncAsOfJoinAtom.KEYS_PARALLEL;
+        AsyncAsOfJoinRecordCursorFactory.WALK_MODE = AsyncAsOfJoinRecordCursorFactory.WALK_NEVER;
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 10_000);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, ctx) -> {
+                        engine.execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL CAPACITY 131072, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        engine.execute("INSERT INTO quotes SELECT '2024-01-01'::timestamp + x * 100_000L, 's' || (x % 60000), x FROM long_sequence(600000)", ctx);
+                        engine.execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL CAPACITY 131072, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        engine.execute("INSERT INTO trades SELECT '2024-01-01'::timestamp + x * 200_000L + 7, 's' || ((x * 37) % 60000), x FROM long_sequence(300000)", ctx);
+                        final String body = " t.ts, t.sym, q.bid, q.ts qts FROM trades t ASOF JOIN quotes q ON (sym)";
+                        final String parallel = "SELECT /*+ asof_parallel(t q) */" + body;
+                        final StringSink expected = new StringSink();
+                        TestUtils.printSql(engine, ctx, "SELECT /*+ asof_linear(t q) */" + body, expected);
+                        final StringSink actual = new StringSink();
+                        boolean switchSeen = false;
+                        for (long limit = 8L << 20; limit <= 48L << 20; limit += 2L << 20) {
+                            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
+                            try {
+                                try (RecordCursorFactory factory = engine.select(parallel, ctx)) {
+                                    final AsyncAsOfJoinAtom atom = findAtom(factory);
+                                    try (RecordCursor cursor = factory.getCursor(ctx)) {
+                                        CursorPrinter.println(cursor, factory.getMetadata(), actual);
+                                    } catch (CairoException e) {
+                                        // under this limit not even one state fits
+                                        Assert.assertTrue(e.getFlyweightMessage().toString(), e.isOutOfMemory());
+                                        LOG.info().$("parallel join fails under limit [limit=").$(limit).$(", error=").$(e.getFlyweightMessage()).I$();
+                                        continue;
+                                    }
+                                    // the key arrays were built, and the join still went serial
+                                    final boolean switched = atom.getJoinableCount() > 0 && atom.isSerial();
+                                    LOG.info().$("limit [limit=").$(limit).$(", switched=").$(switched).$(", serialFrames=").$(atom.getStatFramesSerial()).I$();
+                                    switchSeen |= switched;
+                                }
+                                TestUtils.assertEquals("limit=" + limit, expected, actual);
+                            } finally {
+                                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                            }
+                        }
+                        Assert.assertTrue("no limit made a worker hand its frame to the query's thread", switchSeen);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testMemoryLimitScale() throws Exception {
         // Under a limit that refuses the parallel way's key arrays, the join must cost about what the
         // serial ASOF JOIN costs: not a backward scan per master row. A third of the master's keys are
@@ -517,6 +573,47 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
                             }
                             Assert.assertEquals(0, tracker.getUsed());
                         }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testParallelWayHashedKeys() throws Exception {
+        // the parallel way with more joinable keys than the per-key array takes: each slot's state is
+        // then hashed, in the span scan and in the walk
+        AsyncAsOfJoinAtom.KEYS_MODE = AsyncAsOfJoinAtom.KEYS_PARALLEL;
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 10_000);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, ctx) -> {
+                        engine.execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL CAPACITY 131072, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        // 80k symbols; every 7th row a NULL key
+                        engine.execute("INSERT INTO quotes SELECT '2024-01-01'::timestamp + x * 200_000L, CASE WHEN x % 7 = 0 THEN NULL ELSE 's' || (x % 80000) END, x "
+                                + "FROM long_sequence(400000)", ctx);
+                        engine.execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL CAPACITY 131072, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        // keys quoted recently, keys whose last quote is days back, NULL, and keys never quoted
+                        engine.execute("INSERT INTO trades SELECT '2024-01-01'::timestamp + x * 700_000L + 3, CASE WHEN x % 11 = 0 THEN NULL "
+                                + "WHEN x % 13 = 0 THEN 'z' || x ELSE 's' || ((x * 37) % 80000) END, x FROM long_sequence(110000)", ctx);
+                        final String body = " t.ts, t.sym, q.bid, q.ts qts FROM trades t ASOF JOIN quotes q ON (sym)";
+                        for (int mode : WALK_MODES) {
+                            AsyncAsOfJoinRecordCursorFactory.WALK_MODE = mode;
+                            final String parallel = "SELECT /*+ asof_parallel(t q) */" + body;
+                            try (RecordCursorFactory factory = engine.select(parallel, ctx)) {
+                                final AsyncAsOfJoinAtom atom = findAtom(factory);
+                                drain(factory, ctx);
+                                Assert.assertFalse(atom.isSerial());
+                                Assert.assertTrue(atom.getSpanSlotCount() > 65_536);
+                            }
+                            TestUtils.assertSqlCursors(engine, ctx, "SELECT /*+ asof_linear(t q) */" + body, parallel, LOG);
+                            TestUtils.assertSqlCursors(engine, ctx, "SELECT /*+ asof_linear(t q) */" + body + " TOLERANCE 1h", parallel + " TOLERANCE 1h", LOG);
+                        }
+                        assertNotVacuous(engine, ctx, "SELECT /*+ asof_parallel(t q) */" + body, "bid");
                     },
                     configuration,
                     LOG

@@ -84,9 +84,10 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMem
  * <li><b>Serial</b>: the query's thread joins the frames, in order, as it collects them (the workers
  * still filter the master). A master key is translated to its slave key the first time a frame meets
  * it, and the per-key state is keyed by the slave key, so the join holds the keys it meets and
- * nothing more. Taken for a master that is small against its symbol tables, and for the rest of a
- * query whose per-worker state the memory tracker refused: one state, as the serial ASOF JOIN
- * holds.</li>
+ * nothing more. Taken for a master that is small against its symbol tables, and for a query whose
+ * key arrays the memory tracker refuses: one state, as the serial ASOF JOIN holds. A query whose
+ * worker state the tracker refuses inside a frame goes on serially too, from that frame: the query's
+ * thread joins with the slots already built and its own state, and the workers free theirs.</li>
  * </ul>
  * Per slot (and for the query's thread), the span scan keeps per key the last slave row id met so
  * far in the page frame's slave span, in an {@link AsyncAsOfJoinKeyTable}: allocated by the slot's
@@ -707,6 +708,14 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
     }
 
     /**
+     * True when the parallel way's joinable slots were built for the query (they stay when a worker
+     * switches the query to the serial way).
+     */
+    public boolean hasJoinableSlots() {
+        return masterSlotsAddress != 0;
+    }
+
+    /**
      * True when the query's thread joins the frames, see the class comment.
      */
     public boolean isSerial() {
@@ -743,6 +752,18 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
 
     public void release(int slotId) {
         perWorkerLocks.releaseSlot(slotId);
+    }
+
+    /**
+     * The serial way: a worker frees its slot's per-key state and prevailing cache, which the query
+     * no longer uses, so that the query's thread has their memory. The slot's own thread, under the
+     * slot's lock; not the query thread's state (-1), which the serial way uses.
+     */
+    public void releaseSlotState(int slotId) {
+        if (slotId != -1) {
+            perWorkerKeyTables.getQuick(slotId).free();
+            perWorkerPrevailingCaches.getQuick(slotId).close();
+        }
     }
 
     @Override

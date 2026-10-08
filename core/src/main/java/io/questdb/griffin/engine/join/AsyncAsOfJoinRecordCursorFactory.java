@@ -360,7 +360,9 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
         try {
             final long rowCount = applyFilter(record, task, atom, slotId, frameRowCount);
             // in the serial way the query's thread joins the frame when it collects it
-            if (rowCount > 0 && !atom.isSkipJoin() && !atom.isSerial()) {
+            if (atom.isSerial()) {
+                atom.releaseSlotState(slotId);
+            } else if (rowCount > 0 && !atom.isSkipJoin()) {
                 joinFrame(atom, slotId, record, task.getFilteredRows(), true, rowCount, circuitBreaker);
             }
         } finally {
@@ -440,7 +442,9 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
             rows.clear();
             task.setFilteredRowCount(frameRowCount);
             // in the serial way the query's thread joins the frame when it collects it
-            if (!atom.isSkipJoin() && !atom.isSerial()) {
+            if (atom.isSerial()) {
+                atom.releaseSlotState(slotId);
+            } else if (!atom.isSkipJoin()) {
                 joinFrame(atom, slotId, record, rows, false, frameRowCount, circuitBreaker);
             }
         } finally {
@@ -493,8 +497,11 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
         }
     }
 
-    // The serial way: joins a frame on the query's thread, see joinFrame(). The per-key state is the
-    // query thread's, keyed by the slave key, and holds the keys the frame meets.
+    // The serial way: joins a frame on the query's thread, see joinFrame(). A query that chose the
+    // serial way when it opened keys the query thread's state by the slave key, holding the keys the
+    // frame meets. A query that switched to it (a worker's state hit the memory limit) has the
+    // joinable slots: the query's thread then runs the parallel way's span scan with its own state,
+    // which allocates nothing the parallel way had not already, while the workers free theirs.
     static void joinFrameSerial(
             AsyncAsOfJoinAtom atom,
             PageFrameMemoryRecord record,
@@ -506,7 +513,11 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
         final long outOffset = isMasterFiltered ? rowCount : 0;
         final long outAddress = reserveOutput(atom, rows, outOffset, rowCount);
         final WindowJoinTimeFrameHelper helper = atom.getSlaveTimeFrameHelper(-1);
-        joinSpanSerial(atom, helper, record, rows, isMasterFiltered, rowCount, outAddress, circuitBreaker);
+        if (atom.hasJoinableSlots()) {
+            joinSpan(atom, -1, helper, record, rows, isMasterFiltered, rowCount, outAddress, circuitBreaker);
+        } else {
+            joinSpanSerial(atom, helper, record, rows, isMasterFiltered, rowCount, outAddress, circuitBreaker);
+        }
         gather(atom, helper, outAddress, rowCount, record, rows, isMasterFiltered, circuitBreaker);
         atom.recordFrameSerial();
     }
