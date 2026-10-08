@@ -57,7 +57,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     private long minMappedMemorySize = -1;
 
     public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSizePow2, long size, int memoryTag, int opts) {
-        this.exact = false;
+        this(false);
         of(ff, name, extendSegmentSizePow2, size, memoryTag, opts, -1);
     }
 
@@ -72,6 +72,11 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     @Override
     public long addressHi() {
         return lim;
+    }
+
+    @Override
+    public void allocate(long size) {
+        allocateDiskSpace(size);
     }
 
     @Override
@@ -273,6 +278,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     public void swapState(MemoryCMARWImpl other) {
+        assert exact == other.exact;
         long tFd = this.fd;
         this.fd = other.fd;
         other.fd = tFd;
@@ -455,7 +461,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         // file either did not exist when length() was called or empty
         if (size < 1) {
             this.size = minMappedMemorySize;
-            allocateDiskSpace(this.size);
             map0(ff, minMappedMemorySize);
             this.appendAddress = pageAddress;
         } else {

@@ -296,7 +296,7 @@ public final class TableUtils {
     }
 
     /**
-     * Grows the file to at least exactly {@code size} bytes. Use it for small files that never grow.
+     * Grows the file to exactly {@code size} bytes if it is shorter. Use it for small files that never grow.
      */
     public static void allocateDiskSpaceUnaligned(FilesFacade ff, long fd, long size) {
         if (ff.length(fd) < size && !ff.allocate(fd, size)) {
