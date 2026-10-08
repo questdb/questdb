@@ -86,7 +86,9 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
      * mismatch, is removed once the older generation is restored and checked. A kill after the replay moved the
      * live files past the older cut, but not past the rejected one, then cannot read as a wrong-lineage state:
      * the next start lands on the older generation again and the replay brings back every row. A read fault
-     * inside the content check (in each place it can happen) also falls back, but must leave the file in place.
+     * inside the content check (in each place it can happen) also falls back, but must leave the file in place,
+     * also when that file sits exactly at the sequencer frontier. When the older generation fails too, on content
+     * or on its checksums, no generation is selected: every start refuses, and both files stay on disk.
      */
     @Test
     public void testFallbackRemovesOnlyGenerationRejectedOnContent() throws Exception {
@@ -96,36 +98,64 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
         try {
             assertMemoryLeak(faultFf, () -> {
-                final Rejection[] rejections = {
-                        Rejection.CUT, Rejection.HEADER_VERSIONS, Rejection.SYMBOL_COUNT, Rejection.TABLE_ID,
-                        Rejection.SYMBOL_COUNT, Rejection.HEADER_VERSIONS, Rejection.HEADER_VERSIONS
+                final String metaFault = TableUtils.META_FILE_NAME;
+                final String cvFault = TableUtils.COLUMN_VERSION_FILE_NAME;
+                final String manifestFault = DurableEpochManifest.FILE_NAME + ".0";
+                final ContentRow[] rows = {
+                        new ContentRow(Rejection.CUT, null, Older.VALID, false),
+                        new ContentRow(Rejection.HEADER_VERSIONS, null, Older.VALID, false),
+                        new ContentRow(Rejection.SYMBOL_COUNT, null, Older.VALID, false),
+                        new ContentRow(Rejection.TABLE_ID, null, Older.VALID, false),
+                        new ContentRow(Rejection.TXN_CV_VERSIONS, null, Older.VALID, false),
+                        new ContentRow(Rejection.SYMBOL_COUNT, metaFault, Older.VALID, false),
+                        new ContentRow(Rejection.HEADER_VERSIONS, cvFault, Older.VALID, false),
+                        new ContentRow(Rejection.HEADER_VERSIONS, manifestFault, Older.VALID, false),
+                        new ContentRow(Rejection.SYMBOL_COUNT, metaFault, Older.VALID, true),
+                        new ContentRow(Rejection.CUT, null, Older.CONTENT_MISMATCH, false),
+                        new ContentRow(Rejection.TXN_CV_VERSIONS, null, Older.CONTENT_MISMATCH, false),
+                        new ContentRow(Rejection.HEADER_VERSIONS, null, Older.FLIPPED_BYTE, false)
                 };
-                final String[] readFaults = {
-                        null, null, null, null,
-                        TableUtils.META_FILE_NAME, TableUtils.COLUMN_VERSION_FILE_NAME, DurableEpochManifest.FILE_NAME + ".0"
-                };
-                for (int i = 0; i < rejections.length; i++) {
-                    final String readFault = readFaults[i];
-                    final String context = rejections[i] + (readFault != null ? " behind a read fault on " + readFault : "");
-                    final TableToken tt = buildTableWithRejectedNewestGeneration(i, rejections[i]);
-                    faultFf.arm(readFault);
+                for (int i = 0; i < rows.length; i++) {
+                    final ContentRow row = rows[i];
+                    final String context = row.rejection + (row.readFault != null ? " behind a read fault on " + row.readFault : "")
+                            + (row.older != Older.VALID ? " with the older generation " + row.older : "")
+                            + (row.atFrontier ? " at the sequencer frontier" : "");
+                    final TableToken tt = buildTableWithRejectedNewestGeneration(i, row.rejection, row.older, row.atFrontier);
+                    if (row.older != Older.VALID) {
+                        for (int start = 0; start < 2; start++) {
+                            try {
+                                new RecoveryCoordinator(engine).recover();
+                                Assert.fail(context + ": a start with no valid generation must refuse");
+                            } catch (CairoException e) {
+                                TestUtils.assertContains(e.getFlyweightMessage(), "no trustworthy adaptive epoch generation");
+                            }
+                            Assert.assertTrue(context + ": no generation is removed when none is selected", savePointFileExists(tt, 0));
+                            Assert.assertTrue(context + ": no generation is removed when none is selected", savePointFileExists(tt, 1));
+                        }
+                        engine.getTxnScoreboardPool().remove(tt);
+                        dropSweepTable(tt);
+                        engine.releaseAllWriters();
+                        engine.releaseAllReaders();
+                        continue;
+                    }
+                    faultFf.arm(row.readFault);
                     try {
                         new RecoveryCoordinator(engine).recover();
                     } finally {
                         faultFf.disarm();
                     }
                     Assert.assertEquals(context + ": the first start must fall back to the older generation", K, readTxnSeqTxn(tt));
-                    Assert.assertTrue(context + ": the read fault never fired", readFault == null || faultFf.fired);
+                    Assert.assertTrue(context + ": the read fault never fired", row.readFault == null || faultFf.fired);
                     final boolean rejectedFileKept = savePointFileExists(tt, 0);
-                    if (readFault == null) {
+                    if (row.readFault == null) {
                         // A kill once the replay has passed the older cut but not the rejected one.
                         for (String fileName : new String[]{TableUtils.TXN_FILE_NAME, TableUtils.COLUMN_VERSION_FILE_NAME, TableUtils.META_FILE_NAME}) {
                             replaceLiveFile(tt, fileName + ".mid", fileName);
                         }
                     }
                     engine.getTxnScoreboardPool().remove(tt);
-                    assertRestartAfterFallbackConverges(tt, context);
-                    Assert.assertEquals(context + ": only a definite mismatch removes the rejected generation", readFault != null, rejectedFileKept);
+                    assertRestartAfterFallbackConverges(tt, context, row.atFrontier ? K + M : K + M + 1);
+                    Assert.assertEquals(context + ": only a definite mismatch removes the rejected generation", row.readFault != null, rejectedFileKept);
                     dropSweepTable(tt);
                     engine.releaseAllWriters();
                     engine.releaseAllReaders();
@@ -204,21 +234,21 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
             runWithCrashFacade(() -> {
                 final Set<Long> fdBaseline = new HashSet<>(crashFf.noCacheOpenFdsSnapshot());
-                final TableToken countToken = buildTableWithRejectedNewestGeneration(0, Rejection.SYMBOL_COUNT);
+                final TableToken countToken = buildTableWithRejectedNewestGeneration(0, Rejection.SYMBOL_COUNT, Older.VALID, false);
                 markDurableBaseline();
                 final int opsBefore = crashFf.durabilityOpCount();
                 new RecoveryCoordinator(engine).recover();
                 final int n = crashFf.durabilityOpCount() - opsBefore;
                 Assert.assertEquals("the first start must fall back to the older generation", K, readTxnSeqTxn(countToken));
                 simulateRestart(new TableToken[]{countToken});
-                assertRestartAfterFallbackConverges(countToken, "no power loss");
+                assertRestartAfterFallbackConverges(countToken, "no power loss", K + M + 1);
                 dropSweepTable(countToken);
                 releaseEngineHandles();
                 reclaimLingeringNonCacheFds(fdBaseline);
                 Assert.assertTrue("the fallback must make durability calls", n > 0);
 
                 for (int k = 1; k <= n; k++) {
-                    final TableToken tt = buildTableWithRejectedNewestGeneration(k, Rejection.SYMBOL_COUNT);
+                    final TableToken tt = buildTableWithRejectedNewestGeneration(k, Rejection.SYMBOL_COUNT, Older.VALID, false);
                     markDurableBaseline();
                     crashFf.armCrashAt(crashFf.durabilityOpCount() + k);
                     boolean fired = false;
@@ -229,7 +259,7 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
                     }
                     Assert.assertTrue("crash point " + k + " of " + n + " never fired", fired);
                     simulateRestart(new TableToken[]{tt});
-                    assertRestartAfterFallbackConverges(tt, "power loss at durability call " + k + " of " + n);
+                    assertRestartAfterFallbackConverges(tt, "power loss at durability call " + k + " of " + n, K + M + 1);
                     dropSweepTable(tt);
                     releaseEngineHandles();
                     reclaimLingeringNonCacheFds(fdBaseline);
@@ -462,7 +492,7 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
         }
     }
 
-    private void assertRestartAfterFallbackConverges(TableToken tt, String context) {
+    private void assertRestartAfterFallbackConverges(TableToken tt, String context, int expectedRows) {
         try {
             new RecoveryCoordinator(engine).recover();
         } catch (CairoException e) {
@@ -475,7 +505,7 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
         engine.notifyWalTxnRepublisher(tt);
         drainWalQueue();
         Assert.assertFalse(context + ": table suspended", engine.getTableSequencerAPI().isSuspended(tt));
-        assertRows(tt.getTableName(), K + M + 1, context);
+        assertRows(tt.getTableName(), expectedRows, context);
     }
 
     private void assertRows(String tableName, int expected, String context) {
@@ -552,11 +582,12 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
 
     /**
      * A table whose newest generation passes its checksums but fails one of recovery's content checks, as a
-     * write-side bug leaves it (see {@link Rejection}). The older generation is consistent at seqTxn K, and the
-     * live table is one transaction past the newest generation. The live {@code _txn}, {@code _cv} and
-     * {@code _meta} of a cut between the two generations are kept with the suffix {@code .mid}.
+     * write-side bug leaves it (see {@link Rejection}). The older generation is at seqTxn K and is consistent
+     * unless {@code older} damages it, and the live table is one transaction past the newest generation, or,
+     * {@code atFrontier}, exactly at it. The live {@code _txn}, {@code _cv} and {@code _meta} of a cut between the
+     * two generations are kept with the suffix {@code .mid}.
      */
-    private TableToken buildTableWithRejectedNewestGeneration(int iteration, Rejection rejection) throws Exception {
+    private TableToken buildTableWithRejectedNewestGeneration(int iteration, Rejection rejection, Older older, boolean atFrontier) throws Exception {
         final String name = "f" + iteration;
         execute("create table " + name + " (ts timestamp, sym symbol, v long) timestamp(ts) partition by day wal");
         for (int i = 0; i < K; i++) {
@@ -569,14 +600,26 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
         }
         final FilesFacade ff = engine.getConfiguration().getFilesFacade();
         final String[] liveFiles = {TableUtils.TXN_FILE_NAME, TableUtils.COLUMN_VERSION_FILE_NAME, TableUtils.META_FILE_NAME};
-        try (Path live = new Path(); Path forge = new Path(); Path dst = new Path()) {
+        try (Path live = new Path(); Path forge = new Path(); Path forgeOlder = new Path(); Path dst = new Path()) {
             live.of(engine.getConfiguration().getDbRoot()).concat(tt);
             final int liveLen = live.size();
             forge.of(engine.getConfiguration().getDbRoot()).concat("forge_" + name);
             final int forgeLen = forge.size();
             Assert.assertEquals(0, ff.mkdirs(forge.slash(), engine.getConfiguration().getMkDirMode()));
+            forgeOlder.of(engine.getConfiguration().getDbRoot()).concat("forge_older_" + name);
+            final int forgeOlderLen = forgeOlder.size();
+            if (older == Older.CONTENT_MISMATCH) {
+                // The live files equal the older generation's sections here.
+                Assert.assertEquals(0, ff.mkdirs(forgeOlder.slash(), engine.getConfiguration().getMkDirMode()));
+                for (String fileName : liveFiles) {
+                    Assert.assertTrue(ff.copy(live.trimTo(liveLen).concat(fileName).$(), dst.of(forgeOlder).trimTo(forgeOlderLen).concat(fileName).$()) >= 0);
+                }
+            }
             if (rejection == Rejection.SYMBOL_COUNT) {
                 Assert.assertTrue(ff.copy(live.trimTo(liveLen).concat(TableUtils.META_FILE_NAME).$(), dst.of(forge).trimTo(forgeLen).concat(TableUtils.META_FILE_NAME).$()) >= 0);
+            } else if (rejection == Rejection.TXN_CV_VERSIONS) {
+                // Adding a column to a non-empty table moves the column version past this _cv.
+                Assert.assertTrue(ff.copy(live.trimTo(liveLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(), dst.of(forge).trimTo(forgeLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$()) >= 0);
             }
 
             execute("alter table " + name + " add column sym2 symbol");
@@ -594,7 +637,9 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
             drainWalQueue();
             engine.releaseAllWriters();
             for (String fileName : liveFiles) {
-                if (rejection != Rejection.SYMBOL_COUNT || !TableUtils.META_FILE_NAME.equals(fileName)) {
+                final boolean keptFromEarlier = rejection == Rejection.SYMBOL_COUNT && TableUtils.META_FILE_NAME.equals(fileName)
+                        || rejection == Rejection.TXN_CV_VERSIONS && TableUtils.COLUMN_VERSION_FILE_NAME.equals(fileName);
+                if (!keptFromEarlier) {
                     // The cut row saves the _txn and _cv of the earlier cut under a header that names the later one.
                     final String from = rejection == Rejection.CUT && !TableUtils.META_FILE_NAME.equals(fileName) ? fileName + ".mid" : fileName;
                     Assert.assertTrue(ff.copy(live.trimTo(liveLen).concat(from).$(), dst.of(forge).trimTo(forgeLen).concat(fileName).$()) >= 0);
@@ -640,9 +685,35 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
                 marker.of(live.trimTo(liveLen).concat(TableUtils.SNAPSHOT_FILE_NAME).$());
                 marker.write(seqTxn, txn, 2L, 0);
             }
+            if (older == Older.CONTENT_MISMATCH) {
+                try (TxReader tx = new TxReader(ff)) {
+                    tx.ofRO(forgeOlder.trimTo(forgeOlderLen).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+                    Assert.assertTrue(tx.unsafeLoadAll());
+                    Assert.assertEquals(K, tx.getSeqTxn());
+                    DurableEpochManifest.write(
+                            engine.getConfiguration(),
+                            tt,
+                            forgeOlder.trimTo(forgeOlderLen),
+                            forgeOlderLen,
+                            1,
+                            tx.getSeqTxn(),
+                            tx.getTxn(),
+                            tx.getColumnVersion() + 1,
+                            tx.getMetadataVersion()
+                    );
+                }
+                Assert.assertTrue(ff.copy(
+                        forgeOlder.trimTo(forgeOlderLen).concat(DurableEpochManifest.FILE_NAME).put(".1").$(),
+                        live.trimTo(liveLen).concat(DurableEpochManifest.FILE_NAME).put(".1").$()
+                ) >= 0);
+            } else if (older == Older.FLIPPED_BYTE) {
+                corruptRange(tt, TableUtils.TXN_FILE_NAME, true);
+            }
         }
-        execute("insert into " + name + " values ('2024-10-02T00:00:00.000000Z', 'c', " + (K + M) + ", 'b')");
-        drainWalQueue();
+        if (!atFrontier) {
+            execute("insert into " + name + " values ('2024-10-02T00:00:00.000000Z', 'c', " + (K + M) + ", 'b')");
+            drainWalQueue();
+        }
         Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tt));
         engine.releaseAllWriters();
         engine.releaseAllReaders();
@@ -873,6 +944,14 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
         }
     }
 
+    private enum Older {
+        // Passes its checksums, but its header records a column version its _txn section does not.
+        CONTENT_MISMATCH,
+        // One byte of its _txn section flipped: fails its checksums.
+        FLIPPED_BYTE,
+        VALID
+    }
+
     private enum Rejection {
         // The _txn and _cv sections are an earlier cut than the header and the marker name.
         CUT,
@@ -881,7 +960,14 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
         // The _meta section has one symbol column fewer than the _txn section, at the same metadata version.
         SYMBOL_COUNT,
         // The _meta section names another table.
-        TABLE_ID
+        TABLE_ID,
+        // The _cv section is at an earlier column version than the _txn section names.
+        TXN_CV_VERSIONS
+    }
+
+    // One row of the content-rejection table: how the newest generation fails, an optional read fault inside its
+    // content check, how the older generation fails, and whether no transaction follows the newest generation.
+    private record ContentRow(Rejection rejection, String readFault, Older older, boolean atFrontier) {
     }
 
     // While armed, fails every open of the named file that the content check of the first generation makes.
