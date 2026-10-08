@@ -336,6 +336,10 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 false,
                 TableUtils.TABLE_KIND_REGULAR_TABLE
         );
+        // Another session can create the table as WAL after the parser found it missing.
+        if (refuseWalTable(writerCache.valueAtQuick(cacheEntryIndex), cache.get(tableName), tableToken.isWal())) {
+            return;
+        }
         appendFirstRowAndCacheWriter(cache);
     }
 
@@ -529,11 +533,9 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     // parser's life.
     private boolean refuseWalTable(CacheEntry entry, CharSequence tableName, boolean isWal) {
         if (isWal && configuration.getCommitMode() == CommitMode.ADAPTIVE) {
-            LOG.error().$("UDP line protocol cannot write a WAL table in ADAPTIVE commit mode, skipping its lines [table=")
+            LOG.error().$("UDP line protocol cannot write a WAL table in ADAPTIVE commit mode, skipping its lines until restart [table=")
                     .$safe(tableName).I$();
             entry.state = 3;
-            // The previous table's writer is on the commit list; the next line of this table must not append to it.
-            writer = null;
             switchModeToSkipLine();
             return true;
         }
@@ -621,6 +623,9 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         this.cacheEntryIndex = entryIndex;
 
         if (entry.writer == null) {
+            // The previous table's writer is on the commit list. A table left without a writer must not take the
+            // same-table shortcut into it on its next line.
+            writer = null;
             initCacheEntry(tableName, entry);
         } else {
             createState(entry);
