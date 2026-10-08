@@ -5241,26 +5241,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             split = split.thenProjection();
             final boolean[] nonDecreasing = new boolean[ownerStage.getFunctions().size()];
             final boolean[] nonNegative = new boolean[nonDecreasing.length];
+            final boolean[] nonNull = new boolean[nonDecreasing.length];
             projectionColumnOrder(
                     ownerStage.getFunctions(),
                     virtual.getPriorityMetadata().getVirtualColumnReservedSlots(),
                     next.getNonDecreasingColumns(),
                     next.getNonNegativeColumns(),
+                    next.getNonNullColumns(),
                     nonDecreasing,
-                    nonNegative
+                    nonNegative,
+                    nonNull
             );
             next = next.withStage(ownerStage, virtualCopies, outputMetadata, virtualSink, split.toPlan(taskRows), split.getCarryStage());
             next.setChainSplit(split);
-            next.setColumnOrder(nonDecreasing, nonNegative);
+            next.setColumnOrder(nonDecreasing, nonNegative, nonNull);
         }
         final boolean[] filterNonDecreasing = next.getNonDecreasingColumns();
         final boolean[] filterNonNegative = next.getNonNegativeColumns();
+        final boolean[] filterNonNull = next.getNonNullColumns();
         split = split.thenFilter();
         next = next.withStage(AsyncWindowStage.filter(filter), filterCopies, outputMetadata, sink, split.toPlan(taskRows), split.getCarryStage());
         next.setChainColumns(singleKey, chainColumns[0], chainColumns[1]);
         next.setChainSplit(split);
         // a filter keeps the columns and the order of the rows it keeps
-        next.setColumnOrder(filterNonDecreasing, filterNonNegative);
+        next.setColumnOrder(filterNonDecreasing, filterNonNegative, filterNonNull);
         return next;
     }
 
@@ -13613,29 +13617,45 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             split = split.thenProjection();
             final boolean[] nonDecreasing = new boolean[ownerStage.getFunctions().size()];
             final boolean[] nonNegative = new boolean[nonDecreasing.length];
+            final boolean[] nonNull = new boolean[nonDecreasing.length];
             projectionColumnOrder(
                     ownerStage.getFunctions(),
                     virtual.getPriorityMetadata().getVirtualColumnReservedSlots(),
                     next.getNonDecreasingColumns(),
                     next.getNonNegativeColumns(),
+                    next.getNonNullColumns(),
                     nonDecreasing,
-                    nonNegative
+                    nonNegative,
+                    nonNull
             );
             next = next.withStage(ownerStage, virtualCopies, (GenericRecordMetadata) virtual.getMetadata(), virtualSink, split.toPlan(taskRows), split.getCarryStage());
             next.setChainColumns(singleKey, keyOutput, timestampOutput);
             next.setChainSplit(split);
-            next.setColumnOrder(nonDecreasing, nonNegative);
+            next.setColumnOrder(nonDecreasing, nonNegative, nonNull);
             stage++;
         }
         final AsyncWindowSplitPlan windowPlan = classifyKeySplit(columns, functions, taskRows, singleKey, false);
         split = split.thenWindow(windowPlan, stage);
         final boolean[] nonDecreasing = new boolean[functions.size()];
         final boolean[] nonNegative = new boolean[nonDecreasing.length];
-        windowColumnOrder(columns, functions, next.getNonDecreasingColumns(), next.getNonNegativeColumns(), nonDecreasing, nonNegative);
+        final boolean[] nonNull = new boolean[nonDecreasing.length];
+        windowColumnOrder(
+                columns,
+                functions,
+                baseMetadata,
+                keyOutput,
+                singleKey,
+                next.getNonDecreasingColumns(),
+                next.getNonNegativeColumns(),
+                next.getNonNullColumns(),
+                nonDecreasing,
+                nonNegative,
+                nonNull
+        );
         next = next.withStage(AsyncWindowStage.window(functions, windowMapStates), windowCopies, factoryMetadata, windowSink, split.toPlan(taskRows), split.getCarryStage());
         next.setChainColumns(singleKey, findColumnFunction(functions, keyOutput), findColumnFunction(functions, timestampOutput));
         next.setChainSplit(split);
-        next.setColumnOrder(nonDecreasing, nonNegative);
+        next.setColumnOrder(nonDecreasing, nonNegative, nonNull);
         if (dropPartitionBy) {
             ((AsyncWindowAtom) next.getAtom()).setKeyStartReset(true);
         }
@@ -13827,12 +13847,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         final boolean[] nonNegative = async.getNonNegativeColumns();
+        final boolean[] nonNull = async.getNonNullColumns();
+        // A group key that is never NULL, as a running sum of a never NULL argument: a task that
+        // continues a key would otherwise see its own sum go NULL, then 0, two local groups the
+        // carry both turns into the key's carried value, which serially is one group.
+        final boolean isGroupKeyNonNull = groupColumn > -1 && groupColumn < nonNull.length && nonNull[groupColumn];
         final AsyncWindowChainSplit split = async.getChainSplit().thenGroupBy(
                 groupKeyIndex,
                 groupColumn,
                 groupOutput,
                 // a running sum of integers only, see isNonNegativeValue(): combining it is exact
-                groupColumn > -1 && groupColumn < nonNegative.length && nonNegative[groupColumn]
+                groupColumn > -1 && groupColumn < nonNegative.length && nonNegative[groupColumn] && isGroupKeyNonNull
         );
         final RecordSink headSink;
         try {
@@ -13856,10 +13881,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
         next.setChainSplit(split);
         next.setChainColumns(singleKey, keyOutput, -1);
-        // a group key the projection drops leaves the groups of a scan key in no known order
-        next.setGroupOrder(groupColumn == -1 ? -1 : groupOutput > -1 ? groupOutput : -2);
+        // A group key the projection drops leaves the groups of a scan key in no known order. So
+        // does a NULL group key: the walk meets a running sum's NULL group first, which ORDER BY
+        // ranks last.
+        next.setGroupOrder(groupColumn == -1 ? -1 : groupOutput > -1 && isGroupKeyNonNull ? groupOutput : -2);
         // the groups' output columns are not known to be ordered within anything
-        next.setColumnOrder(new boolean[0], new boolean[0]);
+        next.setColumnOrder(new boolean[0], new boolean[0], new boolean[0]);
         return next;
     }
 
@@ -14263,8 +14290,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         final boolean[] nonDecreasing = new boolean[functions.size()];
         final boolean[] nonNegative = new boolean[functions.size()];
-        windowColumnOrder(columns, functions, null, null, nonDecreasing, nonNegative);
-        factory.setColumnOrder(nonDecreasing, nonNegative);
+        final boolean[] nonNull = new boolean[functions.size()];
+        windowColumnOrder(columns, functions, baseMetadata, keyColumnIndex, singleKey, null, null, null, nonDecreasing, nonNegative, nonNull);
+        factory.setColumnOrder(nonDecreasing, nonNegative, nonNull);
         return factory;
     }
 
@@ -14321,14 +14349,79 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         };
     }
 
+    // Whether a value is never NULL: a constant that is not NULL, an input column known to be, a
+    // widening numeric cast of such a value, or a CASE whose every value, and an ELSE, are such.
+    private static boolean isNonNullValue(Function function, @Nullable boolean[] inputNonNull, int reservedSlots, boolean[] ownNonNull) {
+        if (function instanceof ColumnFunction cf && !(function instanceof WindowFunction)) {
+            final int index = cf.getColumnIndex();
+            if (index >= reservedSlots) {
+                return inputNonNull != null && index - reservedSlots < inputNonNull.length && inputNonNull[index - reservedSlots];
+            }
+            return index < ownNonNull.length && ownNonNull[index];
+        }
+        if (function.isConstant()) {
+            return switch (ColumnType.tagOf(function.getType())) {
+                case ColumnType.BYTE, ColumnType.SHORT -> true;
+                case ColumnType.INT -> function.getInt(null) != Numbers.INT_NULL;
+                case ColumnType.LONG -> function.getLong(null) != Numbers.LONG_NULL;
+                case ColumnType.DOUBLE -> !Double.isNaN(function.getDouble(null));
+                default -> false;
+            };
+        }
+        if (function instanceof UnaryFunction cast
+                && function.getClass().getName().contains("Cast")
+                && isWideningNumericCast(cast.getArg().getType(), function.getType())) {
+            return isNonNullValue(cast.getArg(), inputNonNull, reservedSlots, ownNonNull);
+        }
+        if (function instanceof CaseFunction cf) {
+            // condition, value, ..., else: the values are at odd positions, and else is last
+            final ObjList<Function> args = cf.args();
+            final int n = args.size();
+            if (n % 2 == 0) {
+                // no ELSE: NULL when no condition holds
+                return false;
+            }
+            for (int i = 1; i < n; i += 2) {
+                if (!isNonNullValue(args.getQuick(i), inputNonNull, reservedSlots, ownNonNull)) {
+                    return false;
+                }
+            }
+            return isNonNullValue(args.getQuick(n - 1), inputNonNull, reservedSlots, ownNonNull);
+        }
+        return false;
+    }
+
+    // Whether a cast from one numeric type to another holds every value of the first, so that a
+    // value that is not NULL does not become one: from an integer to a wider type.
+    private static boolean isWideningNumericCast(int fromType, int toType) {
+        final int from = numericRank(fromType);
+        final int to = numericRank(toType);
+        return from > 0 && from <= 4 && to > from;
+    }
+
+    // BYTE 1, SHORT 2, INT 3, LONG 4, FLOAT 5, DOUBLE 6, 0 for any other type.
+    private static int numericRank(int type) {
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.BYTE -> 1;
+            case ColumnType.SHORT -> 2;
+            case ColumnType.INT -> 3;
+            case ColumnType.LONG -> 4;
+            case ColumnType.FLOAT -> 5;
+            case ColumnType.DOUBLE -> 6;
+            default -> 0;
+        };
+    }
+
     // What a projection's output columns are known to be, see AsyncWindowRecordCursorFactory.setColumnOrder().
     private static void projectionColumnOrder(
             ObjList<Function> functions,
             int reservedSlots,
             boolean[] inputNonDecreasing,
             boolean[] inputNonNegative,
+            boolean[] inputNonNull,
             boolean[] nonDecreasing,
-            boolean[] nonNegative
+            boolean[] nonNegative,
+            boolean[] nonNull
     ) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             Function function = functions.getQuick(i);
@@ -14341,28 +14434,58 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final int input = index - reservedSlots;
                     nonDecreasing[i] = input < inputNonDecreasing.length && inputNonDecreasing[input];
                     nonNegative[i] = input < inputNonNegative.length && inputNonNegative[input];
+                    nonNull[i] = input < inputNonNull.length && inputNonNull[input];
                 } else if (index < i) {
                     nonDecreasing[i] = nonDecreasing[index];
                     nonNegative[i] = nonNegative[index];
+                    nonNull[i] = nonNull[index];
                 }
                 continue;
             }
             nonNegative[i] = isNonNegativeValue(function, inputNonNegative, reservedSlots, nonNegative);
+            nonNull[i] = isNonNullValue(function, inputNonNull, reservedSlots, nonNull);
             // a constant is the same on every row
             nonDecreasing[i] = function.isConstant();
         }
     }
 
-    // What a window's output columns are known to be, over input columns known as given (null for
-    // a scan, of which nothing is known): a running count or row_number never decreases within a
-    // partition, nor does a running sum of values that are never negative.
+    /**
+     * What a window's output columns are known to be, see
+     * {@link AsyncWindowRecordCursorFactory#setColumnOrder}, over input columns known as given
+     * (null for a scan, of which nothing is known).
+     * <p>
+     * A window column never decreases within a key of the walk, after a run of NULLs, when it is
+     * {@code row_number()}, a running {@code count}, or a running {@code sum} of values that are
+     * never negative, and its partition is the walk's key: the window is partitioned by the key
+     * alone, or not at all over a single key. Proof: the window streams, so it sees its
+     * partition's rows in walk order (its ORDER BY was dismissed as the walk's, or it has none).
+     * Its partition is exactly the key's rows. Along them, row_number counts up from 1; a count
+     * of the rows from the partition's first to the current one, or to its last peer, only grows;
+     * a sum over the same rows adds values that are not negative, and rounding to nearest is
+     * monotone, so it only grows once its first value that is not NULL makes it one. A finer
+     * partition, as {@code (key, side)}, starts these afresh within the key, so its values may
+     * come back to an earlier one: no claim then. Passing a column through, as a window or a
+     * projection does, keeps the claim, and so does a filter, whose rows are a subsequence.
+     * <p>
+     * A column is never NULL when it is row_number or a count, or a running sum of a value that
+     * is never NULL: its frame ends at the current row, which counts. It is never negative, and
+     * whole, when it is row_number, a count, or a running sum of such values.
+     *
+     * @param keyIndex  the walk's key among the base's columns, -1 when the base drops it
+     * @param singleKey whether the walk has a single key
+     */
     private static void windowColumnOrder(
             ObjList<QueryColumn> columns,
             ObjList<Function> functions,
+            RecordMetadata baseMetadata,
+            int keyIndex,
+            boolean singleKey,
             @Nullable boolean[] inputNonDecreasing,
             @Nullable boolean[] inputNonNegative,
+            @Nullable boolean[] inputNonNull,
             boolean[] nonDecreasing,
-            boolean[] nonNegative
+            boolean[] nonNegative,
+            boolean[] nonNull
     ) {
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
@@ -14371,7 +14494,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (inputNonDecreasing != null && function instanceof ColumnFunction cf) {
                     final int index = cf.getColumnIndex();
                     nonDecreasing[i] = index < inputNonDecreasing.length && inputNonDecreasing[index];
-                    nonNegative[i] = index < inputNonNegative.length && inputNonNegative[index];
+                    nonNegative[i] = inputNonNegative != null && index < inputNonNegative.length && inputNonNegative[index];
+                    nonNull[i] = inputNonNull != null && index < inputNonNull.length && inputNonNull[index];
                 }
                 continue;
             }
@@ -14381,19 +14505,35 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     && window.getRowsHi() == 0
                     && window.getExclusionKind() == WindowExpression.EXCLUDE_NO_OTHERS;
             final boolean known;
+            final boolean knownNonNull;
             if (Chars.equalsIgnoreCase(name, "row_number")) {
                 known = true;
+                knownNonNull = true;
             } else if (cumulative && Chars.equalsIgnoreCase(name, "count")) {
                 known = true;
+                knownNonNull = true;
+            } else if (cumulative
+                    && Chars.equalsIgnoreCase(name, "sum")
+                    && function instanceof BaseWindowFunction windowFunction
+                    && windowFunction.getWindowArgument() != null
+                    && isNonNegativeValue(windowFunction.getWindowArgument(), inputNonNegative, 0, nonNegative)) {
+                known = true;
+                knownNonNull = isNonNullValue(windowFunction.getWindowArgument(), inputNonNull, 0, nonNull);
             } else {
-                known = cumulative
-                        && Chars.equalsIgnoreCase(name, "sum")
-                        && function instanceof BaseWindowFunction windowFunction
-                        && windowFunction.getWindowArgument() != null
-                        && isNonNegativeValue(windowFunction.getWindowArgument(), inputNonNegative, 0, nonNegative);
+                known = false;
+                knownNonNull = false;
             }
-            nonDecreasing[i] = known;
+            // the window's partition is the walk's key: the key alone, or nothing over one key
+            final ObjList<ExpressionNode> partitionBy = window.getPartitionBy();
+            final boolean byWalkKey = partitionBy.size() == 0
+                    ? singleKey
+                    : partitionBy.size() == 1
+                    && partitionBy.getQuick(0).type == LITERAL
+                    && keyIndex > -1
+                    && SqlUtil.getColumnIndexQuiet(baseMetadata, partitionBy.getQuick(0).token) == keyIndex;
+            nonDecreasing[i] = known && byWalkKey;
             nonNegative[i] = known;
+            nonNull[i] = knownNonNull;
         }
     }
 

@@ -702,6 +702,95 @@ public class WindowChainTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionFinerThanKeyUnderGroupBy() throws Exception {
+        // row_number and a running count partitioned by (key, side) restart within a key: a group
+        // of their values is not contiguous along the walk, so a GROUP BY on them is not streamed
+        assertMemoryLeak(() -> {
+            execute("create table t (time timestamp, sym symbol index type " + indexType + ", side symbol, price double) timestamp(time) partition by DAY");
+            execute("insert into t select (x * 1_000_000_000L)::timestamp, case when x % 7 = 0 then 'Z' else 'A' end," +
+                    " case when x % 3 = 0 then 'S' else 'B' end, (x % 5)::double from long_sequence(2000)");
+            final String w2 = "WITH src AS (SELECT time, sym, side, price FROM t WHERE sym = 'A'), " +
+                    "w1 AS (SELECT time, sym, side, price, lag(price) OVER (ORDER BY time) lp FROM src), " +
+                    "w1p AS (SELECT time, sym, side, price, lp + 1 AS lp1 FROM w1), " +
+                    "w2 AS (SELECT time, sym, side, lp1, row_number() OVER (PARTITION BY sym, side) rn FROM w1p) ";
+            final String w3 = w2.replace("row_number() OVER (PARTITION BY sym, side)", "count() OVER (PARTITION BY sym, side ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)");
+            final String w4 = "WITH src AS (SELECT time, sym, side, price FROM t WHERE sym IN ('A', 'Z') ORDER BY sym), " +
+                    "w1 AS (SELECT time, sym, side, price, lag(price) OVER (PARTITION BY sym) lp FROM src), " +
+                    "w1p AS (SELECT time, sym, side, price, lp + 1 AS lp1 FROM w1), " +
+                    "w2 AS (SELECT time, sym, side, lp1, row_number() OVER (PARTITION BY sym, side) rn FROM w1p) ";
+            final String[] queries = {
+                    w2 + "SELECT rn, count() c, sum(lp1) s FROM w2",
+                    w2 + "SELECT sym, rn, count() c, sum(lp1) s FROM w2",
+                    w2 + "SELECT rn, count() c, sum(lp1) s FROM w2 ORDER BY rn",
+                    w3 + "SELECT rn, count() c, sum(lp1) s FROM w2",
+                    w4 + "SELECT sym, rn, count() c, sum(lp1) s FROM w2 ORDER BY sym, rn",
+            };
+            for (String query : queries) {
+                assertMatchesSerial(engine, sqlExecutionContext, query, null);
+            }
+            // partitioned by the key alone, the same GROUP BY streams, its groups in order
+            assertMatchesSerial(engine, sqlExecutionContext, w2.replace("PARTITION BY sym, side", "PARTITION BY sym") + "SELECT rn, count() c, sum(lp1) s FROM w2 ORDER BY rn", AsyncWindowStage.KIND_GROUP_BY);
+        });
+    }
+
+    @Test
+    public void testCarriedGroupKeyNullThenZero() throws Exception {
+        // a CASE without ELSE is NULL between its cases: a task's own running sum of it goes NULL,
+        // then 0, both of which the carry turns into the same group key
+        assertMemoryLeak(() -> {
+            execute("create table t (time timestamp, sym symbol index type " + indexType + ", price double, size double) timestamp(time) partition by DAY");
+            execute("insert into t select (x * 1_000_000_000L)::timestamp, case when x % 5 = 0 then 'Z' else 'A' end," +
+                    " ((x / 3) % 5)::double, (x % 9)::double from long_sequence(4000)");
+            final String w = "ORDER BY time";
+            final String q = "WITH src AS (SELECT time, price, size FROM t WHERE sym = 'A'), " +
+                    "ch AS (SELECT time, price, size, CASE WHEN price > lag(price) OVER (" + w + ") THEN 1 WHEN price < lag(price) OVER (" + w + ") THEN 0 END AS f FROM src), " +
+                    "runs AS (SELECT time, price, size, sum(f) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS seg FROM ch) ";
+            final String w2 = "PARTITION BY sym ORDER BY time";
+            final String q2 = "WITH src AS (SELECT sym, time, price, size FROM t WHERE sym IN ('A', 'Z')), " +
+                    "ch AS (SELECT sym, time, price, size, CASE WHEN price > lag(price) OVER (" + w2 + ") THEN 1 WHEN price < lag(price) OVER (" + w2 + ") THEN 0 END AS f FROM src), " +
+                    "runs AS (SELECT sym, time, price, size, sum(f) OVER (" + w2 + " ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS seg FROM ch) ";
+            final String[] queries = {
+                    q + "SELECT seg, count() cnt, sum(size) s, last(size) l FROM runs",
+                    q + "SELECT seg, count() cnt, sum(size) s FROM runs ORDER BY seg",
+                    q2 + "SELECT sym, seg, count() cnt, sum(size) s FROM runs ORDER BY sym, seg",
+                    // with an ELSE the flag is never NULL, and the carry may split the key
+                    q.replace("THEN 0 END", "THEN 0 ELSE 0 END") + "SELECT seg, count() cnt, sum(size) s FROM runs",
+            };
+            for (String query : queries) {
+                assertMatchesSerial(engine, sqlExecutionContext, query, null);
+            }
+        });
+    }
+
+    @Test
+    public void testNullableDoubleGroupKeyOrder() throws Exception {
+        // a running DOUBLE sum whose first rows are NULL starts with a NaN group along the walk,
+        // which ORDER BY ranks last: the sort must stay
+        assertMemoryLeak(() -> {
+            execute("create table t (time timestamp, sym symbol index type " + indexType + ", price double, size double) timestamp(time) partition by DAY");
+            execute("insert into t select (x * 1_000_000_000L)::timestamp, 'K' || (x % 4)," +
+                    " case when x < 400 then 5.0 else (x / 37)::double end, (x % 9)::double from long_sequence(3000)");
+            final String w = "PARTITION BY sym ORDER BY time";
+            final String runs = "WITH src AS (SELECT sym, time, price, size FROM t WHERE sym IN ('K0','K1','K2','K3')), w0 AS (SELECT sym, time, price, size, lag(price) OVER (" + w + ") lp FROM src), " +
+                    "ch AS (SELECT sym, time, price, size, CASE WHEN price > 10 AND lp > 0 THEN 1 END AS f FROM w0), " +
+                    "runs AS (SELECT sym, time, price, size, sum(f) OVER (" + w + " ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS seg FROM ch) ";
+            final String runs1 = "WITH src AS (SELECT time, price, size FROM t WHERE sym = 'K1'), w0 AS (SELECT time, price, size, lag(price) OVER (ORDER BY time) lp FROM src), " +
+                    "ch AS (SELECT time, price, size, CASE WHEN price > 10 AND lp > 0 THEN 1 END AS f FROM w0), " +
+                    "runs AS (SELECT time, price, size, sum(f) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS seg FROM ch) ";
+            final String runs2 = "WITH ch AS (SELECT time, price, size, CASE WHEN price > 10 THEN 1 END AS f FROM t WHERE sym = 'K1'), " +
+                    "runs AS (SELECT time, price, size, sum(f) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS seg FROM (SELECT time, price, size, f, lag(price) OVER (ORDER BY time) lp FROM ch)) ";
+            final String[] queries = {
+                    runs + "SELECT sym, seg, count() c, sum(size) s FROM runs ORDER BY sym, seg",
+                    runs1 + "SELECT seg, count() c, sum(size) s FROM runs ORDER BY seg",
+                    runs2 + "SELECT seg, count() c, sum(size) s FROM runs ORDER BY seg",
+            };
+            for (String query : queries) {
+                assertMatchesSerial(engine, sqlExecutionContext, query, null);
+            }
+        });
+    }
+
+    @Test
     public void testStepsOverFoldWithoutPrefix() throws Exception {
         // without a prefix on the query's thread, tasks compute the key from its first row; a
         // step chained over a folded running sum must not see the workers' stand-in for it

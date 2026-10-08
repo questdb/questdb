@@ -80,8 +80,10 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
     private int keyOutputIndex = -1;
     // per output column: whether its values never decrease within a key of the scan, in walk order
     private boolean[] nonDecreasingColumns = new boolean[0];
-    // per output column: whether its values are never negative
+    // per output column: whether its values are never negative, or NULL
     private boolean[] nonNegativeColumns = new boolean[0];
+    // per output column: whether its values are never NULL
+    private boolean[] nonNullColumns = new boolean[0];
     // whether the scan walks a single key
     private boolean singleKey;
     // while EXPLAIN prints a step: the metadata naming the columns its functions read
@@ -412,13 +414,26 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     /**
-     * Records, per output column, whether its values never decrease within a key of the scan in
-     * the walk's order, and whether they are never negative: what the planner proved of them, so
-     * that a GROUP BY on such a column sees each group's rows together.
+     * Records what the planner proved of each output column, so that a GROUP BY on one sees each
+     * group's rows together, and the order of its groups is known:
+     * <ul>
+     *     <li>{@code nonDecreasingColumns}: along the walk, within each key of the scan, the
+     *     column's values are a run of NULLs, possibly empty, then values that never decrease.
+     *     The rows of a key that share a value, NULL included, are then contiguous, and so are
+     *     the rows of a group of the key and the column.</li>
+     *     <li>{@code nonNegativeColumns}: the values are never negative, or NULL, and are whole
+     *     numbers, see {@code SqlCodeGenerator.isNonNegativeValue}: adding them is exact.</li>
+     *     <li>{@code nonNullColumns}: the values are never NULL.</li>
+     * </ul>
      */
-    public void setColumnOrder(boolean[] nonDecreasingColumns, boolean[] nonNegativeColumns) {
+    public void setColumnOrder(boolean[] nonDecreasingColumns, boolean[] nonNegativeColumns, boolean[] nonNullColumns) {
         this.nonDecreasingColumns = nonDecreasingColumns;
         this.nonNegativeColumns = nonNegativeColumns;
+        this.nonNullColumns = nonNullColumns;
+    }
+
+    public boolean[] getNonNullColumns() {
+        return nonNullColumns;
     }
 
     public boolean[] getNonDecreasingColumns() {
