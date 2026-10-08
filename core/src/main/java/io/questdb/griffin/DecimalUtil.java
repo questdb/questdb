@@ -26,7 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Function;
@@ -211,7 +210,7 @@ public final class DecimalUtil {
         // tier (PhysicalDescriptor.Arithmetic) gives; DATE and TIMESTAMP are 64-bit counts of their
         // unit
         return switch (driver.getRelationKind()) {
-            case INT -> integerPrecisionScale(driver.getArithmetic());
+            case INT -> integerPrecisionScale(driver);
             case TEMPORAL -> Numbers.encodeLowHighShorts((short) 19, (short) 0);
             case UNDEF, BOOL, CHAR, FLOAT, TEXT, SYMBOL, LONG256, LONG128, UUID, IPV4, BINARY, GEO, DECIMAL, ARRAY,
                  INTERVAL, PSEUDO, NULL -> 0;
@@ -737,12 +736,15 @@ public final class DecimalUtil {
         return toFloat(sink);
     }
 
-    private static int integerPrecisionScale(PhysicalDescriptor.Arithmetic arithmetic) {
-        final short precision = switch (arithmetic) {
-            case I8, U8 -> 3;
-            case I16, U16 -> 5;
-            case I32, U32 -> 10;
+    private static int integerPrecisionScale(TypeDriver driver) {
+        final short precision = switch (driver.getArithmetic()) {
+            case I8 -> 3;
+            case I16 -> 5;
+            case I32 -> 10;
             case I64 -> 19;
+            // no existing integer type is unsigned; the PR that adds one decides its precision here
+            case U8, U16, U32 -> throw CairoException.nonCritical()
+                    .put("no decimal precision for an unsigned integer type [type=").put(driver.getTypeName()).put(']');
             case F32, F64, WIDE, NONE -> 0;
         };
         return precision == 0 ? 0 : Numbers.encodeLowHighShorts(precision, (short) 0);
