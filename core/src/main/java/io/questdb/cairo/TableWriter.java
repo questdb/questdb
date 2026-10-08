@@ -1520,6 +1520,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // The prepass batch was never published: on-disk _txn still references the parquet dirs, and
             // the next writer open reclaims the unreferenced native dirs as non-attached partitions.
             pendingParquetToNativeConversions.clear();
+            if (CairoException.isDataSyncFailure(th)) {
+                engine.handleDataSyncFailure(th);
+            }
             throw th;
         } finally {
             // clear temp resources
