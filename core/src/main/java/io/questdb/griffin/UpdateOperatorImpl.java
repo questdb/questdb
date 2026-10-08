@@ -694,6 +694,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         );
         rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), tableMetadata, tableWriter);
         tableWriter.markPartitionDataChanged(partitionIndex);
+        tableWriter.markPartitionDataActivity(partitionIndex);
     }
 
     private void openColumns(ObjList<? extends MemoryCM> columns, int partitionIndex, boolean forWrite) {

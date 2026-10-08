@@ -38,6 +38,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -371,14 +372,14 @@ public class TableUtilsTest extends AbstractTest {
     }
 
     @Test(expected = AssertionError.class)
-    public void testCheckStoragePolicyTtlRejectsZero() {
+    public void testCheckStoragePolicyTtlRejectsNull() {
         TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
         TxReader txReader = new TxReader(FF);
         txReader.initPartitionBy(ColumnType.TIMESTAMP, PartitionBy.DAY);
         long partitionTimestamp = driver.fromDays(19_723);
         long maxTimestamp = partitionTimestamp + driver.fromHours(100);
 
-        TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, maxTimestamp, 0);
+        TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, maxTimestamp, Numbers.INT_NULL);
     }
 
     @Test
@@ -396,6 +397,18 @@ public class TableUtilsTest extends AbstractTest {
 
         Assert.assertTrue(TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, maxTimestamp, 1));
         Assert.assertFalse(TableUtils.checkTtl(txReader, driver, partitionTimestamp, maxTimestamp, 1));
+    }
+
+    @Test
+    public void testCheckStoragePolicyTtlZeroBoundary() {
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        TxReader txReader = new TxReader(FF);
+        txReader.initPartitionBy(ColumnType.TIMESTAMP, PartitionBy.DAY);
+        long partitionTimestamp = driver.fromDays(19_723); // 2024-01-01
+        long partitionFloor = txReader.getPartitionFloor(partitionTimestamp);
+
+        Assert.assertTrue(TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, partitionFloor, 0));
+        Assert.assertFalse(TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, partitionFloor - 1, 0));
     }
 
     @Test
