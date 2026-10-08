@@ -206,8 +206,8 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
                 // to [0, pageSize]. This is the main win: the active partition's partial last page is
                 // synced on every commit, and most of it is unwritten/clean. We recompute the length
                 // from the live append offset each call, so prior jumpTo/rollback cannot make it stale
-                // (NARROW-ONLY: no msync skip for PMAR). The page-flip release() still msyncs the full
-                // page it releases, so completed pages are fully flushed.
+                // (NARROW-ONLY: no msync skip for PMAR). The page-flip release() msyncs the full page it
+                // releases (MS_ASYNC for an ADAPTIVE WAL column on Linux, whose commit fdatasyncs the file).
                 final long inPageWritten = inPageWritten();
                 if (inPageWritten > 0) {
                     ff.msync(pageAddress, inPageWritten, async);
