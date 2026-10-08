@@ -5152,7 +5152,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return null;
         }
         final ExpressionNode filterExpr = model.getWhereClause();
-        if (filterExpr == null || hasSubQuery(filterExpr)) {
+        // A copy of a sub-query would run it again, and a random function draws from the
+        // query's one Rnd, which is not thread safe: as for the windows, see generateAsyncWindow()
+        if (filterExpr == null || hasSubQuery(filterExpr) || hasRandomFunction(filterExpr)) {
             return null;
         }
         final AsyncWindowRecordCursorFactory async;
@@ -13432,6 +13434,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ObjList<Function> ownerFunctions = owner.getFunctions();
         final RecordMetadata ownerMetadata = owner.getMetadata();
         final int columnCount = columns.size();
+        // A copy of a sub-query would run it again, and a random function draws from the
+        // query's one Rnd, which is not thread safe: as for the windows, see generateAsyncWindow()
+        for (int i = 0; i < columnCount; i++) {
+            final ExpressionNode ast = columns.getQuick(i).getAst();
+            if (hasSubQuery(ast) || hasRandomFunction(ast)) {
+                return null;
+            }
+        }
         final PriorityMetadata priorityMetadata = new PriorityMetadata(owner.getPriorityMetadata().getVirtualColumnReservedSlots(), inputMetadata);
         final ObjList<Function> functions = new ObjList<>(columnCount);
         try {
@@ -13734,6 +13744,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return null;
             }
         }
+        // the copies would run a sub-query again, or draw from the query's one Rnd at once
+        final ObjList<QueryColumn> groupByColumns = model.getColumns();
+        for (int i = 0, n = groupByColumns.size(); i < n; i++) {
+            final ExpressionNode ast = groupByColumns.getQuick(i).getAst();
+            if (hasSubQuery(ast) || hasRandomFunction(ast)) {
+                return null;
+            }
+        }
         for (int i = 0, n = projection.size(); i < n; i++) {
             if (projection.getQuick(i) == null) {
                 return null;
@@ -13938,7 +13956,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 || scan.usesIndex()
                 || scan.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD
                 || (scan != base && base.getStealFilterExpr() == null)
-                || (scan != base && hasSubQuery(base.getStealFilterExpr()))) {
+                || (scan != base && (hasSubQuery(base.getStealFilterExpr()) || hasRandomFunction(base.getStealFilterExpr())))) {
             return null;
         }
         final ObjList<QueryColumn> columns = model.getColumns();
@@ -17130,6 +17148,38 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
+     * Whether a window may stream, as the parallel window needs, judged from its shape before its
+     * function is compiled: ordered by one column ascending or not at all, and computed from the
+     * rows up to the current one. A function that needs its whole partition first, or rows after
+     * the current one, is cached and sorted whatever its scan, so a key-major walk would only cost
+     * it: a frame that ends after the current row, or a RANGE frame without ORDER BY, whose peers
+     * are the whole partition; lead() and the distribution functions. The ranking functions and
+     * lag() read no frame.
+     */
+    private static boolean isStreamableWindowShape(WindowExpression window) {
+        final ObjList<ExpressionNode> orderBy = window.getOrderBy();
+        if (orderBy.size() > 1
+                || (orderBy.size() == 1 && (orderBy.getQuick(0).type != LITERAL || window.getOrderByDirection().getQuick(0) != ORDER_ASC))) {
+            return false;
+        }
+        final CharSequence name = window.getAst().token;
+        if (Chars.equalsIgnoreCase(name, "row_number")
+                || Chars.equalsIgnoreCase(name, "rank")
+                || Chars.equalsIgnoreCase(name, "dense_rank")
+                || Chars.equalsIgnoreCase(name, "lag")) {
+            return true;
+        }
+        if (Chars.equalsIgnoreCase(name, "lead")
+                || Chars.equalsIgnoreCase(name, "cume_dist")
+                || Chars.equalsIgnoreCase(name, "percent_rank")
+                || Chars.equalsIgnoreCase(name, "ntile")
+                || Chars.startsWithIgnoreCase(name, "percentile_")) {
+            return false;
+        }
+        return window.getRowsHi() <= 0 && (orderBy.size() > 0 || window.getFramingMode() == WindowExpression.FRAMING_ROWS);
+    }
+
+    /**
      * Asks for the table scan below a streaming window to walk the scan's index key by key
      * (a key-major scan), so that the window may run as {@code Async Window}, computed by the
      * shared workers one key apart from another; see {@link #generateAsyncWindow}. The request
@@ -17162,7 +17212,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 continue;
             }
             final WindowExpression window = (WindowExpression) column;
-            if (window.getPendingSubsample() != null) {
+            if (window.getPendingSubsample() != null || !isStreamableWindowShape(window)) {
                 return null;
             }
             hasWindow = true;

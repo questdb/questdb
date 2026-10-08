@@ -931,6 +931,70 @@ public class WindowChainTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testKeyMajorWalkOnlyForStreamingWindows() throws Exception {
+        // a window that needs its whole partition, or rows after the current one, is cached
+        // whatever its scan walks: it keeps the serial plan's scan, and the plans built on it
+        assertMemoryLeak(() -> {
+            createTrade(engine, sqlExecutionContext, 3_000);
+            final String[] queries = {
+                    // the parallel min/max filter over a scan in table order
+                    "SELECT sym, time, price, m FROM (SELECT sym, time, price, min(price) OVER (PARTITION BY sym) m FROM trade) WHERE price > m ORDER BY sym, time, price, m",
+                    "SELECT sym, time, price, l FROM (SELECT sym, time, price, lead(price) OVER (PARTITION BY sym ORDER BY time) l FROM trade) ORDER BY sym, time, price, l",
+                    "SELECT sym, time, c FROM (SELECT sym, time, cume_dist() OVER (PARTITION BY sym ORDER BY time) c FROM trade) ORDER BY sym, time, c",
+                    "SELECT sym, time, a FROM (SELECT sym, time, avg(price) OVER (PARTITION BY sym) a FROM trade) ORDER BY sym, time, a",
+                    "SELECT sym, time, s FROM (SELECT sym, time, sum(price) OVER (PARTITION BY sym ORDER BY time DESC) s FROM trade) ORDER BY sym, time, s",
+            };
+            for (String query : queries) {
+                final StringSink serialPlan = new StringSink();
+                engine.print("explain " + query, serialPlan, sqlExecutionContext);
+                sqlExecutionContext.setParallelWindowEnabled(true);
+                final StringSink plan = new StringSink();
+                try {
+                    engine.print("explain " + query, plan, sqlExecutionContext);
+                } finally {
+                    sqlExecutionContext.setParallelWindowEnabled(false);
+                }
+                TestUtils.assertEquals(query, serialPlan, plan);
+                assertMatchesSerial(engine, sqlExecutionContext, query, -1);
+            }
+        });
+    }
+
+    @Test
+    public void testStepsWithRandomFunctionsOrSubQueriesStaySerial() throws Exception {
+        // A step's worker copies would draw from the query's one Rnd at once, which is not thread
+        // safe, or run a sub-query once each: such a step is not chained. rnd_int(1, 2, 0) * 0 + 1
+        // is always 1, so the results still compare.
+        assertMemoryLeak(() -> {
+            createTrade(engine, sqlExecutionContext, 3_000);
+            final String lagged = "(SELECT time, ex, price, size, lag(price) OVER (ORDER BY time) lp FROM trade WHERE sym = 'BIG')";
+            final String[][] queries = {
+                    {"SELECT time, lp, sum(r) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM (SELECT time, lp, (rnd_int(1, 2, 0) * 0 + 1) r FROM " + lagged + ")", "then: project"},
+                    {"SELECT time, lp, sum(x) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM (SELECT time, lp, CASE WHEN ex IN (SELECT ex FROM trade WHERE sym = 'K1' AND ex = 'T') THEN 1 ELSE 0 END x FROM " + lagged + ")", "then: project"},
+                    {"SELECT time, lp FROM " + lagged + " WHERE rnd_int(1, 2, 0) > 0", "then: filter"},
+                    {"SELECT time, lp FROM " + lagged + " WHERE lp < (SELECT max(price) FROM trade)", "then: filter"},
+                    {"SELECT g, count() n, sum(rnd_int(1, 2, 0) * 0 + 1) c FROM (SELECT time, sum(f) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) g FROM (SELECT time, CASE WHEN price > lp THEN 1 ELSE 0 END f FROM " + lagged + ")) ORDER BY g", "then: group by"},
+                    // a slice's filter, which its workers would apply
+                    {"SELECT time, sum(size) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM trade WHERE ex = 'T' AND rnd_int(1, 2, 0) > 0", "rowSlices"},
+            };
+            for (String[] query : queries) {
+                assertMatchesSerial(engine, sqlExecutionContext, query[0], null);
+                sqlExecutionContext.setParallelWindowEnabled(true);
+                final StringSink plan = new StringSink();
+                try {
+                    engine.print("explain " + query[0], plan, sqlExecutionContext);
+                } finally {
+                    sqlExecutionContext.setParallelWindowEnabled(false);
+                }
+                Assert.assertFalse(query[0] + "\n" + plan, Chars.contains(plan, query[1]));
+            }
+            // without them, the same steps are chained
+            assertMatchesSerial(engine, sqlExecutionContext, "SELECT time, lp, sum(r) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM (SELECT time, lp, 1 r FROM " + lagged + ")", AsyncWindowStage.KIND_WINDOW);
+            assertMatchesSerial(engine, sqlExecutionContext, "SELECT time, lp FROM " + lagged + " WHERE lp < 100", AsyncWindowStage.KIND_FILTER);
+        });
+    }
+
     private void assertStepsOverFold() throws Exception {
         execute("create table t (time timestamp, sym symbol index type " + indexType + ", size double) timestamp(time) partition by DAY");
         execute("insert into t select (x * 1_000_000_000L)::timestamp, case when x % 5 = 0 then 'Z' else 'A' end, (x % 9)::double from long_sequence(300)");
