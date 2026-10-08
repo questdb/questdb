@@ -48,6 +48,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * TDD tests for Plan 2 — CommitMode.ADAPTIVE: durable WAL commit (Task A) + lazy table apply (Task B).
@@ -794,6 +797,54 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
+     * The sync calls a 1-row WAL commit makes on each WAL segment file (the column files and the two
+     * {@code _event} files), per commit mode and group window. ADAPTIVE drains writeback at every window,
+     * W=0 included: each file gets {@code msync(MS_ASYNC)}, {@code sync_file_range} and its own barrier, and
+     * never a blocking {@code msync(MS_SYNC)}. NOSYNC, ASYNC and SYNC run neither the drain nor a barrier.
+     * The filesystem probe is pinned on, so the drain runs on every platform.
+     */
+    @Test
+    public void testWalCommitSegmentFileSyncsPerMode() throws Exception {
+        final String perFile = "_event: %1$s; _event.i: %1$s; ts.d: %1$s; v.d: %1$s";
+        final String drained = String.format(perFile, "barrierFsync=1 msyncAsync=1 syncFileRange=1");
+        // commit mode, group window in microseconds, the sync calls of one commit on the segment files.
+        // Setting a property to its current value cancels a pending configuration rebuild, so the mode is set
+        // last and differs from one case to the next.
+        final String[][] cases = {
+                {"adaptive", "50000", drained},
+                {"nosync", "0", ""},
+                {"async", "0", String.format(perFile, "msyncAsync=1")},
+                {"sync", "0", String.format(perFile, "msyncSync=1")},
+                {"adaptive", "0", drained}
+        };
+        final WritebackDrainFacade ff = new WritebackDrainFacade();
+        assertMemoryLeak(ff, () -> {
+            for (int c = 0; c < cases.length; c++) {
+                final String[] mode = cases[c];
+                node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, mode[1]);
+                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode[0]);
+                Assert.assertEquals(CommitMode.fromString(mode[0]), engine.getConfiguration().getCommitMode());
+                Assert.assertEquals(Long.parseLong(mode[1]), engine.getConfiguration().getAdaptiveCommitGroupWindowUs());
+                execute("CREATE TABLE x" + c + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                try (WalWriter writer = getWalWriter("x" + c)) {
+                    for (int i = 0; i < 4; i++) {
+                        final TableWriter.Row row = writer.newRow(i * 60_000_000L);
+                        row.putLong(1, i);
+                        row.append();
+                        ff.segmentSyncs.clear();
+                        writer.commit();
+                        Assert.assertEquals(
+                                "mode=" + mode[0] + ", window=" + mode[1] + "us, commit " + i,
+                                mode[2],
+                                ff.segmentSyncSummary()
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    /**
      * The writeback drain's filesystem probe allocates a native path and costs a statfs, so
      * {@code WalWriter} resolves it once, on its own WAL directory, when it opens. A commit must not
      * repeat it, yet the drain itself must still run on every ADAPTIVE commit under {@code W > 0}.
@@ -1271,9 +1322,29 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Pins the writeback drain on and counts its calls. Also counts the sync calls on each WAL segment file,
+     * resolved from the fd, or for an msync from the mapping's address.
+     */
     static class WritebackDrainFacade extends TestFilesFacadeImpl {
+        private static final Pattern SEGMENT_FILE = Pattern.compile(".*[/\\\\]wal[0-9]+[/\\\\][0-9]+[/\\\\]([^/\\\\]+)");
+        final Map<String, Map<String, int[]>> segmentSyncs = new TreeMap<>();
+        private final Map<Long, String> addrToFile = new HashMap<>();
+        private final Map<Long, String> fdToFile = new HashMap<>();
         int probeCount, syncFileRangeCount;
         String probedPath;
+
+        @Override
+        public void barrierFsync(long fd) {
+            countSegmentSync(fdToFile.get(fd), "barrierFsync");
+            super.barrierFsync(fd);
+        }
+
+        @Override
+        public boolean close(long fd) {
+            fdToFile.remove(fd);
+            return super.close(fd);
+        }
 
         @Override
         public boolean isSyncFileRangeEffective(Utf8Sequence root) {
@@ -1284,9 +1355,74 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         }
 
         @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            final long addr = super.mmap(fd, len, offset, flags, memoryTag);
+            trackMapping(addr, fd);
+            return addr;
+        }
+
+        @Override
+        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            final long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+            addrToFile.remove(addr);
+            trackMapping(newAddr, fd);
+            return newAddr;
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            countSegmentSync(addrToFile.get(addr), async ? "msyncAsync" : "msyncSync");
+            super.msync(addr, len, async);
+        }
+
+        @Override
+        public void munmap(long address, long size, int memoryTag) {
+            addrToFile.remove(address);
+            super.munmap(address, size, memoryTag);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final long fd = super.openRW(name, opts);
+            final Matcher segmentFile = SEGMENT_FILE.matcher(Utf8String.newInstance(name).toString());
+            if (fd > -1 && segmentFile.matches()) {
+                fdToFile.put(fd, segmentFile.group(1));
+            }
+            return fd;
+        }
+
+        @Override
         public int syncFileRange(long fd, long offset, long nbytes, int flags) {
             syncFileRangeCount++;
+            countSegmentSync(fdToFile.get(fd), "syncFileRange");
             return super.syncFileRange(fd, offset, nbytes, flags);
+        }
+
+        private void countSegmentSync(String file, String call) {
+            if (file != null) {
+                segmentSyncs.computeIfAbsent(file, k -> new TreeMap<>()).computeIfAbsent(call, k -> new int[1])[0]++;
+            }
+        }
+
+        private String segmentSyncSummary() {
+            final StringBuilder sb = new StringBuilder();
+            for (Map.Entry<String, Map<String, int[]>> file : segmentSyncs.entrySet()) {
+                if (!sb.isEmpty()) {
+                    sb.append("; ");
+                }
+                sb.append(file.getKey()).append(':');
+                for (Map.Entry<String, int[]> call : file.getValue().entrySet()) {
+                    sb.append(' ').append(call.getKey()).append('=').append(call.getValue()[0]);
+                }
+            }
+            return sb.toString();
+        }
+
+        private void trackMapping(long addr, long fd) {
+            final String file = fdToFile.get(fd);
+            if (file != null && addr != -1 && addr != 0) {
+                addrToFile.put(addr, file);
+            }
         }
     }
 }

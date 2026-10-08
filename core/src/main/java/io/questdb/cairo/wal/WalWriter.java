@@ -2392,10 +2392,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
-     * MS_ASYNC vs MS_SYNC for the structural null-backfill, using the same rule as
-     * {@link #syncIfRequired0()}: ASYNC mode is async by definition, and under ADAPTIVE the group-commit
-     * window (W&gt;0) defers the device flush, so the msync only has to order the pages -- the explicit
-     * fdatasync that follows is the barrier.
+     * MS_ASYNC vs MS_SYNC for the structural null-backfill: ASYNC mode is async by definition, and under
+     * ADAPTIVE the group-commit window (W&gt;0) defers the device flush, so the msync only has to order the
+     * pages -- the explicit fdatasync that follows is the barrier.
      */
     private boolean adaptiveMsyncAsync(int commitMode) {
         return commitMode == CommitMode.ASYNC
@@ -2557,12 +2556,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     private void syncIfRequired0(int commitMode) {
         if (commitMode != CommitMode.NOSYNC) {
-            // W>0 uses MS_ASYNC here, then fdatasyncs these writer-private files explicitly before
-            // sequencing. Only the shared sequencer barrier is deferred/batched; this safe fallback prevents
-            // one writer's shared flush from publishing another writer's volatile dependencies. Other modes
-            // (and ADAPTIVE W=0) keep their exact existing mmap sync grade.
-            final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE && deferDeviceFlush();
-            final boolean async = commitMode == CommitMode.ASYNC || deferDeviceFlush;
+            // ADAPTIVE uses MS_ASYNC here at every window, then fdatasyncs these writer-private files explicitly
+            // before sequencing. Under W>0 only the shared sequencer barrier is deferred/batched; this safe
+            // fallback prevents one writer's shared flush from publishing another writer's volatile
+            // dependencies. ASYNC and SYNC keep their exact existing mmap sync grade.
+            final boolean adaptive = commitMode == CommitMode.ADAPTIVE;
+            final boolean async = commitMode == CommitMode.ASYNC || adaptive;
             for (int i = 0, n = columns.size(); i < n; i++) {
                 MemoryMA column = columns.getQuick(i);
                 if (column != null) {
@@ -2582,12 +2581,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             // what makes it safe to skip on a filesystem where it does nothing: ZFS loses the speedup and
             // nothing else.
             //
-            // Only under deferDeviceFlush (W>0): events.sync() is then MS_ASYNC, so hoisting it above the
-            // column barriers moves no barrier and the data->events->seq fdatasync order below is intact.
-            // Under W=0 events.sync() IS a barrier and must stay after the column barriers.
-            final boolean drain = commitMode == CommitMode.ADAPTIVE && deferDeviceFlush && isWritebackDrainEnabled;
+            // ADAPTIVE syncs the event mappings at the ASYNC grade, MS_ASYNC with no barrier of its own, so
+            // hoisting it above the column barriers moves no barrier and the data->events->seq fdatasync order
+            // below is intact.
+            final int eventsSyncMode = adaptive ? CommitMode.ASYNC : commitMode;
+            final boolean drain = adaptive && isWritebackDrainEnabled;
             if (drain) {
-                events.sync(commitMode); // MS_ASYNC only: makes the event mappings' pages known-dirty
+                events.sync(eventsSyncMode); // MS_ASYNC only: makes the event mappings' pages known-dirty
                 for (int i = 0, n = columns.size(); i < n; i++) {
                     final MemoryMA column = columns.getQuick(i);
                     if (column != null) {
@@ -2620,9 +2620,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 }
             }
             if (!drain) {
-                events.sync(commitMode);
+                events.sync(eventsSyncMode);
             }
-            if (commitMode == CommitMode.ADAPTIVE && deferDeviceFlush) {
+            if (adaptive) {
                 events.barrierFsync();
             }
         }
