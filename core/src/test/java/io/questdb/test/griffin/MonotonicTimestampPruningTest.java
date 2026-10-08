@@ -33,6 +33,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -450,6 +451,41 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                             30.0\t2022-03-01T00:00:00.000000Z
                             40.0\t2022-03-15T00:00:00.000000Z
                             """);
+        });
+    }
+
+    @Test
+    public void testDateAddRuntimeTextBound() throws Exception {
+        // a text bind variable bounds the chain as its getLong() reads it: NULL selects nothing,
+        // an integer string is the bound's value
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-02T00:00:00.000000Z')");
+            final String query = "SELECT v, ts FROM t WHERE dateadd('h', 1, ts) > $1";
+            for (boolean isVarchar : new boolean[]{true, false}) {
+                bindVariableService.clear();
+                if (isVarchar) {
+                    bindVariableService.setVarchar(0, null);
+                } else {
+                    bindVariableService.setStr(0, null);
+                }
+                assertQuery(query)
+                        .timestamp("ts")
+                        .returns("v\tts\n");
+                bindVariableService.clear();
+                if (isVarchar) {
+                    bindVariableService.setVarchar(0, new Utf8String("1704067200000000"));
+                } else {
+                    bindVariableService.setStr(0, "1704067200000000");
+                }
+                assertQuery(query)
+                        .timestamp("ts")
+                        .returns("""
+                                v\tts
+                                1\t2024-01-01T00:00:00.000000Z
+                                2\t2024-01-02T00:00:00.000000Z
+                                """);
+            }
         });
     }
 

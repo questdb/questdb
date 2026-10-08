@@ -754,7 +754,6 @@ public final class DecimalUtil {
      * When the unscaled value and 10^scale are both exact doubles the quotient is rounded once,
      * so dividing them gives the same double as parsing the decimal text.
      */
-
     private static boolean isExact(long unscaled, int scale) {
         return scale <= MAX_EXACT_SCALE && unscaled >= -MAX_EXACT_UNSCALED && unscaled <= MAX_EXACT_UNSCALED;
     }

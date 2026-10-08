@@ -1932,10 +1932,6 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         }
     }
 
-
-    /**
-     * Writes the appropriate null sentinel value for the given decimal column type.
-     */
     /**
      * The error of a switch over {@link PhysicalDescriptor#familyArmOpcodeOf(int)} for a type it
      * has no arm for: the family-arm refusal for a type unlike its family's namesake, else the
@@ -1948,6 +1944,9 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         return CairoException.nonCritical().put(message).put(ColumnType.nameOf(columnType));
     }
 
+    /**
+     * Writes the appropriate null sentinel value for the given decimal column type.
+     */
     private static void writeDecimalNullSentinel(MemoryMA dataMem, int columnType) {
         switch (PhysicalDescriptor.familyArmOpcodeOf(columnType)) {
             case ColumnType.DECIMAL8 -> dataMem.putByte(Decimals.DECIMAL8_NULL);
