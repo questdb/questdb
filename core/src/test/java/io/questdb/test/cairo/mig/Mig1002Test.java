@@ -333,6 +333,41 @@ public class Mig1002Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testRepairsNullFlagFromIndexOfColumnAddedToEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("ALTER TABLE t ADD COLUMN a SYMBOL INDEX");
+            execute("ALTER TABLE t ADD COLUMN s SYMBOL INDEX");
+            execute("INSERT INTO t VALUES ('2024-01-05T00:00:00Z', 1, 'a', 'x'), ('2024-01-05T01:00:00Z', 2, 'a', NULL)");
+            unsetSymbolNullFlag("t", "a");
+            unsetSymbolNullFlag("t", "s");
+            runMig1002("t");
+            Assert.assertFalse(containsSymbolNullValue("t", "a"));
+            Assert.assertTrue(containsSymbolNullValue("t", "s"));
+            assertQuery("SELECT x, s FROM t LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n1\tx\n2\t\n");
+        });
+    }
+
+    @Test
+    public void testRepairsNullFlagFromIndexOfUpdatedColumnVersion() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, a SYMBOL INDEX, s SYMBOL INDEX, b SYMBOL INDEX) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-05T00:00:00Z', 'a', 'x', 'b'), ('2024-01-05T01:00:00Z', 'a', 'y', 'b'), ('2024-01-06T00:00:00Z', 'a', 'z', 'b')");
+            execute("UPDATE t SET s = NULL WHERE ts = '2024-01-05T01:00:00Z'");
+            unsetSymbolNullFlag("t", "a");
+            unsetSymbolNullFlag("t", "s");
+            unsetSymbolNullFlag("t", "b");
+            runMig1002("t");
+            Assert.assertFalse(containsSymbolNullValue("t", "a"));
+            Assert.assertTrue(containsSymbolNullValue("t", "s"));
+            Assert.assertFalse(containsSymbolNullValue("t", "b"));
+            assertQuery("SELECT s FROM t LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("s\nx\n\nz\n");
+        });
+    }
+
+    @Test
     public void testRepairsNullFlagOfConvertedColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE stale (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");

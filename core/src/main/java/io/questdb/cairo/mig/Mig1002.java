@@ -38,6 +38,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.BitSet;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
@@ -121,30 +122,76 @@ public final class Mig1002 {
                         }
                     }
 
+                    final LongList versions = cvReader.getCachedColumnVersionList();
+                    final IntList recordIndexes = new IntList(pendingColumns.size());
+                    findColumnVersionRecords(versions, ColumnVersionReader.COL_TOP_DEFAULT_PARTITION, pendingColumns, recordIndexes);
                     final LongList columnTopPartitions = new LongList(columnCount);
+                    final LongList defaultNameTxns = new LongList(columnCount);
                     columnTopPartitions.setAll(columnCount, Long.MIN_VALUE);
+                    defaultNameTxns.setAll(columnCount, -1L);
                     for (int i = 0, n = pendingColumns.size(); i < n; i++) {
-                        final int columnIndex = pendingColumns.getQuick(i);
-                        columnTopPartitions.setQuick(columnIndex, cvReader.getColumnTopPartitionTimestamp(columnIndex));
+                        final int recordIndex = recordIndexes.getQuick(i);
+                        if (recordIndex > -1) {
+                            final int columnIndex = pendingColumns.getQuick(i);
+                            columnTopPartitions.setQuick(columnIndex, versions.getQuick(recordIndex + ColumnVersionReader.COLUMN_TOP_OFFSET));
+                            defaultNameTxns.setQuick(columnIndex, versions.getQuick(recordIndex + ColumnVersionReader.COLUMN_NAME_TXN_OFFSET));
+                        }
                     }
 
                     final IntList foundColumns = new IntList();
+                    final IntList probeColumns = new IntList();
+                    final LongList probeNameTxns = new LongList();
+                    final BitSet foundColumnSet = new BitSet(columnCount);
                     final ParquetMetaFileReader parquetMetadata = new ParquetMetaFileReader();
                     for (int i = 0, n = txReader.getPartitionCount(); i < n && pendingColumns.size() > 0; i++) {
                         if (txReader.getPartitionSize(i) < 1) {
                             continue;
                         }
+                        final long partitionTimestamp = txReader.getPartitionTimestampByIndex(i);
+                        findColumnVersionRecords(versions, partitionTimestamp, pendingColumns, recordIndexes);
                         foundColumns.clear();
-                        path.trimTo(plen);
-                        collectNullEvidence(
-                                migrationContext, metaMem, txReader, cvReader, columnTopPartitions, parquetMetadata,
-                                timestampType, partitionBy, i, columnNames, pendingColumns, foundColumns
-                        );
+                        probeColumns.clear();
+                        probeNameTxns.clear();
+                        for (int j = 0, m = pendingColumns.size(); j < m; j++) {
+                            final int columnIndex = pendingColumns.getQuick(j);
+                            final int recordIndex = recordIndexes.getQuick(j);
+                            final boolean hasColumnTop = recordIndex > -1
+                                    ? versions.getQuick(recordIndex + ColumnVersionReader.COLUMN_TOP_OFFSET) != 0
+                                    : columnTopPartitions.getQuick(columnIndex) > partitionTimestamp;
+                            if (hasColumnTop) {
+                                foundColumns.add(columnIndex);
+                            } else {
+                                probeColumns.add(columnIndex);
+                                probeNameTxns.add(recordIndex > -1
+                                        ? versions.getQuick(recordIndex + ColumnVersionReader.COLUMN_NAME_TXN_OFFSET)
+                                        : defaultNameTxns.getQuick(columnIndex));
+                            }
+                        }
+                        if (probeColumns.size() > 0) {
+                            path.trimTo(plen);
+                            if (txReader.isPartitionParquet(i)) {
+                                collectParquetNullEvidence(migrationContext, metaMem, txReader, parquetMetadata, timestampType, partitionBy, i, probeColumns, foundColumns);
+                            } else {
+                                collectIndexNullEvidence(migrationContext, metaMem, txReader, timestampType, partitionBy, i, columnNames, probeColumns, probeNameTxns, foundColumns);
+                            }
+                        }
+                        if (foundColumns.size() == 0) {
+                            continue;
+                        }
+                        foundColumnSet.clear();
                         for (int j = 0, m = foundColumns.size(); j < m; j++) {
                             final int columnIndex = foundColumns.getQuick(j);
                             setNullFlag(migrationContext, path.trimTo(plen), columnNames.getQuick(columnIndex), cvReader.getSymbolTableNameTxn(columnIndex));
-                            pendingColumns.remove(columnIndex);
+                            foundColumnSet.set(columnIndex);
                         }
+                        int pendingCount = 0;
+                        for (int j = 0, m = pendingColumns.size(); j < m; j++) {
+                            final int columnIndex = pendingColumns.getQuick(j);
+                            if (!foundColumnSet.get(columnIndex)) {
+                                pendingColumns.setQuick(pendingCount++, columnIndex);
+                            }
+                        }
+                        pendingColumns.setPos(pendingCount);
                     }
                 }
             }
@@ -157,12 +204,12 @@ public final class Mig1002 {
             MigrationContext migrationContext,
             MemoryCMR metaMem,
             TxReader txReader,
-            ColumnVersionReader cvReader,
             int timestampType,
             int partitionBy,
             int partitionIndex,
             ObjList<String> columnNames,
-            IntList pendingColumns,
+            IntList probeColumns,
+            LongList probeNameTxns,
             IntList foundColumns
     ) {
         final Path path = migrationContext.getTablePath();
@@ -172,13 +219,13 @@ public final class Mig1002 {
         final long partitionSize = txReader.getPartitionSize(partitionIndex);
         try {
             TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-            for (int i = 0, n = pendingColumns.size(); i < n; i++) {
-                final int columnIndex = pendingColumns.getQuick(i);
-                if (foundColumns.contains(columnIndex) || TableUtils.getColumnIndexType(metaMem, columnIndex) != IndexType.BITMAP) {
+            for (int i = 0, n = probeColumns.size(); i < n; i++) {
+                final int columnIndex = probeColumns.getQuick(i);
+                if (TableUtils.getColumnIndexType(metaMem, columnIndex) != IndexType.BITMAP) {
                     continue;
                 }
                 final String columnName = columnNames.getQuick(columnIndex);
-                final long columnNameTxn = cvReader.getColumnNameTxn(partitionTimestamp, columnIndex);
+                final long columnNameTxn = probeNameTxns.getQuick(i);
                 try (BitmapIndexBwdReader indexReader = new BitmapIndexBwdReader(migrationContext.getConfiguration(), path, columnName, columnNameTxn, partitionNameTxn, 0)) {
                     try (RowCursor nullRows = indexReader.getCursor(0, 0, partitionSize - 1)) {
                         if (nullRows.hasNext()) {
@@ -195,54 +242,6 @@ public final class Mig1002 {
         }
     }
 
-    private static void collectNullEvidence(
-            MigrationContext migrationContext,
-            MemoryCMR metaMem,
-            TxReader txReader,
-            ColumnVersionReader cvReader,
-            LongList columnTopPartitions,
-            ParquetMetaFileReader parquetMetadata,
-            int timestampType,
-            int partitionBy,
-            int partitionIndex,
-            ObjList<String> columnNames,
-            IntList pendingColumns,
-            IntList foundColumns
-    ) {
-        final long partitionTimestamp = txReader.getPartitionTimestampByIndex(partitionIndex);
-        final LongList versions = cvReader.getCachedColumnVersionList();
-        final int versionsSize = versions.size();
-        int recordIndex = versions.binarySearchBlock(ColumnVersionReader.BLOCK_SIZE_MSB, partitionTimestamp, Vect.BIN_SEARCH_SCAN_UP);
-        if (recordIndex < 0) {
-            recordIndex = versionsSize;
-        }
-        for (int i = 0, n = pendingColumns.size(); i < n; i++) {
-            final int columnIndex = pendingColumns.getQuick(i);
-            while (recordIndex < versionsSize
-                    && versions.getQuick(recordIndex) == partitionTimestamp
-                    && versions.getQuick(recordIndex + ColumnVersionReader.COLUMN_INDEX_OFFSET) < columnIndex) {
-                recordIndex += ColumnVersionReader.BLOCK_SIZE;
-            }
-            final boolean hasRecord = recordIndex < versionsSize
-                    && versions.getQuick(recordIndex) == partitionTimestamp
-                    && versions.getQuick(recordIndex + ColumnVersionReader.COLUMN_INDEX_OFFSET) == columnIndex;
-            final boolean hasColumnTop = hasRecord
-                    ? versions.getQuick(recordIndex + ColumnVersionReader.COLUMN_TOP_OFFSET) != 0
-                    : columnTopPartitions.getQuick(columnIndex) > partitionTimestamp;
-            if (hasColumnTop) {
-                foundColumns.add(columnIndex);
-            }
-        }
-        if (foundColumns.size() == pendingColumns.size()) {
-            return;
-        }
-        if (txReader.isPartitionParquet(partitionIndex)) {
-            collectParquetNullEvidence(migrationContext, metaMem, txReader, parquetMetadata, timestampType, partitionBy, partitionIndex, pendingColumns, foundColumns);
-        } else {
-            collectIndexNullEvidence(migrationContext, metaMem, txReader, cvReader, timestampType, partitionBy, partitionIndex, columnNames, pendingColumns, foundColumns);
-        }
-    }
-
     private static void collectParquetNullEvidence(
             MigrationContext migrationContext,
             MemoryCMR metaMem,
@@ -251,7 +250,7 @@ public final class Mig1002 {
             int timestampType,
             int partitionBy,
             int partitionIndex,
-            IntList pendingColumns,
+            IntList probeColumns,
             IntList foundColumns
     ) {
         final FilesFacade ff = migrationContext.getFf();
@@ -274,11 +273,8 @@ public final class Mig1002 {
                 if (!parquetMetadata.resolveFooter(txReader.getPartitionParquetFileSize(partitionIndex))) {
                     return;
                 }
-                for (int i = 0, n = pendingColumns.size(); i < n; i++) {
-                    final int columnIndex = pendingColumns.getQuick(i);
-                    if (foundColumns.contains(columnIndex)) {
-                        continue;
-                    }
+                for (int i = 0, n = probeColumns.size(); i < n; i++) {
+                    final int columnIndex = probeColumns.getQuick(i);
                     int parquetColumnIndex = parquetMetadata.getColumnIndexById(columnIndex);
                     if (parquetColumnIndex == -1) {
                         parquetColumnIndex = parquetMetadata.getColumnIndexById(TableUtils.getReplacingChainHead(metaMem, columnIndex));
@@ -293,6 +289,27 @@ public final class Mig1002 {
             }
         } finally {
             path.trimTo(plen);
+        }
+    }
+
+    private static void findColumnVersionRecords(LongList versions, long partitionTimestamp, IntList columns, IntList recordIndexes) {
+        final int versionsSize = versions.size();
+        int recordIndex = versions.binarySearchBlock(ColumnVersionReader.BLOCK_SIZE_MSB, partitionTimestamp, Vect.BIN_SEARCH_SCAN_UP);
+        if (recordIndex < 0) {
+            recordIndex = versionsSize;
+        }
+        recordIndexes.clear();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final int columnIndex = columns.getQuick(i);
+            while (recordIndex < versionsSize
+                    && versions.getQuick(recordIndex) == partitionTimestamp
+                    && versions.getQuick(recordIndex + ColumnVersionReader.COLUMN_INDEX_OFFSET) < columnIndex) {
+                recordIndex += ColumnVersionReader.BLOCK_SIZE;
+            }
+            final boolean hasRecord = recordIndex < versionsSize
+                    && versions.getQuick(recordIndex) == partitionTimestamp
+                    && versions.getQuick(recordIndex + ColumnVersionReader.COLUMN_INDEX_OFFSET) == columnIndex;
+            recordIndexes.add(hasRecord ? recordIndex : -1);
         }
     }
 
