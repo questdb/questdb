@@ -28,8 +28,9 @@ import org.jetbrains.annotations.Nullable;
 /**
  * One save point generation of one table, in one file: a {@link #FILE_SIZE}-byte header, then byte copies
  * (sections) of the live {@code _txn}, {@code _cv} and {@code _meta}, in that order. The header binds the
- * sections to one table and cut and carries the size and checksum of each. It is written last, after an fsync
- * of the sections, so a header that validates always has durable sections behind it.
+ * sections to one table and cut and carries the size and checksum of each, so every reader rejects a file whose
+ * sections did not all land. A generation is adopted only once the {@code _snapshot} marker names it, and the
+ * marker is written after this file's final fsync.
  */
 public final class DurableEpochManifest {
     public static final String FILE_NAME = "_epoch.manifest";
@@ -336,6 +337,22 @@ public final class DurableEpochManifest {
     }
 
     /**
+     * Whether the live {@code _txn} is byte-equal to the {@code _txn} section of a generation that
+     * {@link #validateSections} accepted, that is, whether the live cut is the one that generation saved.
+     */
+    public static boolean liveTxnEqualsSection(CairoConfiguration configuration, Path tablePath, int rootLen, int generation) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path manifest = new Path()) {
+            manifest.of(tablePath).trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
+            try (MemoryCMR mem = Vm.getCMRInstance(ff, manifest.$(), ff.length(manifest.$()), MemoryTag.MMAP_TABLE_READER)) {
+                return liveFileEquals(ff, tablePath, rootLen, TableUtils.TXN_FILE_NAME, mem.addressOf(FILE_SIZE), mem.getLong(OFFSET_TXN_SIZE));
+            } catch (CairoException | CairoError e) {
+                return false;
+            }
+        }
+    }
+
+    /**
      * Writes each section of a generation that {@link #validateSections} accepted over its live file where the
      * two differ: truncate, copy, fsync. {@code _meta} goes first and its directory entry is synced before the
      * pointers, so they are always interpreted with the metadata of the same cut. {@code _txn} goes before
@@ -427,6 +444,8 @@ public final class DurableEpochManifest {
      * Saves the live {@code _txn}, {@code _cv} and {@code _meta} as generation {@code generation}. Truncates the
      * file, writes the three sections after the header, fsyncs them, then writes the header in one call and
      * fsyncs again. A crash before the header lands leaves a file with no valid header, which recovery skips.
+     * What keeps a crash from exposing a header over sections that did not land is the section checksums in the
+     * header and the caller publishing the marker only after this returns, not the fsync between the two.
      * The caller holds the table, so the live files do not change meanwhile.
      */
     public static void write(

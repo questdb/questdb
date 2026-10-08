@@ -350,6 +350,23 @@ public class RecoveryCoordinator {
         }
     }
 
+    private boolean isLiveTxnSavedByOtherGeneration(
+            TableToken token,
+            Path src,
+            int rootLen,
+            SnapshotMarker.Candidate[] candidates,
+            SnapshotMarker.Candidate ahead
+    ) {
+        for (SnapshotMarker.Candidate other : candidates) {
+            if (other.generation != ahead.generation
+                    && DurableEpochManifest.validateSections(configuration, token, src, rootLen, other.generation, other.epochSeqTxn, other.epochTxn)
+                    && DurableEpochManifest.liveTxnEqualsSection(configuration, src, rootLen, other.generation)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean isMarkedForRestoreEnrolment(TableToken token, Path dir) {
         tablePath(dir, token).concat(RESTORE_ENROL_FILE_NAME);
         return ff.exists(dir.$());
@@ -711,6 +728,13 @@ public class RecoveryCoordinator {
                 }
                 // The lineage guard reads the live _txn, so it runs before any section is written over it.
                 if (epochIsAheadOfLiveTxn(token, src, candidate)) {
+                    // A fallback below leaves this generation listed first and the live _txn rewound to an older
+                    // one. A live _txn equal to another valid generation's is that rewind: go on to it.
+                    if (isLiveTxnSavedByOtherGeneration(token, src, rootLen, candidates, candidate)) {
+                        LOG.info().$("adaptive epoch ahead of live state is a rejected generation, skipping it [table=").$(token)
+                                .$(", epochSeqTxn=").$(candidate.epochSeqTxn).I$();
+                        continue;
+                    }
                     ahead = candidate;
                     break;
                 }
@@ -1107,8 +1131,8 @@ public class RecoveryCoordinator {
 
     /**
      * Fail-closed removal of the adaptive durable-epoch anchor for ONE table — the {@code _snapshot}
-     * marker plus the immutable {@code _meta.epoch}/{@code _txn.epoch}/{@code _cv.epoch} copies — given {@code path} positioned
-     * at the table root and {@code tableRootLen} = the length of that table-root prefix.
+     * marker plus the save point files {@code _epoch.manifest.0} and {@code _epoch.manifest.1} — given
+     * {@code path} positioned at the table root and {@code tableRootLen} = the length of that table-root prefix.
      * <p>
      * Call this when the local materialized state has been SUPERSEDED by an external event and the on-disk
      * epoch would otherwise be a stale, wrong-lineage anchor for {@link #recover()}:
@@ -1120,8 +1144,9 @@ public class RecoveryCoordinator {
      * </ul>
      * Removing the anchor prevents recovery from selecting a stale lineage. Absent files are accepted so
      * this remains idempotent for non-adaptive / never-epoch'd tables, but any artifact that still exists
-     * after deletion is a hard restore failure. Only the {@code .epoch} copies + marker are removed; the LIVE
-     * {@code _txn}/{@code _cv} are never touched. Leaves {@code path} trimmed back to the table root.
+     * after deletion is a hard restore failure. Only the save point files, the copy files of older development
+     * layouts and the marker are removed; the LIVE {@code _txn}/{@code _cv} are never touched. Leaves
+     * {@code path} trimmed back to the table root.
      */
     public static void removeAdaptiveEpochArtifacts(FilesFacade ff, Path path, int tableRootLen) {
         removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.SNAPSHOT_FILE_NAME));

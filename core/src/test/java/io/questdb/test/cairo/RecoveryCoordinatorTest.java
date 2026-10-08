@@ -471,6 +471,10 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
                 new RecoveryCoordinator(engine).recover();
                 Assert.assertEquals("recovery must fall back to the consistent generation", consistentSeqTxn, readTxnSeqTxn(tt));
+                // A second start before the replay: the rejected generation is still listed first and is ahead of
+                // the live _txn the fallback rewound, which must not read as a wrong-lineage state.
+                new RecoveryCoordinator(engine).recover();
+                Assert.assertEquals("a second start must stay on the consistent generation", consistentSeqTxn, readTxnSeqTxn(tt));
 
                 engine.getTxnScoreboardPool().remove(tt);
                 engine.notifyWalTxnRepublisher(tt);

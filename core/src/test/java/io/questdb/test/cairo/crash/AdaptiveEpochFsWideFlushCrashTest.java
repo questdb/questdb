@@ -26,11 +26,8 @@ package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CommitMode;
-import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.std.str.Path;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -129,15 +126,11 @@ public class AdaptiveEpochFsWideFlushCrashTest extends AbstractCrashConsistencyT
                 // Pre-crash a reader sees all TOTAL rows.
                 Assert.assertEquals("pre-crash must see all rows", TOTAL, readVs().size());
 
-                // Drive the durable epoch via fsyncMaterializedState() and PROVE it issued a fs-wide syncfs
-                // even though the batched path is disabled. Without the I1 fix this count does NOT move.
-                final long epochSeqTxn;
-                final long epochTxn;
+                // Take a real save point, whose flush is fsyncMaterializedState(), and PROVE it issued a fs-wide
+                // syncfs even though the batched path is disabled. Without the I1 fix this count does NOT move.
                 final int syncfsBefore = crashFf.syncfsCount();
                 try (TableWriter w = getWriter(tt)) {
-                    w.fsyncMaterializedState();
-                    epochSeqTxn = w.getSeqTxn();
-                    epochTxn = w.getTxn();
+                    w.advanceDurableEpoch(1L);
                 }
                 final int syncfsAfter = crashFf.syncfsCount();
                 Assert.assertTrue(
@@ -145,14 +138,6 @@ public class AdaptiveEpochFsWideFlushCrashTest extends AbstractCrashConsistencyT
                                 + ", after=" + syncfsAfter + ")",
                         syncfsAfter > syncfsBefore
                 );
-
-                // Record the epoch marker exactly as the apply-worker advance() hook does.
-                try (SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration());
-                     Path p = new Path()) {
-                    p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
-                    marker.of(p.$());
-                    marker.write(epochSeqTxn, epochTxn, 1L);
-                }
 
                 // CRASH: drop everything not made durable. The day-1 (closed) partition is durable ONLY
                 // because the epoch's fs-wide syncfs flushed it; without the fix it is dropped here.

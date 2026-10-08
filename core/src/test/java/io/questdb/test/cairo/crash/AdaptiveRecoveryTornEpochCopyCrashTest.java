@@ -31,12 +31,15 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
+import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
@@ -122,6 +125,61 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+        }
+    }
+
+    /**
+     * The newest generation passes its checksums but fails the content checks, so recovery restores it, rejects
+     * it and restores the older generation over it. The rejected generation stays listed first, ahead of the
+     * live {@code _txn} the fallback rewound. With no power loss, and with one at each durability call of the
+     * fallback, the next start must not refuse: it lands on the older generation, the start after it recovers
+     * nothing, and the replay brings back every row.
+     */
+    @Test
+    public void testPowerLossAtEverySyncOfFallbackThenRestart() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        try {
+            Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
+            runWithCrashFacade(() -> {
+                final Set<Long> fdBaseline = new HashSet<>(crashFf.noCacheOpenFdsSnapshot());
+                final TableToken countToken = buildTableWithSkewedNewestGeneration(0);
+                markDurableBaseline();
+                final int opsBefore = crashFf.durabilityOpCount();
+                new RecoveryCoordinator(engine).recover();
+                final int n = crashFf.durabilityOpCount() - opsBefore;
+                Assert.assertEquals("the first start must fall back to the older generation", K, readTxnSeqTxn(countToken));
+                simulateRestart(new TableToken[]{countToken});
+                assertRestartAfterFallbackConverges(countToken, "no power loss");
+                dropSweepTable(countToken);
+                releaseEngineHandles();
+                reclaimLingeringNonCacheFds(fdBaseline);
+                Assert.assertTrue("the fallback must make durability calls", n > 0);
+
+                for (int k = 1; k <= n; k++) {
+                    final TableToken tt = buildTableWithSkewedNewestGeneration(k);
+                    markDurableBaseline();
+                    crashFf.armCrashAt(crashFf.durabilityOpCount() + k);
+                    boolean fired = false;
+                    try {
+                        new RecoveryCoordinator(engine).recover();
+                    } catch (CrashSimulationError expected) {
+                        fired = true;
+                    }
+                    Assert.assertTrue("crash point " + k + " of " + n + " never fired", fired);
+                    simulateRestart(new TableToken[]{tt});
+                    assertRestartAfterFallbackConverges(tt, "power loss at durability call " + k + " of " + n);
+                    dropSweepTable(tt);
+                    releaseEngineHandles();
+                    reclaimLingeringNonCacheFds(fdBaseline);
+                }
+                Files.getMmapCache().asyncMunmap();
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
         }
     }
 
@@ -344,6 +402,22 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
         }
     }
 
+    private void assertRestartAfterFallbackConverges(TableToken tt, String context) {
+        try {
+            new RecoveryCoordinator(engine).recover();
+        } catch (CairoException e) {
+            Assert.fail(context + ": the next start refused: " + e.getFlyweightMessage());
+        }
+        Assert.assertEquals(context + ": the next start must land on the older generation", K, readTxnSeqTxn(tt));
+        final long events = TestUtils.getMetricValue(engine, RECOVERY_EVENTS);
+        new RecoveryCoordinator(engine).recover();
+        Assert.assertEquals(context + ": the start after it must recover nothing", events, TestUtils.getMetricValue(engine, RECOVERY_EVENTS));
+        engine.notifyWalTxnRepublisher(tt);
+        drainWalQueue();
+        Assert.assertFalse(context + ": table suspended", engine.getTableSequencerAPI().isSuspended(tt));
+        assertRows(tt.getTableName(), K + M + 1, context);
+    }
+
     private void assertRows(String tableName, int expected, String context) {
         final List<Long> rows = readVs(tableName);
         Assert.assertEquals(context + ": rows", expected, rows.size());
@@ -357,27 +431,31 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
         // Drive the epoch explicitly at a KNOWN cut; the auto-epoch must not fire.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         try {
-            Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
+            // A descriptor or mapping leaked on a rejected generation fails this row, not a later one that the fd
+            // cache would serve the stale file.
+            assertMemoryLeak(() -> {
+                Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
 
-            final TableToken tt = buildTableWithEpochAndLazyTail();
-            Assert.assertTrue("live _txn must hold the post-epoch frontier", readTxnSeqTxn(tt) >= K + M);
+                final TableToken tt = buildTableWithEpochAndLazyTail();
+                Assert.assertTrue("live _txn must hold the post-epoch frontier", readTxnSeqTxn(tt) >= K + M);
 
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
 
-            tornByMode(tt, mode);
+                tornByMode(tt, mode);
 
-            // Recovery rejects the newest generation and restores the proven creation baseline.
-            new RecoveryCoordinator(engine).recover();
-            Assert.assertEquals("a damaged newest generation must fall back to the generation-0 replay floor",
-                    0, readTxnSeqTxn(tt));
+                // Recovery rejects the newest generation and restores the proven creation baseline.
+                new RecoveryCoordinator(engine).recover();
+                Assert.assertEquals("a damaged newest generation must fall back to the generation-0 replay floor",
+                        0, readTxnSeqTxn(tt));
 
-            engine.notifyWalTxnRepublisher(tt);
-            drainWalQueue();
+                engine.notifyWalTxnRepublisher(tt);
+                drainWalQueue();
 
-            Assert.assertFalse("table must NOT be suspended after a safe fallback",
-                    engine.getTableSequencerAPI().isSuspended(tt));
-            assertRows("t", K + M, mode.name());
+                Assert.assertFalse("table must NOT be suspended after a safe fallback",
+                        engine.getTableSequencerAPI().isSuspended(tt));
+                assertRows("t", K + M, mode.name());
+            });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
@@ -408,6 +486,75 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
             execute("insert into t values ('2024-10-01T0" + i + ":00:00.000000Z', " + i + ")");
         }
         drainWalQueue();
+        return tt;
+    }
+
+    /**
+     * A table whose newest generation passes its checksums but whose {@code _meta} section has one symbol column
+     * fewer than its {@code _txn} section, with equal metadata versions, as a write-side bug leaves it. The older
+     * generation is consistent at seqTxn K, and the live table is one transaction past the newest generation.
+     */
+    private TableToken buildTableWithSkewedNewestGeneration(int iteration) throws Exception {
+        final String name = "f" + iteration;
+        execute("create table " + name + " (ts timestamp, sym symbol, v long) timestamp(ts) partition by day wal");
+        for (int i = 0; i < K; i++) {
+            execute("insert into " + name + " values ('2024-10-01T0" + i + ":00:00.000000Z', 'a" + i + "', " + i + ")");
+        }
+        drainWalQueue();
+        final TableToken tt = engine.verifyTableName(name);
+        try (TableWriter w = getWriter(tt)) {
+            w.advanceDurableEpoch(1L);
+        }
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path live = new Path(); Path forge = new Path(); Path dst = new Path()) {
+            live.of(engine.getConfiguration().getDbRoot()).concat(tt);
+            final int liveLen = live.size();
+            forge.of(engine.getConfiguration().getDbRoot()).concat("forge_" + name);
+            final int forgeLen = forge.size();
+            Assert.assertEquals(0, ff.mkdirs(forge.slash(), engine.getConfiguration().getMkDirMode()));
+            Assert.assertTrue(ff.copy(live.trimTo(liveLen).concat(TableUtils.META_FILE_NAME).$(), dst.of(forge).trimTo(forgeLen).concat(TableUtils.META_FILE_NAME).$()) >= 0);
+
+            execute("alter table " + name + " add column sym2 symbol");
+            for (int i = K; i < K + M; i++) {
+                execute("insert into " + name + " values ('2024-10-01T0" + i + ":00:00.000000Z', 'a" + i + "', " + i + ", 'b')");
+            }
+            drainWalQueue();
+            engine.releaseAllWriters();
+            for (String fileName : new String[]{TableUtils.TXN_FILE_NAME, TableUtils.COLUMN_VERSION_FILE_NAME}) {
+                Assert.assertTrue(ff.copy(live.trimTo(liveLen).concat(fileName).$(), dst.of(forge).trimTo(forgeLen).concat(fileName).$()) >= 0);
+            }
+            final long seqTxn;
+            final long txn;
+            final long columnVersion;
+            final long metadataVersion;
+            try (TxReader tx = new TxReader(ff)) {
+                tx.ofRO(forge.trimTo(forgeLen).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+                Assert.assertTrue(tx.unsafeLoadAll());
+                seqTxn = tx.getSeqTxn();
+                txn = tx.getTxn();
+                columnVersion = tx.getColumnVersion();
+                metadataVersion = tx.getMetadataVersion();
+            }
+            // Equal metadata versions: otherwise the version check rejects the generation before the symbol check.
+            try (MemoryMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(ff, forge.trimTo(forgeLen).concat(TableUtils.META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                TableUtils.resetMetadataVersion(mem, metadataVersion);
+            }
+            DurableEpochManifest.write(engine.getConfiguration(), tt, forge.trimTo(forgeLen), forgeLen, 0, seqTxn, txn, columnVersion, metadataVersion);
+            Assert.assertTrue(ff.copy(
+                    forge.trimTo(forgeLen).concat(DurableEpochManifest.FILE_NAME).put(".0").$(),
+                    live.trimTo(liveLen).concat(DurableEpochManifest.FILE_NAME).put(".0").$()
+            ) >= 0);
+            try (SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
+                marker.of(live.trimTo(liveLen).concat(TableUtils.SNAPSHOT_FILE_NAME).$());
+                marker.write(seqTxn, txn, 2L, 0);
+            }
+        }
+        execute("insert into " + name + " values ('2024-10-02T00:00:00.000000Z', 'c', " + (K + M) + ", 'b')");
+        drainWalQueue();
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tt));
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
         return tt;
     }
 
