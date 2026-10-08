@@ -165,6 +165,83 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testToleranceBoundary() throws Exception {
+        // a slave row exactly TOLERANCE before the master row joins, one microsecond older does not;
+        // in the span scan, the walk and the automatic choice alike
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, ctx) -> {
+                        engine.execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        // k0 every 100 s, k1 in between
+                        engine.execute("INSERT INTO quotes SELECT '2024-01-01'::timestamp + x * 50_000_000L, CASE WHEN x % 2 = 0 THEN 'k0' ELSE 'k1' END, x "
+                                + "FROM long_sequence(2000)", ctx);
+                        engine.execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        // k0 trades 30 s after a k0 quote, every other one a microsecond later
+                        engine.execute("INSERT INTO trades SELECT '2024-01-01'::timestamp + x * 100_000_000L + 30_000_000L + (x % 2), 'k0', x "
+                                + "FROM long_sequence(900)", ctx);
+                        final String body = " t.ts, t.px, q.ts qts, q.bid FROM trades t ASOF JOIN quotes q ON (sym) TOLERANCE 30s";
+                        final String parallel = "SELECT /*+ asof_parallel(t q) */" + body;
+                        assertParallel(engine, ctx, parallel, true);
+                        final StringSink sink = new StringSink();
+                        TestUtils.printSql(engine, ctx, "SELECT count(), count(qts) FROM (" + parallel + ")", sink);
+                        TestUtils.assertEquals("count\tcount1\n900\t450\n", sink);
+                        for (int mode : WALK_MODES) {
+                            AsyncAsOfJoinRecordCursorFactory.WALK_MODE = mode;
+                            TestUtils.assertSqlCursors(engine, ctx, "SELECT /*+ asof_linear(t q) */" + body, parallel, LOG);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testToTopAndSize() throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, ctx) -> {
+                        createTables(engine, ctx, new Rnd(), false, false, false);
+                        for (String where : new String[]{"", " WHERE t.px > 4"}) {
+                            final String body = " t.ts, t.sym, q.bid, q.cond, q.st FROM trades t ASOF JOIN quotes q ON (sym)" + where;
+                            final String parallel = "SELECT /*+ asof_parallel(t q) */" + body;
+                            final StringSink expected = new StringSink();
+                            TestUtils.printSql(engine, ctx, "SELECT /*+ asof_linear(t q) */" + body, expected);
+                            try (RecordCursorFactory factory = engine.select(parallel, ctx)) {
+                                findAtom(factory);
+                                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                                    // a part, then toTop() and the whole of it, twice
+                                    for (int i = 0; i < 1000 && cursor.hasNext(); i++) {
+                                        cursor.getRecord().getDouble(2);
+                                    }
+                                    for (int pass = 0; pass < 2; pass++) {
+                                        cursor.toTop();
+                                        final StringSink actual = new StringSink();
+                                        CursorPrinter.println(cursor, factory.getMetadata(), actual);
+                                        TestUtils.assertEquals(expected, actual);
+                                    }
+                                    // the size, counted without joining
+                                    cursor.toTop();
+                                    final RecordCursor.Counter counter = new RecordCursor.Counter();
+                                    cursor.calculateSize(ctx.getCircuitBreaker(), counter);
+                                    Assert.assertEquals(expected.toString().split("\n").length - 1, counter.get());
+                                    Assert.assertFalse(cursor.hasNext());
+                                }
+                            }
+                            TestUtils.assertSqlCursors(engine, ctx, "SELECT count() FROM (SELECT /*+ asof_linear(t q) */" + body + ")", "SELECT count() FROM (" + parallel + ")", LOG);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testWalkOrSpanScan() throws Exception {
         // the walk serves frames with few master rows against long spans, and is given up for the
         // span scan where every slave row's key joins and the walk would read about as many rows
@@ -555,6 +632,13 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
                         ctx,
                         "SELECT /*+ asof_linear(t q) */" + body + " LIMIT 50, 75",
                         parallel + " LIMIT 50, 75",
+                        LOG
+                );
+                TestUtils.assertSqlCursors(
+                        engine,
+                        ctx,
+                        "SELECT /*+ asof_linear(t q) */" + body + " LIMIT -9",
+                        parallel + " LIMIT -9",
                         LOG
                 );
             }
