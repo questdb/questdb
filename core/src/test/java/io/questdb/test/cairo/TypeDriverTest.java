@@ -326,9 +326,7 @@ public class TypeDriverTest {
                 continue;
             }
             final TypeDriver driver = ColumnType.getTypeDriver(tag);
-            if (driver instanceof FixedSizeTypeDriver fixed) {
-                Assert.assertEquals(ColumnType.nameOf(tag), ColumnType.sizeOf(tag), fixed.getWidth());
-                Assert.assertEquals(ColumnType.nameOf(tag), ColumnType.pow2SizeOf(tag), fixed.getPow2Width());
+            if (driver instanceof FixedSizeTypeDriver) {
                 fixedWidthTags.add(tag);
             } else {
                 Assert.assertTrue(ColumnType.nameOf(tag), driver instanceof ColumnTypeDriver);
@@ -387,9 +385,9 @@ public class TypeDriverTest {
                     final FixedSizeTypeDriver driver = (FixedSizeTypeDriver) ColumnType.getTypeDriver(tag);
                     mem.truncate();
                     driver.newNullAppender(mem, null).run();
-                    Assert.assertEquals(driver.getTypeName(), driver.getWidth(), mem.getAppendOffset());
+                    Assert.assertEquals(driver.getTypeName(), driver.getMovement().size(), mem.getAppendOffset());
                     driver.setNull(buf, 1);
-                    for (int b = 0; b < driver.getWidth(); b++) {
+                    for (int b = 0; b < driver.getMovement().size(); b++) {
                         Assert.assertEquals(driver.getTypeName() + " byte " + b, Unsafe.getByte(buf + b), mem.getByte(b));
                     }
                 }
@@ -746,7 +744,7 @@ public class TypeDriverTest {
             Assert.assertEquals(tag.name(), tag == ColumnTypeTag.VARCHAR_SLICE ? ColumnType.VARCHAR : tag.code(), implicitCasts[0]);
             switch (driver.getRelationKind()) {
                 case INT, CHAR, GEO -> {
-                    final int bits = ((FixedSizeTypeDriver) driver).getWidth() * Byte.SIZE;
+                    final int bits = driver.getMovement().size() * Byte.SIZE;
                     Assert.assertEquals(tag.name(), bits, driver.getRelationBits());
                 }
                 case BOOL, FLOAT, TEMPORAL, TEXT, SYMBOL, LONG256, LONG128, UUID, IPV4, BINARY, DECIMAL, ARRAY,

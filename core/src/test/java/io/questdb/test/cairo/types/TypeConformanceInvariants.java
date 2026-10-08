@@ -548,7 +548,7 @@ public final class TypeConformanceInvariants {
     // the fixed width of a type in bytes, -1 for a var-size type
     public static int widthOf(int columnType) {
         final TypeDriver driver = ColumnType.getTypeDriver(columnType);
-        return driver instanceof FixedSizeTypeDriver fixed ? fixed.getWidth() : -1;
+        return driver instanceof FixedSizeTypeDriver fixed ? fixed.getMovement().size() : -1;
     }
 
     private static void assertNoError(TypeConformanceTypes.Entry type, String row, String path, String mode, @Nullable String error) {

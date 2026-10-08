@@ -42,7 +42,7 @@ public final class TypeDriverInitOrderMain {
         for (String step : args) {
             switch (step) {
                 case "tag" -> ColumnTypeTag.of(5);
-                case "leaf" -> IntTypeDriver.INSTANCE.getWidth();
+                case "leaf" -> IntTypeDriver.INSTANCE.getMovement();
                 case "drivers" -> Class.forName("io.questdb.cairo.TypeDrivers");
                 case "type" -> ColumnType.nameOf(5);
                 default -> throw new IllegalArgumentException(step);

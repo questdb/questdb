@@ -253,7 +253,7 @@ public final class TypeConformanceValues {
     public static long[] readValue(Record record, int column, TypeConformanceTypes.Entry type) {
         final TypeDriver driver = ColumnType.getTypeDriver(type.columnType);
         if (driver instanceof FixedSizeTypeDriver fixed) {
-            return readBits(record, column, fixed.getWidth());
+            return readBits(record, column, fixed.getMovement().size());
         }
         return switch (driver.getAccessor()) {
             case VARCHAR -> {
@@ -354,7 +354,7 @@ public final class TypeConformanceValues {
             addVarSizeRows(type, driver, rows);
             return;
         }
-        final int width = fixed.getWidth();
+        final int width = fixed.getMovement().size();
         addTierRows(type, width, rows);
         rows.add(Row.bits("zero", width, 0, 0, 0, 0));
         rows.add(Row.bits("one", width, 1, 0, 0, 0));
@@ -368,7 +368,7 @@ public final class TypeConformanceValues {
                 continue;
             }
             final TypeDriver other = ColumnType.getTypeDriver(tag.code());
-            if (!(other instanceof FixedSizeTypeDriver otherFixed) || otherFixed.getWidth() != width || other.getNullPolicy() != NullPolicy.SENTINEL) {
+            if (!(other instanceof FixedSizeTypeDriver otherFixed) || otherFixed.getMovement().size() != width || other.getNullPolicy() != NullPolicy.SENTINEL) {
                 continue;
             }
             final Row row = Row.bits("sentinel_" + tag.name(), width, other.getNullLong(0), other.getNullLong(1), other.getNullLong(2), other.getNullLong(3));

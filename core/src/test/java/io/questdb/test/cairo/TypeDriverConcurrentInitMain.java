@@ -114,7 +114,7 @@ public final class TypeDriverConcurrentInitMain {
             case "tag" -> ColumnTypeTag.of(ColumnType.SYMBOL);
             case "drivers" ->
                     Class.forName("io.questdb.cairo.TypeDrivers", true, TypeDriverConcurrentInitMain.class.getClassLoader());
-            case "leaf" -> IntTypeDriver.INSTANCE.getWidth();
+            case "leaf" -> IntTypeDriver.INSTANCE.getMovement();
             // the leaf whose static initialiser calls back into ColumnType
             case "array" -> ArrayTypeDriver.INSTANCE.getTag();
             default -> throw new IllegalArgumentException(start);

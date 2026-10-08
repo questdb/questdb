@@ -110,7 +110,7 @@ public abstract class FixedSizeTypeDriver implements TypeDriver {
     }
 
     /**
-     * Derived from the storage NULL: the low {@link #getWidth()} bytes of the NULL word,
+     * Derived from the storage NULL: the low bytes of the NULL word, as many as the value is wide,
      * sign-extended, for a value up to 8 bytes wide; 0 for wider values, which no long slot can
      * hold.
      */
@@ -184,13 +184,6 @@ public abstract class FixedSizeTypeDriver implements TypeDriver {
     @Override
     public final TypeConstant getTypeConstant(int columnType) {
         return typeConstantSource.typeConstant(columnType);
-    }
-
-    /**
-     * Width of one value in bytes, as {@link ColumnType#sizeOf(int)} reports it.
-     */
-    public final int getWidth() {
-        return facts.movement().size();
     }
 
     @Override

@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.CursorPrinter;
-import io.questdb.cairo.FixedSizeTypeDriver;
 import io.questdb.cairo.RelationKind;
 import io.questdb.cairo.RelationRules;
 import io.questdb.cairo.TableReader;
@@ -1116,7 +1115,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                                 appendHex(sink, dataAddress + dataLo, dataHi - dataLo);
                             }
                         } else {
-                            final int width = ((FixedSizeTypeDriver) driver).getWidth();
+                            final int width = driver.getMovement().size();
                             appendHex(sink, dataAddress + r * width, width);
                         }
                         sink.put('\n');
