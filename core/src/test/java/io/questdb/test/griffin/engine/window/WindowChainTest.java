@@ -368,6 +368,7 @@ public class WindowChainTest extends AbstractCairoTest {
             createTrade(engine, sqlExecutionContext, 3_000);
             for (String sym : new String[]{"BIG", "K3", "NOPE"}) {
                 assertMatchesSerial(engine, sqlExecutionContext, q72(sym), AsyncWindowStage.KIND_GROUP_BY);
+                assertMatchesSerial(engine, sqlExecutionContext, withLast(q72(sym)), AsyncWindowStage.KIND_GROUP_BY);
             }
             // BIG within a task: computed by a task rather than streamed by the query's thread
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MAX_KEY_ROWS, 100_000);
@@ -384,6 +385,8 @@ public class WindowChainTest extends AbstractCairoTest {
             for (String in : lists) {
                 assertMatchesSerial(engine, sqlExecutionContext, q73(in), AsyncWindowStage.KIND_GROUP_BY);
                 assertMatchesSerial(engine, sqlExecutionContext, q74ManualOpt(in), AsyncWindowStage.KIND_GROUP_BY);
+                assertMatchesSerial(engine, sqlExecutionContext, withLast(q73(in)), AsyncWindowStage.KIND_GROUP_BY);
+                assertMatchesSerial(engine, sqlExecutionContext, withLast(q74ManualOpt(in)), AsyncWindowStage.KIND_GROUP_BY);
                 assertMatchesSerial(engine, sqlExecutionContext, q73(in) + " LIMIT 11", AsyncWindowStage.KIND_GROUP_BY);
             }
             // whole keys within tasks: BIG computed by a task too
@@ -399,7 +402,12 @@ public class WindowChainTest extends AbstractCairoTest {
         // that continue it, end it, and hold nothing but it are all met
         assertMemoryLeak(() -> {
             createLongRuns(engine, sqlExecutionContext);
-            for (String query : new String[]{q72("R"), q72("S"), q73("'R', 'S', 'T'"), q73("'T'"), q74ManualOpt("'R', 'S', 'T'")}) {
+            for (String query : new String[]{
+                    q72("R"), q72("S"), q73("'R', 'S', 'T'"), q73("'T'"), q74ManualOpt("'R', 'S', 'T'"),
+                    // last() keeps the row with the highest row id: a group's rows from several
+                    // tasks must come in rising row ids
+                    withLast(q72("R")), withLast(q73("'R', 'S', 'T'")), withLast(q74ManualOpt("'R', 'S', 'T'"))
+            }) {
                 assertMatchesSerial(engine, sqlExecutionContext, query, AsyncWindowStage.KIND_GROUP_BY);
                 sqlExecutionContext.setParallelWindowEnabled(true);
                 try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
@@ -416,7 +424,7 @@ public class WindowChainTest extends AbstractCairoTest {
         assertMemoryLeak(() -> inPool((engine, ctx) -> {
             createLongRuns(engine, ctx);
             long workerTasks = 0;
-            for (String query : new String[]{q72("R"), q73("'R', 'S', 'T'"), q74ManualOpt("'R', 'S', 'T'")}) {
+            for (String query : new String[]{q72("R"), q73("'R', 'S', 'T'"), q74ManualOpt("'R', 'S', 'T'"), withLast(q72("R")), withLast(q73("'R', 'S', 'T'"))}) {
                 for (int run = 0; run < 3; run++) {
                     workerTasks += assertMatchesSerial(engine, ctx, query, AsyncWindowStage.KIND_GROUP_BY);
                 }
@@ -981,6 +989,14 @@ public class WindowChainTest extends AbstractCairoTest {
                         " from long_sequence(9_000)",
                 ctx
         );
+    }
+
+    // The query with aggregates that keep a group's last row, which compare row ids, and that
+    // skip NULLs.
+    private static String withLast(String query) {
+        final String first = "first(price) AS price, ";
+        Assert.assertTrue(query, query.contains(first));
+        return query.replace(first, first + "last(price) AS lp, last_not_null(price) AS lnn, last(size) AS ls, first_not_null(size) AS fnn, last(time) AS lt, ");
     }
 
     private static String allKeys() {

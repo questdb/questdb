@@ -1254,7 +1254,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                     final int k = splitPlan.getGroupCarryKeyIndex();
                     gs.tailKeys[k] = AsyncWindowSplitPlan.combine(splitPlan.getPrefixOp(0), splitPlan.getPrefixType(0), carry[0], gs.tailKeys[k]);
                 }
-                stage.adoptGroup(gs.tailValue, gs.tailKeys);
+                stage.adoptGroup(gs.tailValue, gs.tailKeys, gs.tailLastRowId);
             }
             if (carries) {
                 carry[0] = stage.getOpenKey(splitPlan.getGroupCarryKeyIndex());

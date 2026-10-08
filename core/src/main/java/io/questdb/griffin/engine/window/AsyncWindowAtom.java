@@ -856,6 +856,7 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             groupSplit.tailIsFirstKey = singleKeyTask;
             if (groupSplit.lastKeyContinues) {
                 if (!capturing) {
+                    groupSplit.tailLastRowId = stage.getOpenGroupLastRowId();
                     groupSplit.hasTail = stage.exportOpenGroup(groupSplit.tailValue, groupSplit.tailKeys);
                 }
             } else if (!capturing && stage.closeOpenGroup()) {
@@ -1427,6 +1428,8 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         boolean lastKeyContinues;
         // the tail group is the first key's, which a carry applies to
         boolean tailIsFirstKey;
+        // the row id of the tail group's last row
+        long tailLastRowId = -1;
         // the walk position of the task's first own row, the row id of its first group row
         long walkBase;
 
@@ -1450,6 +1453,7 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             headRows = 0;
             lastKeyContinues = false;
             tailIsFirstKey = false;
+            tailLastRowId = -1;
             walkBase = 0;
         }
     }

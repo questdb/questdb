@@ -87,6 +87,8 @@ public class AsyncWindowGroupByStage extends AsyncWindowStage {
     private boolean isCapturing;
     private boolean isGroupOpen;
     private boolean isOpen;
+    // the row id of the open group's last row: row ids rise within a group, see setRowId()
+    private long openGroupLastRowId = -1;
     private long rowId;
     // calls the aggregates' computeFirst/computeNext through generated, monomorphic call sites, as
     // the serial GROUP BY does; null to call them in a loop
@@ -190,11 +192,21 @@ public class AsyncWindowGroupByStage extends AsyncWindowStage {
     /**
      * Makes {@code value} and {@code keys} the open group, as if this stage had aggregated its
      * rows: the group a task left open at its end, which the next task's rows may continue.
+     *
+     * @param lastRowId the row id of the group's last row, see {@link #getOpenGroupLastRowId()}
      */
-    public void adoptGroup(SimpleMapValue value, long[] keys) {
+    public void adoptGroup(SimpleMapValue value, long[] keys, long lastRowId) {
         currentValue.copy(value);
         System.arraycopy(keys, 0, currentKeys, 0, keys.length);
+        openGroupLastRowId = lastRowId;
         isGroupOpen = true;
+    }
+
+    /**
+     * The row id of the open group's last row, which a task hands over with the group.
+     */
+    public long getOpenGroupLastRowId() {
+        return openGroupLastRowId;
     }
 
     /**
@@ -308,9 +320,12 @@ public class AsyncWindowGroupByStage extends AsyncWindowStage {
     }
 
     /**
-     * The row id the next row is given, its position in the scan's walk: aggregates such as
-     * {@code first()} keep the row with the lowest id, which must be the earliest also when a
-     * group's rows came from several tasks.
+     * The row id the next row is given, its position in the scan's walk. Aggregates compare row
+     * ids: {@code first()} keeps the row with the lowest id, {@code last()} the one with the
+     * highest, so a group's ids must rise along its rows, also when they came from several tasks.
+     * They do: a task's rows take the walk positions from its first own row on, its head rows
+     * included, and the cursor replays a task's head rows with their positions, after the rows of
+     * the group the task before it left open. {@link #accept} asserts it.
      */
     public void setRowId(long rowId) {
         this.rowId = rowId;
@@ -364,6 +379,8 @@ public class AsyncWindowGroupByStage extends AsyncWindowStage {
                 }
             }
             if (same) {
+                assert rowId > openGroupLastRowId : "row ids must rise within a group [rowId=" + rowId + ", last=" + openGroupLastRowId + ']';
+                openGroupLastRowId = rowId;
                 final SimpleMapValue value = currentValue;
                 if (updater != null) {
                     updater.updateExisting(value, record, rowId);
@@ -454,6 +471,7 @@ public class AsyncWindowGroupByStage extends AsyncWindowStage {
         }
         final SimpleMapValue value = currentValue;
         value.clear();
+        openGroupLastRowId = rowId;
         if (updater != null) {
             updater.updateNew(value, record, rowId);
         } else {
