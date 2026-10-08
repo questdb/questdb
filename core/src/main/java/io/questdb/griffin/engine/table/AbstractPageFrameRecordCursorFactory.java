@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -84,6 +85,40 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
         this.partitionFrameCursorFactory = partitionFrameCursorFactory;
         this.columnIndexes = columnIndexes;
         this.columnSizeShifts = columnSizeShifts;
+    }
+
+    /**
+     * For an interval scan, the number of rows the intervals select, counted the way the scan
+     * would find them: a partition wholly inside an interval by its row count, a partition an
+     * interval boundary cuts by two binary searches on its timestamp column (or the Parquet row
+     * group statistics). Only the cut partitions are opened, at most two per interval, also when
+     * the query is only EXPLAINed. Index and row filters can only drop rows from there, so it is a
+     * bound for them too. A full scan, or an interval scan whose intervals are evaluated only when
+     * the cursor opens, answers -1 and leaves the planner to its whole-table count, as does a table
+     * whose reader is out of date.
+     * <p>
+     * Rows a live view holds in memory, not yet in its partitions, are not counted, so for a live
+     * view this can be below the rows the scan returns. The planner uses the count to choose between
+     * algorithms that return the same rows: an undercount costs speed, never results.
+     */
+    @Override
+    public long estimateRowCountUpperBound(SqlExecutionContext executionContext) {
+        if (!partitionFrameCursorFactory.isIntervalScan() || !partitionFrameCursorFactory.isIntervalScanStatic()) {
+            // a full scan, or intervals that take bind variable values only when the cursor opens
+            return -1;
+        }
+        try (PartitionFrameCursor cursor = partitionFrameCursorFactory.getCursor(executionContext, columnIndexes, ORDER_ASC)) {
+            if (!cursor.supportsSizeCalculation()) {
+                return -1;
+            }
+            final RecordCursor.Counter counter = new RecordCursor.Counter();
+            cursor.calculateSizeUpperBound(counter);
+            return counter.get();
+        } catch (SqlException | CairoException | TableReferenceOutOfDateException e) {
+            // e.g. a bind variable the intervals depend on has no value yet at compile time, or the
+            // table changed since the query was parsed: the planner falls back to the whole-table count
+            return -1;
+        }
     }
 
     @Override

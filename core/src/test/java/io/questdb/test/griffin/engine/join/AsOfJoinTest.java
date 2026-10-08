@@ -6621,7 +6621,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
             execute("create table quotes (sym symbol index, ts timestamp, bid double) timestamp(ts) partition by day bypass wal");
             execute("insert into quotes select ('s'||(x%50))::symbol, (x*1000)::timestamp, x::double from long_sequence(100000)");
             execute("create table trades (sym symbol, ts timestamp, px double) timestamp(ts) partition by day bypass wal");
-            execute("insert into trades select ('s'||(x%50))::symbol, (x*137)::timestamp, x::double from long_sequence(500)");
+            // 0.1% of the slave: small enough for the bitmap (2%) and the posting (0.2%) threshold alike,
+            // whichever index type the test randomly picked
+            execute("insert into trades select ('s'||(x%50))::symbol, (x*137)::timestamp, x::double from long_sequence(100)");
             String auto = "SELECT t.ts, t.sym, q.bid FROM trades t ASOF JOIN quotes q ON (sym)";
             String dense = "SELECT /*+ asof_dense(t q) */ t.ts, t.sym, q.bid FROM trades t ASOF JOIN quotes q ON (sym)";
             printSql("EXPLAIN " + auto);

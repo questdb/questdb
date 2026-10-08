@@ -113,6 +113,11 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
     }
 
     @Override
+    public boolean isIntervalScanStatic() {
+        return intervalModel.isStatic();
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         int order = sink.getOrder();
         if (order == ORDER_ANY || order < 0) {

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.DirectIntLongHashMap;
@@ -34,6 +35,7 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -47,11 +49,19 @@ import org.jetbrains.annotations.Nullable;
  */
 public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reopenable {
     // used when the symbol key is not present in the cache
+    // the backward scan consults the circuit breaker once per this many rows (a power of two)
+    private static final int CIRCUIT_BREAKER_CHECK_ROWS = 1024;
     private static final long NO_ENTRY_VALUE = Rows.toRowID(-1, 0);
     // holds <master_key, slave_rowid> pairs
     private final DirectIntLongHashMap cache;
+    private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     private int frameIndex = -1;
+    // with summaries: the block whose summary the next lookup starts from, once the scan is done
+    private int nextSummaryBlock = -1;
     private long rowIndex = Long.MIN_VALUE;
+    // the block the scan stops at the start of; -1 when the scan runs to the table start
+    private int scanStopBlock = -1;
+    private @Nullable WindowJoinPrevailingSummaries summaries;
 
     WindowJoinPrevailingCache() {
         this.cache = new DirectIntLongHashMap(
@@ -68,6 +78,8 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
         cache.clear();
         frameIndex = -1;
         rowIndex = Long.MIN_VALUE;
+        scanStopBlock = -1;
+        nextSummaryBlock = -1;
     }
 
     @Override
@@ -97,12 +109,17 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
         if (rowIndex == Long.MIN_VALUE) {
             // oops, previously we've scanned the slave table until the very start
             // or the row index was never initialized (Long.MIN_VALUE)
+            if (nextSummaryBlock >= 0) {
+                // the scan stopped at a block boundary; the blocks below it are summarised
+                return findBelowScanStop(slaveTimeFrameHelper, slaveRecord, slaveSymbolIndex, slaveSymbolLookupMap, masterKey, masterCacheKey);
+            }
             return Long.MIN_VALUE;
         }
 
         final int savedFrameIndex = slaveTimeFrameHelper.getBookmarkedFrameIndex();
         final long savedRowId = slaveTimeFrameHelper.getBookmarkedRowIndex();
 
+        int rowsScanned = 0;
         try {
             long scanStart = rowIndex;
             slaveTimeFrameHelper.restoreBookmark(frameIndex, rowIndex);
@@ -115,7 +132,16 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
                 long rowHi = slaveTimeFrameHelper.getTimeFrameRowHi();
                 scanStart = Math.min(scanStart, rowHi - 1);
 
+                if (scanStopBlock >= 0 && summaries.getBlockOf(frameIndex) < scanStopBlock) {
+                    // walked out of the scan's own block: the rest is summarised
+                    rowIndex = Long.MIN_VALUE;
+                    nextSummaryBlock = scanStopBlock - 1;
+                    break;
+                }
                 for (long r = scanStart; r >= rowLo; r--) {
+                    if ((rowsScanned++ & (CIRCUIT_BREAKER_CHECK_ROWS - 1)) == 0) {
+                        circuitBreaker.statefulThrowExceptionIfTripped();
+                    }
                     slaveTimeFrameHelper.recordAtRowIndex(r);
 
                     final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
@@ -137,9 +163,14 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
                 rowIndex = rowLo - 1;
                 scanStart = Long.MAX_VALUE;
             } while (slaveTimeFrameHelper.previousFrame());
-            rowIndex = Long.MIN_VALUE; // we've scanned until the very beginning, no more rows to check
+            if (nextSummaryBlock < 0) {
+                rowIndex = Long.MIN_VALUE; // we've scanned until the very beginning, no more rows to check
+            }
         } finally {
             slaveTimeFrameHelper.restoreBookmark(savedFrameIndex, savedRowId);
+        }
+        if (nextSummaryBlock >= 0) {
+            return findBelowScanStop(slaveTimeFrameHelper, slaveRecord, slaveSymbolIndex, slaveSymbolLookupMap, masterKey, masterCacheKey);
         }
         return Long.MIN_VALUE;
     }
@@ -149,9 +180,29 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
     }
 
     public void of(int frameIndex, long rowIndex) {
+        of(frameIndex, rowIndex, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+    }
+
+    /**
+     * Starts the lookups of a page frame whose backward scan begins at the given slave row.
+     *
+     * @param circuitBreaker the circuit breaker of the worker reducing the page frame; the scans and
+     *                       the waits for a summary another worker is building check it
+     */
+    public void of(int frameIndex, long rowIndex, @NotNull SqlExecutionCircuitBreaker circuitBreaker) {
         cache.clear();
+        this.circuitBreaker = circuitBreaker;
         this.frameIndex = frameIndex;
         this.rowIndex = rowIndex;
+        this.nextSummaryBlock = -1;
+        // The scan covers its own block from the start row down; the blocks below come from the
+        // summaries. Without summaries, or in the first block, it runs to the table start as before.
+        this.scanStopBlock = frameIndex >= 0 && summaries != null && summaries.isEnabled()
+                ? summaries.getBlockOf(frameIndex)
+                : -1;
+        if (scanStopBlock == 0) {
+            scanStopBlock = -1;
+        }
     }
 
     @Override
@@ -159,6 +210,8 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
         cache.reopen();
         frameIndex = -1;
         rowIndex = Long.MIN_VALUE;
+        scanStopBlock = -1;
+        nextSummaryBlock = -1;
     }
 
     /**
@@ -168,5 +221,81 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
      */
     public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
         cache.setMemoryTracker(memoryTracker);
+    }
+
+    /**
+     * Shares the per-block summaries of the slave with this cache; {@code null} keeps the plain
+     * backward scan. Takes effect from the next {@link #of(int, long)}.
+     */
+    public void setSummaries(@Nullable WindowJoinPrevailingSummaries summaries) {
+        this.summaries = summaries;
+    }
+
+    // The key's last row below the block boundary the scan stopped at: from the summaries or, when
+    // they are off for the query (the memory tracker refused them), from the plain scan, resumed at
+    // the top of the block below the boundary and left to run to the table start from then on.
+    private long findBelowScanStop(
+            WindowJoinTimeFrameHelper slaveTimeFrameHelper,
+            Record slaveRecord,
+            int slaveSymbolIndex,
+            DirectIntIntHashMap slaveSymbolLookupMap,
+            int masterKey,
+            int masterCacheKey
+    ) {
+        final long rowId = findInSummaries(slaveTimeFrameHelper, slaveRecord, slaveSymbolIndex, masterKey, masterCacheKey);
+        if (rowId != WindowJoinPrevailingSummaries.UNAVAILABLE) {
+            return rowId;
+        }
+        assert summaries != null;
+        final int savedFrameIndex = slaveTimeFrameHelper.getBookmarkedFrameIndex();
+        final long savedRowId = slaveTimeFrameHelper.getBookmarkedRowIndex();
+        try {
+            int resumeFrameIndex = summaries.getFirstFrameOf(scanStopBlock) - 1;
+            while (resumeFrameIndex >= 0 && slaveTimeFrameHelper.openFrame(resumeFrameIndex) <= 0) {
+                resumeFrameIndex--;
+            }
+            scanStopBlock = -1;
+            nextSummaryBlock = -1;
+            if (resumeFrameIndex < 0) {
+                // no rows below the boundary
+                rowIndex = Long.MIN_VALUE;
+                return Long.MIN_VALUE;
+            }
+            frameIndex = resumeFrameIndex;
+            rowIndex = slaveTimeFrameHelper.getTimeFrameRowHi() - 1;
+        } finally {
+            slaveTimeFrameHelper.restoreBookmark(savedFrameIndex, savedRowId);
+        }
+        return findPrevailingSlaveRowId(slaveTimeFrameHelper, slaveRecord, slaveSymbolIndex, slaveSymbolLookupMap, masterKey);
+    }
+
+    // Walks the summarised blocks below the scan, newest first, for the key's last row;
+    // WindowJoinPrevailingSummaries.UNAVAILABLE when the summaries are off for the query.
+    private long findInSummaries(
+            WindowJoinTimeFrameHelper slaveTimeFrameHelper,
+            Record slaveRecord,
+            int slaveSymbolIndex,
+            int masterKey,
+            int masterCacheKey
+    ) {
+        final int savedFrameIndex = slaveTimeFrameHelper.getBookmarkedFrameIndex();
+        final long savedRowId = slaveTimeFrameHelper.getBookmarkedRowIndex();
+        try {
+            for (int block = nextSummaryBlock; block >= 0; block--) {
+                final long rowId = summaries.lastRowIdInBlock(block, masterKey, slaveTimeFrameHelper, slaveRecord, slaveSymbolIndex, circuitBreaker);
+                if (rowId == WindowJoinPrevailingSummaries.UNAVAILABLE) {
+                    return WindowJoinPrevailingSummaries.UNAVAILABLE;
+                }
+                if (rowId != Long.MIN_VALUE) {
+                    cache.put(masterCacheKey, rowId);
+                    return rowId;
+                }
+            }
+        } finally {
+            slaveTimeFrameHelper.restoreBookmark(savedFrameIndex, savedRowId);
+        }
+        // nowhere before the span: remember it, so the next row of this key does not walk again
+        cache.put(masterCacheKey, Long.MIN_VALUE);
+        return Long.MIN_VALUE;
     }
 }

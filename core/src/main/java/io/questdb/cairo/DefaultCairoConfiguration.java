@@ -964,6 +964,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlAsOfIndexPostingMaxMasterBp() {
+        return 20;
+    }
+
+    @Override
+    public int getSqlAsOfMultiKeyFastMaxBackScanPct() {
+        return 25;
+    }
+
+    @Override
+    public int getSqlAsOfMultiKeyFastMaxMasterBp() {
+        return 10;
+    }
+
+    @Override
     public int getSqlAsOfMemoizedDenseRunThreshold() {
         // From the K sweep: fallback eliminates the dense_sym cliff (6250ms -> 11.7ms, ~530x, matches
         // Dense) for any K below the rows-per-timestamp; sparse-ts (runs of length 1) never trips, so a

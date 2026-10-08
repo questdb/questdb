@@ -25,6 +25,7 @@
 package io.questdb.std;
 
 import io.questdb.cairo.Reopenable;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -35,6 +36,8 @@ public class DirectBitSet implements Mutable, Closeable, Reopenable {
     private final int initialNBits;
     private final int memoryTag;
     private long address;
+    // null when no per-query limit applies; every malloc, realloc and free goes through it
+    private @Nullable MemoryTracker memoryTracker;
     private int wordCount;
 
     public DirectBitSet() {
@@ -68,7 +71,7 @@ public class DirectBitSet implements Mutable, Closeable, Reopenable {
     @Override
     public void close() {
         if (address != 0) {
-            address = Unsafe.free(address, (long) wordCount << WORD_BYTES_SHIFT, memoryTag);
+            address = Unsafe.free(address, (long) wordCount << WORD_BYTES_SHIFT, memoryTag, memoryTracker);
             wordCount = 0;
         }
     }
@@ -130,7 +133,7 @@ public class DirectBitSet implements Mutable, Closeable, Reopenable {
         } else if (wordCount < wc) {
             long oldBytes = (long) wordCount << WORD_BYTES_SHIFT;
             long newBytes = (long) wc << WORD_BYTES_SHIFT;
-            address = Unsafe.realloc(address, oldBytes, newBytes, memoryTag);
+            address = Unsafe.realloc(address, oldBytes, newBytes, memoryTag, memoryTracker);
             Vect.memset(address + oldBytes, newBytes - oldBytes, 0);
             wordCount = wc;
         }
@@ -140,12 +143,25 @@ public class DirectBitSet implements Mutable, Closeable, Reopenable {
         int targetWc = requiredWordCount(initialNBits);
         long newBytes = (long) targetWc << WORD_BYTES_SHIFT;
         if (address == 0) {
-            address = Unsafe.malloc(newBytes, memoryTag);
+            address = Unsafe.malloc(newBytes, memoryTag, memoryTracker);
         } else if (wordCount != targetWc) {
-            address = Unsafe.realloc(address, (long) wordCount << WORD_BYTES_SHIFT, newBytes, memoryTag);
+            address = Unsafe.realloc(address, (long) wordCount << WORD_BYTES_SHIFT, newBytes, memoryTag, memoryTracker);
         }
         wordCount = targetWc;
         Vect.memset(address, newBytes, 0);
+    }
+
+    /**
+     * Binds the per-query {@link MemoryTracker} that every later allocation charges; {@code null}
+     * keeps global-only accounting. Rebinding to a different tracker frees the bits first, since a
+     * block must be freed under the tracker that charged it. Bind before {@link #reserve(int)} or
+     * {@link #reopen()}, when the set holds nothing worth keeping.
+     */
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        if (tracker != memoryTracker) {
+            close();
+            memoryTracker = tracker;
+        }
     }
 
     public void set(int bitIndex) {
@@ -176,7 +192,7 @@ public class DirectBitSet implements Mutable, Closeable, Reopenable {
 
     private void allocate(int wc) {
         long bytes = (long) wc << WORD_BYTES_SHIFT;
-        address = Unsafe.malloc(bytes, memoryTag);
+        address = Unsafe.malloc(bytes, memoryTag, memoryTracker);
         wordCount = wc;
         Vect.memset(address, bytes, 0);
     }
@@ -186,7 +202,7 @@ public class DirectBitSet implements Mutable, Closeable, Reopenable {
             int newWc = Math.max(wordCount << 1, wordsRequired);
             long oldBytes = (long) wordCount << WORD_BYTES_SHIFT;
             long newBytes = (long) newWc << WORD_BYTES_SHIFT;
-            address = Unsafe.realloc(address, oldBytes, newBytes, memoryTag);
+            address = Unsafe.realloc(address, oldBytes, newBytes, memoryTag, memoryTracker);
             Vect.memset(address + oldBytes, newBytes - oldBytes, 0);
             wordCount = newWc;
         }
