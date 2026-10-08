@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -50,7 +51,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * {@code FilesFacade.copy} is portable only when the destination is absent. On POSIX it is
  * {@code creat(O_TRUNC)} and silently replaces whatever is there; on Windows it is
  * {@code CopyFileW(.., bFailIfExists=TRUE)} and returns {@link Files#WINDOWS_ERROR_FILE_EXISTS}. Every
- * adaptive site that copies over a live file — the epoch copy of a REUSED A/B generation, and the
+ * adaptive site that copies over a live file — the save point file of a REUSED A/B generation, and the
  * recovery roll-forward that restores {@code _meta}/{@code _txn}/{@code _cv} over the live ones — is
  * therefore green on Linux and dead on Windows:
  * <pre>
@@ -207,12 +208,7 @@ public class AdaptiveRestrictedCopyTest extends AbstractCairoTest {
     private boolean epochPayloadExists(TableToken tt, int generation) {
         final FilesFacade ff = engine.getConfiguration().getFilesFacade();
         try (Path p = new Path()) {
-            p.of(engine.getConfiguration().getDbRoot())
-                    .concat(tt)
-                    .concat(TableUtils.TXN_FILE_NAME)
-                    .put(TableUtils.EPOCH_COPY_SUFFIX)
-                    .put('.')
-                    .put(generation);
+            p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(DurableEpochManifest.FILE_NAME).put('.').put(generation);
             return ff.exists(p.$());
         }
     }

@@ -61,8 +61,8 @@ import java.util.List;
  *       recorded exactly the cut's seqTxn (a self-consistent durable cut + anchor survives the cut).
  *       Run under per-inode journaling ({@code modelSharedJournal=false}).</li>
  *   <li>{@link #testNegativeControlWithoutEpochAnchorIsAbsent}: NEGATIVE CONTROL — the identical
- *       workload with epochs DISABLED records NO recovery anchor (no {@code _snapshot}, no
- *       {@code _txn.epoch}/{@code _cv.epoch}), before AND after the crash. This is {@code advance()}'s
+ *       workload with epochs DISABLED records NO recovery anchor (no {@code _snapshot}, no save point
+ *       file), before AND after the crash. This is {@code advance()}'s
  *       reproducible contribution: the cut recovery would land on is simply not recorded. (Asserting
  *       column ROW-loss here is not reliable in this harness — see the test body + report.)</li>
  *   <li>{@link #testCrashMidEpochFsyncNoSilentCorruption}: arm a crash partway through the epoch's
@@ -158,7 +158,7 @@ public class AdaptiveEpochCrashTest extends AbstractCrashConsistencyTest {
     /**
      * Arm a crash partway through the epoch's fsync sequence: reopening must never SILENTLY corrupt.
      * The epoch issues many durability ops (column syncfs, _cv fsync, _txn fsync, marker msync+fsync,
-     * epoch-copy fsyncs); firing the crash on an early one leaves a partially-durable cut, which must
+     * save point file fsyncs); firing the crash on an early one leaves a partially-durable cut, which must
      * degrade safely (correct prefix / loud error / fewer rows), never a wrong value.
      */
     @Test
@@ -241,8 +241,6 @@ public class AdaptiveEpochCrashTest extends AbstractCrashConsistencyTest {
 
     private void assertCreationBaseline(TableToken tt) {
         assertMarkerSeqTxn(tt, 0);
-        assertFilePresent(tt, TableUtils.TXN_FILE_NAME + TableUtils.EPOCH_COPY_SUFFIX + ".0");
-        assertFilePresent(tt, TableUtils.COLUMN_VERSION_FILE_NAME + TableUtils.EPOCH_COPY_SUFFIX + ".0");
         assertFilePresent(tt, io.questdb.cairo.DurableEpochManifest.FILE_NAME + ".0");
     }
 

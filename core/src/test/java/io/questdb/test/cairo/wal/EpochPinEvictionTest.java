@@ -26,6 +26,7 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
@@ -565,19 +566,11 @@ public class EpochPinEvictionTest extends AbstractCairoTest {
         engine.releaseAllReaders();
     }
 
-    // Fails every durable-epoch copy write while armed. The epoch writes its copies into the inactive
-    // generation before the marker switches, so a failed copy leaves the marker on the previous epoch, the
-    // same state as a kill before the marker.
+    // Fails every save point file write while armed. The epoch writes the inactive generation's file before
+    // the marker switches, so a failed write leaves the marker on the previous epoch, the same state as a kill
+    // before the marker.
     private static class EpochCopyFailingFacade extends TestFilesFacadeImpl {
         private volatile boolean isFailingEpochCopies;
-
-        @Override
-        public int copy(LPSZ from, LPSZ to) {
-            if (isFailingEpochCopies && isEpochCopy(to)) {
-                return -1;
-            }
-            return super.copy(from, to);
-        }
 
         @Override
         public long openRW(LPSZ name, int opts) {
@@ -588,7 +581,7 @@ public class EpochPinEvictionTest extends AbstractCairoTest {
         }
 
         private static boolean isEpochCopy(LPSZ name) {
-            return Utf8s.containsAscii(name, TableUtils.EPOCH_COPY_SUFFIX + '.');
+            return Utf8s.containsAscii(name, DurableEpochManifest.FILE_NAME + '.');
         }
     }
 }

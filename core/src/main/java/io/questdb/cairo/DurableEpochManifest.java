@@ -13,7 +13,6 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -22,21 +21,26 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Binds the metadata, transaction, and column-version epoch payloads to one table and marker generation.
+ * One save point generation of one table, in one file: a {@link #FILE_SIZE}-byte header, then byte copies
+ * (sections) of the live {@code _txn}, {@code _cv} and {@code _meta}, in that order. The header binds the
+ * sections to one table and cut and carries the size and checksum of each. It is written last, after an fsync
+ * of the sections, so a header that validates always has durable sections behind it.
  */
 public final class DurableEpochManifest {
     public static final String FILE_NAME = "_epoch.manifest";
+    // The header; the sections follow it.
     public static final int FILE_SIZE = 120;
-    private static final int FORMAT_VERSION = 2;
-    private static final int LEGACY_BODY_SIZE = 88;
-    private static final int LEGACY_FILE_SIZE = 104;
-    private static final int LEGACY_FORMAT_VERSION = 1;
-    private static final Log LOG = LogFactory.getLog(DurableEpochManifest.class);
     private static final int BODY_SIZE = 104;
+    private static final int FORMAT_VERSION = 3;
+    private static final Log LOG = LogFactory.getLog(DurableEpochManifest.class);
+    private static final int OFFSET_CV_SIZE = 64;
+    private static final int OFFSET_META_SIZE = 80;
+    private static final int OFFSET_TXN_SIZE = 48;
 
     private DurableEpochManifest() {
     }
@@ -160,7 +164,7 @@ public final class DurableEpochManifest {
             boolean requireInitialSeqTxn
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
-        try (Path tablePath = new Path(); Path src = new Path(); Path dst = new Path()) {
+        try (Path tablePath = new Path()) {
             // A staging clone publishes into its own (not yet renamed) dir; everything else into the live one.
             if (tableDirPath != null) {
                 tablePath.of(tableDirPath);
@@ -171,24 +175,21 @@ public final class DurableEpochManifest {
             fsyncFile(configuration, tablePath, rootLen, TableUtils.META_FILE_NAME);
             fsyncFile(configuration, tablePath, rootLen, TableUtils.COLUMN_VERSION_FILE_NAME);
             fsyncFile(configuration, tablePath, rootLen, TableUtils.TXN_FILE_NAME);
-            copyPayload(configuration, tablePath, src, dst, rootLen, TableUtils.META_FILE_NAME, 0);
-            copyPayload(configuration, tablePath, src, dst, rootLen, TableUtils.COLUMN_VERSION_FILE_NAME, 0);
-            copyPayload(configuration, tablePath, src, dst, rootLen, TableUtils.TXN_FILE_NAME, 0);
 
             long seqTxn;
             long txn;
             long columnVersion;
             long metadataVersion;
             try (TxReader txReader = new TxReader(ff); ColumnVersionReader cvReader = new ColumnVersionReader()) {
-                src.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(0);
-                txReader.ofRO(src.$(), timestampType, partitionBy);
-                // A torn live area loads its predecessor silently; adopting the copy would make the tear the
+                tablePath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME);
+                txReader.ofRO(tablePath.$(), timestampType, partitionBy);
+                // A torn live area loads its predecessor silently; saving the file would make the tear the
                 // durable cut, and the writer refuses to roll back an anchored table.
                 if (!txReader.unsafeLoadAll() || txReader.unsafeIsLiveAreaTorn()) {
                     throw CairoException.critical(0).put("could not validate initial adaptive _txn baseline [table=").put(tableToken.getTableName()).put(']');
                 }
-                src.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(0);
-                cvReader.ofRO(ff, src.$());
+                tablePath.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+                cvReader.ofRO(ff, tablePath.$());
                 if (!cvReader.readSafe() || cvReader.hasTornLiveArea() || txReader.getColumnVersion() != cvReader.getVersion()) {
                     throw CairoException.critical(0).put("could not validate initial adaptive _cv baseline [table=").put(tableToken.getTableName()).put(']');
                 }
@@ -196,6 +197,8 @@ public final class DurableEpochManifest {
                 txn = txReader.getTxn();
                 columnVersion = txReader.getColumnVersion();
                 metadataVersion = txReader.getMetadataVersion();
+            } finally {
+                tablePath.trimTo(rootLen);
             }
             if (requireInitialSeqTxn && seqTxn != 0) {
                 throw CairoException.critical(0).put("initial adaptive baseline is not at sequencer transaction zero [table=")
@@ -332,6 +335,63 @@ public final class DurableEpochManifest {
         }
     }
 
+    /**
+     * Writes each section of a generation that {@link #validateSections} accepted over its live file where the
+     * two differ: truncate, copy, fsync. {@code _meta} goes first and its directory entry is synced before the
+     * pointers, so they are always interpreted with the metadata of the same cut. {@code _txn} goes before
+     * {@code _cv}: a crash between the two leaves {@code _txn} behind {@code _cv}, which never references a
+     * column version it does not have. The directory is synced again after them. Truncating first leaves each
+     * live file exactly as long as its section, so the next start compares equal and restores nothing.
+     *
+     * @return whether any live file was written
+     */
+    public static boolean restoreLiveFiles(CairoConfiguration configuration, TableToken tableToken, Path tablePath, int rootLen, int generation) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path manifest = new Path()) {
+            manifest.of(tablePath).trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
+            final long txnSize;
+            final long cvSize;
+            final long metaSize;
+            final boolean txnDiffers;
+            final boolean cvDiffers;
+            final boolean metaDiffers;
+            try (MemoryCMR mem = Vm.getCMRInstance(ff, manifest.$(), ff.length(manifest.$()), MemoryTag.MMAP_TABLE_READER)) {
+                txnSize = mem.getLong(OFFSET_TXN_SIZE);
+                cvSize = mem.getLong(OFFSET_CV_SIZE);
+                metaSize = mem.getLong(OFFSET_META_SIZE);
+                txnDiffers = !liveFileEquals(ff, tablePath, rootLen, TableUtils.TXN_FILE_NAME, mem.addressOf(FILE_SIZE), txnSize);
+                cvDiffers = !liveFileEquals(ff, tablePath, rootLen, TableUtils.COLUMN_VERSION_FILE_NAME, mem.addressOf(FILE_SIZE + txnSize), cvSize);
+                metaDiffers = !liveFileEquals(ff, tablePath, rootLen, TableUtils.META_FILE_NAME, mem.addressOf(FILE_SIZE + txnSize + cvSize), metaSize);
+            }
+            if (!txnDiffers && !cvDiffers && !metaDiffers) {
+                return false;
+            }
+            final long manifestFd = TableUtils.openRO(ff, manifest.$(), LOG);
+            try {
+                if (metaDiffers) {
+                    restoreSection(configuration, tableToken, tablePath, rootLen, TableUtils.META_FILE_NAME, manifestFd, FILE_SIZE + txnSize + cvSize, metaSize);
+                    fsyncDirectory(configuration, tablePath, rootLen);
+                }
+                if (txnDiffers) {
+                    restoreSection(configuration, tableToken, tablePath, rootLen, TableUtils.TXN_FILE_NAME, manifestFd, FILE_SIZE, txnSize);
+                }
+                if (cvDiffers) {
+                    restoreSection(configuration, tableToken, tablePath, rootLen, TableUtils.COLUMN_VERSION_FILE_NAME, manifestFd, FILE_SIZE + txnSize, cvSize);
+                }
+            } finally {
+                ff.close(manifestFd);
+            }
+            fsyncDirectory(configuration, tablePath, rootLen);
+            return true;
+        } finally {
+            tablePath.trimTo(rootLen);
+        }
+    }
+
+    /**
+     * Whether generation {@code generation} is a complete save point of this table at the given cut, and its
+     * {@code _txn} section records the given column and metadata versions.
+     */
     public static boolean validate(
             CairoConfiguration configuration,
             TableToken tableToken,
@@ -343,66 +403,32 @@ public final class DurableEpochManifest {
             long columnVersion,
             long metadataVersion
     ) {
-        if (generation < 0) {
-            return false;
-        }
-        final FilesFacade ff = configuration.getFilesFacade();
-        tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
-        final long manifestSize = ff.length(tablePath.$());
-        if (!ff.exists(tablePath.$()) || manifestSize < LEGACY_FILE_SIZE) {
-            return false;
-        }
-        try (MemoryCMR mem = Vm.getCMRInstance(ff, tablePath.$(), Math.min(manifestSize, FILE_SIZE), MemoryTag.MMAP_TABLE_READER);
-             Path payload = new Path()) {
-            final int formatVersion = mem.getInt(8);
-            final int bodySize;
-            if (formatVersion == LEGACY_FORMAT_VERSION) {
-                bodySize = LEGACY_BODY_SIZE;
-            } else if (formatVersion == FORMAT_VERSION && manifestSize >= FILE_SIZE) {
-                bodySize = BODY_SIZE;
-            } else {
-                return false;
-            }
-            if (mem.getLong(0) != TableUtils.SNAPSHOT_CHECKSUM_MAGIC
-                    || mem.getInt(12) != generation
-                    || mem.getInt(16) != tableToken.getTableId()
-                    || mem.getLong(24) != seqTxn
-                    || mem.getLong(32) != txn
-                    || mem.getLong(40) != columnVersion
-                    || mem.getLong(bodySize) != TableUtils.SNAPSHOT_CHECKSUM_MAGIC
-                    || mem.getLong(bodySize + 8) != TableUtils.calculateCvAreaChecksum(mem.addressOf(0), bodySize)) {
-                return false;
-            }
-            final long txnSize = mem.getLong(48);
-            final long txnChecksum = mem.getLong(56);
-            final long cvSize = mem.getLong(64);
-            final long cvChecksum = mem.getLong(72);
-            payload.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME)
-                    .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation);
-            if (!payloadMatches(ff, payload, txnSize, txnChecksum)) {
-                return false;
-            }
-            payload.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.COLUMN_VERSION_FILE_NAME)
-                    .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation);
-            if (!payloadMatches(ff, payload, cvSize, cvChecksum)) {
-                return false;
-            }
-            if (formatVersion == LEGACY_FORMAT_VERSION) {
-                return true;
-            }
-            if (mem.getLong(96) != metadataVersion) {
-                return false;
-            }
-            final long metaSize = mem.getLong(80);
-            final long metaChecksum = mem.getLong(88);
-            payload.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.META_FILE_NAME)
-                    .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation);
-            return payloadMatches(ff, payload, metaSize, metaChecksum);
-        } catch (Throwable e) {
-            return false;
-        }
+        return validate0(configuration, tableToken, tablePath, rootLen, generation, seqTxn, txn, true, columnVersion, metadataVersion);
     }
 
+    /**
+     * Whether generation {@code generation} is a complete save point of this table at the given cut: its header
+     * is whole and names this table, generation and cut, and every section has the size and checksum the
+     * header records. Reads only the save point file.
+     */
+    public static boolean validateSections(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            Path tablePath,
+            int rootLen,
+            int generation,
+            long seqTxn,
+            long txn
+    ) {
+        return validate0(configuration, tableToken, tablePath, rootLen, generation, seqTxn, txn, false, 0, 0);
+    }
+
+    /**
+     * Saves the live {@code _txn}, {@code _cv} and {@code _meta} as generation {@code generation}. Truncates the
+     * file, writes the three sections after the header, fsyncs them, then writes the header in one call and
+     * fsyncs again. A crash before the header lands leaves a file with no valid header, which recovery skips.
+     * The caller holds the table, so the live files do not change meanwhile.
+     */
     public static void write(
             CairoConfiguration configuration,
             TableToken tableToken,
@@ -415,54 +441,50 @@ public final class DurableEpochManifest {
             long metadataVersion
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
-        try (Path payload = new Path()) {
-            // Payloads live beside the manifest, so address them through the CALLER's table dir rather than
-            // re-deriving dbRoot/<token>: a REBASE WAL staging clone publishes its baseline before the rename
-            // that puts it at that final path. Identical for every live-table caller.
-            payload.of(tablePath).trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME)
-                    .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation);
-            final long txnSize = ff.length(payload.$());
-            final long txnChecksum = checksum(ff, payload, txnSize);
-            payload.of(tablePath).trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME)
-                    .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation);
-            final long cvSize = ff.length(payload.$());
-            final long cvChecksum = checksum(ff, payload, cvSize);
-            payload.of(tablePath).trimTo(rootLen).concat(TableUtils.META_FILE_NAME)
-                    .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation);
-            final long metaSize = ff.length(payload.$());
-            final long metaChecksum = checksum(ff, payload, metaSize);
-
-            // Restored in the finally: this path belongs to the caller (TableWriter passes its own), and
-            // leaving it at _epoch.manifest.<generation> made the next concat build a nonexistent
-            // directory. It survived review because a trimTo further along happened to clean it up -- on
-            // Linux only. See DurableEpochPathRestoreTest.
-            try {
-                tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
-                try (MemoryCMARW mem = Vm.getSmallCMARWInstance(ff, tablePath.$(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)) {
-                    mem.jumpTo(FILE_SIZE);
-                    mem.putLong(0, TableUtils.SNAPSHOT_CHECKSUM_MAGIC);
-                    mem.putInt(8, FORMAT_VERSION);
-                    mem.putInt(12, generation);
-                    mem.putInt(16, tableToken.getTableId());
-                    mem.putInt(20, 0);
-                    mem.putLong(24, seqTxn);
-                    mem.putLong(32, txn);
-                    mem.putLong(40, columnVersion);
-                    mem.putLong(48, txnSize);
-                    mem.putLong(56, txnChecksum);
-                    mem.putLong(64, cvSize);
-                    mem.putLong(72, cvChecksum);
-                    mem.putLong(80, metaSize);
-                    mem.putLong(88, metaChecksum);
-                    mem.putLong(96, metadataVersion);
-                    mem.putLong(BODY_SIZE, TableUtils.SNAPSHOT_CHECKSUM_MAGIC);
-                    mem.putLong(BODY_SIZE + 8, TableUtils.calculateCvAreaChecksum(mem.addressOf(0), BODY_SIZE));
-                    mem.sync(false);
-                    ff.fsync(mem.getFd());
-                }
-            } finally {
-                tablePath.trimTo(rootLen);
+        long fd = -1;
+        long header = 0;
+        // Restored in the finally: this path belongs to the caller (TableWriter passes its own), and leaving it
+        // at _epoch.manifest.<generation> made the next concat build a nonexistent directory. See
+        // DurableEpochPathRestoreTest.
+        try {
+            tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
+            fd = TableUtils.openRW(ff, tablePath.$(), LOG, CairoConfiguration.O_NONE);
+            if (fd == -1) {
+                throw CairoException.critical(ff.errno()).put("could not open adaptive epoch manifest [path=").put(tablePath).put(']');
             }
+            if (!ff.truncate(fd, 0)) {
+                throw CairoException.critical(ff.errno()).put("could not truncate adaptive epoch manifest [path=").put(tablePath).put(']');
+            }
+            header = Unsafe.calloc(FILE_SIZE, MemoryTag.NATIVE_TABLE_WRITER);
+            long offset = FILE_SIZE;
+            offset = writeSection(ff, tablePath, rootLen, TableUtils.TXN_FILE_NAME, fd, offset, header + OFFSET_TXN_SIZE);
+            offset = writeSection(ff, tablePath, rootLen, TableUtils.COLUMN_VERSION_FILE_NAME, fd, offset, header + OFFSET_CV_SIZE);
+            writeSection(ff, tablePath, rootLen, TableUtils.META_FILE_NAME, fd, offset, header + OFFSET_META_SIZE);
+            ff.fsync(fd);
+
+            Unsafe.getUnsafe().putLong(header, TableUtils.SNAPSHOT_CHECKSUM_MAGIC);
+            Unsafe.getUnsafe().putInt(header + 8, FORMAT_VERSION);
+            Unsafe.getUnsafe().putInt(header + 12, generation);
+            Unsafe.getUnsafe().putInt(header + 16, tableToken.getTableId());
+            Unsafe.getUnsafe().putLong(header + 24, seqTxn);
+            Unsafe.getUnsafe().putLong(header + 32, txn);
+            Unsafe.getUnsafe().putLong(header + 40, columnVersion);
+            Unsafe.getUnsafe().putLong(header + 96, metadataVersion);
+            Unsafe.getUnsafe().putLong(header + BODY_SIZE, TableUtils.SNAPSHOT_CHECKSUM_MAGIC);
+            Unsafe.getUnsafe().putLong(header + BODY_SIZE + 8, TableUtils.calculateCvAreaChecksum(header, BODY_SIZE));
+            tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
+            if (ff.write(fd, header, FILE_SIZE, 0) != FILE_SIZE) {
+                throw CairoException.critical(ff.errno()).put("could not write adaptive epoch manifest header [path=").put(tablePath).put(']');
+            }
+            ff.fsync(fd);
+        } finally {
+            if (header != 0) {
+                Unsafe.free(header, FILE_SIZE, MemoryTag.NATIVE_TABLE_WRITER);
+            }
+            if (fd != -1) {
+                ff.close(fd);
+            }
+            tablePath.trimTo(rootLen);
         }
     }
 
@@ -540,40 +562,6 @@ public final class DurableEpochManifest {
         }
     }
 
-    private static long checksum(FilesFacade ff, Path path, long size) {
-        if (size <= 0) {
-            throw CairoException.critical(ff.errno()).put("invalid adaptive epoch payload size [path=").put(path).put(", size=").put(size).put(']');
-        }
-        try (MemoryCMR mem = Vm.getCMRInstance(ff, path.$(), size, MemoryTag.MMAP_TABLE_READER)) {
-            return TableUtils.calculateCvAreaChecksum(mem.addressOf(0), size);
-        }
-    }
-
-    private static void copyPayload(CairoConfiguration configuration, Path tablePath, Path src, Path dst, int rootLen, String name, int generation) {
-        final FilesFacade ff = configuration.getFilesFacade();
-        src.of(tablePath).trimTo(rootLen).concat(name);
-        dst.of(tablePath).trimTo(rootLen).concat(name).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation);
-        // Not ff.copy: a baseline is also published over a table that already carries generation-zero
-        // payloads (a restore re-enrolment), and a whole-file copy refuses an existing destination on
-        // Windows. See TableUtils.replaceFileContent.
-        try {
-            TableUtils.replaceFileContent(ff, src.$(), dst.$(), configuration.getWriterFileOpenOpts());
-        } catch (CairoException e) {
-            throw CairoException.critical(e.getErrno())
-                    .put("could not create initial adaptive epoch payload [path=").put(dst)
-                    .put(", reason=").put(e.getFlyweightMessage()).put(']');
-        }
-        final long fd = TableUtils.openRW(ff, dst.$(), LOG, configuration.getWriterFileOpenOpts());
-        if (fd == -1) {
-            throw CairoException.critical(ff.errno()).put("could not open initial adaptive epoch payload [path=").put(dst).put(']');
-        }
-        try {
-            ff.fsync(fd);
-        } finally {
-            ff.close(fd);
-        }
-    }
-
     private static void fsyncFile(CairoConfiguration configuration, Path tablePath, int rootLen, String name) {
         final FilesFacade ff = configuration.getFilesFacade();
         tablePath.trimTo(rootLen).concat(name);
@@ -625,8 +613,130 @@ public final class DurableEpochManifest {
         fsyncDirectory(configuration, dirPath, dirLen);
     }
 
-    private static boolean payloadMatches(FilesFacade ff, Path path, long expectedSize, long expectedChecksum) {
-        return expectedSize > 0 && ff.exists(path.$()) && ff.length(path.$()) == expectedSize
-                && checksum(ff, path, expectedSize) == expectedChecksum;
+    private static boolean liveFileEquals(FilesFacade ff, Path tablePath, int rootLen, String name, long sectionAddr, long sectionSize) {
+        tablePath.trimTo(rootLen).concat(name);
+        try {
+            if (ff.length(tablePath.$()) != sectionSize) {
+                return false;
+            }
+            try (MemoryCMR live = Vm.getCMRInstance(ff, tablePath.$(), sectionSize, MemoryTag.MMAP_TABLE_READER)) {
+                return Vect.memeq(live.addressOf(0), sectionAddr, sectionSize);
+            }
+        } catch (CairoException | CairoError e) {
+            // Any failure to compare sends the file down the restore.
+            return false;
+        } finally {
+            tablePath.trimTo(rootLen);
+        }
+    }
+
+    private static void restoreSection(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            Path tablePath,
+            int rootLen,
+            String name,
+            long manifestFd,
+            long offset,
+            long size
+    ) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        tablePath.trimTo(rootLen).concat(name);
+        // Windows cannot shrink a file while a mapping of it is live; replace the file there, as
+        // TableUtils.replaceFileContent does.
+        if (Os.isWindows() && !ff.removeQuiet(tablePath.$()) && ff.exists(tablePath.$())) {
+            throw CairoException.critical(ff.errno()).put("adaptive epoch roll-forward could not replace [table=")
+                    .put(tableToken.getTableName()).put(", path=").put(tablePath).put(']');
+        }
+        final long fd = TableUtils.openRW(ff, tablePath.$(), LOG, configuration.getWriterFileOpenOpts());
+        if (fd == -1) {
+            throw CairoException.critical(ff.errno()).put("adaptive epoch roll-forward could not open [table=")
+                    .put(tableToken.getTableName()).put(", path=").put(tablePath).put(']');
+        }
+        try {
+            if (!ff.truncate(fd, 0) || ff.copyData(manifestFd, fd, offset, size) != size) {
+                throw CairoException.critical(ff.errno()).put("adaptive epoch roll-forward failed to restore [table=")
+                        .put(tableToken.getTableName()).put(", path=").put(tablePath).put(", size=").put(size).put(']');
+            }
+            ff.fsync(fd);
+        } finally {
+            ff.close(fd);
+            tablePath.trimTo(rootLen);
+        }
+    }
+
+    private static boolean validate0(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            Path tablePath,
+            int rootLen,
+            int generation,
+            long seqTxn,
+            long txn,
+            boolean checkVersions,
+            long columnVersion,
+            long metadataVersion
+    ) {
+        if (generation < 0) {
+            return false;
+        }
+        final FilesFacade ff = configuration.getFilesFacade();
+        tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
+        try {
+            final long fileSize = ff.length(tablePath.$());
+            if (!ff.exists(tablePath.$()) || fileSize <= FILE_SIZE) {
+                return false;
+            }
+            try (MemoryCMR mem = Vm.getCMRInstance(ff, tablePath.$(), fileSize, MemoryTag.MMAP_TABLE_READER)) {
+                if (mem.getLong(0) != TableUtils.SNAPSHOT_CHECKSUM_MAGIC
+                        || mem.getInt(8) != FORMAT_VERSION
+                        || mem.getInt(12) != generation
+                        || mem.getInt(16) != tableToken.getTableId()
+                        || mem.getLong(24) != seqTxn
+                        || mem.getLong(32) != txn
+                        || (checkVersions && (mem.getLong(40) != columnVersion || mem.getLong(96) != metadataVersion))
+                        || mem.getLong(BODY_SIZE) != TableUtils.SNAPSHOT_CHECKSUM_MAGIC
+                        || mem.getLong(BODY_SIZE + 8) != TableUtils.calculateCvAreaChecksum(mem.addressOf(0), BODY_SIZE)) {
+                    return false;
+                }
+                final long txnSize = mem.getLong(OFFSET_TXN_SIZE);
+                final long cvSize = mem.getLong(OFFSET_CV_SIZE);
+                final long metaSize = mem.getLong(OFFSET_META_SIZE);
+                if (txnSize <= 0 || cvSize <= 0 || metaSize <= 0
+                        || txnSize > fileSize || cvSize > fileSize || metaSize > fileSize
+                        || FILE_SIZE + txnSize + cvSize + metaSize != fileSize) {
+                    return false;
+                }
+                return TableUtils.calculateCvAreaChecksum(mem.addressOf(FILE_SIZE), txnSize) == mem.getLong(OFFSET_TXN_SIZE + 8)
+                        && TableUtils.calculateCvAreaChecksum(mem.addressOf(FILE_SIZE + txnSize), cvSize) == mem.getLong(OFFSET_CV_SIZE + 8)
+                        && TableUtils.calculateCvAreaChecksum(mem.addressOf(FILE_SIZE + txnSize + cvSize), metaSize) == mem.getLong(OFFSET_META_SIZE + 8);
+            }
+        } catch (Throwable e) {
+            return false;
+        } finally {
+            tablePath.trimTo(rootLen);
+        }
+    }
+
+    /**
+     * Appends the live file {@code name} to the save point file at {@code offset}, records its size and
+     * checksum at {@code sizeAddr} (the checksum in the next long), and returns the offset after it.
+     */
+    private static long writeSection(FilesFacade ff, Path tablePath, int rootLen, String name, long fd, long offset, long sizeAddr) {
+        tablePath.trimTo(rootLen).concat(name);
+        final long size = ff.length(tablePath.$());
+        if (size <= 0) {
+            throw CairoException.critical(ff.errno()).put("invalid adaptive epoch section size [path=").put(tablePath).put(", size=").put(size).put(']');
+        }
+        try (MemoryCMR mem = Vm.getCMRInstance(ff, tablePath.$(), size, MemoryTag.MMAP_TABLE_READER)) {
+            if (ff.write(fd, mem.addressOf(0), size, offset) != size) {
+                throw CairoException.critical(ff.errno()).put("could not write adaptive epoch section [path=").put(tablePath).put(", size=").put(size).put(']');
+            }
+            Unsafe.getUnsafe().putLong(sizeAddr, size);
+            Unsafe.getUnsafe().putLong(sizeAddr + 8, TableUtils.calculateCvAreaChecksum(mem.addressOf(0), size));
+        } finally {
+            tablePath.trimTo(rootLen);
+        }
+        return offset + size;
     }
 }

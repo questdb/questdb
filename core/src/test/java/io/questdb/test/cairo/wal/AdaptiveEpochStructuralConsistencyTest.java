@@ -31,8 +31,10 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -99,7 +101,7 @@ public class AdaptiveEpochStructuralConsistencyTest extends AbstractCairoTest {
     }
 
     /**
-     * Reads the epoch copies the way {@link io.questdb.cairo.RecoveryCoordinator} does and asserts the one
+     * Reads the saved sections the way {@link io.questdb.cairo.RecoveryCoordinator} does and asserts the one
      * property recovery depends on but never checked: that the {@code _txn} and {@code _meta} it restores
      * together were captured from the same table shape.
      */
@@ -120,10 +122,11 @@ public class AdaptiveEpochStructuralConsistencyTest extends AbstractCairoTest {
                 marker.close();
             }
 
-            final int rootLen = path.of(engine.getConfiguration().getDbRoot()).concat(token).size();
-
-            path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME)
-                    .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation);
+            final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            final CharSequence dbRoot = engine.getConfiguration().getDbRoot();
+            // The readers load files, so each saved section is copied out first.
+            path.of(dbRoot).concat("saved" + TableUtils.META_FILE_NAME);
+            TestUtils.copySavePointSection(ff, dbRoot, token, generation, TableUtils.META_FILE_NAME, path.$());
             int metaSymbolColumns = 0;
             int partitionBy;
             int timestampType;
@@ -139,12 +142,12 @@ public class AdaptiveEpochStructuralConsistencyTest extends AbstractCairoTest {
                 }
             }
 
-            path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME)
-                    .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation);
+            path.of(dbRoot).concat("saved" + TableUtils.TXN_FILE_NAME);
+            TestUtils.copySavePointSection(ff, dbRoot, token, generation, TableUtils.TXN_FILE_NAME, path.$());
             final int txnSymbolColumns;
-            try (TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade())) {
+            try (TxReader txReader = new TxReader(ff)) {
                 txReader.ofRO(path.$(), timestampType, partitionBy);
-                Assert.assertTrue("could not load _txn.epoch." + generation, txReader.unsafeLoadAll());
+                Assert.assertTrue("could not load the saved _txn of generation " + generation, txReader.unsafeLoadAll());
                 txnSymbolColumns = txReader.getSymbolColumnCount();
             }
 

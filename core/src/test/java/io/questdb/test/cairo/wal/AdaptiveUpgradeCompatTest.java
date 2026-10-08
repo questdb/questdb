@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.SnapshotMarker;
@@ -589,9 +590,9 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
             marker.of(markerPath);
             Assert.assertTrue("marker must load", marker.tryLoad());
             final int generation = marker.getGeneration();
-            final String fileName = baseFileName + TableUtils.EPOCH_COPY_SUFFIX
-                    + (generation == SnapshotMarker.LEGACY_GENERATION ? "" : "." + generation);
-            assertArtifactExists(tt, fileName);
+            assertArtifactExists(tt, DurableEpochManifest.FILE_NAME + "." + generation);
+            final long[] section = TestUtils.savePointSection(configuration.getFilesFacade(), markerPath, configuration.getDbRoot(), tt, generation, baseFileName.toString());
+            Assert.assertTrue("the save point must hold a copy of " + baseFileName, section[1] > 0);
         }
     }
 

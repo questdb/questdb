@@ -63,7 +63,7 @@ import org.junit.Test;
  *   <li>{@code sync} takes the eager grade at every apply-path site, including the ones {@code adaptive}
  *       defers to the durable epoch.</li>
  *   <li>{@code adaptive} reaches sites {@code sync} never executes at all -- the epoch itself:
- *       {@code DurableEpochManifest}, the {@code _txn.epoch}/{@code _cv.epoch} payload copies, and
+ *       {@code DurableEpochManifest}, which saves the live {@code _txn}, {@code _cv} and {@code _meta}, and
  *       {@code fsyncMaterializedState}. Running only {@code sync} would leave the entire epoch machinery,
  *       which is the whole point of this branch, unswept.</li>
  * </ul>
@@ -123,7 +123,7 @@ public class WriteAccessBarrierSweepTest extends AbstractCairoTest {
             Assert.assertTrue(
                     "no durable-epoch barrier was issued, so this case adds nothing over the sync one"
                             + ff.debugDump(),
-                    ff.barrierCount(".epoch") > 0 || ff.barrierCount("_epoch.manifest") > 0
+                    ff.barrierCount("_epoch.manifest") > 0
             );
         });
     }

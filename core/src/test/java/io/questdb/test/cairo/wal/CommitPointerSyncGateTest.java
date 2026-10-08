@@ -26,6 +26,7 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.SyncAttributingFilesFacade;
 import org.junit.Assert;
@@ -105,8 +106,8 @@ public class CommitPointerSyncGateTest extends AbstractCairoTest {
                     "the durable epoch MUST force _cv durable, independent of commit mode",
                     facade.barrierCount(dir + "/_cv") > 0);
             Assert.assertTrue(
-                    "the durable epoch MUST fsync the immutable _txn.epoch recovery anchor",
-                    facade.fsyncCount(dir + "/_txn.epoch") > 0);
+                    "the durable epoch MUST fsync the save point file that holds the _txn copy",
+                    facade.fsyncCount(dir + "/" + DurableEpochManifest.FILE_NAME) > 0);
         });
     }
 

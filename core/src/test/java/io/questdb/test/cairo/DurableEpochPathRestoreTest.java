@@ -30,6 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -99,18 +100,23 @@ public class DurableEpochPathRestoreTest extends AbstractCairoTest {
      * <p>
      * The coverage pass on PR #7411 found {@code DurableEpochManifest.validate()} is entered by the
      * existing suites and ALWAYS SUCCEEDS -- its happy path is covered and every rejection branch had
-     * zero coverage: the {@code _txn.epoch} payload checksum, the {@code _cv.epoch} payload checksum,
-     * and the {@code metadataVersion} agreement. Those are three of the four conditions the PR
+     * zero coverage: the {@code _txn} section checksum, the {@code _cv} section checksum, and the
+     * {@code metadataVersion} agreement. Those are three of the four conditions the PR
      * describes as proving an epoch self-consistent before recovery adopts it, so the guarantee rested
      * on the passing case alone.
      * <p>
-     * The torn-copy crash tests do not reach them. They corrupt {@code _txn.epoch} and recovery
+     * The torn-copy crash tests do not reach them. They corrupt the saved {@code _txn} and recovery
      * rejects it earlier, inside {@code RecoveryCoordinator}'s own decode, so they exercise that layer
      * instead. Calling {@code validate()} directly is what separates the two.
      */
     @Test
     public void testValidateRejectsATamperedTxnEpochPayload() throws Exception {
         assertMemoryLeak(() -> assertTamperedPayloadIsRejected("mftxn", TableUtils.TXN_FILE_NAME));
+    }
+
+    @Test
+    public void testValidateRejectsATamperedMetaEpochPayload() throws Exception {
+        assertMemoryLeak(() -> assertTamperedPayloadIsRejected("mfmeta", TableUtils.META_FILE_NAME));
     }
 
     @Test
@@ -140,8 +146,8 @@ public class DurableEpochPathRestoreTest extends AbstractCairoTest {
     }
 
     /**
-     * Builds an enrolled table, proves its manifest validates, flips one byte inside the named
-     * {@code .epoch} payload, and requires the manifest to reject it. The precondition matters: without
+     * Builds an enrolled table, proves its manifest validates, flips one byte inside the named file's
+     * section, and requires the manifest to reject it. The precondition matters: without
      * it a build where validate() always returned false would pass every case here.
      */
     private void assertTamperedPayloadIsRejected(String table, String payloadName) throws Exception {
@@ -154,19 +160,18 @@ public class DurableEpochPathRestoreTest extends AbstractCairoTest {
                     DurableEpochManifest.validate(configuration, token, p, rootLen,
                             (int) h[0], h[1], h[2], h[3], h[4]));
 
-            final java.io.File payload = new java.io.File(
-                    new java.io.File(configuration.getDbRoot().toString(), token.getDirName()),
-                    payloadName + TableUtils.EPOCH_COPY_SUFFIX + "." + (int) h[0]);
-            Assert.assertTrue("precondition: " + payload.getName() + " must exist", payload.exists());
+            final long[] section = TestUtils.savePointSection(configuration.getFilesFacade(), p, configuration.getDbRoot(), token, (int) h[0], payloadName);
+            final java.io.File payload = new java.io.File(p.toString());
             try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(payload, "rw")) {
-                raf.seek(raf.length() / 2);
+                final long middle = section[0] + section[1] / 2;
+                raf.seek(middle);
                 final int b = raf.read();
-                raf.seek(raf.length() / 2);
+                raf.seek(middle);
                 raf.write(b ^ 0xFF);
             }
 
-            p.trimTo(rootLen);
-            Assert.assertFalse("a tampered " + payload.getName() + " must fail the manifest checksum",
+            p.of(configuration.getDbRoot()).concat(token);
+            Assert.assertFalse("a tampered " + payloadName + " section must fail the manifest checksum",
                     DurableEpochManifest.validate(configuration, token, p, rootLen,
                             (int) h[0], h[1], h[2], h[3], h[4]));
         }

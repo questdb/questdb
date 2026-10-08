@@ -1126,14 +1126,9 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             marker.of(p);
             Assert.assertTrue("durable epoch marker must load", marker.tryLoad());
             final int generation = marker.getGeneration();
-            p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(baseFileName).put(".epoch");
-            if (generation != SnapshotMarker.LEGACY_GENERATION) {
-                p.put('.').put(generation);
-            }
-            Assert.assertTrue(
-                    "durable epoch copy must exist: " + p,
-                    engine.getConfiguration().getFilesFacade().exists(p.$())
-            );
+            final io.questdb.std.FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            final long[] section = io.questdb.test.tools.TestUtils.savePointSection(ff, p, engine.getConfiguration().getDbRoot(), tt, generation, baseFileName);
+            Assert.assertTrue("the save point must hold a copy of " + baseFileName + ": " + p, section[1] > 0);
         }
     }
 

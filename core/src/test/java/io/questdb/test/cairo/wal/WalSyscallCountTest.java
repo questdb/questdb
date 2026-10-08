@@ -26,12 +26,14 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
@@ -49,6 +51,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -184,6 +187,56 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The sync calls of one periodic save point after its column flush: the live {@code _cv} and {@code _txn},
+     * then the generation's one file twice (its sections, then its header), the table directory and the
+     * {@code _snapshot} marker. Separate copies of {@code _meta}, {@code _cv} and {@code _txn} took three more.
+     */
+    @Test
+    public void testPeriodicSavePointSyncs() throws Exception {
+        Assume.assumeTrue("only ADAPTIVE takes save points", "adaptive".equals(commitMode));
+        Assume.assumeFalse("Windows syncs no directory", Os.isWindows());
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, isV2 ? 1000 : 0);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        final CountingFacade ff = new CountingFacade();
+        assertMemoryLeak(ff, () -> {
+            Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES (1000000, 1)");
+            drainWalQueue();
+            try (TableWriter writer = getWriter("x")) {
+                // A writer's first save point also flushes every partition; measure the next one.
+                writer.advanceDurableEpoch(1L);
+                ff.startSyncLog();
+                writer.advanceDurableEpoch(2L);
+                ff.stopSyncLog();
+            }
+            final List<String> log = ff.syncLog;
+            int columnFlushEnd = -1;
+            for (int i = 0, n = log.size(); i < n; i++) {
+                if (log.get(i).startsWith("syncfs")) {
+                    columnFlushEnd = i;
+                }
+            }
+            Assert.assertTrue("the column flush ends with syncfs: " + log, columnFlushEnd > -1);
+            Assert.assertEquals(
+                    "sync calls after the column flush",
+                    """
+                            msyncSync
+                            fsync _cv
+                            msyncSync
+                            fsync _txn
+                            fsync _epoch.manifest.0
+                            fsync _epoch.manifest.0
+                            fsyncAndClose x~1
+                            msyncSync
+                            fsync _snapshot""",
+                    String.join("\n", log.subList(columnFlushEnd + 1, log.size()))
+            );
+        });
+    }
+
     private static void addForeignFiles(Path tableDir, Path dir, Pattern baseFile, Set<String> foreign) throws IOException {
         try (Stream<Path> files = Files.walk(dir)) {
             for (Path file : files.filter(Files::isRegularFile).toList()) {
@@ -289,9 +342,12 @@ public class WalSyscallCountTest extends AbstractCairoTest {
      */
     private static class CountingFacade extends TestFilesFacadeImpl {
         private final Map<String, int[]> calls = new TreeMap<>();
+        private final Map<Long, String> fdNames = new HashMap<>();
         private final Map<String, int[]> opened = new TreeMap<>();
         private final List<String> summaries = new ArrayList<>();
+        private final List<String> syncLog = new ArrayList<>();
         private Thread measured;
+        private Thread syncLogged;
 
         @Override
         public boolean allocate(long fd, long size) {
@@ -314,6 +370,7 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         @Override
         public boolean close(long fd) {
             count("close");
+            fdNames.remove(fd);
             return super.close(fd);
         }
 
@@ -326,13 +383,23 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         @Override
         public void fdatasync(long fd) {
             count("fdatasync");
+            logSync("fdatasync", fd);
             super.fdatasync(fd);
         }
 
         @Override
         public void fsync(long fd) {
             count("fsync");
+            logSync("fsync", fd);
             super.fsync(fd);
+        }
+
+        @Override
+        public void fsyncAndClose(long fd) {
+            count("fsyncAndClose");
+            logSync("fsyncAndClose", fd);
+            fdNames.remove(fd);
+            super.fsyncAndClose(fd);
         }
 
         @Override
@@ -386,6 +453,9 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         @Override
         public void msync(long addr, long len, boolean async) {
             count(async ? "msyncAsync" : "msyncSync");
+            if (!async && Thread.currentThread() == syncLogged) {
+                syncLog.add("msyncSync");
+            }
             super.msync(addr, len, async);
         }
 
@@ -398,31 +468,31 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         @Override
         public long openCleanRW(LPSZ name, long size) {
             countOpen("openCleanRW", name);
-            return super.openCleanRW(name, size);
+            return named(super.openCleanRW(name, size), name);
         }
 
         @Override
         public long openRO(LPSZ name) {
             countOpen("openRO", name);
-            return super.openRO(name);
+            return named(super.openRO(name), name);
         }
 
         @Override
         public long openRONoCache(LPSZ path) {
             countOpen("openRONoCache", path);
-            return super.openRONoCache(path);
+            return named(super.openRONoCache(path), path);
         }
 
         @Override
         public long openRW(LPSZ name, int opts) {
             countOpen("openRW", name);
-            return super.openRW(name, opts);
+            return named(super.openRW(name, opts), name);
         }
 
         @Override
         public long openRWNoCache(LPSZ name, int opts) {
             countOpen("openRWNoCache", name);
-            return super.openRWNoCache(name, opts);
+            return named(super.openRWNoCache(name, opts), name);
         }
 
         @Override
@@ -462,6 +532,13 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         }
 
         @Override
+        public void syncfs(long fd) {
+            count("syncfs");
+            logSync("syncfs", fd);
+            super.syncfs(fd);
+        }
+
+        @Override
         public boolean truncate(long fd, long size) {
             count("truncate");
             return super.truncate(fd, size);
@@ -488,6 +565,21 @@ public class WalSyscallCountTest extends AbstractCairoTest {
             return sb.toString();
         }
 
+        private static String fileName(LPSZ name) {
+            final StringBuilder file = new StringBuilder();
+            for (int i = 0, n = name.size(); i < n; i++) {
+                final char c = (char) (name.byteAt(i) & 0xFF);
+                if (c == '/' || c == '\\') {
+                    if (i < n - 1) {
+                        file.setLength(0);
+                    }
+                } else {
+                    file.append(c);
+                }
+            }
+            return file.toString();
+        }
+
         private void count(String call) {
             if (Thread.currentThread() == measured) {
                 increment(calls, call);
@@ -510,9 +602,27 @@ public class WalSyscallCountTest extends AbstractCairoTest {
             }
         }
 
+        private void logSync(String call, long fd) {
+            if (Thread.currentThread() == syncLogged) {
+                syncLog.add(call + ' ' + fdNames.get(fd));
+            }
+        }
+
+        private long named(long fd, LPSZ name) {
+            if (fd > -1) {
+                fdNames.put(fd, fileName(name));
+            }
+            return fd;
+        }
+
         private void start(boolean isArmed) {
             stop();
             measured = isArmed ? Thread.currentThread() : null;
+        }
+
+        private void startSyncLog() {
+            syncLog.clear();
+            syncLogged = Thread.currentThread();
         }
 
         private void stop() {
@@ -522,6 +632,10 @@ public class WalSyscallCountTest extends AbstractCairoTest {
                 opened.clear();
                 measured = null;
             }
+        }
+
+        private void stopSyncLog() {
+            syncLogged = null;
         }
     }
 }
