@@ -492,6 +492,12 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
     ) {
         final AsyncWindowRecordCursorFactory next;
         try {
+            // The workers of a folded column output a stand-in for it (AsyncWindowFoldEcho), which
+            // only the query thread's fold turns into the column: a step after it would read the
+            // stand-in, see SqlCodeGenerator, which chains nothing over a fold.
+            if (this.splitPlan.hasFold()) {
+                throw CairoException.critical(0).put("internal error: a step over a folded window");
+            }
             next = new AsyncWindowRecordCursorFactory(this, metadata, recordSink, splitPlan);
         } catch (Throwable th) {
             Misc.free(ownerStage);

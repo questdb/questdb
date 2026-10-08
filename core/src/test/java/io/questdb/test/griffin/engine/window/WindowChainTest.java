@@ -701,6 +701,37 @@ public class WindowChainTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testStepsOverFoldWithoutPrefix() throws Exception {
+        // without a prefix on the query's thread, tasks compute the key from its first row; a
+        // step chained over a folded running sum must not see the workers' stand-in for it
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_PREFIX_ROWS, 0);
+        assertMemoryLeak(() -> {
+            assertStepsOverFold();
+            // a gate of no rows has no prefix either
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_PREFIX_ROWS, 16384);
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS, 0);
+            assertStepsOverFold();
+        });
+    }
+
+    private void assertStepsOverFold() throws Exception {
+        execute("create table t (time timestamp, sym symbol index type " + indexType + ", size double) timestamp(time) partition by DAY");
+        execute("insert into t select (x * 1_000_000_000L)::timestamp, case when x % 5 = 0 then 'Z' else 'A' end, (x % 9)::double from long_sequence(300)");
+        final String q52 = "SELECT time, size, sum(size) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS s FROM t WHERE sym = 'A'";
+        final String[] queries = {
+                q52,
+                "SELECT time, size, s FROM (" + q52 + ") WHERE s > 10",
+                "SELECT time, s, lag(s) OVER (ORDER BY time) ls FROM (" + q52 + ")",
+                "SELECT time, s + 1 s1 FROM (" + q52 + ")",
+                "SELECT size, max(s) m, count() c FROM (" + q52 + ")",
+        };
+        for (String query : queries) {
+            assertMatchesSerial(engine, sqlExecutionContext, query, null);
+        }
+        execute("drop table t");
+    }
+
     private void assertAsyncWindow(CairoEngine engine, SqlExecutionContext ctx, String query) throws Exception {
         ctx.setParallelWindowEnabled(true);
         try (RecordCursorFactory factory = engine.select(query, ctx)) {

@@ -5173,6 +5173,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         if (async.getAtom() == null
                 || async.isSliceMode()
+                // the workers output a folded column's stand-in, see AsyncWindowFoldEcho
+                || async.getSplitPlan().hasFold()
                 || ((AsyncWindowAtom) async.getAtom()).hasFilterStage()
                 || ((AsyncWindowAtom) async.getAtom()).hasGroupByStage()) {
             return null;
@@ -13506,6 +13508,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (!configuration.isSqlParallelWindowChainEnabled()
                 || async.getAtom() == null
                 || async.isSliceMode()
+                // the workers output a folded column's stand-in, see AsyncWindowFoldEcho
+                || async.getSplitPlan().hasFold()
                 || ((AsyncWindowAtom) async.getAtom()).hasFilterStage()
                 || ((AsyncWindowAtom) async.getAtom()).hasGroupByStage()) {
             return null;
@@ -13680,6 +13684,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 || async.getAtom() == null
                 || async.isShardMode()
                 || async.isSliceMode()
+                // the workers output a folded column's stand-in, see AsyncWindowFoldEcho
+                || async.getSplitPlan().hasFold()
                 || ((AsyncWindowAtom) async.getAtom()).hasGroupByStage()
                 || model.getSampleBy() != null
                 || model.getSampleByFill() != null && model.getSampleByFill().size() > 0) {
