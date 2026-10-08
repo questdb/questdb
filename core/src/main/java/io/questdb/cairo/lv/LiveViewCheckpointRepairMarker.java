@@ -206,13 +206,15 @@ public final class LiveViewCheckpointRepairMarker {
                 mem.putLong(FLOOR_TIMESTAMP_OFFSET, floorTimestamp);
                 final int crc = Zip.crc32(0, mem.addressOf(0), CRC_COVERAGE);
                 mem.putInt(CRC_OFFSET, crc);
+                // readBaseGeneration() requires the exact size; close() truncates to this offset
+                mem.jumpTo(SIZE);
                 if (commitMode != CommitMode.NOSYNC) {
                     mem.sync(commitMode == CommitMode.ASYNC);
                 }
             } finally {
                 // Close before rename: Windows rejects a rename over an open
                 // file, and POSIX would leave a stale mapping to the old inode.
-                mem.close(false);
+                mem.close(true, Vm.TRUNCATE_TO_POINTER);
             }
             // A second repair rewrites the fixed-name marker, so the destination
             // can already exist.
