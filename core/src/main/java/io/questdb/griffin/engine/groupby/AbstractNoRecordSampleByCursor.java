@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -38,6 +39,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
@@ -248,6 +250,13 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         }
 
         final long timestamp = baseRecord.getTimestamp(timestampIndex);
+        // TIMESTAMP(col) can designate a column that holds NULL, and an ascending base puts the NULL first. No bucket
+        // can hold it. With ALIGN TO FIRST OBSERVATION, the grid would start at Long.MIN_VALUE, and the fill cursors
+        // would walk it one stride at a time towards the next row. On a calendar grid, round() would put the NULL in
+        // a bucket near Long.MAX_VALUE, which takes in every row.
+        if (timestamp == Numbers.LONG_NULL) {
+            throw CairoException.nonCritical().put("SAMPLE BY designated timestamp cannot be NULL");
+        }
 
         if (rules != null) {
             tzOffset = rules.getOffset(timestamp);

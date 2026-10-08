@@ -2490,9 +2490,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
     public void testHorizonJoinOrderByExpressionOverNonSelectedColumn() throws Exception {
         // ORDER BY an expression over a column that the select list does not output, such as
         // t.price * 2, adds the expression to the horizon model as a hidden key, so the groups split
-        // by it, as they do with a plain GROUP BY. The projection above the horizon model used to
-        // reference that key as a regular column, so the query, and SELECT * over it, returned an
-        // extra column named "column".
+        // by it, as they do with a plain GROUP BY, and the query returns 8 rows. The projection above
+        // the horizon model used to reference that key as a regular column, so the query, and SELECT *
+        // over it, returned an extra column named "column". A count(), a UNION ALL or a re-sort over
+        // the query drops its ORDER BY, and then nothing above the horizon model references the hidden
+        // key. Top-down column pruning must keep the key in the horizon keys; otherwise the horizon
+        // join regroups by (sym, offset) and the outer query sees 6 merged rows.
         assertMemoryLeak(() -> {
             createHorizonTradesAndQuoteTables();
 
@@ -2508,6 +2511,17 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     C\t0\t40.0
                     C\t#1s\t40.0
                     """.replace("#1s", oneSecond);
+            final String expectedResorted = """
+                    sym\toffset\ta
+                    A\t0\t10.0
+                    A\t0\t30.0
+                    A\t#1s\t30.0
+                    A\t#1s\t50.0
+                    B\t0\t20.0
+                    B\t#1s\t60.0
+                    C\t0\t40.0
+                    C\t#1s\t40.0
+                    """.replace("#1s", oneSecond);
             final String[] queries = {
                     "SELECT t.sym, h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.price * 2, h.offset",
                     "SELECT t.sym, h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY abs(t.price), h.offset",
@@ -2516,14 +2530,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "SELECT t.sym, h.offset, avg(b.bid) a FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks k ON (sym) LIST (0s, 1s) AS h ORDER BY t.price * 2, h.offset",
             };
             for (String sql : queries) {
-                assertQuery(sql)
-                        .noLeakCheck()
-                        .expectSize()
-                        .returns(expected);
-                assertQuery("SELECT * FROM (" + sql + ")")
-                        .noLeakCheck()
-                        .expectSize()
-                        .returns(expected);
+                assertOrderByHiddenKey(sql, expected, true);
+                assertHorizonOrderByHiddenKeyResorted(sql, "sym, offset, a", expectedResorted);
             }
 
             // the sort still reads the hidden key
@@ -2546,108 +2554,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                     "                    Frame forward scan on: quotes\n"
                     );
 
-            // without aggregates
-            final String noAggregates = "SELECT t.sym, h.offset FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.price * 2, h.offset";
-            final String expectedNoAggregates = """
-                    sym\toffset
-                    A\t0
-                    A\t#1s
-                    B\t0
-                    B\t#1s
-                    A\t0
-                    A\t#1s
-                    C\t0
-                    C\t#1s
-                    """.replace("#1s", oneSecond);
-            assertQuery(noAggregates)
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns(expectedNoAggregates);
-            assertQuery("SELECT * FROM (" + noAggregates + ")")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns(expectedNoAggregates);
-
-            // a select expression over an aggregate
-            final String aggregateExpression = "SELECT t.sym, h.offset, avg(q.bid) + 1 a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.price * 2, h.offset";
-            final String expectedAggregateExpression = """
-                    sym\toffset\ta
-                    A\t0\t11.0
-                    A\t#1s\t51.0
-                    B\t0\t21.0
-                    B\t#1s\t61.0
-                    A\t0\t31.0
-                    A\t#1s\t31.0
-                    C\t0\t41.0
-                    C\t#1s\t41.0
-                    """.replace("#1s", oneSecond);
-            assertQuery(aggregateExpression)
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns(expectedAggregateExpression);
-            assertQuery("SELECT * FROM (" + aggregateExpression + ")")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns(expectedAggregateExpression);
-
-            // an expression over the offset, which the select list does not output either
-            final String offsetExpression = "SELECT t.sym, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY h.offset * 2, t.sym";
-            final String expectedOffsetExpression = """
-                    sym\ta
-                    A\t20.0
-                    B\t20.0
-                    C\t40.0
-                    A\t40.0
-                    B\t60.0
-                    C\t40.0
-                    """;
-            assertQuery(offsetExpression)
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns(expectedOffsetExpression);
-            assertQuery("SELECT * FROM (" + offsetExpression + ")")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns(expectedOffsetExpression);
-        });
-    }
-
-    @Test
-    public void testHorizonJoinOrderByExpressionOverNonSelectedColumnInSubQuery() throws Exception {
-        // The hidden ORDER BY key of a HORIZON JOIN, such as t.price * 2, splits the groups, so the
-        // query returns 8 rows. A count(), a UNION ALL or a re-sort over the query drops its ORDER BY,
-        // and then nothing above the horizon model references the hidden key. Top-down column pruning
-        // must keep the key in the horizon keys; otherwise the horizon join regroups by (sym, offset)
-        // and the outer query sees 6 merged rows.
-        assertMemoryLeak(() -> {
-            createHorizonTradesAndQuoteTables();
-
-            final String oneSecond = String.valueOf(getSecondsDivisor());
-            final String expectedResorted = """
-                    sym\toffset\ta
-                    A\t0\t10.0
-                    A\t0\t30.0
-                    A\t#1s\t30.0
-                    A\t#1s\t50.0
-                    B\t0\t20.0
-                    B\t#1s\t60.0
-                    C\t0\t40.0
-                    C\t#1s\t40.0
-                    """.replace("#1s", oneSecond);
-            final String[] queries = {
-                    "SELECT t.sym, h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.price * 2, t.sym",
-                    "SELECT t.sym, h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.price * 2, h.offset",
-                    "SELECT t.sym, h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY abs(t.price), h.offset",
-                    "SELECT t.sym, h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) RANGE FROM 0s TO 1s STEP 1s AS h ORDER BY t.price * 2, h.offset",
-                    "SELECT DISTINCT t.sym, h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.price * 2, h.offset",
-                    "SELECT t.sym, h.offset, avg(b.bid) a FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks k ON (sym) LIST (0s, 1s) AS h ORDER BY t.price * 2, h.offset",
-            };
-            for (String sql : queries) {
-                assertHorizonOrderByHiddenKeyInSubQuery(sql, 8, "sym, offset, a", expectedResorted);
-            }
+            // ORDER BY t.price * 2, t.sym leaves the order of the two offsets of each trade open, so
+            // only the wrappers and the re-sort assert this query
+            final String tieOnOffset = "SELECT t.sym, h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.price * 2, t.sym";
+            assertRowCountInWrappers(tieOnOffset, 8);
+            assertHorizonOrderByHiddenKeyResorted(tieOnOffset, "sym, offset, a", expectedResorted);
 
             // a filter on a selected column keeps the groups split as well
-            assertQuery("SELECT count() FROM (" + queries[0] + ") WHERE sym = 'A'")
+            assertQuery("SELECT count() FROM (" + tieOnOffset + ") WHERE sym = 'A'")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -2657,7 +2571,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             """);
 
             // the horizon model keeps the hidden key, while the projection above it drops it
-            assertQuery("SELECT count() FROM (" + queries[0] + ")")
+            assertQuery("SELECT count() FROM (" + tieOnOffset + ")")
                     .noLeakCheck()
                     .assertsPlan(
                             "Count\n" +
@@ -2675,9 +2589,21 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     );
 
             // without aggregates
-            assertHorizonOrderByHiddenKeyInSubQuery(
-                    "SELECT t.sym, h.offset FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.price * 2, h.offset",
-                    8,
+            final String noAggregates = "SELECT t.sym, h.offset FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.price * 2, h.offset";
+            final String expectedNoAggregates = """
+                    sym\toffset
+                    A\t0
+                    A\t#1s
+                    B\t0
+                    B\t#1s
+                    A\t0
+                    A\t#1s
+                    C\t0
+                    C\t#1s
+                    """.replace("#1s", oneSecond);
+            assertOrderByHiddenKey(noAggregates, expectedNoAggregates, true);
+            assertHorizonOrderByHiddenKeyResorted(
+                    noAggregates,
                     "sym, offset",
                     """
                             sym\toffset
@@ -2693,9 +2619,21 @@ public class HorizonJoinTest extends AbstractCairoTest {
             );
 
             // a select expression over an aggregate
-            assertHorizonOrderByHiddenKeyInSubQuery(
-                    "SELECT t.sym, h.offset, avg(q.bid) + 1 a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.price * 2, h.offset",
-                    8,
+            final String aggregateExpression = "SELECT t.sym, h.offset, avg(q.bid) + 1 a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.price * 2, h.offset";
+            final String expectedAggregateExpression = """
+                    sym\toffset\ta
+                    A\t0\t11.0
+                    A\t#1s\t51.0
+                    B\t0\t21.0
+                    B\t#1s\t61.0
+                    A\t0\t31.0
+                    A\t#1s\t31.0
+                    C\t0\t41.0
+                    C\t#1s\t41.0
+                    """.replace("#1s", oneSecond);
+            assertOrderByHiddenKey(aggregateExpression, expectedAggregateExpression, true);
+            assertHorizonOrderByHiddenKeyResorted(
+                    aggregateExpression,
                     "sym, offset, a",
                     """
                             sym\toffset\ta
@@ -2711,9 +2649,19 @@ public class HorizonJoinTest extends AbstractCairoTest {
             );
 
             // an expression over the offset, which the select list does not output either
-            assertHorizonOrderByHiddenKeyInSubQuery(
-                    "SELECT t.sym, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY h.offset * 2, t.sym",
-                    6,
+            final String offsetExpression = "SELECT t.sym, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY h.offset * 2, t.sym";
+            final String expectedOffsetExpression = """
+                    sym\ta
+                    A\t20.0
+                    B\t20.0
+                    C\t40.0
+                    A\t40.0
+                    B\t60.0
+                    C\t40.0
+                    """;
+            assertOrderByHiddenKey(offsetExpression, expectedOffsetExpression, true);
+            assertHorizonOrderByHiddenKeyResorted(
+                    offsetExpression,
                     "sym, a",
                     """
                             sym\ta
@@ -8028,10 +7976,9 @@ public class HorizonJoinTest extends AbstractCairoTest {
         });
     }
 
-    // Asserts that the wrappers which drop the ORDER BY of a HORIZON JOIN query with a hidden ORDER BY key
-    // still see the query's rows: count(), count() over UNION ALL, and a re-sort.
-    private void assertHorizonOrderByHiddenKeyInSubQuery(String sql, int rowCount, String sortKeys, String expectedResorted) throws Exception {
-        assertRowCountInWrappers(sql, rowCount);
+    // Asserts that a re-sort, which drops the ORDER BY of a HORIZON JOIN query with a hidden ORDER BY key,
+    // still sees the query's rows, as assertRowCountInWrappers() does for count() and UNION ALL.
+    private void assertHorizonOrderByHiddenKeyResorted(String sql, String sortKeys, String expectedResorted) throws Exception {
         assertQuery("SELECT * FROM (" + sql + ") ORDER BY " + sortKeys)
                 .noLeakCheck()
                 .expectSize()

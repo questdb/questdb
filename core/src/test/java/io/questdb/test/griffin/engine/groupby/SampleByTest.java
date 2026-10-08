@@ -4326,8 +4326,8 @@ public class SampleByTest extends AbstractCairoTest {
         // implementations read the LONG_NULL there as histogram 0, the first histogram of the
         // execution, which holds key A at 00:00, and showed 10.0 for B at 00:00 and 01:00 while
         // count() showed NULL. The cursor now shows NULL, as the GROUP BY path does.
-        // approx_percentile(l, 0.5), at precision 2 or less, stores a pointer instead, and it showed
-        // NULL before the fix too.
+        // approx_percentile(l, 0.5), at precision 2 or less, stores a pointer instead, so issue #7761
+        // does not affect it, and it shows NULL as well.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v DOUBLE, l LONG) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -10893,6 +10893,126 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByNullDesignatedTimestampCursor() throws Exception {
+        // TIMESTAMP(ts) designates a column that holds NULL, and the sort puts the NULL first. The SAMPLE BY cursor
+        // anchored its grid at the first row, so at the NULL, Long.MIN_VALUE. With ALIGN TO FIRST OBSERVATION,
+        // FILL(NULL), FILL(PREV) and FILL(value) emitted fill rows from year -290308 one stride at a time, and
+        // FILL(NONE) labelled the buckets off the grid of the rows. With ALIGN TO CALENDAR, the bucket of the NULL
+        // took in every row under a label near Long.MAX_VALUE, and keyed FILL(NONE) with a time zone failed an
+        // assertion. The cursor now fails with an error that names the NULL.
+        assertMemoryLeak(() -> {
+            createNullTimestampTable();
+            final String source = " FROM ((SELECT * FROM n ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY ";
+            for (String select : new String[]{"SELECT ts, count() c, sum(v) s", "SELECT ts, sym, count() c, sum(v) s"}) {
+                for (String fill : new String[]{"FILL(NULL)", "FILL(PREV)", "FILL(0, 0)", "FILL(NONE)"}) {
+                    assertSampleByNullTimestampFails(select + source + "1h " + fill + " ALIGN TO FIRST OBSERVATION", "Sample By\n");
+                    assertSampleByNullTimestampFails(select + source + "1h " + fill, "Sample By\n");
+                    assertSampleByNullTimestampFails(select + source + "1h " + fill + " ALIGN TO CALENDAR WITH OFFSET '00:10'", "Sample By\n");
+                    assertSampleByNullTimestampFails(select + source + "1h " + fill + " ALIGN TO CALENDAR TIME ZONE 'Europe/London'", "Sample By\n");
+                    assertSampleByNullTimestampFails(select + source + "1M " + fill + " ALIGN TO CALENDAR TIME ZONE 'America/New_York'", "Sample By\n");
+                }
+            }
+            // a filter that drops the NULL gives the rows
+            assertSampleByCursorFrom(
+                    "SELECT ts, count() c, sum(v) s FROM ((SELECT * FROM n WHERE ts IS NOT NULL ORDER BY ts) TIMESTAMP(ts))"
+                            + " SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION",
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2024-01-01T00:00:00.000000Z\t1\t1.0
+                            2024-01-01T01:00:00.000000Z\tnull\tnull
+                            2024-01-01T02:00:00.000000Z\t1\t4.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByNullDesignatedTimestampFillLinear() throws Exception {
+        // FILL(LINEAR) over a designated timestamp that holds NULL, see testSampleByNullDesignatedTimestampCursor().
+        // The cursor builds every bucket before it returns the first row, so LIMIT does not bound it. With ALIGN TO
+        // FIRST OBSERVATION it failed with a NullPointerException, and a stride of 1h ran for minutes and took tens
+        // of GB first, so the statement uses a stride of 1000d. With ALIGN TO CALENDAR, it returned a bucket near
+        // Long.MAX_VALUE and values that no row wrote. The cursor now fails with an error that names the NULL.
+        assertMemoryLeak(() -> {
+            createNullTimestampTable();
+            final String source = " FROM ((SELECT * FROM n ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY ";
+            for (String select : new String[]{"SELECT ts, count() c, sum(v) s", "SELECT ts, sym, count() c, sum(v) s"}) {
+                assertSampleByNullTimestampFails(select + source + "1000d FILL(LINEAR) ALIGN TO FIRST OBSERVATION", "fill: linear\n");
+                assertSampleByNullTimestampFails(select + source + "1h FILL(LINEAR)", "fill: linear\n");
+                assertSampleByNullTimestampFails(select + source + "1h FILL(LINEAR) ALIGN TO CALENDAR WITH OFFSET '00:10'", "fill: linear\n");
+                assertSampleByNullTimestampFails(select + source + "1h FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'Europe/London'", "fill: linear\n");
+                assertSampleByNullTimestampFails(select + source + "1M FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'America/New_York'", "fill: linear\n");
+            }
+            // a filter that drops the NULL gives the rows
+            assertQuery("SELECT ts, count() c, sum(v) s FROM ((SELECT * FROM n WHERE ts IS NOT NULL ORDER BY ts) TIMESTAMP(ts))"
+                    + " SAMPLE BY 1h FILL(LINEAR) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("Sample By\n", "fill: linear\n")
+                    .returns("""
+                            ts\tc\ts
+                            2024-01-01T00:00:00.000000Z\t1\t1.0
+                            2024-01-01T01:00:00.000000Z\t1\t2.5
+                            2024-01-01T02:00:00.000000Z\t1\t4.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByNullDesignatedTimestampGroupByFill() throws Exception {
+        // The GROUP BY path sorts the bucket of a NULL timestamp first. The fill cursor anchored its grid at that
+        // bucket, Long.MIN_VALUE, and emitted fill rows from year -290308 one stride at a time; with a time zone and
+        // a stride of a day, it emitted one fill row after another under the same label. With WITH OFFSET, it failed
+        // with an error that printed the NULL as a row timestamp. The cursor now fails with an error that names the
+        // NULL.
+        assertMemoryLeak(() -> {
+            createNullTimestampTable();
+            final String source = " FROM n TIMESTAMP(ts) SAMPLE BY ";
+            for (String select : new String[]{"SELECT ts, count() c, sum(v) s", "SELECT ts, sym, count() c, sum(v) s"}) {
+                for (String fill : new String[]{"FILL(NULL)", "FILL(PREV)", "FILL(0, 0)"}) {
+                    assertSampleByNullTimestampFails(select + source + "1h " + fill, "Sample By Fill\n");
+                    assertSampleByNullTimestampFails(select + source + "1h " + fill + " ALIGN TO CALENDAR WITH OFFSET '00:10'", "Sample By Fill\n");
+                    assertSampleByNullTimestampFails(select + source + "1h " + fill + " ALIGN TO CALENDAR TIME ZONE 'Europe/London'", "Sample By Fill\n");
+                    assertSampleByNullTimestampFails(select + source + "1d " + fill + " ALIGN TO CALENDAR TIME ZONE 'America/New_York'", "Sample By Fill\n");
+                }
+            }
+            // without FILL, the GROUP BY path keeps the NULL in a bucket of its own
+            assertQuery("SELECT ts, count() c, sum(v) s FROM n TIMESTAMP(ts) SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("keyFunctions: [timestamp_floor_utc('1h',ts)]")
+                    .returns("""
+                            ts\tc\ts
+                            \t1\t2.0
+                            2024-01-01T00:00:00.000000Z\t1\t1.0
+                            2024-01-01T02:00:00.000000Z\t1\t4.0
+                            """);
+            // FROM and a filter that drops the NULL give the rows
+            final String expected = """
+                    ts\tc\ts
+                    2024-01-01T00:00:00.000000Z\t1\t1.0
+                    2024-01-01T01:00:00.000000Z\tnull\tnull
+                    2024-01-01T02:00:00.000000Z\t1\t4.0
+                    """;
+            assertQuery("SELECT ts, count() c, sum(v) s FROM n TIMESTAMP(ts) SAMPLE BY 1h FROM '2024-01-01' FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By Fill\n")
+                    .returns(expected);
+            assertQuery("SELECT ts, count() c, sum(v) s FROM n TIMESTAMP(ts) WHERE ts IS NOT NULL SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By Fill\n")
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testSampleByOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE eq_equities_market_data (" +
@@ -16433,8 +16553,9 @@ public class SampleByTest extends AbstractCairoTest {
         // cursor rounded FROM plus the offset of the zone. For a zone behind UTC, that is the evening before FROM,
         // and the month sampler floored it into December 2023. The not-keyed FILL(NULL) cursor then emitted a
         // fill row for December, also with TO. It now starts at the bucket at FROM, as the GROUP BY path does,
-        // for a zone name and for a numeric zone. A FROM a month before the first row still fills that month. A
-        // zone ahead of UTC, Europe/Berlin, returned the rows of the GROUP BY path before the fix too.
+        // for a zone name and for a numeric zone. A FROM a month before the first row still fills that month.
+        // Issue #7763 does not affect a zone ahead of UTC: with Europe/Berlin, the cursor returns the rows of the
+        // GROUP BY path.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -22091,6 +22212,17 @@ public class SampleByTest extends AbstractCairoTest {
         };
     }
 
+    private static void createNullTimestampTable() throws SqlException {
+        // the table has no designated timestamp, so a statement can designate ts, whose second row holds NULL
+        execute("CREATE TABLE n (ts TIMESTAMP, sym SYMBOL, v DOUBLE)");
+        execute("""
+                INSERT INTO n VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 1.0),
+                    (NULL, 'b', 2.0),
+                    ('2024-01-01T02:30:00.000000Z', 'a', 4.0)
+                """);
+    }
+
     private static String keyedSampleByReusePlan(String planFill) {
         return "Sample By\n" +
                 (planFill != null ? "  fill: " + planFill + "\n" : "") +
@@ -22303,8 +22435,8 @@ public class SampleByTest extends AbstractCairoTest {
 
     // Asserts a statement of GitHub issue #7760 on both SAMPLE BY paths: the table alone takes the GROUP BY path,
     // except with FILL(LINEAR), and the filtered sub-query keeps the statement on the SAMPLE BY cursor. LIMIT
-    // bounds the statements that emitted fill rows without end before the fix; each statement returns fewer rows,
-    // so the LIMIT hides no extra row.
+    // keeps a regression to the endless fill rows of issue #7760 from hanging the test; each statement returns
+    // fewer rows, so the LIMIT hides no extra row.
     private void assertSampleByNegativeOffset(String select, String sampleBy, String groupByPlan, String expected) throws Exception {
         assertSampleByNegativeOffset(select, sampleBy, groupByPlan, expected, expected);
     }
@@ -22330,6 +22462,18 @@ public class SampleByTest extends AbstractCairoTest {
                 .sizeMayVary()
                 .withPlanContaining("Sample By\n")
                 .returns(expectedCursor);
+    }
+
+    // Asserts that a statement over a designated timestamp that holds NULL fails with an error that names the NULL,
+    // and pins the path that the plan takes. LIMIT bounds the statements that walked the fill grid from the NULL,
+    // except FILL(LINEAR), which builds every bucket before it returns the first row.
+    private void assertSampleByNullTimestampFails(String sql, String planFragment) throws Exception {
+        assertQuery(sql)
+                .noLeakCheck()
+                .assertsPlanContaining(planFragment);
+        assertQuery(sql + " LIMIT 10")
+                .noLeakCheck()
+                .failsWith("SAMPLE BY designated timestamp cannot be NULL");
     }
 
     private void assertSubDayTimeZoneBindVariable(String sql, String rowsAt0200, String rowsAt0530) throws Exception {
