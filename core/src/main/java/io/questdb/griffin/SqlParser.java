@@ -179,10 +179,12 @@ public class SqlParser {
     private int digit;
     // Track tables currently being wrapped by the row-expiry filter, so the synthetic inner
     // "SELECT * FROM t WHERE ..." resolves "t" as a plain table instead of recursing forever.
-    // The key is the caller's own spelling of the name, re-emitted verbatim into the synthetic inner query,
-    // so the recursion guard matches on that exact spelling. A case-folding set is unnecessary: the table
-    // registry is case-insensitive, so case-distinct sibling tables/views cannot exist in the first place.
-    private final CharSequenceHashSet expiringTablesBeingExpanded = new CharSequenceHashSet();
+    // The key is the caller's own spelling of the name, re-emitted verbatim into the synthetic inner query.
+    // Lookups ignore case, as the table registry does: a policy subquery or a SQL view body can name the
+    // table in a different case from the read, and it must still read the table without the policy rather
+    // than apply the policy a second time. A case-distinct sibling table cannot exist, so no other table
+    // matches the key.
+    private final LowerCaseCharSequenceHashSet expiringTablesBeingExpanded = new LowerCaseCharSequenceHashSet();
     // The execution context of the current parse, consulted for the PER-TABLE read-filter decision
     // (the mat-view refresh context keeps the filter on every table except the base). Null when parse()
     // was invoked without a context; rowExpiryReadPolicy is the decision then.

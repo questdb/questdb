@@ -518,6 +518,30 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRawWindowWhenSelfReferenceIgnoresNameCase() throws Exception {
+        // A policy subquery that names the view itself reads the view without the policy. Table names are
+        // case-insensitive, so the policy text, a SQL view body and the read may each spell the name in a
+        // different case, and every spelling must keep the same rows. A spelling the parser failed to match
+        // would apply the policy a second time inside the subquery, where it hides A's 1.0 row, empties the
+        // subquery and shows every row.
+        assertMemoryLeak(() -> {
+            createViewWith("");
+            execute("alter materialized view mv set expire rows when v < max(v) over (partition by k) and k in (select k from mv where v < 2)");
+            drainWalAndMatViewQueues();
+            assertSelfReferencePolicyKeepsRows();
+
+            execute("alter materialized view mv set expire rows when v < max(v) over (partition by k) and k in (select k from MV where v < 2)");
+            drainWalAndMatViewQueues();
+            assertSelfReferencePolicyKeepsRows();
+
+            execute("create view vw as (select * from MV)");
+            execute("alter materialized view mv set expire rows when v < max(v) over (partition by k) and k in (select k from vw where v < 2)");
+            drainWalAndMatViewQueues();
+            assertSelfReferencePolicyKeepsRows();
+        });
+    }
+
+    @Test
     public void testComposesWithOuterWhere() throws Exception {
         assertMemoryLeak(() -> {
             createViewWith("expire rows keep highest on v partition by k");
@@ -1292,6 +1316,22 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                         + "; use KEEP <N> HIGHEST/LOWEST ON <column> to rank an orderable column of any type"
         );
         Assert.assertNull(engine.getTableTokenIfExists("mvbad"));
+    }
+
+    private void assertSelfReferencePolicyKeepsRows() throws Exception {
+        // Only A has a raw row below 2, so the policy expires A's non-max rows and keeps every other key.
+        for (String name : new String[]{"mv", "MV", "\"MV\"", "public.Mv"}) {
+            assertQuery("select k, v from " + name + " order by k, ts").noLeakCheck().returns("""
+                    k\tv
+                    A\t3.0
+                    B\t5.0
+                    B\t5.0
+                    B\t4.0
+                    C\tnull
+                    C\tnull
+                    D\t7.0
+                    """);
+        }
     }
 
     private void assertWindowBindRejected(String sql, String bind) throws Exception {
