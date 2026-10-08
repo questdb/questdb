@@ -166,7 +166,6 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
         }
         // a type unlike its family's namesake would parse and fill as the namesake's value; the
         // calling factory's constructor frees what it holds on the throw
-        // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
         final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.familyArmOf(driver, "SAMPLE BY FILL(value)");
         // parse the fill value as the type of the column's accessor family: the fill cursor reads
         // the constant through that family's getter

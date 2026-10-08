@@ -153,7 +153,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                     // a type unlike its family's namesake would be interpolated with the namesake's NULL
                     if (!PhysicalDescriptor.isLikeFamilyNamesake(driver)) {
                         Misc.freeObjList(groupByScalarFunctions);
-                        // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
                         throw PhysicalDescriptor.noFamilyArm(driver.getTypeName(), "SAMPLE BY FILL(LINEAR)");
                     }
                     final InterpolationUtil.Steps steps = switch (driver.getAccessor()) {

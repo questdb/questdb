@@ -68,7 +68,6 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
             // namesake may hold its NULL otherwise, so it is refused
             final TypeDriver driver = ColumnType.findTypeDriver(arg.getType());
             if (driver != null && !PhysicalDescriptor.isLikeFamilyNamesake(driver)) {
-                // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
                 throw PhysicalDescriptor.noFamilyArm(driver.getTypeName(), "between");
             }
             if (fromFn.isConstant() && toFn.isConstant()) {

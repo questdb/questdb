@@ -387,11 +387,6 @@ public final class TypeConformanceInvariants {
     }
 
     /**
-     * Whether a kit path and mode runs for the type: always for an existing type; for a type
-     * registered later, when a pattern of its resource line matches. A later tag without a
-     * resource line fails here, so no kit class passes it silently.
-     */
-    /**
      * Whether the type declares it is refused at one of the guarded sites a path reaches; always
      * false for an existing type.
      */
@@ -404,10 +399,15 @@ public final class TypeConformanceInvariants {
         return false;
     }
 
+    /**
+     * Whether a kit path and mode runs for the type. An existing type runs every path, except a
+     * type no table can hold (INTERVAL, VARCHAR_SLICE), which fails every path at CREATE TABLE: it
+     * runs one such path, for the refusal, and its bind values. A type registered later runs a
+     * path when a pattern of its resource line matches; a later tag without a resource line fails
+     * here, so no kit class passes it silently.
+     */
     public static boolean isEnabled(TypeConformanceTypes.Entry type, String path, String mode) {
         if (!type.isLater()) {
-            // a type no table can hold (INTERVAL, VARCHAR_SLICE) fails every path at CREATE TABLE:
-            // it runs one such path, for the refusal, and its bind values
             return ColumnType.isPersisted(ColumnType.tagOf(type.columnType)) || NOT_PERSISTED_PATHS.contains(path);
         }
         if (type.laterPaths == null) {

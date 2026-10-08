@@ -64,7 +64,6 @@ final class ParquetColumnTypeConverter {
             // the pseudo tags and VARCHAR_SLICE are no conversion target
             return ColumnType.UNDEFINED;
         }
-        // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
         final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.familyArmOf(driver, "Parquet conversion");
         return switch (accessor) {
             case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, IPv4, UUID,

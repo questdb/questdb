@@ -1457,7 +1457,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (driver == null) {
             return function;
         }
-        // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
         return switch (PhysicalDescriptor.familyArmOf(driver, "memoized virtual column")) {
             case LONG -> new LongFunctionMemoizer(function);
             case INT -> new IntFunctionMemoizer(function);
@@ -1736,7 +1735,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (driver == null) {
             return false;
         }
-        // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
         return switch (PhysicalDescriptor.familyArmOf(driver, "SAMPLE BY FILL(PREV)")) {
             case BOOLEAN, BYTE, CHAR, DATE, DECIMAL128, DECIMAL16, DECIMAL256, DECIMAL32, DECIMAL64, DECIMAL8, DOUBLE,
                  FLOAT, GEOBYTE, GEOINT, GEOLONG, GEOSHORT, INT, IPv4, LONG, LONG128, LONG256, SHORT, SYMBOL,

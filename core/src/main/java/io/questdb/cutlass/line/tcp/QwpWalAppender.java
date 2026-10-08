@@ -889,7 +889,6 @@ public class QwpWalAppender implements QuietCloseable {
                             }
                         } else if (PhysicalDescriptor.isFamilyArmMissing(columnType)) {
                             // a type unlike its family's namesake has no family arm above
-                            // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
                             throw PhysicalDescriptor.noFamilyArm(ColumnType.nameOf(columnType), "QWP WAL append");
                         } else {
                             // Unsupported column type - this should not happen as all types are handled

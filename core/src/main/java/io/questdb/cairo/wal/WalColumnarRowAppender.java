@@ -1943,7 +1943,6 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
      */
     private static CairoException unsupportedColumnType(int columnType, String message) {
         if (PhysicalDescriptor.isFamilyArmMissing(columnType)) {
-            // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
             return PhysicalDescriptor.noFamilyArm(ColumnType.nameOf(columnType), "WAL columnar append");
         }
         return CairoException.nonCritical().put(message).put(ColumnType.nameOf(columnType));

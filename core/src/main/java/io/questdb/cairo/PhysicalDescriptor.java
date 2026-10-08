@@ -86,6 +86,10 @@ public final class PhysicalDescriptor {
      * ({@link #isLikeFamilyNamesake(TypeDriver)}), which every existing type is. Any other type
      * would take the namesake's range check and NULL sentinel in the family's arm, so this throws
      * instead, naming the type and the site. Asked once per column at setup, never per row.
+     * <p>
+     * No existing type reaches this refusal, at any site that guards with it or with {@link
+     * #noFamilyArm}, so no test of this repository runs a refusing site's cleanup; the conformance
+     * kit runs it once a type registered later declares the site refused.
      *
      * @param site the label of the asking site, as the refusal names it
      */

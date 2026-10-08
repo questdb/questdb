@@ -171,7 +171,6 @@ public class BindVariableServiceImpl implements BindVariableService {
         // pseudo types and VARCHAR_SLICE have no stored type driver and copy as they always did
         final TypeDriver driver = f != null ? PhysicalDescriptor.storedTypeDriverOf(f.getType()) : null;
         if (driver != null) {
-            // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
             PhysicalDescriptor.familyArmOf(driver, "COPY bind snapshot");
         }
     }

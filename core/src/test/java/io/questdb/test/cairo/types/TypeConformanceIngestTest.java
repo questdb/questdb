@@ -472,12 +472,6 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
         return Utf8s.toString(headers.getStatusCode());
     }
 
-    /**
-     * The error the NULL row of a type registered later raised, or null when the path took it.
-     * ILP over HTTP and QWP answer each row; ILP over TCP and UDP answer nothing. The other paths
-     * read the rows from a table the kit writes with SQL, where every row of a later type is raw
-     * bits except the NULL row, so the literal INSERT's error is that row's.
-     */
     // the guarded sites, labelled as the tool's decisions label them, that a path reaches with a value of the type
     private static String[] guardedSitesOf(String path) {
         return switch (path) {
@@ -487,6 +481,12 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
         };
     }
 
+    /**
+     * The error the NULL row of a type registered later raised, or null when the path took it.
+     * ILP over HTTP and QWP answer each row; ILP over TCP and UDP answer nothing. The other paths
+     * read the rows from a table the kit writes with SQL, where every row of a later type is raw
+     * bits except the NULL row, so the literal INSERT's error is that row's.
+     */
     private static String nullError(String path, StringSink section) {
         return switch (path) {
             case "ingest.ilp-http", "ingest.qwp" -> rowOutcome(section, "null");

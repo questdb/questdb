@@ -41,7 +41,7 @@ import io.questdb.griffin.engine.functions.constants.ConstantFunction;
  * <li>{@code TypeDriver}: per tag, this hierarchy. {@link FixedSizeTypeDriver} is the base of
  * the fixed-size leaves.</li>
  * <li>{@link ColumnTypeDriver}: the var-size storage API (aux and data vectors), which
- * extends this interface; STRING, BINARY, VARCHAR and ARRAY.</li>
+ * extends this interface.</li>
  * <li>{@link TimestampDriver}: per timestamp <em>precision</em>, keyed by the encoded type,
  * not by tag. It is a separate facet, not a {@code TypeDriver}; the TIMESTAMP and DATE
  * drivers fetch it where a method needs temporal arithmetic.</li>
@@ -55,9 +55,7 @@ public interface TypeDriver {
     /**
      * Defines bind variable {@code index} of {@code service} as {@code columnType}, holding NULL,
      * and returns the type the variable holds (a SYMBOL variable holds a STRING). A type no bind
-     * variable can hold throws {@link SqlException} at {@code position}. The service pools its
-     * variables, so defining one allocates nothing; PostgreSQL wire defines every parameter once
-     * per execution.
+     * variable can hold throws {@link SqlException} at {@code position}.
      */
     int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException;
 
@@ -74,7 +72,7 @@ public interface TypeDriver {
      * query engine uses it for {@code cast(null as T)}, a CASE without ELSE, an outer join's
      * missing side and any other place that needs a NULL of a known type. Encoded types
      * (timestamp precision, geohash bits, decimal precision and scale, array dimensions) read
-     * their parameters from {@code columnType}. Called once per query, never per row.
+     * their parameters from {@code columnType}.
      */
     ConstantFunction getNullConstant(int columnType);
 
@@ -86,9 +84,9 @@ public interface TypeDriver {
     long getNullLong(int longIndex);
 
     /**
-     * How this type represents NULL: {@link NullPolicy#NONE} only for the types where every bit
-     * pattern is a value (BOOLEAN, BYTE, SHORT, CHAR), whose column tops read as default values
-     * rather than NULLs; {@link NullPolicy#SENTINEL} for every other type.
+     * How this type represents NULL: {@link NullPolicy#NONE} for a type where every bit pattern is a
+     * value, whose column tops read as default values rather than NULLs; {@link NullPolicy#SENTINEL}
+     * for a type that reserves a value for NULL.
      * <p>
      * Code that holds a column reads the column's policy instead, through a per-column accessor
      * such as {@link io.questdb.cairo.sql.RecordMetadata#getColumnNullPolicy(int)}, which derives
@@ -132,15 +130,14 @@ public interface TypeDriver {
 
     /**
      * The PostgreSQL type OID of an array whose elements are this type ({@link PgTypeOids}), or 0
-     * when PostgreSQL wire describes no such array: pgwire sends only DOUBLE and VARCHAR arrays.
-     * Asked once per column.
+     * when PostgreSQL wire describes no such array.
      */
     int getPgArrayOid();
 
     /**
      * The PostgreSQL type OID the wire describes a column of this type with ({@link PgTypeOids}),
-     * or 0 when PostgreSQL wire has none: LONG128, which pgwire cannot send, and the bare ARRAY
-     * tag, whose arrays take {@link #getPgArrayOid()} of their element type. Asked once per column.
+     * or 0 when PostgreSQL wire has none; an array takes {@link #getPgArrayOid()} of its element
+     * type.
      */
     int getPgOid();
 
@@ -164,9 +161,8 @@ public interface TypeDriver {
      * ({@link io.questdb.griffin.FunctionFactory#getSignature()}); the upper-case form of the same
      * character is the constant-argument variant, so the character must differ from its upper-case
      * form in bit 5 only. {@link io.questdb.griffin.FunctionFactoryDescriptor#NO_SIGNATURE_CHAR} for
-     * a type no signature names: the geohash and decimal widths are named by their pseudo tags and
-     * an array by its element character followed by {@code []}. {@code FunctionFactoryDescriptorTest}
-     * pins the table and the bit-5 rule.
+     * a type no signature names by its own character: a signature names a type of several widths by
+     * its pseudo tag, and an array by its element character followed by {@code []}.
      */
     char getSignatureChar();
 
@@ -177,10 +173,8 @@ public interface TypeDriver {
 
     /**
      * The type constant a CAST names {@code columnType} with, as in {@code cast(x as T)}, or null
-     * when no SQL type name resolves to exactly this encoding. The query engine resolves a type
-     * name token through it once, at compile time. GEOHASH and DECIMAL casts name their pseudo
-     * types, whose constants carry bits or precision and scale, so the bare geohash and decimal
-     * tags answer null.
+     * when no SQL type name resolves to exactly this encoding: a CAST that names a pseudo type,
+     * whose constant carries the type's parameters, leaves the bare tags of that family null.
      */
     TypeConstant getTypeConstant(int columnType);
 
@@ -194,8 +188,7 @@ public interface TypeDriver {
     /**
      * Whether the parser takes this type as the target of {@code cast(x as T)} and of the
      * {@code T 'literal'} form: from a value when {@code isFromNull} is false, from {@code null}
-     * when it is true. GEOHASH and DECIMAL casts name their pseudo types, so the bare geohash and
-     * decimal tags answer false.
+     * when it is true. A CAST that names a pseudo type leaves the bare tags of that family false.
      */
     boolean isCastTarget(boolean isFromNull);
 
@@ -208,7 +201,7 @@ public interface TypeDriver {
 
     /**
      * Creates the appender that writes one NULL of this type at the current append position,
-     * for a writer's per-column null setters. Called once per column when the writer opens it.
+     * for a writer's per-column null setters.
      */
     Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem);
 

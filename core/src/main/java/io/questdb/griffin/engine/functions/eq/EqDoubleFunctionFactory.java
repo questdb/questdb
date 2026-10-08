@@ -81,7 +81,6 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         if (driver == null) {
             return new FuncDoubleIsNaN(operand);
         }
-        // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
         return switch (PhysicalDescriptor.familyArmOf(driver, "= NULL")) {
             case INT -> new FuncIntIsNaN(operand);
             case LONG -> new FuncLongIsNaN(operand);

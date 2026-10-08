@@ -361,7 +361,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDesignProofMixingCases() throws Exception {
+    public void testMixingCases() throws Exception {
         final ObjList<String[]> cases = TypeConformanceInvariants.mixingCases();
         TypeConformanceTypes.Entry firstLater = null;
         for (int i = 0, n = TypeConformanceTypes.ALL.size(); i < n && firstLater == null; i++) {

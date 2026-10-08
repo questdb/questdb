@@ -835,7 +835,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case ColumnType.DECIMAL128 -> value.putDecimal128Null(slot);
                     case ColumnType.DECIMAL256 -> value.putDecimal256Null(slot);
                     // a family the slot key admits with no pre-fill arm here
-                    // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
                     default -> throw PhysicalDescriptor.noFamilyArm(
                             ColumnType.nameOf(fixedPrevTypeTags.getQuick(i)),
                             "SAMPLE BY FILL(PREV)"
