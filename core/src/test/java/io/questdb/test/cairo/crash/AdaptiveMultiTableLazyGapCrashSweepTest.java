@@ -210,7 +210,6 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
      * {@link #testMultiTableLazyGapSweepRecoversCleanlyAtEveryCrashPoint}: at N=110, k=50 lands BOTH
      * tables on a genuine, non-degenerate PARTIAL result — t1=6, t2=6, each strictly more than LAZY_K and
      * fewer than ROWS) — chosen the same way the sibling lazy-gap sweeps chose theirs ({@code
-     * AdaptiveO3LazyGapCrashSweepTest.SCOREBOARD_REWIND_CRASH_K}, {@code
      * AdaptiveIndexedSymbolLazyGapCrashSweepTest.REPRESENTATIVE_REWIND_CRASH_K}).
      */
     private static final int REPRESENTATIVE_REWIND_CRASH_K = 50;

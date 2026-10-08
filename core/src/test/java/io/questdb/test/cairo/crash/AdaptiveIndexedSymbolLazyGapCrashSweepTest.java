@@ -160,8 +160,7 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
      * from the durable WAL, landing on a genuine, non-degenerate PARTIAL result (more than LAZY_K, fewer
      * than ROWS) — chosen from this class's own sweep staircase (see {@link
      * #testIndexedSymbolLazyGapSweepRecoversCleanlyAtEveryCrashPoint}'s logged {@code recoveredByK}) the
-     * same way {@code AdaptiveO3LazyGapCrashSweepTest.SCOREBOARD_REWIND_CRASH_K} and {@code
-     * AdaptiveO3CrashSweepTest.LAZY_GAP_CRASH_K} were.
+     * same way {@code AdaptiveO3CrashSweepTest.LAZY_GAP_CRASH_K} was.
      */
     private static final int REPRESENTATIVE_REWIND_CRASH_K = 30;
 
