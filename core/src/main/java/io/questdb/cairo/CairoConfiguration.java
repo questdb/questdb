@@ -699,8 +699,6 @@ public interface CairoConfiguration {
 
     int getPartitionCompactionHotCommits();
 
-    long getPartitionCompactionHotTime();
-
     long getPartitionCompactionIdleTimeout();
 
     long getPartitionCompactionIoBudget();
@@ -709,15 +707,11 @@ public interface CairoConfiguration {
 
     int getPartitionCompactionMoveTailDeadRowsPercent();
 
-    int getPartitionCompactionMoveTailMinGain();
-
     int getPartitionCompactionMoveTailPieceThreshold();
 
     int getPartitionCompactionMoveTailPrefixMultiple();
 
     int getPartitionCompactionPieceThreshold();
-
-    int getPartitionCompactionPrefixMinPercent();
 
     /**
      * How long every folder of a logical partition - the main directory and all its MOVE-TAIL splits - has to

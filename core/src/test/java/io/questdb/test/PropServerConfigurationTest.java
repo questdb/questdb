@@ -1967,6 +1967,21 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testPartitionCompactionPressureRatioDefaultsBelowDeadRowsRatio() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Properties properties = new Properties();
+            Assert.assertEquals(0.5, newPropServerConfiguration(properties).getCairoConfiguration().getPartitionCompactionTablePressureDeadRatio(), 0.0);
+            // Only the waste ratio is set: the pressure ratio follows it down rather than failing startup.
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO.getPropertyPath(), "0.5");
+            Assert.assertEquals(0.25, newPropServerConfiguration(properties).getCairoConfiguration().getPartitionCompactionTablePressureDeadRatio(), 0.0);
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO.getPropertyPath(), "0.2");
+            Assert.assertEquals(0.1, newPropServerConfiguration(properties).getCairoConfiguration().getPartitionCompactionTablePressureDeadRatio(), 0.0);
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO.getPropertyPath(), "3");
+            Assert.assertEquals(0.5, newPropServerConfiguration(properties).getCairoConfiguration().getPartitionCompactionTablePressureDeadRatio(), 0.0);
+        });
+    }
+
+    @Test
     public void testPartitionCompactionPressureRatioRejectsInvalidValues() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Properties properties = new Properties();

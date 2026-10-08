@@ -79,8 +79,6 @@ public class CompactionSplitOverflowTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "100000h");
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD_PERCENT, "99");
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, hotCommits);
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_TIME, 0);
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_MIN_GAIN, 1);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, CAP);
             execute("CREATE TABLE x (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE oracle (v LONG, ts TIMESTAMP)");

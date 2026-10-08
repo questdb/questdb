@@ -127,6 +127,11 @@ public class CompositeFrameCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTruncatedTableReleasesCachedFrames() throws Exception {
+        assertRemovedPartitionReleasesCachedFrames("TRUNCATE TABLE t");
+    }
+
+    @Test
     public void testIndexLookupsAfterReplaceRangeCommits() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
@@ -208,6 +213,11 @@ public class CompositeFrameCacheTest extends AbstractCairoTest {
                 drainWalQueue();
             }
         });
+    }
+
+    @Test
+    public void testDroppedPartitionReleasesCachedFrames() throws Exception {
+        assertRemovedPartitionReleasesCachedFrames("ALTER TABLE t DROP PARTITION LIST '" + DAY + "'");
     }
 
     @Test
@@ -362,6 +372,52 @@ public class CompositeFrameCacheTest extends AbstractCairoTest {
             drainWalQueue();
             assertReusable(0);
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "ref", "t", LOG);
+        });
+    }
+
+    /**
+     * Runs {@code removal} against a partition the cache holds frames on, and checks no file of the partition is
+     * left open once it is gone: the frames hold every column file of it, on a directory nothing reads any more.
+     */
+    private static void assertRemovedPartitionReleasesCachedFrames(String removal) throws Exception {
+        final ConcurrentHashMap<Long, String> openDayFiles = new ConcurrentHashMap<>();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                openDayFiles.remove(fd);
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                return track(name, super.openRO(name));
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                return track(name, super.openRW(name, opts));
+            }
+
+            private long track(LPSZ name, long fd) {
+                if (fd > -1 && Utf8s.containsAscii(name, Files.SEPARATOR + DAY)) {
+                    openDayFiles.put(fd, Utf8s.stringFromUtf8Bytes(name));
+                }
+                return fd;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            // Pooled frame columns capture the FilesFacade they were built with; start from a fresh pool.
+            engine.resetFrameFactory();
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            createTables();
+            insertBoth(batch("T12:00:30", 10_000, 10));
+            insertBoth(batch("T06:00:30", 20_000, 10));
+            assertReusable(1);
+
+            execute(removal);
+            drainWalQueue();
+            engine.releaseAllReaders();
+            Assert.assertEquals("files of the removed partition left open: " + openDayFiles.values(), 0, openDayFiles.size());
         });
     }
 

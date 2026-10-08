@@ -12637,6 +12637,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 final long timestamp = partitionRemoveCandidates.getQuick(i);
                 final long txn = partitionRemoveCandidates.get(i + 1);
+                if (compositeFrameCache != null) {
+                    // Whether the directory goes now or to the async purge, its files must not stay open and mapped
+                    // in a frame no commit can reuse: they would keep its disk space, and on Windows block its removal.
+                    compositeFrameCache.evict(timestamp, txn);
+                }
                 // txn >= lastCommittedTxn means there are some versions found in the table directory
                 // that are not attached to the table most likely as a result of a rollback.
                 // Rollback orphans (txn >= lastCommittedTxn) are not in any txn snapshot,
@@ -17215,12 +17220,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else {
                 targetFrame = firstPartitionFrame;
                 targetFrame.setKeepColumnsOpen(true);
-                targetFrame.reserve(reservedRowHi, squashDataBytes);
                 // The frame is opened at the extent, because that is where the appends have to land. A
                 // composite target's live rows stop short of it, and a column top - which describes a flat
                 // run from row 0 - cannot be extended over the dead rows in between. A plain target states
-                // the same number twice.
+                // the same number twice. Stated before the reserve, which sizes the files off the same rule.
                 targetFrame.setLiveRowCount(targetLiveRows);
+                targetFrame.reserve(reservedRowHi, squashDataBytes);
             }
 
             engine.getPartitionOverwriteControl().notifyPartitionMutates(

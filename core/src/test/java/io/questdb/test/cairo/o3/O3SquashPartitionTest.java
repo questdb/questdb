@@ -1369,6 +1369,16 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSquashAllocatesNothingForColumnUnderItsTop() throws Exception {
+        testSquashAllocatesNothingForColumnUnderItsTop(false);
+    }
+
+    @Test
+    public void testSquashAllocatesNothingForColumnUnderItsTopCopiedTarget() throws Exception {
+        testSquashAllocatesNothingForColumnUnderItsTop(true);
+    }
+
+    @Test
     public void testSquashPartitionClearsRemoteAndStampsTarget() throws Exception {
         // Drives squashSplitPartitions over SPLIT sub-partitions. Merge-append folds a backdated
         // write into the partition's own composite geometry instead of opening a split directory, so
@@ -1843,6 +1853,78 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         } catch (NumericException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private void testSquashAllocatesNothingForColumnUnderItsTop(boolean copyTarget) throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 3);
+            execute(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " timestamp_sequence('2020-02-04T00', 1000000L)::" + timestampType.getTypeName() + " ts" +
+                            " from long_sequence(86400 + 43200)" +
+                            ") timestamp (ts) partition by DAY"
+            );
+            // A reader from before the split makes the squash copy its target rather than append to it in place.
+            try (TableReader ignore = copyTarget ? getReader("x") : null) {
+                execute(
+                        "insert into x select cast(x as int) i," +
+                                " timestamp_sequence('2020-02-04T20:01:00.5', 1000000L)::" + timestampType.getTypeName() + " ts" +
+                                " from long_sequence(200)"
+                );
+                assertQuery("select count() c from table_partitions('x')")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("c\n3\n");
+
+                // Added after every row: every folder holds them entirely under their column tops.
+                execute("alter table x add column k long");
+                execute("alter table x add column s varchar");
+                execute("alter table x add column t string");
+                execute("alter table x squash partitions");
+            }
+            engine.releaseAllWriters();
+
+            assertQuery("select count() c from table_partitions('x')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("c\n2\n");
+            assertQuery("select count() c, count(k) ck, count(s) cs, count(t) ct from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("c\tck\tcs\tct\n129800\t0\t0\t0\n");
+
+            // The squash wrote no value of these columns, so it must not have allocated their files either.
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(engine.verifyTableName("x").getDirName());
+                final int tableLen = path.size();
+                final java.io.File tableDir = new java.io.File(path.toString());
+                final String[] partitionDirs = tableDir.list();
+                Assert.assertNotNull(partitionDirs);
+                int checkedFiles = 0;
+                for (String partitionDir : partitionDirs) {
+                    if (!partitionDir.startsWith("2020-02-04")) {
+                        continue;
+                    }
+                    final String[] files = new java.io.File(tableDir, partitionDir).list();
+                    Assert.assertNotNull(files);
+                    for (String file : files) {
+                        if (file.startsWith("k.") || file.startsWith("s.") || file.startsWith("t.")) {
+                            path.trimTo(tableLen).concat(partitionDir).concat(file);
+                            Assert.assertEquals(partitionDir + '/' + file, 0, ff.length(path.$()));
+                            checkedFiles++;
+                        }
+                    }
+                }
+                Assert.assertTrue("the squash target must have the late columns' files", checkedFiles > 0);
+            }
+        });
     }
 
     private void testSquashPartitionsFails(FilesFacade ff, AtomicBoolean armed, String expectedError) throws Exception {

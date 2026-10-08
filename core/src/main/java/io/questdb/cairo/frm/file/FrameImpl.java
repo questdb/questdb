@@ -64,6 +64,9 @@ import static io.questdb.cairo.frm.FrameColumn.COLUMN_CONTIGUOUS_FILE;
 import static io.questdb.cairo.frm.FrameColumn.COLUMN_MEMORY;
 
 public class FrameImpl implements Frame {
+    // addDataBytes keeps two longs per column: the var-size data bytes, then the leading NULL run (see
+    // extendLeadingNullRun) of the sources it has been given so far.
+    private static final int DATA_BYTES_STRIDE = 2;
     private static final int MAX_OPEN_COLUMNS = 64;
     // A task slot an operation has no use for, matching TableWriter#IGNORE.
     private static final long IGNORE = -1L;
@@ -127,18 +130,26 @@ public class FrameImpl implements Frame {
     @Override
     public void addDataBytes(LongList dataBytes, LongList ranges) {
         final int columnCount = metadata.getColumnCount();
+        final int size = columnCount * DATA_BYTES_STRIDE;
         final int previousSize = dataBytes.size();
-        if (previousSize < columnCount) {
-            dataBytes.setPos(columnCount);
-            dataBytes.fill(previousSize, columnCount, 0);
+        if (previousSize < size) {
+            dataBytes.setPos(size);
+            dataBytes.fill(previousSize, size, 0);
         }
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             final int columnType = metadata.getColumnType(columnIndex);
-            if (columnType >= 0 && ColumnType.isVarSize(columnType)) {
+            if (columnType < 0) {
+                continue;
+            }
+            final int slot = columnIndex * DATA_BYTES_STRIDE;
+            // Resolved rather than opened: a fixed-size column needs nothing else from its file here.
+            final long columnTop = Math.min(resolveColumnTop(columnIndex), rowCount);
+            dataBytes.setQuick(slot + 1, extendLeadingNullRun(dataBytes.getQuick(slot + 1), columnTop, ranges));
+            if (ColumnType.isVarSize(columnType)) {
                 final FrameColumn column = openColumn(columnIndex);
                 try {
                     final long bytes = varDataBytes(column, ColumnType.getDriver(columnType), ranges);
-                    dataBytes.setQuick(columnIndex, dataBytes.getQuick(columnIndex) + bytes);
+                    dataBytes.setQuick(slot, dataBytes.getQuick(slot) + bytes);
                 } finally {
                     releaseColumn(column);
                 }
@@ -495,13 +506,19 @@ public class FrameImpl implements Frame {
         }
         assert canWrite;
         final int columnCount = metadata.getColumnCount();
-        assert dataBytes.size() >= columnCount;
+        assert dataBytes.size() >= columnCount * DATA_BYTES_STRIDE;
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             final int columnType = metadata.getColumnType(columnIndex);
             if (columnType >= 0) {
                 final FrameColumn column = openColumn(columnIndex);
                 try {
-                    column.reserve(rowCount, rowHi, dataBytes.getQuick(columnIndex), false);
+                    final int slot = columnIndex * DATA_BYTES_STRIDE;
+                    final long topRows = topAbsorbedRows(column, rowHi, leadingNullRows(dataBytes.getQuick(slot + 1)));
+                    long bytes = dataBytes.getQuick(slot);
+                    if (ColumnType.isVarSize(columnType)) {
+                        bytes -= topRows * ColumnType.getDriver(columnType).getDataVectorMinEntrySize();
+                    }
+                    column.reserve(rowCount, rowHi - topRows, bytes, false);
                 } finally {
                     releaseColumn(column);
                 }
@@ -555,6 +572,36 @@ public class FrameImpl implements Frame {
         assert 0 <= rowLo && rowLo <= rowHi && rowHi <= rowCount;
         this.windowLo = rowLo;
         this.windowHi = rowHi;
+    }
+
+    /**
+     * Extends a column's leading NULL run over the source rows of {@code ranges}, taken in the order the plan appends
+     * them: a row under the source column's top lengthens the run, and the first row holding a value ends it. The run
+     * is carried as its length while it is open and as that length's bitwise complement once it has ended - see
+     * {@link #leadingNullRows}.
+     */
+    private static long extendLeadingNullRun(long run, long columnTop, LongList ranges) {
+        for (int i = 0, n = ranges.size(); i < n && run >= 0; i += 2) {
+            final long lo = ranges.getQuick(i);
+            final long hi = ranges.getQuick(i + 1);
+            if (lo >= hi) {
+                continue;
+            }
+            if (lo < columnTop) {
+                run += Math.min(hi, columnTop) - lo;
+            }
+            if (hi > columnTop) {
+                return ~run;
+            }
+        }
+        return run;
+    }
+
+    /**
+     * The length of a run {@link #extendLeadingNullRun} carries, whether or not it has ended.
+     */
+    private static long leadingNullRows(long run) {
+        return run < 0 ? ~run : run;
     }
 
     /**
@@ -679,10 +726,18 @@ public class FrameImpl implements Frame {
             return;
         }
         try {
+            final FrameColumn targetColumn = targetColumns.getQuick(columnIndex);
+            final FrameColumn source1Column = source1Columns.getQuick(columnIndex);
+            // Only a plan of appends from source1 alone runs its ranges in the order they are listed. A merge with
+            // source2 can come first and end the target's top, so such a plan absorbs nothing up front.
+            final long topRows = reserveSource2Ranges == null
+                    ? topAbsorbedRows(targetColumn, rowHi, leadingNullRows(extendLeadingNullRun(0, source1Column.getColumnTop(), reserveSource1Ranges)))
+                    : 0;
             long dataBytes = 0;
             if (ColumnType.isVarSize(columnType)) {
                 final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
-                dataBytes = varDataBytes(source1Columns.getQuick(columnIndex), driver, reserveSource1Ranges);
+                // The absorbed rows are leading rows under source1's top, each of which varDataBytes charges a NULL.
+                dataBytes = varDataBytes(source1Column, driver, reserveSource1Ranges) - topRows * driver.getDataVectorMinEntrySize();
                 if (reserveSource2Ranges != null) {
                     // Maps the source's column on the way, which is all the fixed-size branch below does.
                     dataBytes += varDataBytes(source2Columns.getQuick(columnIndex), driver, reserveSource2Ranges);
@@ -697,9 +752,9 @@ public class FrameImpl implements Frame {
             }
             // One allocation and one (re)map per file of the target column, for every write of the plan.
             final int timestampIndex = metadata.getTimestampIndex();
-            targetColumns.getQuick(columnIndex).reserve(
+            targetColumn.reserve(
                     rowCount,
-                    rowHi,
+                    rowHi - topRows,
                     dataBytes,
                     timestampIndex > -1 && metadata.isDedupKey(timestampIndex)
             );
@@ -847,19 +902,9 @@ public class FrameImpl implements Frame {
                 indexBlockCapacity = 0;
             }
         }
-        // A tracked top (only ever set by this frame's own saveChanges, when it has no external sink) takes over from
-        // crv entirely once present: it already reflects everything crv would resolve to PLUS every piece this frame.
-        long columnTop = columnTops.getQuick(columnIndex);
-        // _cv records are keyed by the WRITER index. TableReaderMetadata is dense - it drops every retired
-        // column - so an ALTER COLUMN TYPE or a DROP COLUMN makes the two index spaces diverge, and a dense
-        // lookup then reads some other column's name txn and top. TableWriterMetadata's writer index is the
-        // identity, so this is a no-op for the writer's own callers.
-        final int writerIndex = metadata.getWriterIndex(columnIndex);
-        if (columnTop < 0) {
-            int crvRecIndex = crv.getRecordIndex(partitionTimestamp, writerIndex);
-            columnTop = crv.getColumnTopByIndexOrDefault(crvRecIndex, partitionTimestamp, writerIndex, rowCount);
-        }
-        long columnTxn = crv.getColumnNameTxn(partitionTimestamp, writerIndex);
+        long columnTop = resolveColumnTop(columnIndex);
+        // Keyed by the writer index, see resolveColumnTop.
+        long columnTxn = crv.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
 
         FrameColumnTypePool columnTypePool = columnPool.getPool(columnType);
         boolean createNew = columnTop >= rowCount || create;
@@ -935,6 +980,28 @@ public class FrameImpl implements Frame {
         columnTops.fill(0, columnCount, -1L);
     }
 
+    /**
+     * The top {@link #openColumn} would open column {@code columnIndex} with, before it is capped at the row count,
+     * without opening the column. A tracked top (only ever set by this frame's own saveChanges) takes over from crv
+     * entirely once present: it already reflects everything crv would resolve to PLUS every piece this frame wrote.
+     */
+    private long resolveColumnTop(int columnIndex) {
+        if (frameType != COLUMN_CONTIGUOUS_FILE) {
+            return 0;
+        }
+        final long columnTop = columnTops.getQuick(columnIndex);
+        if (columnTop >= 0) {
+            return columnTop;
+        }
+        // _cv records are keyed by the WRITER index. TableReaderMetadata is dense - it drops every retired
+        // column - so an ALTER COLUMN TYPE or a DROP COLUMN makes the two index spaces diverge, and a dense
+        // lookup then reads some other column's name txn and top. TableWriterMetadata's writer index is the
+        // identity, so this is a no-op for the writer's own callers.
+        final int writerIndex = metadata.getWriterIndex(columnIndex);
+        final int crvRecIndex = crv.getRecordIndex(partitionTimestamp, writerIndex);
+        return crv.getColumnTopByIndexOrDefault(crvRecIndex, partitionTimestamp, writerIndex, rowCount);
+    }
+
     private void throwOnError() {
         final Throwable th = error;
         if (th != null) {
@@ -949,6 +1016,18 @@ public class FrameImpl implements Frame {
             }
             throw CairoException.critical(0).put("frame column task failed [error=").put(th.getMessage()).put(']');
         }
+    }
+
+    /**
+     * How many of the rows a plan appends below {@code rowHi} the target column takes into its top rather than its
+     * files: the leading NULL run of the plan's sources, as long as the column reaches the plan with no data of its
+     * own and every row of this frame is live - the two conditions {@link FrameAlgebra#appendColumn} raises a top on.
+     */
+    private long topAbsorbedRows(FrameColumn targetColumn, long rowHi, long leadingNullRows) {
+        if (targetColumn.getColumnTop() == rowCount && deadRowCount == 0) {
+            return Math.min(leadingNullRows, rowHi - rowCount);
+        }
+        return 0;
     }
 
     void setRecycleBin(RecycleBin<FrameImpl> frameRecycleBin) {

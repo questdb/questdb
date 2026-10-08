@@ -459,17 +459,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long partitionCompactionDeclineBackoffMin;
     private final int partitionCompactionDeclineBackoffMultiplier;
     private final int partitionCompactionHotCommits;
-    private final long partitionCompactionHotTime;
     private final long partitionCompactionIdleTimeout;
     private final long partitionCompactionIoBudget;
     private final int partitionCompactionIoCostMultiplier;
     private final long partitionCompactionSquashIdleTimeout;
     private final int partitionCompactionMoveTailDeadRowsPercent;
-    private final int partitionCompactionMoveTailMinGain;
     private final int partitionCompactionMoveTailPieceThreshold;
     private final int partitionCompactionMoveTailPrefixMultiple;
     private final int partitionCompactionPieceThreshold;
-    private final int partitionCompactionPrefixMinPercent;
     private final int partitionCompactionSquashTargetSizeMultiple;
     private final long partitionCompactionSwapTimeout;
     private final int partitionCompactionTableDeadStopPercent;
@@ -1937,7 +1934,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3PartitionMergeAppendEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, false);
             this.o3PartitionMergeAppendFrameCacheSize = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_FRAME_CACHE_SIZE, 2));
             this.partitionCompactionDeadRowsRatio = getDouble(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1.0");
-            this.partitionCompactionTablePressureDeadRatio = getDouble(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_PRESSURE_DEAD_RATIO, "0.5");
+            // Defaults below the waste ratio, so lowering dead.rows.ratio on its own never leaves an invalid pair.
+            this.partitionCompactionTablePressureDeadRatio = getDouble(
+                    properties,
+                    env,
+                    PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_PRESSURE_DEAD_RATIO,
+                    Double.toString(Math.min(0.5, partitionCompactionDeadRowsRatio / 2))
+            );
             if (!Double.isFinite(partitionCompactionTablePressureDeadRatio)
                     || partitionCompactionTablePressureDeadRatio <= 0
                     || !(partitionCompactionTablePressureDeadRatio < partitionCompactionDeadRowsRatio)) {
@@ -1967,17 +1970,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.partitionCompactionPieceThreshold = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 20));
             // 0 turns the hot-partition exclusion off entirely, restoring the pre-existing behaviour.
             this.partitionCompactionHotCommits = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 10));
-            this.partitionCompactionHotTime = getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_TIME, 10 * Micros.SECOND_MICROS);
-            // MOVE-TAIL reclaims the partition's dead rows and pays a copy of its tail, so this is the
-            // dead rows it must win per row copied. 1 breaks even on bytes moved.
             // A merge triggers MOVE-TAIL once its projected dead rows exceed this percentage of the
             // projected live rows. 0 triggers on any dead space above cairo.o3.partition.split.min.size.
             this.partitionCompactionMoveTailDeadRowsPercent = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_DEAD_ROWS_PERCENT, 10));
-            this.partitionCompactionMoveTailMinGain = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_MIN_GAIN, 2));
             this.partitionCompactionAvgRowsPieceLim = Math.max(1, getLong(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 4096));
             this.partitionCompactionTimeBudgetMs = getMillis(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TIME_BUDGET, 1000);
             this.partitionCompactionDeclineBackoffMax = getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MAX, 60 * Micros.MINUTE_MICROS);
-            this.partitionCompactionPrefixMinPercent = getIntPercentage(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_PREFIX_MIN_PERCENT, 50);
             this.partitionCompactionDeclineBackoffMin = Math.max(0, Math.min(partitionCompactionDeclineBackoffMax, getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MIN, Micros.MINUTE_MICROS)));
             this.partitionCompactionDeclineBackoffMultiplier = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MULTIPLIER, 2));
             this.partitionCompactionIoCostMultiplier = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_IO_COST_MULTIPLIER, 2));
@@ -5007,11 +5005,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getPartitionCompactionHotTime() {
-            return partitionCompactionHotTime;
-        }
-
-        @Override
         public long getPartitionCompactionIdleTimeout() {
             return partitionCompactionIdleTimeout;
         }
@@ -5032,11 +5025,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getPartitionCompactionMoveTailMinGain() {
-            return partitionCompactionMoveTailMinGain;
-        }
-
-        @Override
         public int getPartitionCompactionMoveTailPieceThreshold() {
             return partitionCompactionMoveTailPieceThreshold;
         }
@@ -5049,11 +5037,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPartitionCompactionPieceThreshold() {
             return partitionCompactionPieceThreshold;
-        }
-
-        @Override
-        public int getPartitionCompactionPrefixMinPercent() {
-            return partitionCompactionPrefixMinPercent;
         }
 
         @Override

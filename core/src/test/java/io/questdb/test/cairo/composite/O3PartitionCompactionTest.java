@@ -1815,13 +1815,10 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     private static void enableCompaction() {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE / 8);
-        // These fixtures are a handful of commits over a mock clock that barely advances, and they hold
-        // dead space measured in tens of thousands of rows. The shipped settled-piece window and MOVE-TAIL
-        // gain floor would decline every one of them, so the tests that want MOVE-TAIL turn them off and
-        // the tests that want to observe them set them themselves.
+        // These fixtures are a handful of commits, every one of which would count as hot under the shipped
+        // commit window, so the tests that want compaction turn it off and the tests that want to observe it
+        // set it themselves.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_TIME, 0);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_MIN_GAIN, 1);
     }
 
     /**

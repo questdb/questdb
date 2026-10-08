@@ -692,16 +692,14 @@ public class CompositeAppendCompactionForecastTest extends AbstractCairoTest {
     }
 
     /**
-     * The settled-piece window and the MOVE-TAIL gain floor, off. These fixtures are a handful of commits
-     * over a clock that barely advances, so the shipped values call every piece hot and decline the
-     * MOVE-TAIL the prefix-dominant test is about. {@code O3PartitionCompactionTest.enableCompaction}
-     * turns the same three knobs off for the same reason.
+     * The hot-commit window off, and a split size these fixtures' dead space clears. They are a handful of
+     * commits, so the shipped window calls the partition hot and declines the MOVE-TAIL the prefix-dominant
+     * test is about. {@code O3PartitionCompactionTest.enableCompaction} turns the same window off for the same
+     * reason.
      */
     private static void letMoveTailRun() {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_TIME, 0);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_MIN_GAIN, 1);
     }
 
     /**

@@ -131,6 +131,23 @@ public class CompositeFrameCache implements QuietCloseable {
     }
 
     /**
+     * Closes the entry holding version {@code nameTxn} of partition {@code partitionTimestamp}, if any, ahead of that
+     * version's directory being removed: the frames hold every column file of it open, and mapped.
+     */
+    public synchronized void evict(long partitionTimestamp, long nameTxn) {
+        for (int i = 0, n = entries.length; i < n; i++) {
+            final Entry e = entries[i];
+            if (e.partitionTimestamp == partitionTimestamp && e.nameTxn == nameTxn) {
+                if (e.inUse) {
+                    e.evictOnRelease = true;
+                } else {
+                    e.evict();
+                }
+            }
+        }
+    }
+
+    /**
      * Closes every entry nobody is using and marks the ones in use to close on release.
      */
     public synchronized void evictAll() {

@@ -925,11 +925,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getPartitionCompactionHotTime() {
-        return getDelegate().getPartitionCompactionHotTime();
-    }
-
-    @Override
     public int getPartitionCompactionIoCostMultiplier() {
         return getDelegate().getPartitionCompactionIoCostMultiplier();
     }
@@ -937,11 +932,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getPartitionCompactionMoveTailDeadRowsPercent() {
         return getDelegate().getPartitionCompactionMoveTailDeadRowsPercent();
-    }
-
-    @Override
-    public int getPartitionCompactionMoveTailMinGain() {
-        return getDelegate().getPartitionCompactionMoveTailMinGain();
     }
 
     @Override
@@ -957,11 +947,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getPartitionCompactionPieceThreshold() {
         return getDelegate().getPartitionCompactionPieceThreshold();
-    }
-
-    @Override
-    public int getPartitionCompactionPrefixMinPercent() {
-        return getDelegate().getPartitionCompactionPrefixMinPercent();
     }
 
     @Override

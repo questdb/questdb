@@ -976,13 +976,10 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.partition.compaction.io.budget\tQDB_CAIRO_PARTITION_COMPACTION_IO_BUDGET\t1073741824\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.compaction.io.cost.multiplier\tQDB_CAIRO_PARTITION_COMPACTION_IO_COST_MULTIPLIER\t2\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.compaction.hot.commits\tQDB_CAIRO_PARTITION_COMPACTION_HOT_COMMITS\t10\tdefault\tfalse\tfalse\n" +
-                                    "cairo.partition.compaction.hot.time\tQDB_CAIRO_PARTITION_COMPACTION_HOT_TIME\t10000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.compaction.move.tail.dead.rows.percent\tQDB_CAIRO_PARTITION_COMPACTION_MOVE_TAIL_DEAD_ROWS_PERCENT\t10\tdefault\tfalse\tfalse\n" +
-                                    "cairo.partition.compaction.move.tail.min.gain\tQDB_CAIRO_PARTITION_COMPACTION_MOVE_TAIL_MIN_GAIN\t2\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.compaction.move.tail.piece.threshold\tQDB_CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PIECE_THRESHOLD\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.compaction.move.tail.prefix.multiple\tQDB_CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PREFIX_MULTIPLE\t2\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.compaction.piece.threshold\tQDB_CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD\t20\tdefault\tfalse\tfalse\n" +
-                                    "cairo.partition.compaction.prefix.min.percent\tQDB_CAIRO_PARTITION_COMPACTION_PREFIX_MIN_PERCENT\t50\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.compaction.squash.idle.timeout\tQDB_CAIRO_PARTITION_COMPACTION_SQUASH_IDLE_TIMEOUT\t1800000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.compaction.squash.target.size.multiple\tQDB_CAIRO_PARTITION_COMPACTION_SQUASH_TARGET_SIZE_MULTIPLE\t4\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.compaction.swap.timeout\tQDB_CAIRO_PARTITION_COMPACTION_SWAP_TIMEOUT\t1800000000\tdefault\tfalse\tfalse\n" +

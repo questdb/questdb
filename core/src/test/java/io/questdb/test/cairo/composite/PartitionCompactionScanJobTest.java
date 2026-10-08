@@ -1478,8 +1478,6 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_TIME, 0);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_MIN_GAIN, 1);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
         node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
@@ -2387,6 +2385,72 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
+     * Columns added after a day was split hold no value in any of its folders, so merging the folders writes none
+     * either: the merged directory takes them as column tops. Their files must not be allocated for the rows the
+     * tops stand in for.
+     */
+    @Test
+    public void testScanMergeAllocatesNothingForColumnUnderItsTop() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            createSplitDayTable("cx");
+            execute("ALTER TABLE cx ADD COLUMN k LONG");
+            execute("ALTER TABLE cx ADD COLUMN s VARCHAR");
+            execute("ALTER TABLE cx ADD COLUMN t STRING");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("cx");
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertEquals("the O3 insert must have split 2020-01-01", 3, reader.getTxFile().getPartitionCount());
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_SQUASH_IDLE_TIMEOUT, "30m");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:00:00.000000Z"));
+            final Clock pastTheSquashTimeout = () -> MicrosecondClockImpl.INSTANCE.getTicks() + 2 * Micros.HOUR_MICROS;
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(
+                    engine,
+                    configuration.getFilesFacade(),
+                    pastTheSquashTimeout
+            )) {
+                job.run();
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (TableReader reader = engine.getReader(token); Path path = new Path()) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertEquals("the day's two folders must have become one", 2, tx.getPartitionCount());
+                final String dir = partitionDir(token, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(), day, tx.getPartitionNameTxn(0));
+                path.of(dir);
+                final int partitionLen = path.size();
+                final String[] files = new java.io.File(dir).list();
+                Assert.assertNotNull(files);
+                int checkedFiles = 0;
+                for (String file : files) {
+                    if (file.startsWith("k.") || file.startsWith("s.") || file.startsWith("t.")) {
+                        path.trimTo(partitionLen).concat(file);
+                        Assert.assertEquals(file, 0, ff.length(path.$()));
+                        checkedFiles++;
+                    }
+                }
+                Assert.assertTrue("the merge must have created the late columns' files", checkedFiles > 0);
+            }
+            assertQuery("SELECT count() c, count(k) ck, count(s) cs, count(t) ct FROM cx")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\tck\tcs\tct\n6010\t0\t0\t0\n");
+        });
+    }
+
+    /**
      * The merge also reclaims dead space: a day MOVE-TAIL left as a COMPOSITE front plus a COMPOSITE sibling
      * split comes back as one plain folder holding only the live rows, so the sweep does the whole logical
      * partition's work in a single copy rather than one copy per folder.
@@ -2396,8 +2460,6 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_TIME, 0);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_MIN_GAIN, 1);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
         node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);

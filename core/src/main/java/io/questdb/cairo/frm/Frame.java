@@ -35,9 +35,11 @@ import java.io.Closeable;
 public interface Frame extends Closeable {
 
     /**
-     * Adds the exact data-vector sizes of the source rows in {@code ranges} to {@code dataBytes}, indexed by column.
-     * Fixed-size columns add zero. This lets a caller aggregate var-size reservations across source frames before it
-     * starts writing a multi-frame plan.
+     * Adds the exact data-vector sizes of the source rows in {@code ranges} to {@code dataBytes}, and extends each
+     * column's leading run of rows under the sources' column tops, which a target can take into its own top instead
+     * of its files. This lets a caller aggregate reservations across source frames before it starts writing a
+     * multi-frame plan: call it once per source, in the order the plan appends them, and hand the list, opaque to
+     * the caller, to {@link #reserve(long, LongList)}.
      */
     void addDataBytes(LongList dataBytes, LongList ranges);
 
@@ -126,7 +128,9 @@ public interface Frame extends Closeable {
      * Grows every column file of this frame, in one allocation per file, to hold the rows a plan of appends and
      * merges is about to write - see {@link FrameColumn#reserve}. Called once ahead of the plan's first action, so
      * no action has to allocate as it writes. Var-size columns are sized off the source rows the plan reads: each
-     * {@code (lo, hi)} pair in a ranges list names rows {@code [lo, hi)} of the source it belongs to.
+     * {@code (lo, hi)} pair in a ranges list names rows {@code [lo, hi)} of the source it belongs to. A plan with no
+     * {@code source2} appends {@code source1}'s ranges in the listed order, so the leading rows under its column tops
+     * that a target column will take into its own top are not allocated.
      *
      * @param rowHi         the extent {@code E} the plan reaches at most, exclusive
      * @param source1       the frame the plan appends and merges from - the batch
@@ -139,7 +143,8 @@ public interface Frame extends Closeable {
 
     /**
      * Grows every target column from its current extent to {@code rowHi}, using exact per-column var-size byte totals
-     * accumulated with {@link #addDataBytes}. This overload supports plans that read more than two source frames.
+     * accumulated with {@link #addDataBytes}. This overload supports plans that read more than two source frames,
+     * which append in the order {@link #addDataBytes} saw them.
      */
     void reserve(long rowHi, LongList dataBytes);
 
