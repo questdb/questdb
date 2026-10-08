@@ -878,6 +878,15 @@ public class WindowChainTest extends AbstractCairoTest {
         for (String query : singleKey) {
             assertMatchesSerial(engine, ctx, query, null);
         }
+        // a bounded DOUBLE frame chained over another window is not replayed: its key stays whole
+        final String chainedFrame = "SELECT time, l, avg(l) OVER (ORDER BY time ROWS BETWEEN 9 PRECEDING AND CURRENT ROW) a FROM (SELECT time, lag(v) OVER (ORDER BY time) l " + big + ")";
+        assertMatchesSerial(engine, ctx, chainedFrame, AsyncWindowStage.KIND_WINDOW);
+        ctx.setParallelWindowEnabled(true);
+        try (RecordCursorFactory factory = engine.select(chainedFrame, ctx)) {
+            Assert.assertEquals(AsyncWindowSplitPlan.MODE_NONE, findAsyncFactory(factory).getSplitPlan().getMode());
+        } finally {
+            ctx.setParallelWindowEnabled(false);
+        }
         // the plans split the key, so the values are the fold's, the replay's and the warm-up's
         assertSplitOp(engine, ctx, singleKey[0], AsyncWindowSplitPlan.OP_REPLAY);
         assertSplitOp(engine, ctx, singleKey[4], AsyncWindowSplitPlan.OP_REPLAY);
