@@ -703,8 +703,8 @@ public class RecoveryCoordinator {
 
     /**
      * Last durable sequencer transaction for {@code token}, or {@code -1} when it cannot be established.
-     * Read only on the refusal path (see the lineage classification in {@link #recoverTable}), never on the
-     * healthy one, so opening the sequencer here costs nothing at a normal startup.
+     * Read on the refusal path (see the lineage classification in {@link #recoverTable}) and when the live state
+     * already matches the save point, to tell whether WAL passes ran after it.
      */
     private long sequencerFrontierOrUnknown(TableToken token) {
         try {
@@ -833,6 +833,12 @@ public class RecoveryCoordinator {
         if (isLiveStateAtEpoch(token, src, dst, epochGeneration, metadataBound)) {
             if (repairMarkerSelector) {
                 republishSelectedGeneration(token, dir, selected);
+            }
+            // A power loss usually reverts _txn and _cv to the save point, so nothing is restored, but the passes
+            // applied after it can have left index generations behind. Those passes are in the WAL, after the save
+            // point; after a clean stop with everything applied the WAL holds nothing past it.
+            if (sequencerFrontierOrUnknown(token) > epochSeqTxn) {
+                removeUnnamedPostingGenerations(token, src, selected, metadataBound);
             }
             pinRecoveredEpoch(token, selected.epochTxn, epochSeqTxn);
             LOG.info().$("adaptive epoch matches live state, nothing to restore [table=").$(token)
