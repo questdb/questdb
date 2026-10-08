@@ -133,6 +133,11 @@ public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction 
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
     public boolean isOrderSensitive() {
         return true;
     }

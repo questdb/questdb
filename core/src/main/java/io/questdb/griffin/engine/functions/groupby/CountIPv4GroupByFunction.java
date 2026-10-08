@@ -122,6 +122,11 @@ public class CountIPv4GroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
     public boolean isOrderSensitive() {
         return false;
     }

@@ -168,6 +168,11 @@ public class MinIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
     public boolean isOrderSensitive() {
         return false;
     }

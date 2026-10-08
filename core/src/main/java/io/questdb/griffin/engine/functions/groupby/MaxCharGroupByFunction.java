@@ -112,6 +112,11 @@ public class MaxCharGroupByFunction extends CharFunction implements GroupByFunct
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
     public boolean isOrderSensitive() {
         return false;
     }

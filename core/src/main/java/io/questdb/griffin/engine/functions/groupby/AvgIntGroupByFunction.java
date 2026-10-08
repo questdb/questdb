@@ -180,6 +180,11 @@ public class AvgIntGroupByFunction extends DoubleFunction implements GroupByFunc
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
     public boolean isOrderSensitive() {
         return false;
     }

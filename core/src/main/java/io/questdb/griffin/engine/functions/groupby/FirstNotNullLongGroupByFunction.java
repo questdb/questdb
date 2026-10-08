@@ -130,6 +130,11 @@ public class FirstNotNullLongGroupByFunction extends FirstLongGroupByFunction {
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
     public boolean isOrderSensitive() {
         return true;
     }

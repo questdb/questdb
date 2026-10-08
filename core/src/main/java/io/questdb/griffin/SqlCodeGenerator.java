@@ -13691,17 +13691,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     // An aggregate a GROUP BY step computes as the serial GROUP BY does, with fixed-size state in
-    // its value slots and nothing allocated per group.
+    // its value slots and nothing allocated per group: each such function declares it.
     private static boolean isChainableAggregate(GroupByFunction function) {
-        final String name = function.getClass().getSimpleName();
-        if (name.contains("Distinct") || name.contains("Str") || name.contains("Varchar") || name.contains("Array")
-                || name.contains("Bin") || name.contains("Decimal") || name.contains("Long256") || name.contains("Uuid")
-                || name.contains("Symbol") || name.contains("Interval")) {
-            return false;
-        }
-        return name.startsWith("Count") || name.startsWith("Sum") || name.startsWith("KSum") || name.startsWith("NSum")
-                || name.startsWith("Min") || name.startsWith("Max") || name.startsWith("First") || name.startsWith("Last")
-                || name.startsWith("Avg");
+        return function.isFixedSizeState();
     }
 
     /**

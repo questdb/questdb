@@ -147,6 +147,11 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
     public boolean isOrderSensitive() {
         return false;
     }

@@ -168,6 +168,11 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
     public boolean isOrderSensitive() {
         return false;
     }

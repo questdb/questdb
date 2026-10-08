@@ -112,6 +112,11 @@ public class LastIPv4GroupByFunction extends FirstIPv4GroupByFunction {
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
     public boolean isOrderSensitive() {
         return true;
     }

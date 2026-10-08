@@ -219,6 +219,11 @@ public class SumLongGroupByFunction extends LongFunction implements GroupByFunct
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
     public boolean isOrderSensitive() {
         return false;
     }
