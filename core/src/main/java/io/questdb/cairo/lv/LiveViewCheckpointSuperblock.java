@@ -366,8 +366,8 @@ public class LiveViewCheckpointSuperblock implements Closeable {
             isOpen = false;
         }
         LiveViewCheckpointLayout.timelinePath(path, checkpointsDir);
-        // size < 1 allocates and maps exactly FILE_SIZE, zero-filling a fresh
-        // file and preserving an existing one.
+        // size < 1 maps exactly FILE_SIZE (the file itself is rounded up to a
+        // page), zero-filling a fresh file and preserving an existing one.
         mem.of(
                 ff,
                 path.$(),
