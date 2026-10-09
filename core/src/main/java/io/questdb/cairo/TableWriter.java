@@ -5814,18 +5814,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Who holds this partition's squash range: a {@link TxnScoreboard#RANGE_HELD_BY_EPOCH} pin blocks
-     * an in-place OVERWRITE but not a COPY (the copy writes a new partition version and only queues
-     * the old one, whose real removal goes back through the epoch-protected predicate);
-     * {@link TxnScoreboard#RANGE_HELD_BY_OTHER} -- a reader or a checkpoint -- blocks both, because
-     * something is reading those files right now.
+     * Who holds this partition's squash range. A {@link TxnScoreboard#RANGE_HELD_BY_EPOCH} pin blocks an
+     * in-place overwrite but not a copy: the copy writes a new partition version and only queues the old one,
+     * whose removal goes back through the epoch-protected check. {@link TxnScoreboard#RANGE_HELD_BY_OTHER}, a
+     * reader or a checkpoint, blocks both, because something reads those files.
      * <p>
-     * ONE scan, answering both questions. Under ADAPTIVE the epoch pin is always present, so the
-     * caller always needs both answers: the epoch pin sits at the last cut, and the last cut is
-     * always at least one txn behind the {@code toTxn} the gate asks about, so it is permanently
-     * inside the range -- at every epoch cadence, including epoch-every-batch, where the pin merely
-     * tracks one txn behind instead of standing still. Without the distinction ADAPTIVE never
-     * squashes a split partition at all.
+     * One scan answers both questions. Under ADAPTIVE the epoch pin sits at the last cut, at least one txn
+     * behind the {@code toTxn} the gate asks about, so it is always inside the range, at every epoch cadence;
+     * without the distinction ADAPTIVE would never squash a split partition.
      */
     private int scanSquashRangeHolders(int partitionIndex) {
         final long fromTxn = squashRangeFromTxn(partitionIndex);
@@ -6256,16 +6252,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final MemoryCARW o3DataMem2;
         final MemoryCARW o3AuxMem2;
 
-        // Under ADAPTIVE the materialized partition columns are a rebuildable cache of the durable WAL
-        // (durability via the epoch + recovery roll-forward), so their append-page-release msync is
-        // skipped (lazy apply). Non-adaptive modes leave applyLazy false => byte-identical behavior.
+        // Under ADAPTIVE the partition columns are a cache of the WAL that the epoch and recovery make durable,
+        // so their append-page-release msync is skipped (lazy apply). The other modes keep applyLazy false.
         final boolean applyLazyColumns = !appliesColumnSync(effectiveCommitMode);
         if (type > 0) {
             dataMem = Vm.getPMARInstance(configuration);
             dataMem.setApplyLazy(applyLazyColumns);
-            // Thread this writer's commit mode into the page-release durability decision: a table held at
-            // SYNC pending adaptive enrolment must still msync its completed pages (the apply-side
-            // syncColumns() already uses effectiveCommitMode; release() must match).
+            // The page release follows this writer's commit mode: a table held at SYNC until adaptive enrolment
+            // still msyncs its completed pages, as syncColumns() does with effectiveCommitMode.
             dataMem.setCommitMode(effectiveCommitMode);
             o3DataMem1 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
             o3DataMem2 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
@@ -10175,9 +10169,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             ff.mkdir(other.$(), configuration.getMkDirMode());
                             try (Frame targetFrame = frameFactory.createRW(other, newSplitPartitionTimestamp, metadata, columnVersionWriter, 0)) {
                                 // Apply-path column write (partition split): lazy under ADAPTIVE via
-                                // applyColumnSyncMode() — the split's column bytes are rebuilt from the
-                                // durable WAL on recovery; the new partition's _txn/_cv stays as durable
-                                // as the commit mode dictates.
+                                // applyColumnSyncMode(), since recovery rebuilds the split's column bytes from
+                                // the WAL; the new partition's _txn and _cv are as durable as the commit mode
+                                // makes them.
                                 FrameAlgebra.append(targetFrame, sourceFrame, newPrevPartitionSize, prevPartitionSize, txWriter.getTxn() + 1L, applyColumnSyncMode());
                             }
                         }
@@ -10440,12 +10434,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     configuration.getWriterFileOpenOpts(),
                     Files.POSIX_MADV_RANDOM
             );
-            // Column DATA (primary) vector is strictly append-only: TableWriter only ever appends
-            // row values (put*(value)) and moves the cursor with jumpTo/truncate; it never does an
-            // in-place put*(offset,..) below the high-water mark. Safe to narrow the SYNC msync to
-            // the written range -- but ONLY under ADAPTIVE: legacy modes (SYNC/ASYNC/NOSYNC) keep
-            // appendOnly=false so sync() takes its full-extent else branch, byte-identical to master.
-            // (Set after of(): of() re-opens the file and the flag is per-object.)
+            // The column data vector is append-only: TableWriter appends row values (put*(value)) and moves
+            // the cursor with jumpTo or truncate, never writing in place below the high-water mark, so the
+            // SYNC msync can narrow to the written range. Only ADAPTIVE narrows; the other modes keep
+            // appendOnly false, and sync() flushes the full extent. Set after of(), which reopens the file;
+            // the flag is per object.
             final boolean columnAppendOnly = getEffectiveCommitMode() == CommitMode.ADAPTIVE;
             mem1.setAppendOnly(columnAppendOnly);
             if (mem2 != null) {
@@ -10458,8 +10451,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         configuration.getWriterFileOpenOpts(),
                         Files.POSIX_MADV_RANDOM
                 );
-                // Column AUX (secondary) vector is likewise strictly append-only under ADAPTIVE only
-                // (one fixed-width entry appended per row); same narrowing applies.
+                // The aux vector is append-only too (one fixed-width entry per row), and the same narrowing
+                // applies under ADAPTIVE.
                 mem2.setAppendOnly(columnAppendOnly);
             }
         } finally {
@@ -10744,10 +10737,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ColumnIndexer indexer = indexers.getQuick(i);
             if (indexer != null) {
                 denseIndexers.add(indexer);
-                // denseIndexers is the ONLY list the commit/sync loops iterate, and this is the ONLY place it
-                // is populated -- so publishing the table's effective mode here guarantees every indexer that
-                // can ever be committed knows it, without threading the mode through the many
-                // configureFollowerAndWriter() call sites. See reapplyColumnCommitMode.
+                // denseIndexers is the only list the commit and sync loops iterate, and this is the only place
+                // that fills it, so publishing the table's mode here reaches every indexer that can be committed
+                // without threading the mode through the configureFollowerAndWriter() call sites. See
+                // reapplyColumnCommitMode.
                 indexer.getWriter().setCommitMode(effectiveCommitMode);
                 if (IndexType.isPosting(indexer.getWriter().getIndexType())) {
                     hasPostingIndexers = true;
@@ -15740,9 +15733,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean canOverwrite = holders == TxnScoreboard.RANGE_FREE;
             // A durable-epoch pin blocks the overwrite but not the copy. Squashing by copy here
             // keeps ADAPTIVE's partition layout the same as every other mode's; skipping would
-            // leave the split standing forever, because that pin never leaves the range.
-            // Deliberately NOT reached for a reader or checkpoint pin: those keep the existing
-            // deferral, so a busy table still waits rather than copying under every scan.
+            // leave the split standing forever, because that pin never leaves the range. A reader
+            // or checkpoint pin keeps the deferral, so a busy table waits rather than copying under
+            // every scan.
             if (canOverwrite || force || (holders & TxnScoreboard.RANGE_HELD_BY_OTHER) == 0) {
                 targetPartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex);
                 copyTargetFrame = !canOverwrite;
@@ -15766,12 +15759,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Whether the squash target is the partition this writer currently holds
         // open. Captured before the append: the column append memories we may have
         // to re-sync afterwards are the ones positioned at this point.
-        // NOT "&& !copyTargetFrame". Either route leaves the writer's column memories for this
-        // partition stale: the overwrite route grows the files behind them, and the copy route
-        // moves the partition to a NEW version directory, leaving the memories pointed at the old
-        // one that _txn no longer names and that is now a remove candidate. Both need the close
-        // WITHOUT truncating plus a re-open of the target, which openPartition below does at
-        // whatever name txn the partition now carries.
+        // This holds for the copy route too: either route leaves the writer's column memories for
+        // this partition stale. The overwrite grows the files behind them, and the copy moves the
+        // partition to a new version directory, leaving the memories on the old one, which _txn
+        // does not name and which is a remove candidate. Both need the close without truncating
+        // and a reopen of the target, which openPartition below does at the partition's name txn.
         final boolean targetIsOpenPartition = lastOpenPartitionTs == targetPartition;
         int squashCount = Math.min(partitionIndexHi - targetPartitionIndex - 1, partitionIndexHi - partitionIndexLo - optimalPartitionCount);
 
