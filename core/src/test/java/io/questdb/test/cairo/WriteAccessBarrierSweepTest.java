@@ -35,36 +35,20 @@ import org.junit.Test;
 
 /**
  * Drives a broad slice of the storage surface and fails if any durability barrier goes through a handle
- * opened without write access. Such a barrier works on POSIX but fails with {@code ERROR_ACCESS_DENIED} on
- * Windows; {@link WindowsBarrierContractFilesFacade} models that contract on POSIX, so a Linux run catches
- * the defect. The sweep sees only the paths its workloads reach: add a workload for a new barrier site
- * rather than assuming the sweep already covers it.
- * <p>
- * Both commit modes run, because they reach different barrier sites:
- * <ul>
- *   <li>{@code sync} takes the eager grade at every apply-path site, including the ones {@code adaptive}
- *       defers to the durable epoch.</li>
- *   <li>{@code adaptive} reaches the epoch itself, which {@code sync} never executes:
- *       {@code DurableEpochManifest}, which saves the live {@code _txn}, {@code _cv} and {@code _meta}, and
- *       {@code fsyncMaterializedState}.</li>
- * </ul>
+ * opened without write access, which fails with {@code ERROR_ACCESS_DENIED} on Windows.
+ * {@link WindowsBarrierContractFilesFacade} models that contract on POSIX. The sweep sees only the paths its
+ * workloads reach, so a new barrier site needs its own workload. Both commit modes run: {@code sync} takes
+ * the eager barrier at every apply-path site, and {@code adaptive} reaches the durable epoch
+ * ({@code DurableEpochManifest} and {@code fsyncMaterializedState}), which {@code sync} never executes.
  */
 public class WriteAccessBarrierSweepTest extends AbstractCairoTest {
 
     /**
-     * Runs on POSIX only, and the skip loses no coverage:
-     * <ol>
-     *   <li>{@link WindowsBarrierContractFilesFacade} models Windows on POSIX. On a real Windows agent
-     *       {@code FlushFileBuffers} already returns {@code ERROR_ACCESS_DENIED} through a handle opened
-     *       without {@code GENERIC_WRITE}.</li>
-     *   <li>The sites a Windows run adds are the directory fsyncs, and the facade exempts those
-     *       ({@code isDirOrSoftLinkDir}) on every platform.</li>
-     *   <li>{@code runStorageWorkloads()} issues {@code CHECKPOINT CREATE}, which the engine refuses on
-     *       Windows ({@code DatabaseCheckpointAgent}: "Checkpoint is not supported on Windows").</li>
-     * </ol>
-     * The skip is an {@code Assume}, not an early {@code return}, so a skipped run does not report a pass.
-     * A real Windows assertion is a different test: run the workloads on a Windows agent and assert that
-     * every barrier succeeds.
+     * Runs on POSIX only, and the skip loses no coverage: on real Windows {@code FlushFileBuffers} itself
+     * returns {@code ERROR_ACCESS_DENIED} through a handle opened without {@code GENERIC_WRITE}; the sites a
+     * Windows run adds are directory fsyncs, which the facade exempts ({@code isDirOrSoftLinkDir}) on every
+     * platform; and {@code runStorageWorkloads()} issues {@code CHECKPOINT CREATE}, which the engine refuses
+     * on Windows. The skip is an {@code Assume}, so a skipped run does not report a pass.
      */
     @Before
     public void setUp() {
