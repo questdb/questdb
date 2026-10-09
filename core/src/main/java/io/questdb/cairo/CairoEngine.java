@@ -349,18 +349,16 @@ public class CairoEngine implements Closeable, WriterSource {
     // CairoError if this callback returns. ServerMain installs the production hard-halt callback.
     private volatile @NotNull DurabilityFailureHandler durabilityFailureHandler = failure -> {
     };
-    // Default is LocalDurableAckRegistry (local-fsync tier, isEnabled=true). Initialized in the
-    // constructor body after `this` is available. Enterprise overrides via setDurableAckRegistry.
+    // The constructor sets it to a LocalDurableAckRegistry, which needs `this`; Enterprise replaces it through
+    // setDurableAckRegistry.
     private volatile @NotNull DurableAckRegistry durableAckRegistry;
     private FrameFactory frameFactory;
     private volatile boolean isCompleteInitDone;
     private boolean isSqlExecutionCooperativePollingEnabled;
     private @NotNull LiveViewStateStore liveViewStateStore = NoOpLiveViewStateStore.INSTANCE;
-    // Governs the adaptive apply-side durable epoch (ApplyWal2TableJob.maybeAdvanceDurableEpoch).
-    // OSS default ALWAYS_ON; Enterprise installs REPLICA_SKIP while a node is a live replica and
-    // restores ALWAYS_ON when that tenure ends. volatile: swapped by EntCairoEngine role
-    // transitions on the lifecycle thread, read by apply worker threads. Fail-safe: the default and
-    // any non-replica state is ALWAYS_ON. Matches the sibling volatile durableAckRegistry.
+    // Governs the adaptive durable epoch on the apply side (ApplyWal2TableJob.maybeAdvanceDurableEpoch).
+    // ALWAYS_ON unless Enterprise installs REPLICA_SKIP while the node is a live replica. Role changes swap it on
+    // the lifecycle thread and apply workers read it, hence volatile.
     private volatile @NotNull LocalDurabilityPolicy localDurabilityPolicy = LocalDurabilityPolicy.ALWAYS_ON;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
     // Lazily initialized on first call to getMemoryTrackerProvider(), because the
@@ -384,10 +382,9 @@ public class CairoEngine implements Closeable, WriterSource {
     // implicit fence between writer and readers.
     private volatile @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
     private @NotNull WalLocker walLocker;
-    // Deferred 2 (adaptive group commit): registry of WAL writers with a pending (not-yet-device-flushed)
-    // commit under cairo.adaptive.commit.group.window > 0. The WalPurgeJob background flusher sweeps it so
-    // an idle writer's last commit is durable within <= W even if commits stop. Always present (cheap, empty
-    // when W=0 since nothing registers).
+    // WAL writers whose last commit still awaits its device flush, under a group-commit window above 0. The
+    // WalPurgeJob flusher sweeps it, so an idle writer's last commit becomes durable within the window. Empty
+    // when the window is 0.
     private final WalGroupCommitFlushQueue walGroupCommitFlushQueue = new WalGroupCommitFlushQueue();
 
     public CairoEngine(CairoConfiguration configuration) {
@@ -434,7 +431,6 @@ public class CairoEngine implements Closeable, WriterSource {
             this.copyImportContext = new CopyImportContext(this, configuration);
             this.copyExportContext = new CopyExportContext(this);
             this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
-            // OSS default: local-fsync tier (isEnabled=true). Enterprise overrides via setDurableAckRegistry.
             this.durableAckRegistry = new LocalDurableAckRegistry(this);
             // Timer waits run independently of worker pools.
             this.timerShards = new TimerShards(
@@ -1249,8 +1245,8 @@ public class CairoEngine implements Closeable, WriterSource {
     public final void checkpointRecover() {
         try {
             checkpointAgent.recover();
-            // Runtime/test invocation historically completes cleanup synchronously. Startup invokes this
-            // before completeInit is done and deliberately defers cleanup until adaptive baselines publish.
+            // Startup calls this before completeInit is done, and completeInit completes the restore only after
+            // adaptive recovery. A later call completes it here.
             if (isCompleteInitDone) {
                 tableNameRegistry.reload();
                 new RecoveryCoordinator(this).recover();
@@ -1381,13 +1377,11 @@ public class CairoEngine implements Closeable, WriterSource {
         EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
         tableNameRegistry = createTableNameRegistry(configuration, tableFlagResolver);
         tableNameRegistry.reload();
-        // Adaptive durable-epoch recovery roll-forward (Plan 3 Task C). Runs AFTER the table registry
-        // is loaded (so tables are enumerable) but BEFORE any WAL apply (CheckWalTransactionsJob ->
-        // ApplyWal2TableJob) or table open: for each adaptive WAL table with a durable epoch it rewinds
-        // _txn/_cv to the epoch cut so the boot path idempotently re-applies (epoch.seqTxn, frontier]
-        // from the durable WAL; outside adaptive it then removes the save point. No-op for tables without one.
+        // Adaptive recovery runs after the table registry loads, so tables are enumerable, and before any WAL
+        // apply or table open. For each WAL table with a save point it restores _txn, _cv and _meta from it, and
+        // WAL apply then replays (epoch.seqTxn, frontier]. Outside adaptive it removes the save point.
         new RecoveryCoordinator(this).recover();
-        // Only now is it safe to remove the restore trigger/checkpoint: a crash before it repeats the restoration.
+        // Remove the restore trigger and checkpoint only after recovery: a crash before this repeats the restore.
         try {
             checkpointAgent.completeRecovery();
         } catch (Throwable th) {
@@ -2282,7 +2276,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Changes on every {@link #setLocalDurabilityPolicy} call. Read it BEFORE {@link #getLocalDurabilityPolicy()}:
+     * Changes on every {@link #setLocalDurabilityPolicy} call. Read it before {@link #getLocalDurabilityPolicy()}:
      * the version is bumped after the policy is published, so a reader that sees a version also sees a policy at
      * least as new as the one that version stands for.
      */
@@ -2715,9 +2709,9 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * The adaptive group-commit (Deferred 2) pending-flush registry: WAL writers with a deferred device
-     * flush under {@code cairo.adaptive.commit.group.window > 0}. Swept by the {@code WalPurgeJob}
-     * background flusher so an idle writer's last commit becomes durable within {@code <= W}.
+     * Returns the WAL writers whose last commit awaits its device flush under a group-commit window
+     * ({@code cairo.adaptive.commit.group.window}) above 0. The {@code WalPurgeJob} flusher sweeps them, so an
+     * idle writer's last commit becomes durable within the window.
      */
     public @NotNull WalGroupCommitFlushQueue getWalGroupCommitFlushQueue() {
         return walGroupCommitFlushQueue;
@@ -3477,15 +3471,12 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Evict pooled {@link TableMetadata} for a table whose {@code _meta} adaptive recovery just replaced.
-     * Recovery itself reads metadata (the epoch freshness/validity guards), so the pool can hold entries
-     * loaded from the PRE-recovery schema; WAL replay must not see those.
+     * Evicts pooled {@link TableMetadata} for a table whose {@code _meta} adaptive recovery replaced. Recovery
+     * reads metadata itself, so the pool can hold entries of the schema before recovery, which WAL replay must
+     * not see.
      * <p>
-     * Deliberately does NOT touch {@link #metadataCache}: that cache exists only to speed up SQL-side
-     * metadata queries and is not part of the write/recovery path. On the boot path this runs from
-     * {@link #completeInit()} BEFORE the cache is even constructed, and the cache is then hydrated from
-     * the post-recovery {@code _meta} on disk, so it cannot hold a stale generation. (Reaching into it
-     * here also NPE'd on every metadata-bound epoch recovery at startup.)
+     * Leaves {@link #metadataCache} alone: it serves SQL metadata queries only, and at startup this runs from
+     * {@link #completeInit()} before that cache exists, so the cache loads the restored {@code _meta}.
      */
     void resetTableMetadataForRecovery(TableToken tableToken) {
         if (!tableMetadataPool.lock(tableToken)) {
@@ -3519,10 +3510,9 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Force-reclaim writers the calling thread left checked out or locked — a fault-injection crash-test
-     * artifact (a simulated power loss unwinds a {@link TableWriter#close()} with the pool entry still
-     * owned, which {@link #releaseAllWriters()} cannot reclaim). See {@link WriterPool#releaseCrashOrphanedWriters()}.
-     * No-op on a healthy engine.
+     * Force-reclaims writers the calling thread left checked out or locked. A simulated power loss can unwind
+     * {@link TableWriter#close()} with the pool entry still owned, which {@link #releaseAllWriters()} cannot
+     * reclaim. See {@link WriterPool#releaseCrashOrphanedWriters()}. No-op on a healthy engine.
      */
     @TestOnly
     public int releaseCrashOrphanedWriters() {
@@ -3530,13 +3520,11 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Force-reclaim WAL writers the calling thread left checked out — a fault-injection crash-test artifact.
-     * Under adaptive group commit ({@code W > 0}) a swept power loss can fire on the deferred close-time
-     * fdatasync ({@code WalWriter.cleanupBeforeClose} -> {@code flushPendingDurable}); the writer distresses
-     * and rethrows, so its {@code WalWriterTenant.close()} unwinds with the pool slot still owned, which
-     * {@link #releaseAllWalWriters()} cannot reclaim (it would throw "left behind on pool shutdown"). The
-     * WAL-writer analogue of {@link #releaseCrashOrphanedWriters()}; covers the view WAL pool too. No-op on a
-     * healthy engine.
+     * Force-reclaims WAL writers the calling thread left checked out, in the view WAL pool too. With a
+     * group-commit window above 0, a simulated power loss can hit the close-time fdatasync
+     * ({@code WalWriter.cleanupBeforeClose} -> {@code flushPendingDurable}); the writer rethrows, so
+     * {@code WalWriterTenant.close()} unwinds with the pool slot still owned, which
+     * {@link #releaseAllWalWriters()} cannot reclaim. No-op on a healthy engine.
      */
     @TestOnly
     public int releaseCrashOrphanedWalWriters() {
@@ -3889,7 +3877,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     /**
      * {@link #handleDataSyncFailure(Throwable)} for a cleanup path. It poisons the engine and invokes the callback
-     * exactly as that method does, but RETURNS the CairoError instead of throwing it, so the caller can finish
+     * exactly as that method does, but returns the CairoError instead of throwing it, so the caller can finish
      * releasing resources and throw it last. Fail-stop is in force from this call on: every later write acquire is
      * rejected whether or not the caller has thrown yet.
      */
@@ -4640,24 +4628,16 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Loads one mat-view's definition and persisted state into {@code target}.
-     * Shared by {@link #buildViewGraphs()} (boot, {@code forceCreateState=false}) and
-     * {@link #hydrateMatViewStateStore(MatViewStateStore)} (role promote, {@code forceCreateState=true}).
-     * When {@code forceCreateState} is true, a view already present in the graph still has its state
-     * created so a freshly built store on promote is populated; when false, only a brand-new graph
-     * entry gets its state created (the boot semantics).
-     */
-    /**
-     * Plans a surgical repair for a materialized view left AHEAD of its base by a crash: which
+     * Plans a surgical repair for a materialized view left ahead of its base by a crash: which
      * timestamp window the stranded view transactions touched, and which base txn to resume from.
      * Returns false when the window cannot be bounded, in which case the caller must fall back to
      * invalidation (a full rebuild). Never throws -- a repair is an optimisation over a behaviour
      * that is already correct, so any failure degrades to that behaviour.
      */
     private boolean planMatViewRepair(TableToken viewToken, long baseTableLastTxn, WalUtils.MatViewRepairPlan plan) {
-        // The event reader is owned HERE, not by findMatViewRepairPlan: the scan re-positions it with
-        // close()+of() per txn and leaves it open on the last one, so without this try-with-resources
-        // the view's _event mapping stays open for the life of the engine.
+        // This method owns the event reader, not findMatViewRepairPlan: the scan re-positions it with
+        // close()+of() per txn and leaves it open on the last one, so the try-with-resources closes the view's
+        // _event mapping.
         try (
                 Path repairPath = new Path().of(configuration.getDbRoot());
                 WalEventReader walEventReader = new WalEventReader(configuration)
@@ -4678,6 +4658,14 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    /**
+     * Loads one mat-view's definition and persisted state into {@code target}.
+     * Shared by {@link #buildViewGraphs()} (boot, {@code forceCreateState=false}) and
+     * {@link #hydrateMatViewStateStore(MatViewStateStore)} (role promote, {@code forceCreateState=true}).
+     * When {@code forceCreateState} is true, a view already present in the graph still has its state
+     * created so a freshly built store on promote is populated; when false, only a brand-new graph
+     * entry gets its state created (the boot semantics).
+     */
     private void loadMatViewIntoStore(
             MatViewStateStore target,
             TableToken tableToken,
@@ -4757,12 +4745,12 @@ public class CairoEngine implements Closeable, WriterSource {
 
                 state.initFromReader(matViewStateReader);
                 if (state.isInvalid()) {
-                    // A crash DURING a surgical repair leaves the view invalid with this reason and
+                    // A crash during a surgical repair leaves the view invalid with this reason and
                     // the in-memory arming lost. Re-plan and re-arm so the repair still completes;
                     // until it does the view stays invalid, which is the fail-safe direction.
                     if (Chars.equalsNc(MatViewState.REPAIR_PENDING_REASON, matViewStateReader.getInvalidationReason())) {
-                        // Keep the original repair cut even if ingestion advanced after the repair
-                        // was deferred: the stranded view transactions belong to the discarded tail.
+                        // Keep the original repair cut even if ingestion advanced after the deferral:
+                        // the stranded view transactions belong to the discarded tail.
                         final long baseTxnForRepair = Math.min(
                                 getTableSequencerAPI().lastTxn(baseTableToken),
                                 matViewStateReader.getLastRefreshBaseTxn()
@@ -4789,15 +4777,11 @@ public class CairoEngine implements Closeable, WriterSource {
                             .$(", matViewBaseTxn=").$(state.getLastRefreshBaseTxn())
                             .$(", baseTableTxn=").$(baseTableLastTxn)
                             .I$();
-                    // SURGICAL REPAIR. A crash can leave the view holding aggregates for base txns
-                    // the RPO window legitimately discarded. Invalidating is correct but forces a FULL
-                    // rebuild of the whole view. Instead recompute ONLY the window the stranded txns
-                    // touched.
-                    //
-                    // FAIL-SAFE BY CONSTRUCTION: the view is invalidated FIRST (with the repair reason)
-                    // and only the range refresh clears it. If the repair never runs, never completes,
-                    // or the process dies mid-way, the view stays invalid -- exactly today's behaviour.
-                    // The repair can only ever IMPROVE on that; it cannot leave stale rows queryable.
+                    // Surgical repair. A crash can leave the view holding aggregates for base txns the
+                    // crash discarded. Invalidation is correct but rebuilds the whole view; the repair
+                    // recomputes only the window the stranded txns touched. The view is invalidated first,
+                    // with the repair reason, and only the range refresh clears it, so a repair that never
+                    // runs or dies midway leaves the view invalid, never stale.
                     final WalUtils.MatViewRepairPlan repairPlan = new WalUtils.MatViewRepairPlan();
                     if (planMatViewRepair(tableToken, baseTableLastTxn, repairPlan)) {
                         state.setLastRefreshBaseTableTxn(repairPlan.cutBaseTxn);
@@ -5020,27 +5004,21 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
                 renamed = true;
 
-                // DATA BEFORE POINTER. The rename above publishes the table's dentry into the db root, but on
-                // POSIX a newly created directory entry is durable only once its PARENT directory is fsynced --
-                // the same rule WalUtils.syncStagingTreeDurable already applies inside the staging tree. The
-                // registry swap below, by contrast, is made durable unconditionally, in every commit mode
-                // (GrowOnlyTableNameRegistryStore.logSwapTable syncs tables.d). Without this barrier a power
-                // loss between the two leaves a DURABLE registry entry naming a directory the crash lost: the
-                // table disappears (the pre-rebase dir survives, unregistered and invisible) and an ADAPTIVE
-                // boot aborts outright, because RecoveryCoordinator.recover() reads _meta for every registered
-                // WAL table and refuses to expose one it cannot read. This fsync is the covering barrier for
-                // that swap; it is unconditional because the swap's own durability is, and it costs one
-                // directory fsync on an admin-only path. A crash BEFORE it still leaves the old table live,
-                // with the new dir as the accepted (dir-only) duplicate-name orphan.
+                // Data before pointer. The rename publishes the table's directory entry in the db root, and on
+                // POSIX a new entry is durable only once its parent directory is fsynced. The registry swap below
+                // is durable in every commit mode (GrowOnlyTableNameRegistryStore.logSwapTable syncs tables.d), so
+                // without this fsync a power loss between the two leaves a durable registry entry naming a lost
+                // directory: the table disappears, and an ADAPTIVE start refuses because
+                // RecoveryCoordinator.recover() reads _meta of every registered WAL table. The fsync is
+                // unconditional because the swap's durability is. A crash before it leaves the old table live,
+                // with the new directory as a duplicate-name orphan.
                 TableUtils.fsyncDirDurable(ff, dst.of(root).$());
 
-                // Commit the swap in the registry as ONE crash-atomic durable step: drop the old table and
-                // register the rebuilt dir together (a single tables.d sync via logSwapTable), so a power
-                // loss can never leave the old table dropped with the new one unregistered. The dir was
-                // already renamed into place above; a crash before this swap leaves the new dir as a
-                // duplicate-name orphan and keeps the old table live, while a crash after it publishes the
-                // new (still-unseeded until commitRebaseSeed below) table. swapTable drops the old dir,
-                // evicts its metadata-cache entry, repoints the name to the new dir and hydrates its cache.
+                // Drop the old table and register the rebuilt directory in one durable step (one tables.d sync in
+                // logSwapTable), so a power loss cannot leave the old table dropped and the new one unregistered.
+                // A crash after the swap publishes the new table, unseeded until commitRebaseSeed below. swapTable
+                // drops the old directory, evicts its metadata-cache entry, repoints the name to the new directory
+                // and hydrates its cache.
                 final TableToken swapped = tableNameRegistry.swapTable(
                         oldToken,
                         tableName,
@@ -5053,8 +5031,8 @@ public class CairoEngine implements Closeable, WriterSource {
                     throw CairoException.nonCritical()
                             .put("rebase target name was taken concurrently [table=").put(tableName).put(']');
                 }
-                // The swap is the point of no return: the new dir is now the table (its hard links are the
-                // only surviving copy of the data), so the catch below must leave it on disk.
+                // The swap is the point of no return: from here the new directory is the table (its hard links
+                // are the only surviving copy of the data), so the catch below must leave it on disk.
                 oldTableDropped = true;
                 newToken = swapped;
 
@@ -5250,11 +5228,11 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Rethrows {@code e} unless it reports a torn file that the table writer repairs when it opens the table,
-     * by continuing from the intact previous transaction: a torn {@code _txn} of a non-WAL table, or a
-     * {@code _cv} that cannot serve the column version {@code _txn} names. Nothing opens a non-WAL table's
-     * writer before its next write, so the table would stay unreadable until then. Opens the writer to repair
-     * it, as {@link #getTableMetadata} does on failure; rethrows {@code e} when that fails too.
+     * Rethrows {@code e} unless it reports a torn file that the table writer repairs on open by continuing from
+     * the intact previous transaction: a torn {@code _txn} of a non-WAL table, or a {@code _cv} that cannot serve
+     * the column version {@code _txn} names. Nothing else opens a non-WAL table's writer before its next write,
+     * so this opens it to repair the table, as {@link #getTableMetadata} does on failure, and rethrows {@code e}
+     * when that fails too.
      * <p>
      * WAL apply opens a WAL table's writer only when the table lags its sequencer. A torn {@code _txn} reads as
      * that lag, but a torn {@code _cv} does not, so the read repairs the table too. It then notifies WAL apply,
