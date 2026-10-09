@@ -52,64 +52,61 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * SP-D Task W1: the ADAPTIVE out-of-order (O3) crash sweep — drives an adaptive WAL table through
+ * The ADAPTIVE out-of-order (O3) crash sweep: drives an adaptive WAL table through
  * {@link AbstractAdaptiveCrashSweepTest#forEachAdaptiveCrashPoint} with a commit phase whose row
- * timestamps are DELIBERATELY out of order, so every apply after the first engages the O3 merge path
- * (not a pure tail append), and proves (or disproves) that adaptive recovery is crash-safe under O3.
+ * timestamps are out of order, so every apply after the first goes through the O3 merge path rather than
+ * a tail append, and checks that adaptive recovery is crash-safe under O3.
  *
- * <p>Mirrors {@link AdaptiveCrashSweepSelfCheckTest} (the W0 pure-append baseline) exactly, except:
+ * <p>The workload matches {@link AdaptiveCrashSweepSelfCheckTest}, except:
  * <ul>
- *   <li>{@code v} (commit order, 0..ROWS-1) and {@code ts} (physical/designated-timestamp order) are
- *       DELIBERATELY decoupled — row {@code v=0} is inserted with the LATEST timestamp of the batch (a
- *       "ceiling" within the single {@code partition by day} bucket), then {@code v=1..5} each land at
- *       a distinct timestamp BELOW that ceiling in a non-monotonic (zig-zag) order. Every commit from
- *       {@code v=1} onward therefore has {@code minTimestamp < table's current max timestamp} — the
- *       exact condition that routes WAL apply through the O3 merge path instead of a plain append (see
+ *   <li>{@code v} (commit order, 0..ROWS-1) and {@code ts} (designated timestamp order) are decoupled:
+ *       row {@code v=0} carries the latest timestamp of the batch, a ceiling within the single
+ *       {@code partition by day} bucket, and {@code v=1..5} each land at a distinct timestamp below that
+ *       ceiling in zig-zag order. Every commit from {@code v=1} onward therefore has a minimum timestamp
+ *       below the table's maximum timestamp, which routes WAL apply through the O3 merge path (see
  *       {@code TableWriter}'s {@code o3TimestampMin}/{@code getMaxTimestamp} handling and {@code
  *       WalEventCursor#isOutOfOrder}).</li>
- *   <li>The oracle orders by {@code v}, not {@code ts} (ts is intentionally scrambled) — the surviving
- *       rows, sorted by {@code v}, must be an exact identity prefix {@code {0..m-1}}, independent of how
- *       those rows are physically ordered on disk.</li>
+ *   <li>The oracle orders by {@code v}, not {@code ts}: the surviving rows, sorted by {@code v}, must be
+ *       an exact identity prefix {@code {0..m-1}}, whatever their physical order on disk.</li>
  * </ul>
  *
- * <p>Per the SP-D1 plan's Global Constraints, the oracle asserts ALL of, at every crash point k: (1) no
- * silent corruption (surviving rows ordered by v are an exact prefix, loud torn reads tolerated); (2)
- * not suspended + a follow-up insert/read works; (3) full restore at k=N; (4) the recovered count is
- * monotonic non-decreasing in k (the Bar-2 durable-survival floor).
+ * <p>At every crash point k the oracle asserts: (1) no silent corruption (surviving rows ordered by v are
+ * an exact prefix, loud torn reads tolerated); (2) the table is not suspended and a follow-up insert and
+ * read work; (3) full restore at k=N; (4) the recovered count does not decrease as k grows.
  */
 public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
 
     private static final int ROWS = 6; // v = 0,1,2,3,4,5 (commit order)
 
     /**
-     * Hour-of-day (single partition day 2024-10-01), indexed by {@code v}. Index 0 (v=0) is the
-     * CEILING — the latest timestamp in the batch, inserted FIRST. Every subsequent element is strictly
-     * less than the ceiling and visits the timeline in a non-monotonic zig-zag (down, up, down, up,
-     * down relative to the previous element), so each of v=1..5 forces an O3 merge at a DIFFERENT
-     * position in the existing column data (not just always prepending at the head).
+     * Hour of day (single partition day 2024-10-01), indexed by {@code v}. Index 0 (v=0) is the ceiling:
+     * the latest timestamp in the batch, inserted first. Every later element is strictly below the ceiling
+     * and moves through the day in zig-zag order (down, up, down, up, down relative to the previous
+     * element), so each of v=1..5 forces an O3 merge at a different position in the existing column data
+     * rather than always at the head.
      *
      * <pre>
      *   v:      0   1   2   3   4   5
      *   hour:  20   8  14   2  11   5
      * </pre>
-     * ts-ascending order of the v-labels is {@code [3,5,1,4,2,0]} — completely decoupled from commit
-     * order {@code [0,1,2,3,4,5]}.
+     * In ascending timestamp order the v labels are {@code [3,5,1,4,2,0]}, unrelated to the commit order
+     * {@code [0,1,2,3,4,5]}.
      */
     private static final int[] TS_HOUR = {20, 8, 14, 2, 11, 5};
 
     /**
-     * Pre-epoch O3 rows (durable cut taken after these) for the lazy-gap negative-control scenario.
+     * O3 rows applied before the durable epoch in the lazy-gap scenario.
      */
     private static final int LAZY_K = 4;
     /**
-     * Post-epoch O3 rows applied LAZILY (epoch disabled) — the rows at risk without recovery.
+     * O3 rows applied lazily after the epoch, with epochs disabled: the rows at risk without recovery.
      */
     private static final int LAZY_M = 5;
     // Hours for the K+M=9 lazy-gap rows; index 0 is the ceiling (23), all others below it, in a
     // non-monotonic order (independent scenario from TS_HOUR, same O3-forcing technique).
     private static final int[] LAZY_TS_HOUR = {23, 9, 14, 4, 11, 2, 17, 7, 20};
     /**
-     * The crash point of the lazy-gap comparison, pinned by phase rather than by an op count: this many lazy
+     * The crash point of the lazy-gap comparison, set by phase rather than by an op count: this many lazy
      * rows are applied, each as its own txn, and the crash fires on the first durability op of the next lazy
      * row's commit, before that row's WAL is durable. Recovery restores the {@code LAZY_K} epoch rows plus
      * the applied rows, {@code [0, 1, 2, 3, 4]}, a partial result whatever the number of ops per commit.
@@ -117,9 +114,8 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
     private static final int LAZY_GAP_APPLIED_ROWS = 1;
 
     /**
-     * The headline O3 sweep: every commit-phase durability op is crashed at least once; recovery must
-     * clean up to an identity prefix (ordered by v) at every k, never suspended, and restore everything
-     * at k=N.
+     * The O3 sweep: every commit-phase durability op is crashed at least once; recovery must leave an
+     * identity prefix (ordered by v) at every k, never suspended, and restore everything at k=N.
      */
     @Test
     public void testO3SweepRecoversCleanlyAtEveryCrashPoint() throws Exception {
@@ -135,7 +131,7 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
             Assert.assertEquals("default cap must not truncate this small workload", r.n, r.sweptPoints);
             Assert.assertFalse("small workload must not be truncated", r.truncated);
 
-            // Oracle clause 4 (Bar-2 durable-survival FLOOR): recovered counts non-decreasing in k.
+            // Oracle clause 4: recovered counts never decrease as k grows.
             for (int k = 2; k <= r.sweptPoints; k++) {
                 Assert.assertTrue(
                         "recovered counts must be non-decreasing at k=" + k + " ("
@@ -150,7 +146,7 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
                     r.recoveredByK()[1] < ROWS
             );
 
-            // Oracle clause 3: at the LAST crash point k=N, recovery restores ALL committed rows.
+            // Oracle clause 3: at the last crash point, k=N, recovery restores every committed row.
             Assert.assertEquals(
                     "k=N must recover ALL committed rows (W=0 => every returned commit's WAL is durable)",
                     ROWS, r.recoveredByK()[r.sweptPoints]
@@ -159,34 +155,13 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
     }
 
     /**
-     * NEGATIVE-CONTROL FINDING (not the expected shape — reported, not concealed): this test set out to
-     * mirror {@link AdaptiveRecoveryRollForwardCrashTest}'s control exactly — {@code LAZY_K} O3 rows,
-     * a durable epoch ({@code interval=0}), then {@code LAZY_M} more O3 rows applied LAZILY with the
-     * epoch disabled ({@code interval=-1}), then a crash — and asks the same question: does disabling
-     * {@code RecoveryCoordinator.recover()} lose the lazily-applied rows?
-     *
-     * <p>For in-order data the answer is YES (the referenced test proves recovery does real, provable
-     * work there). For O3, extensive testing during development of this class found the answer is
-     * consistently NO. A head-to-head comparison — the IDENTICAL crash point, once with
-     * {@code CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED=true} and once {@code =false} — produced
-     * IDENTICAL recovered results at every one of ~20 durability-op crash points sampled across the
-     * ENTIRE lazy {@code LAZY_M}-batch (both a clean end-of-batch crash with no fault injected at all,
-     * matching the referenced test's own technique exactly, and a fine-grained {@code armCrashAt} scan
-     * spanning the batch's whole op range). {@code RecoveryCoordinator}'s explicit
-     * {@code _txn.epoch->_txn} / {@code _cv.epoch->_cv} rewind never changed the outcome for O3 in any
-     * sampled scenario — see the SP-D1 W1 report for the full scan data.
-     *
-     * <p>This test captures that finding directly, at {@link #LAZY_GAP_APPLIED_ROWS} (a clean,
-     * non-degenerate PARTIAL result, so the comparison is non-trivial): it runs the
-     * SAME crash point with recovery enabled and disabled and asserts the two recovered row-sets are
-     * IDENTICAL — rather than asserting "recovery-disabled is wrong" as the mirrored template would,
-     * because forcing that assertion would misrepresent what was actually measured and is exactly the
-     * kind of oracle-weakening this task was told not to do. Both arms independently satisfy the base
-     * no-silent-corruption oracle (a valid identity prefix, never suspended) — nothing is lost or wrong
-     * in EITHER arm; the gap is specifically that this technique does not demonstrate recovery earning
-     * its keep for O3, unlike the proven in-order case. NOT a correctness bug: flagged prominently as a
-     * negative-control scope gap for the SP-D program to follow up on (e.g. under W&gt;0, or via a
-     * different fault axis), not concealed by a misleading pass.
+     * Runs the lazy-gap scenario at the same crash point with {@code RecoveryCoordinator.recover()} enabled
+     * and disabled: {@code LAZY_K} O3 rows, a durable epoch ({@code interval=0}), then {@code LAZY_M} more
+     * O3 rows applied lazily with epochs disabled ({@code interval=-1}), then a crash after
+     * {@link #LAZY_GAP_APPLIED_ROWS} lazy applies, which leaves a partial result. Both arms must recover a
+     * valid identity prefix, never suspended, and the two recovered row sets are identical: for O3 data at
+     * this crash point, the {@code _txn} and {@code _cv} rewind to the epoch does not change the outcome.
+     * For in-order data the same scenario loses the lazily applied rows when recovery is disabled.
      */
     @Test
     public void testRecoveryVsNoRecoveryIdenticalForO3LazyGapCrash() throws Exception {
@@ -215,11 +190,9 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
                 LAZY_K + LAZY_GAP_APPLIED_ROWS, withRecovery.size()
         );
 
-        // THE FINDING: recovery does NOT change the outcome here (see class javadoc). This asserts what
-        // was actually measured; if this assertion ever FAILS, recovery has started to matter for O3 at
-        // this crash point and this test should be inverted to a normal negative control asserting the
-        // disabled-recovery result is WRONG/short (that would be GOOD news for O3 safety, not a
-        // regression -- update the javadoc accordingly rather than "fixing" the assertion back).
+        // Recovery does not change the outcome at this crash point. If this assertion fails, recovery
+        // matters for O3 here: invert the test to assert that the recovery-disabled arm loses rows, and
+        // update the javadoc, rather than restoring this assertion.
         Assert.assertEquals(
                 "recovery-enabled and recovery-disabled currently produce IDENTICAL results after "
                         + LAZY_GAP_APPLIED_ROWS + " lazy applies for this O3 lazy-gap scenario (the SP-D1 W1 finding)",
@@ -321,11 +294,11 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
                 }
                 drainWalQueue();
 
-                // Disable further epochs: the next LAZY_M rows are applied LAZILY (no new durable cut).
+                // Disable further epochs: the next LAZY_M rows are applied lazily (no new durable cut).
                 setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
 
-                // Baseline of non-cached engine fds after a clean release (mirrors the sweep driver): a
-                // simulated crash unwinds an fsync mid-operation on the LIVE JVM, so a fault-injection fd
+                // Baseline of non-cached engine fds after a clean release (as in the sweep driver): a
+                // simulated crash unwinds an fsync mid-operation on the live JVM, so a fault-injection fd
                 // left open by the interrupted operation lingers where a real power loss's process death
                 // would have reclaimed it. Reclaim the per-cycle delta at the end.
                 final Set<Long> nonCacheFdBaseline = new HashSet<>(crashFf.noCacheOpenFdsSnapshot());
@@ -419,7 +392,7 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
     }
 
     /**
-     * count(*) — the committed row count from table metadata (reliable even if a column read would tear).
+     * count(*): the committed row count from table metadata, reliable even if a column read would tear.
      */
     private long rowCount(String table) {
         try (RecordCursorFactory f = select("select count() from " + table)) {
@@ -433,9 +406,9 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
     }
 
     /**
-     * Read {@code select v ... order by v}, returning the identity values gathered so far. A loud torn
-     * read (CairoException/CairoError/SIGBUS-InternalError on a truncated column) is an acceptable crash
-     * outcome — the (possibly partial) result read before the tear is returned rather than rethrown.
+     * Reads {@code select v ... order by v}, returning the identity values gathered so far. A loud torn
+     * read (CairoException, CairoError, or a SIGBUS InternalError on a truncated column) is an acceptable
+     * crash outcome: the possibly partial result read before the tear is returned rather than rethrown.
      */
     private List<Long> readVOrderedByVAllowTorn(String table) {
         final List<Long> out = new ArrayList<>();
@@ -467,9 +440,9 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
     }
 
     /**
-     * W1 — the O3 workload: an ADAPTIVE {@code (ts timestamp, v long)} WAL table, single {@code
-     * partition by day} bucket, {@code v=0..ROWS-1} identity by COMMIT order, timestamps deliberately
-     * out of order (see {@link #TS_HOUR}) so every apply after v=0 engages the O3 merge path.
+     * The O3 workload: an ADAPTIVE {@code (ts timestamp, v long)} WAL table, single {@code
+     * partition by day} bucket, {@code v=0..ROWS-1} identity in commit order, timestamps out of order
+     * (see {@link #TS_HOUR}) so every apply after v=0 goes through the O3 merge path.
      */
     private final class O3Workload implements AdaptiveCrashWorkload {
         private String table;
@@ -488,13 +461,13 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
         @Override
         public void commit() throws Exception {
             for (int i = 0; i < ROWS; i++) {
-                // v=0 sets the ceiling (latest ts in the batch); v=1..5 each land BELOW it at a
+                // v=0 sets the ceiling (latest ts in the batch); v=1..5 each land below it at a
                 // non-monotonic position -> every apply after the first is an O3 merge, not an append.
                 // W=0: the WAL commit fdatasyncs synchronously here -> an armed crash on that op
                 // propagates a CrashSimulationError out of execute().
                 insertO3Row(table, TS_HOUR[i], i);
                 // ADAPTIVE apply + durable epoch -> more durability ops. An armed crash here is
-                // swallowed by ApplyWal2TableJob's catch(Throwable) into a table SUSPEND (no throw).
+                // swallowed by ApplyWal2TableJob's catch(Throwable) into a table suspend (no throw).
                 drainWalQueue();
                 // Stop as soon as the crash has fired (as a real power loss would): if it manifested as
                 // a suspend, further inserts would durably extend the WAL and mask this injection point.
@@ -512,10 +485,9 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
                     engine.getTableSequencerAPI().isSuspended(tt)
             );
 
-            // No silent corruption (D1.b bar 1): surviving rows, ORDERED BY v (not ts — ts is
-            // deliberately scrambled), are an exact identity PREFIX {0..m-1}. A loud torn read is
-            // tolerated (returns the prefix read so far); a wrong/absent value inside the prefix is a
-            // FAILURE.
+            // No silent corruption: surviving rows, ordered by v (ts is scrambled on purpose), are an
+            // exact identity prefix {0..m-1}. A loud torn read is tolerated (returns the prefix read so
+            // far); a wrong or absent value inside the prefix fails the test.
             final List<Long> rows = readVOrderedByVAllowTorn(table);
             for (int i = 0; i < rows.size(); i++) {
                 Assert.assertNotNull("k=" + k + " row " + i + " read back NULL (corruption)", rows.get(i));
@@ -537,8 +509,8 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
                 Assert.assertEquals("k=N: the full identity set must read back clean", ROWS, rows.size());
             }
 
-            // Clean reopen: a follow-up write + read must succeed on the recovered table. Use a LATER
-            // day (a fresh partition, plain append) so the follow-up check is independent of the O3 path.
+            // Clean reopen: a follow-up write and read must succeed on the recovered table. A later day
+            // (a fresh partition, plain append) keeps the follow-up check independent of the O3 path.
             execute("insert into " + table + " values ('2024-10-09T00:00:00.000000Z', 999)");
             drainWalQueue();
             Assert.assertEquals(
@@ -550,9 +522,9 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
 
         @Override
         public void teardown() throws Exception {
-            // Cleanup is done at the START of the next setup (drop if exists), so a single reused table
-            // name keeps exactly one table alive at a time — bounding on-disk state AND engine-registry
-            // churn across the whole sweep. Best-effort final drop so the last iteration leaves nothing.
+            // The next setup drops the table first, so a single reused table name keeps exactly one table
+            // alive at a time, bounding on-disk state and engine-registry churn across the whole sweep.
+            // Best-effort final drop so the last iteration leaves nothing.
             try {
                 execute("drop table if exists " + table);
                 drainWalQueue();
@@ -569,7 +541,7 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
      * transaction shares the first one's WAL segment. One apply pass with a zero time quota applies the
      * first transaction on its own, keeps its rows in WAL lag (the second sorts below them), stops on the
      * quota and saves the lag in {@code _txn}; under ADAPTIVE a save point lands on it. Setup asserts
-     * {@code _txn} holds that lag, so a green result can never come from a workload that saved none, and
+     * {@code _txn} holds that lag, so the test cannot pass on a workload that saved none, and
      * then runs the WAL purge, which must not take the lag's WAL segment. Commit phase: the drain that
      * consumes the lag. Oracle: every row of the table and of both transactions, by value.
      */
@@ -604,7 +576,7 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
             this.lagInsert = lagInsert;
             this.lagRows = Integer.parseInt(lagInsert[1]);
             this.outOfOrderTs = outOfOrderTs;
-            // a table per row: a red row must not leave its table to the next one
+            // a table per workload: a failing workload must not leave its table to the next one
             this.table = "sweep_lag_" + name;
             for (int i = 0; i < initialInserts.length; i += 3) {
                 addExpectedRows(initialInserts[i], Integer.parseInt(initialInserts[i + 1]), Long.parseLong(initialInserts[i + 2]));
