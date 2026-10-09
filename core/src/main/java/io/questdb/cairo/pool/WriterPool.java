@@ -134,17 +134,13 @@ public class WriterPool extends AbstractPool {
     }
 
     /**
-     * Force-reclaim every entry still checked out or locked by the CALLING thread, closing its writer,
-     * releasing any held {@code .lock} fd, resetting ownership and evicting the entry. Returns the count
-     * reclaimed.
+     * Force-reclaims every entry the calling thread still has checked out or locked: closes its writer,
+     * releases any held {@code .lock} fd, resets ownership and evicts the entry. Returns the count reclaimed.
      * <p>
-     * This exists for fault-injection crash tests: a test that simulates power loss by throwing inside a
-     * {@link TableWriter#close()}/commit unwinds with the pool entry still owned, and {@link #releaseAll}
-     * cannot reclaim it (that path only frees {@code UNALLOCATED} entries — an owned slot can be returned
-     * only by its owner or a full pool close). A real power loss's process death reclaims such an orphan;
-     * this models that on the live JVM. Scoped to the caller's own orphans (owner == current thread) so it
-     * is safe to call on a live engine between iterations. On a healthy engine it is a no-op: production
-     * never leaks an owned writer (every acquire is {@code finally}/try-with guarded).
+     * A test that simulates power loss by throwing inside {@link TableWriter#close()} or a commit unwinds with
+     * the entry still owned, and {@link #releaseAll} frees only {@code UNALLOCATED} entries. A real power loss
+     * reclaims such an entry by ending the process. Only the caller's own entries are reclaimed, so this is
+     * safe on a live engine; on a healthy engine it does nothing.
      */
     @TestOnly
     public int releaseCrashOrphanedWriters() {
