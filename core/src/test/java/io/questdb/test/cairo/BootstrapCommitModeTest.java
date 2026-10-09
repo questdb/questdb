@@ -40,13 +40,11 @@ import java.util.List;
  * reach: it extends {@code AbstractCairoTest}, while {@code createDummyConfiguration} lives on
  * {@link AbstractBootstrapTest}.
  * <p>
- * Until this existed, the ~75 end-to-end classes that run a real server took their commit mode from a
- * {@code server.conf} line that nothing asserted, so deleting that line would have moved all of their
- * coverage to the SHIPPED default without failing anything -- the precise regression
- * {@code TestCommitModeSwitchTest} exists to prevent, on the one path it was not actually checking.
+ * The end-to-end classes that run a real server take their commit mode from the generated
+ * {@code server.conf}; without that line they would follow the shipped default without failing anything.
  * <p>
  * Mirrors {@code com.questdb.EntSuiteCommitModeTest#testEntBootstrapServerConfNamesTheSuiteCommitMode},
- * which has covered the enterprise side of the same seam all along.
+ * which covers the enterprise side.
  */
 public class BootstrapCommitModeTest extends AbstractBootstrapTest {
 
@@ -77,9 +75,8 @@ public class BootstrapCommitModeTest extends AbstractBootstrapTest {
     @Test
     public void testExplicitExtraOverridesTheSuiteCommitMode() throws Exception {
         // The `extra` escape hatch createDummyConfiguration documents ("A caller that wants a different mode
-        // passes it in `extra`, which is written after this and wins on a repeated key"). Asserted, because
-        // it is what lets a bootstrap test be adaptive-only or nosync-only by PINNING rather than by
-        // skipping -- and a pinned test keeps running under every sweep, while a skipped one does not.
+        // passes it in `extra`, which is written after this and wins on a repeated key"). It lets a bootstrap
+        // test pin a mode rather than skip, and a pinned test keeps running under every sweep.
         final String propertyPath = PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath();
         createDummyConfiguration(propertyPath + "=sync");
 
