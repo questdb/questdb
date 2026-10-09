@@ -254,6 +254,15 @@ public interface CairoConfiguration {
 
     boolean getDebugWalApplyBlockFailureNoRetry();
 
+    /**
+     * Upper bound on how many WAL transactions {@code WalTxnDetails.calculateInsertTransactionBlock}
+     * may fold into a single commit. Unlimited by default; a small value makes each transaction land
+     * on its own, which is what a test needs when it wants a later transaction to merge INTO data an
+     * earlier one already put on disk rather than be sorted alongside it into a partition the same
+     * commit creates.
+     */
+    int getDebugWalApplyMaxTxnBlockSize();
+
     @NotNull
     DateLocale getDefaultDateLocale();
 
@@ -591,7 +600,17 @@ public interface CairoConfiguration {
         return 1.5;
     }
 
+    /**
+     * @deprecated Use {@link #getO3PartitionMaxSplits()}.
+     */
+    @Deprecated
     int getO3LastPartitionMaxSplits();
+
+    /**
+     * How many partitions a writer keeps merge-append frames open for across commits - see
+     * {@link io.questdb.cairo.frm.file.CompositeFrameCache}. 0 disables the cache.
+     */
+    int getO3PartitionMergeAppendFrameCacheSize();
 
     /**
      * Default commit lag in microseconds for new tables. This value
@@ -603,11 +622,28 @@ public interface CairoConfiguration {
 
     int getO3MemMaxPages();
 
+    /**
+     * Split cap for a logical partition behind the last one of a non-WAL table, applied by the commit. The
+     * compaction sweep does not serve non-WAL tables. WAL tables use {@link #getO3PartitionMaxSplits()} for
+     * every logical partition and leave folding older days to the sweep.
+     */
     int getO3MidPartitionMaxSplits();
+
+    long getO3PartitionClusterBinWidth();
+
+    int getO3PartitionClusterMaxBins();
+
+    default int getO3PartitionMaxSplits() {
+        return getO3LastPartitionMaxSplits();
+    }
 
     long getO3MinLag();
 
+    int getO3PartitionPreSplitMaxCuts();
+
     int getO3OpenColumnQueueCapacity();
+
+    int getO3PartitionPreSplitMinPieceMultiple();
 
     int getO3PartitionQueueCapacity();
 
@@ -646,6 +682,64 @@ public interface CairoConfiguration {
     CharSequence getParquetExportTableNamePrefix();
 
     int getParquetExportVersion();
+
+    long getPartitionCompactionAvgRowsPieceLim();
+
+    long getPartitionCompactionCheckInterval();
+
+    long getPartitionCompactionDeadMinSize();
+
+    double getPartitionCompactionDeadRowsRatio();
+
+    long getPartitionCompactionDeclineBackoffMax();
+
+    long getPartitionCompactionDeclineBackoffMin();
+
+    int getPartitionCompactionDeclineBackoffMultiplier();
+
+    int getPartitionCompactionHotCommits();
+
+    long getPartitionCompactionIdleTimeout();
+
+    long getPartitionCompactionIoBudget();
+
+    int getPartitionCompactionIoCostMultiplier();
+
+    int getPartitionCompactionMoveTailDeadRowsPercent();
+
+    int getPartitionCompactionMoveTailPieceThreshold();
+
+    int getPartitionCompactionMoveTailPrefixMultiple();
+
+    int getPartitionCompactionPieceThreshold();
+
+    /**
+     * How long every folder of a logical partition - the main directory and all its MOVE-TAIL splits - has to
+     * have been idle before the background sweep merges the whole logical partition into a single folder. Always
+     * at or below {@link #getPartitionCompactionIdleTimeout()}, which is the threshold for compacting one
+     * composite folder on its own.
+     */
+    long getPartitionCompactionSquashIdleTimeout();
+
+    int getPartitionCompactionSquashTargetSizeMultiple();
+
+    long getPartitionCompactionSwapTimeout();
+
+    int getPartitionCompactionTableDeadStopPercent();
+
+    int getPartitionCompactionTableDeadStopTriggerPercent();
+
+    long getPartitionCompactionTableDeadThreshold();
+
+    int getPartitionCompactionTableDeadThresholdPercent();
+
+    long getPartitionCompactionTableDeadTrigger();
+
+    default double getPartitionCompactionTablePressureDeadRatio() {
+        return 0.5;
+    }
+
+    long getPartitionCompactionTimeBudgetMs();
 
     double getPartitionEncoderParquetBloomFilterFpp();
 
@@ -826,6 +920,8 @@ public interface CairoConfiguration {
     int getSampleByIndexSearchPageSize();
 
     long getSequencerCheckInterval();
+
+    long getSequencerCheckMinInterval();
 
     /**
      * Returns database instance id. The instance id is used by the snapshot recovery mechanism:
@@ -1228,6 +1324,13 @@ public interface CairoConfiguration {
 
     boolean isCopierChunkedEnabled();
 
+    /**
+     * Debug-only: when true, {@link TableWriter} verifies its column-mapping and truncation invariants after
+     * every commit, structural change and close, and reports violations to {@link WriterInvariantChecker}.
+     * Index writers are not checked. Enabled by the test harness, never in production.
+     */
+    boolean isDebugWriterInvariantCheckEnabled();
+
     boolean isDevModeEnabled();
 
     boolean isGroupByPresizeEnabled();
@@ -1284,6 +1387,8 @@ public interface CairoConfiguration {
     boolean isMatViewRefreshMissingWalFilesFatal();
 
     boolean isMultiKeyDedupEnabled();
+
+    boolean isO3PartitionMergeAppendEnabled();
 
     boolean isO3QuickSortEnabled();
 

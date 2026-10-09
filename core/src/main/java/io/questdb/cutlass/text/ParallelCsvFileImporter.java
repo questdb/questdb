@@ -395,7 +395,14 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         clear();
         this.circuitBreaker = circuitBreaker;
         this.tableName = tableName;
-        this.tableToken = cairoEngine.lockTableName(tableName);
+        // The directory name keys off the WAL flag, so settle it before locking the name.
+        this.tableToken = cairoEngine.lockTableName(
+                tableName,
+                cairoEngine.getNextTableId(),
+                false,
+                false,
+                cairoEngine.getConfiguration().getWalEnabledDefault() && PartitionBy.isPartitioned(partitionBy)
+        );
         if (tableToken == null) {
             tableToken = cairoEngine.verifyTableName(tableName);
         }
@@ -1469,6 +1476,15 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                             tableToken.getTableId(),
                             securityContext
                     );
+                    if (targetTableStructure.isWalEnabled()) {
+                        // createTable() writes _meta directly, bypassing the sequencer registration
+                        // CairoEngine.createTable() would have done.
+                        cairoEngine.getTableSequencerAPI().registerTable(
+                                tableToken.getTableId(),
+                                targetTableStructure,
+                                tableToken
+                        );
+                    }
                     cairoEngine.registerTableToken(tableToken);
                     targetTableCreated = true;
                     writer = cairoEngine.getWriter(tableToken, LOCK_REASON);
@@ -1504,7 +1520,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             }
 
             inputFilePath.of(inputRoot).concat(inputFileName).$(); // getStatus might override it
+            // The target now exists; from here the structure only describes the per-partition
+            // staging tables. Those take rows through TableWriter, which a WAL table rejects.
             targetTableStructure.setIgnoreColumnIndexedFlag(true);
+            targetTableStructure.setWalEnabled(false);
 
             if (timestampAdapter == null && ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
                 timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
@@ -1600,6 +1619,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         private IntList symbolCapacities;
         private CharSequence tableName;
         private int timestampColumnIndex;
+        private boolean walEnabled;
 
         public TableStructureAdapter(CairoConfiguration configuration) {
             this.configuration = configuration;
@@ -1698,7 +1718,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         @Override
         public boolean isWalEnabled() {
-            return configuration.getWalEnabledDefault() && PartitionBy.isPartitioned(partitionBy);
+            return walEnabled;
         }
 
         public void of(
@@ -1722,10 +1742,15 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
             this.timestampColumnIndex = timestampColumnIndex;
             this.partitionBy = partitionBy;
+            this.walEnabled = configuration.getWalEnabledDefault() && PartitionBy.isPartitioned(partitionBy);
         }
 
         public void setIgnoreColumnIndexedFlag(boolean flag) {
             this.ignoreColumnIndexedFlag = flag;
+        }
+
+        public void setWalEnabled(boolean walEnabled) {
+            this.walEnabled = walEnabled;
         }
     }
 }

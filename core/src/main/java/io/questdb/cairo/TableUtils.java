@@ -93,8 +93,9 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.ParanoiaState.VM_PARANOIA_MODE;
 import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
-import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
 import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
+import static io.questdb.tasks.TableWriterTask.CMD_COMPOSITE_PARTITION_SWAP;
+import static io.questdb.tasks.TableWriterTask.CMD_PARQUET_PARTITION_SWAP;
 import static io.questdb.tasks.TableWriterTask.CMD_STORAGE_POLICY;
 import static io.questdb.tasks.TableWriterTask.getCommandName;
 
@@ -108,6 +109,11 @@ public final class TableUtils {
     public static final String CHECKPOINT_SEQ_TXN_FILE_NAME = "_txn";
     public static final long COLUMN_NAME_TXN_NONE = -1L;
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
+    /**
+     * Marks a composite-partition REWRITE built off a {@link io.questdb.cairo.TableReader} snapshot, staged next to the
+     * source directory before the writer has agreed to swap it in - see {@code PartitionCompactionScanJob}.
+     */
+    public static final String COMPACTING_DIR_MARKER = ".compacting";
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final String DETACHED_DIR_MARKER = ".detached";
     public static final long ESTIMATED_VAR_COL_SIZE = 28;
@@ -123,6 +129,12 @@ public final class TableUtils {
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
     public static final short META_FORMAT_MINOR_VERSION_TABLE_FORMAT = 2;
     public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
+    /**
+     * Marks a whole LOGICAL partition's merge - every folder of one period, the main directory and all its splits,
+     * copied into one - staged next to the source directories before the writer has agreed to swap it in. Named
+     * {@code <logicalPartition>.<firstFolderNameTxn>.merging<folderCount>}; see {@code PartitionCompactionScanJob}.
+     */
+    public static final String MERGING_DIR_MARKER = ".merging";
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // INT
@@ -148,6 +160,7 @@ public final class TableUtils {
     public static final String PARQUET_METADATA_STAGING_FILE_NAME = "_pm.staging";
     public static final String PARQUET_PARTITION_NAME = "data.parquet";
     public static final String PARQUET_PARTITION_STAGING_NAME = "data.parquet.staging";
+    public static final String PARTITION_GEOMETRY_FILE_NAME = "_geometry";
     public static final String PARTITION_LAST_SQUASH_TIMESTAMP_FILE = ".squash_ts";
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
@@ -222,6 +235,7 @@ public final class TableUtils {
     public static final long TX_OFFSET_LAG_ROW_COUNT_32 = TX_OFFSET_LAG_TXN_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MIN_TIMESTAMP_64 = TX_OFFSET_LAG_ROW_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MAX_TIMESTAMP_64 = TX_OFFSET_LAG_MIN_TIMESTAMP_64 + 8;
+    public static final long TX_OFFSET_GEOMETRY_VERSION_32 = TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8;
     // @formatter:on
     public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
@@ -277,15 +291,31 @@ public final class TableUtils {
     private TableUtils() {
     }
 
-    public static void allocateDiskSpace(FilesFacade ff, long fd, long size) {
-        if (ff.length(fd) < size && !ff.allocate(fd, size)) {
+    /**
+     * Rounds an allocation size up to a page on Linux. Growing a file that does not end on a page
+     * boundary can make XFS wait for a synchronous disk write. Other platforms keep the exact size.
+     */
+    public static long alignedSize(long size) {
+        return Os.isLinux() ? Files.ceilPageSize(size) : size;
+    }
+
+    /**
+     * Grows the file to at least {@code size} bytes, rounded up by {@link #alignedSize(long)}.
+     * Use it for files that are appended to later.
+     */
+    public static void allocateDiskSpaceAligned(FilesFacade ff, long fd, long size) {
+        if (ff.length(fd) < size && !ff.allocate(fd, alignedSize(size))) {
             throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
         }
     }
 
-    public static void allocateDiskSpaceToPage(FilesFacade ff, long fd, long size) {
-        size = Files.ceilPageSize(size);
-        allocateDiskSpace(ff, fd, size);
+    /**
+     * Grows the file to exactly {@code size} bytes if it is shorter. Use it for small files that never grow.
+     */
+    public static void allocateDiskSpaceUnaligned(FilesFacade ff, long fd, long size) {
+        if (ff.length(fd) < size && !ff.allocate(fd, size)) {
+            throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
+        }
     }
 
     public static int calculateMetaFormatMinorVersionField(long metadataVersion, int columnCount) {
@@ -796,6 +826,7 @@ public final class TableUtils {
                 seqTxn,
                 dataVersion,
                 partitionTableVersion,
+                0,
                 structureVersion,
                 columnVersion,
                 truncateVersion
@@ -1283,12 +1314,18 @@ public final class TableUtils {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SYMBOL_CACHE) != 0;
     }
 
+    /**
+     * A lock reason the WAL apply machinery did not arrange itself is unsolicited - including {@link
+     * io.questdb.cairo.pool.WriterPool#OWNERSHIP_REASON_UNKNOWN}, reported while a holder is still constructing the
+     * writer and has not stamped its reason yet.
+     */
     public static boolean isUnsolicitedTableLock(String lockReason) {
-        //noinspection StringEquality
-        return lockReason != NO_LOCK_REASON
-                && !WAL_2_TABLE_WRITE_REASON.equals(lockReason)
+        return !WAL_2_TABLE_WRITE_REASON.equals(lockReason)
                 && !WAL_2_TABLE_RESUME_REASON.equals(lockReason)
-                && !getCommandName(CMD_STORAGE_POLICY).equals(lockReason);
+                && !getCommandName(CMD_STORAGE_POLICY).equals(lockReason)
+                // The compaction sweep holds the writer to land its swap the same way STORAGE POLICY does.
+                && !getCommandName(CMD_COMPOSITE_PARTITION_SWAP).equals(lockReason)
+                && !getCommandName(CMD_PARQUET_PARTITION_SWAP).equals(lockReason);
     }
 
     public static boolean isValidColumnName(CharSequence columnName, int fsFileNameLimit) {
@@ -1572,7 +1609,7 @@ public final class TableUtils {
     public static long mapRW(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
         assert fd != -1;
         assert offset % Files.PAGE_SIZE == 0;
-        allocateDiskSpace(ff, fd, size + offset);
+        allocateDiskSpaceAligned(ff, fd, size + offset);
         return mapRWNoAlloc(ff, fd, size, offset, memoryTag);
     }
 
@@ -2480,6 +2517,7 @@ public final class TableUtils {
             long seqTxn,
             long dataVersion,
             long partitionTableVersion,
+            int geometryVersion,
             long structureVersion,
             long columnVersion,
             long truncateVersion
@@ -2507,6 +2545,7 @@ public final class TableUtils {
         txMem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
         // sequencer txn
         txMem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);
+        txMem.putInt(baseOffset + TX_OFFSET_GEOMETRY_VERSION_32, geometryVersion);
 
         txMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolMapCount);
 
@@ -2758,7 +2797,7 @@ public final class TableUtils {
     ) {
         try {
             final long memSize = checkMemSize(metaMem, META_OFFSET_COLUMN_TYPES);
-            validateMetaVersion(metaPath, metaMem, META_OFFSET_VERSION, expectedVersion);
+            validateMetaVersion(metaPath, metaMem, META_OFFSET_VERSION, expectedVersion, ColumnType.MAX_STORAGE_VERSION);
             final int columnCount = getColumnCount(metaPath, metaMem, META_OFFSET_COUNT);
 
             long offset = getColumnNameOffset(columnCount);
@@ -2837,8 +2876,20 @@ public final class TableUtils {
     }
 
     public static void validateMetaVersion(Utf8Sequence metaPath, MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
+        // Exact-version check for metadata whose version has a single supported value, such as the
+        // sequencer WAL format version. Table metadata that may carry the composite storage marker
+        // must use the range overload below; do not widen this one, it also guards the WAL format.
+        validateMetaVersion(metaPath, metaMem, metaVersionOffset, expectedVersion, expectedVersion);
+    }
+
+    public static void validateMetaVersion(Utf8Sequence metaPath, MemoryMR metaMem, long metaVersionOffset, int expectedVersion, int maxVersion) {
         final int metaVersion = metaMem.getInt(metaVersionOffset);
-        if (expectedVersion != metaVersion) {
+        // A table that currently holds composite partitions carries ColumnType.MAX_STORAGE_VERSION
+        // rather than ColumnType.VERSION; both are readable by this binary, so accept the whole
+        // [expectedVersion, maxVersion] range. A version below expectedVersion is a table
+        // that predates a migration (migrations bring it up before it is opened), and a version
+        // above maxVersion comes from a newer binary this one cannot read.
+        if (metaVersion < expectedVersion || metaVersion > maxVersion) {
             throw CairoException.metadataVersionMismatch(metaPath, expectedVersion, metaVersion);
         }
     }

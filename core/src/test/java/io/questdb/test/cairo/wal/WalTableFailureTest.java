@@ -845,6 +845,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testForceDropPartitionRangeNotOnDiskWithSplits() throws Exception {
         setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        // Merge-append folds the O3 split into pieces in the same directory instead of a new one,
+        // so the split-directory name this test deletes to simulate a missing partition never exists.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             TableToken tableName = createStandardWalTable(testName.getMethodName());
 

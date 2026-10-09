@@ -39,6 +39,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -63,6 +64,15 @@ public class TxReader implements Closeable, Mutable {
     public static final long PARTITION_VERSION_FLAGS_MASK = 0xFFL << 56;
     public static final long PARTITION_VERSION_VALUE_MASK = ~PARTITION_VERSION_FLAGS_MASK;
     protected static final int NONE_COL_STRUCTURE_VERSION = Integer.MIN_VALUE;
+    // COMPOSITE re-reads the offset-3 word's VALUE field (the 56 bits under PARTITION_VERSION_VALUE_MASK) as a pointer
+    // into the partition's own _geometry.<generation> file.
+    protected static final long PARTITION_COMPOSITE_FLAG = 1L << 61;
+    protected static final int PARTITION_GEOMETRY_GENERATION_BIT_OFFSET = 24;
+    protected static final long PARTITION_GEOMETRY_GENERATION_MASK = 0x0F000000L; // bits 24-27 (4 bits)
+    protected static final int PARTITION_GEOMETRY_MAX_GENERATION = 15;
+    protected static final long PARTITION_GEOMETRY_OFFSET_MASK = 0x00FFFFFFL; // bits 0-23 (24 bits, 8-byte units)
+    // Every packed offset is this many bits narrower than the byte offset it represents.
+    protected static final int PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT = 3;
     protected static final int PARTITION_MASKED_SIZE_OFFSET = 1;
     protected static final int PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET = 61;
     protected static final int PARTITION_MASK_PARQUET_GENERATED_BIT_OFFSET = 60;
@@ -105,6 +115,7 @@ public class TxReader implements Closeable, Mutable {
     protected long columnVersion;
     protected long dataVersion;
     protected long fixedRowCount;
+    protected int geometryVersion;
     protected long lagMaxTimestamp;
     protected long lagMinTimestamp;
     protected boolean lagOrdered;
@@ -173,6 +184,7 @@ public class TxReader implements Closeable, Mutable {
         mem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, columnVersion);
         mem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
         mem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);
+        mem.putInt(baseOffset + TX_OFFSET_GEOMETRY_VERSION_32, geometryVersion);
         mem.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, lagRowCount);
         mem.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, lagMinTimestamp);
         mem.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, lagMaxTimestamp);
@@ -210,7 +222,11 @@ public class TxReader implements Closeable, Mutable {
                 // hold the file size and are valid without the bit; leave them. The cleared 0L/-1L
                 // sentinels scrub to the canonical 0L, a no-op in meaning.
                 final int partitionIndex = i / LONGS_PER_TX_ATTACHED_PARTITION;
+                // A COMPOSITE word legitimately lacks the VALID bit - it spends the value field on
+                // its geometry pointer, not on a stamp - and scrubbing it would strand the partition's
+                // _geometry record, losing its piece layout for good. Its seqTxn lives in that record.
                 if (!isPartitionParquet(partitionIndex)
+                        && !isPartitionCompositeByRawIndex(i - PARTITION_VERSION_OFFSET)
                         && (isPartitionOffset3Cleared(value) || (value & PARTITION_SEQ_TXN_VALID_BIT) == 0)) {
                     value = 0L;
                 }
@@ -335,6 +351,10 @@ public class TxReader implements Closeable, Mutable {
     public long getNativePartitionSeqTxn(int partitionIndex) {
         assert !isPartitionParquet(partitionIndex);
         final int rawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        if (isPartitionCompositeByRawIndex(rawIndex)) {
+            // The value field is this partition's geometry pointer, not a stamp.
+            return -1L;
+        }
         // getPartitionOffset3 folds the cleared 0L/-1L sentinels to 0 before the bit test;
         // the legacy all-ones word has bit 62 set and must not read as a valid stamp.
         if ((getPartitionOffset3(rawIndex) & PARTITION_SEQ_TXN_VALID_BIT) == 0) {
@@ -457,6 +477,10 @@ public class TxReader implements Closeable, Mutable {
         return getPartitionSquashCountByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
+    public int getGeometryVersion() {
+        return geometryVersion;
+    }
+
     public long getPartitionTableVersion() {
         return partitionTableVersion;
     }
@@ -522,6 +546,15 @@ public class TxReader implements Closeable, Mutable {
         return version;
     }
 
+    public boolean hasCompositePartitions() {
+        for (int i = 0, n = attachedPartitions.size(); i < n; i += LONGS_PER_TX_ATTACHED_PARTITION) {
+            if (isPartitionCompositeByRawIndex(i)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public boolean hasParquetPartitions() {
         for (int i = 0, n = attachedPartitions.size(); i < n; i += LONGS_PER_TX_ATTACHED_PARTITION) {
             if (isPartitionParquetByRawIndex(i)) {
@@ -550,6 +583,62 @@ public class TxReader implements Closeable, Mutable {
 
     public boolean isLagOrdered() {
         return lagOrdered;
+    }
+
+    /**
+     * The {@code _geometry.<generation>} file a slot-3 geometry pointer names.
+     */
+    public static int geometryGeneration(long geometryRef) {
+        return (int) ((geometryRef & PARTITION_GEOMETRY_GENERATION_MASK) >>> PARTITION_GEOMETRY_GENERATION_BIT_OFFSET);
+    }
+
+    public static long geometryOffset(long geometryRef) {
+        return (geometryRef & PARTITION_GEOMETRY_OFFSET_MASK) << PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT;
+    }
+
+    /**
+     * Packs a slot-3 geometry pointer from its components.
+     *
+     * @param byteOffset must be 8-byte aligned, as every real geometry record start is
+     */
+    @TestOnly
+    public static long packGeometryRef(int generation, long byteOffset) {
+        assert generation >= 0 && generation <= PARTITION_GEOMETRY_MAX_GENERATION : "generation out of range";
+        assert (byteOffset & ((1L << PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT) - 1)) == 0 : "byteOffset must be 8-byte aligned";
+        final long packedOffset = byteOffset >>> PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT;
+        assert (packedOffset & ~PARTITION_GEOMETRY_OFFSET_MASK) == 0 : "byteOffset out of range";
+        return PARTITION_COMPOSITE_FLAG
+                | ((long) generation << PARTITION_GEOMETRY_GENERATION_BIT_OFFSET)
+                | packedOffset;
+    }
+
+    public long getGeometryRef(int partitionIndex) {
+        final int rawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        if (!isPartitionCompositeByRawIndex(rawIndex)) {
+            // -1 is the "no committed geometry record yet" sentinel that starts a chain at offset 0 of the first
+            // generation with no file in the directory - see PartitionGeometry#publish.
+            return -1L;
+        }
+        // Strip the flags that are not ours - REMOTE and SEQ_TXN_VALID share this word - so a ref only
+        // ever carries COMPOSITE, its generation and its offset.
+        return getPartitionOffset3(rawIndex)
+                & (PARTITION_COMPOSITE_FLAG | PARTITION_GEOMETRY_GENERATION_MASK | PARTITION_GEOMETRY_OFFSET_MASK);
+    }
+
+    /**
+     * Whether the partition is composite - has a {@code _geometry} record to resolve.
+     */
+    public boolean isPartitionComposite(int partitionIndex) {
+        return isPartitionCompositeByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
+    public boolean isPartitionCompositeByRawIndex(int indexRaw) {
+        if (isPartitionParquetByRawIndex(indexRaw) || isPartitionParquetGeneratedByRawIndex(indexRaw)) {
+            return false;
+        }
+        // getPartitionOffset3 folds the cleared 0L/-1L sentinels to 0, so a legacy all-ones word
+        // (which has bit 61 set) never reads as composite.
+        return (getPartitionOffset3(indexRaw) & PARTITION_COMPOSITE_FLAG) != 0;
     }
 
     public boolean isPartitionParquet(int i) {
@@ -634,6 +723,7 @@ public class TxReader implements Closeable, Mutable {
         this.structureVersion = srcReader.structureVersion;
         this.dataVersion = srcReader.dataVersion;
         this.partitionTableVersion = srcReader.partitionTableVersion;
+        this.geometryVersion = srcReader.geometryVersion;
         this.columnVersion = srcReader.columnVersion;
         this.truncateVersion = srcReader.truncateVersion;
         this.seqTxn = srcReader.seqTxn;
@@ -707,6 +797,7 @@ public class TxReader implements Closeable, Mutable {
         sink.put("', dataVersion: ").put(dataVersion);
         sink.put(", structureVersion: ").put(structureVersion);
         sink.put(", partitionTableVersion: ").put(partitionTableVersion);
+        sink.put(", geometryVersion: ").put(geometryVersion);
         sink.put(", columnVersion: ").put(columnVersion);
         sink.put(", truncateVersion: ").put(truncateVersion);
         sink.put(", seqTxn: ").put(seqTxn);
@@ -741,6 +832,7 @@ public class TxReader implements Closeable, Mutable {
             columnVersion = unsafeReadColumnVersion();
             truncateVersion = getLong(TableUtils.TX_OFFSET_TRUNCATE_VERSION_64);
             seqTxn = getLong(TX_OFFSET_SEQ_TXN_64);
+            geometryVersion = getInt(TX_OFFSET_GEOMETRY_VERSION_32);
             symbolColumnCount = symbolsSize / Long.BYTES;
             lagRowCount = getInt(TX_OFFSET_LAG_ROW_COUNT_32);
             lagMinTimestamp = getLong(TX_OFFSET_LAG_MIN_TIMESTAMP_64);
@@ -953,6 +1045,7 @@ public class TxReader implements Closeable, Mutable {
         baseOffset = 0;
         size = 0;
         partitionTableVersion = -1;
+        geometryVersion = -1;
         attachedPartitionsSize = -1;
         attachedPartitions.clear();
         version = -1;

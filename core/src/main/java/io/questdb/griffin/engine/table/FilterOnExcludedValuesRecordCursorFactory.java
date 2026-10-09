@@ -64,7 +64,11 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     private final IntHashSet includedKeys = new IntHashSet();
     private final int indexDirection;
     private final int maxSymbolNotEqualsCount;
-    private final int orderDirection;
+    // Drives the cursorFactories sort and the plan's symbolOrder attribute. It keeps reading the
+    // withdrawn key-column claim on purpose: recalculateIncludedValues() sorts so that
+    // upsertRowCursorFactory() groups equal symbols, and the sort direction is plan-visible, so it
+    // must not follow followedOrderByAdvice() into "false".
+    private final boolean symbolOrderAsc;
     private PageFrameRecordCursorImpl cursor;
     private Function filter;
     private ObjList<Function> keyExcludedValueFunctions = new ObjList<>();
@@ -87,7 +91,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             int maxSymbolNotEqualsCount
     ) {
         super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
-        this.orderDirection = orderDirection;
+        this.symbolOrderAsc = (orderByKeyColumn || orderByTimestamp) && orderDirection == IQueryModel.ORDER_DIRECTION_ASCENDING;
         this.indexDirection = indexDirection;
         this.maxSymbolNotEqualsCount = maxSymbolNotEqualsCount;
         final int nKeyValues = keyValues.size();
@@ -123,7 +127,12 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
                     filter
             );
         }
-        this.followedOrderByAdvice = orderByKeyColumn || orderByTimestamp;
+        // SequentialRowCursorFactory rebuilds one cursor per key for the page frame it is handed and
+        // restarts at key 0 on the next frame, so an "ORDER BY key" claim would hold only while the
+        // scan produced a single frame. Only the timestamp claim survives frame concatenation: it
+        // forces HeapRowCursorFactory, which emits rows in row-id order within a frame, and the
+        // frames themselves arrive in timestamp order.
+        this.followedOrderByAdvice = orderByTimestamp;
 
         comparator = this::compareStrFunctions;
         comparatorDesc = this::compareStrFunctionsDesc;
@@ -179,7 +188,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             // sorting values makes no sense for heap row cursor
             if (!heapCursorUsed) {
                 // sorting here can produce order of cursorFactories different from one shown by explain command
-                if (followedOrderByAdvice && orderDirection == IQueryModel.ORDER_DIRECTION_ASCENDING) {
+                if (symbolOrderAsc) {
                     cursorFactories.sort(0, cursorFactoriesIdx[0], comparator);
                 } else {
                     cursorFactories.sort(0, cursorFactoriesIdx[0], comparatorDesc);
@@ -199,7 +208,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     public void toPlan(PlanSink sink) {
         sink.type("FilterOnExcludedValues");
         if (!heapCursorUsed) { // sorting symbols makes no sense for heap factory
-            sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == IQueryModel.ORDER_DIRECTION_ASCENDING ? "asc" : "desc");
+            sink.meta("symbolOrder").val(symbolOrderAsc ? "asc" : "desc");
         }
         sink.attr("symbolFilter").putBaseColumnName(columnIndex).val(" not in ").val(keyExcludedValueFunctions);
         sink.optAttr("filter", filter);

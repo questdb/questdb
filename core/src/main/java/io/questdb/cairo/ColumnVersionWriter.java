@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.frm.ColumnTopSink;
+import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
@@ -34,6 +36,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 
 public class ColumnVersionWriter extends ColumnVersionReader {
+    private final ColumnTopSinkImpl columnTopSink = new ColumnTopSinkImpl();
     private final CairoConfiguration configuration;
     private final MemoryCMARW mem;
     private final boolean partitioned;
@@ -54,6 +57,15 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         if (this.size > 0) {
             this.version = super.readUnsafe();
         }
+    }
+
+    /**
+     * Arms this writer's {@link ColumnTopSink} view for one partition and returns it, until the next
+     * {@code asColumnTopSink} call re-arms it. Always the same reused instance.
+     */
+    public ColumnTopSink asColumnTopSink(long partitionTimestamp) {
+        columnTopSink.partitionTimestamp = partitionTimestamp;
+        return columnTopSink;
     }
 
     @Override
@@ -102,6 +114,16 @@ public class ColumnVersionWriter extends ColumnVersionReader {
 
     public boolean hasChanges() {
         return hasChanges;
+    }
+
+    /**
+     * Records a column top a Frame write just established, reconciled against what this writer already resolves for
+     * {@code (partitionTimestamp, columnIndex)} instead of blindly recorded like {@link #upsertColumnTop} does.
+     */
+    public void mergeColumnTop(long partitionTimestamp, int columnIndex, long colTop) {
+        if (colTop != 0 || getColumnTop(partitionTimestamp, columnIndex) != 0) {
+            upsertColumnTop(partitionTimestamp, columnIndex, colTop);
+        }
     }
 
     public void overrideColumnVersions(long partitionTimestamp, ColumnVersionReader src) {
@@ -184,6 +206,10 @@ public class ColumnVersionWriter extends ColumnVersionReader {
                 if (defaultPartitionTimestamp == sourcePartitionTimestamp) {
                     // replace with target block
                     cachedColumnVersionList.set(i + TIMESTAMP_ADDED_PARTITION_OFFSET, targetPartitionTimestamp);
+                    // removePartition() above only flags a change when the source had explicit records, so
+                    // a source carrying nothing but this marker would leave it on disk naming a partition
+                    // that no longer exists - reading as "column absent".
+                    hasChanges = true;
                 }
             } else {
                 break;
@@ -423,5 +449,19 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     static {
         //noinspection ConstantValue
         assert HEADER_SIZE == TableUtils.COLUMN_VERSION_FILE_HEADER_SIZE;
+    }
+
+    /**
+     * The {@link ColumnTopSink} view {@link #asColumnTopSink} hands out - one reused instance, forwarding to {@link
+     * #mergeColumnTop} against whichever partition was last armed.
+     */
+    private final class ColumnTopSinkImpl implements ColumnTopSink {
+        private long partitionTimestamp = Long.MIN_VALUE;
+
+        @Override
+        public void setColumnTop(int columnIndex, long columnTop) {
+            assert partitionTimestamp != Long.MIN_VALUE : "asColumnTopSink not called";
+            mergeColumnTop(partitionTimestamp, columnIndex, columnTop);
+        }
     }
 }

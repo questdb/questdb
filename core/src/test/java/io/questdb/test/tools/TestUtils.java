@@ -47,6 +47,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.WriterInvariantChecker;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.BindVariableService;
@@ -1071,6 +1072,66 @@ public final class TestUtils {
         Assert.fail(formatted + "Expected sequence <" + sequence + "> to NOT contain term <" + term + "> but it did.");
     }
 
+    /**
+     * Cross-checks every WAL table's reported physical row count against its designated timestamp
+     * column's actual on-disk file length. {@link TableReader#getPartitionPhysicalRowCount} is pure
+     * {@code _geometry}/{@code _txn} bookkeeping - never itself read back from the files a commit wrote -
+     * so a bug that mis-publishes it (an undergrown commit, a stale carry-forward after a rewrite) leaves
+     * the file the writer actually produced as the only independent witness. The timestamp column is
+     * fixed-width and always present, so its file length in rows is an exact floor: a shorter file than
+     * the row count claims means the claim is wrong. Skips non-WAL and non-partitioned tables, and any
+     * partition already converted to parquet - this bookkeeping only exists on the native, composite
+     * write path, and a parquet partition's native column files are gone by design.
+     */
+    public static void assertPhysicalRowCountsMatchFiles(CairoEngine engine) {
+        final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
+        engine.getTableTokens(tableTokens, false);
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        for (int i = 0, n = tableTokens.size(); i < n; i++) {
+            final TableToken tableToken = tableTokens.get(i);
+            if (!tableToken.isWal()) {
+                continue;
+            }
+            try (TableReader reader = engine.getReader(tableToken)) {
+                if (!PartitionBy.isPartitioned(reader.getPartitionedBy())) {
+                    continue;
+                }
+                final TableReaderMetadata metadata = reader.getMetadata();
+                final int timestampIndex = metadata.getTimestampIndex();
+                if (timestampIndex < 0) {
+                    continue;
+                }
+                final CharSequence columnName = metadata.getColumnName(timestampIndex);
+                final int writerIndex = metadata.getWriterIndex(timestampIndex);
+                for (int p = 0, partitionCount = reader.getPartitionCount(); p < partitionCount; p++) {
+                    if (reader.getTxFile().isPartitionParquet(p)) {
+                        continue;
+                    }
+                    final long physicalRowCount = reader.getPartitionPhysicalRowCount(p);
+                    if (physicalRowCount <= 0) {
+                        continue;
+                    }
+                    final long partitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(p);
+                    final long partitionNameTxn = reader.getTxFile().getPartitionNameTxn(p);
+                    final long columnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(partitionTimestamp, writerIndex);
+                    final Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tableToken);
+                    TableUtils.setPathForNativePartition(
+                            path, metadata.getTimestampType(), reader.getPartitionedBy(), partitionTimestamp, partitionNameTxn
+                    );
+                    final long fileSize = ff.length(TableUtils.dFile(path, columnName, columnNameTxn));
+                    final long minBytes = physicalRowCount * Long.BYTES;
+                    Assert.assertTrue(
+                            "physical row count exceeds ts column file size [table=" + tableToken.getTableName() +
+                                    ", partitionIndex=" + p + ", partitionTimestamp=" + partitionTimestamp +
+                                    ", physicalRowCount=" + physicalRowCount + ", minBytes=" + minBytes +
+                                    ", fileSize=" + fileSize + ']',
+                            fileSize >= minBytes
+                    );
+                }
+            }
+        }
+    }
+
     public static void assertReader(CharSequence expected, TableReader reader, MutableUtf16Sink sink) {
         try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
             assertCursor(expected, cursor, reader.getMetadata(), true, sink);
@@ -1656,9 +1717,12 @@ public final class TestUtils {
     }
 
     public static void drainWalQueue(CairoEngine engine) {
-        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0)) {
+        try (
+                final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0);
+                final CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine)
+        ) {
             walApplyJob.drain(0);
-            new CheckWalTransactionsJob(engine).run();
+            checkWalTransactionsJob.run();
             // run once again as there might be notifications to handle now
             walApplyJob.drain(0);
         }
@@ -3282,8 +3346,10 @@ public final class TestUtils {
         private final long mem;
         private final long[] memoryUsageByTag = new long[MemoryTag.SIZE];
         private final int sockAddrCount;
+        private final long writerInvariantViolationCount;
 
         public LeakCheck() {
+            writerInvariantViolationCount = WriterInvariantChecker.getViolationCount();
             Files.getMmapCache().asyncMunmap();
             Path.clearThreadLocals();
             Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
@@ -3311,6 +3377,11 @@ public final class TestUtils {
             Path.clearThreadLocals();
             Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
             CLOSEABLE.forEach(Misc::free);
+            final long writerInvariantViolations = WriterInvariantChecker.getViolationCount() - writerInvariantViolationCount;
+            if (writerInvariantViolations > 0) {
+                Assert.fail("writer invariant violated " + writerInvariantViolations + " time(s), last: "
+                        + WriterInvariantChecker.getLastViolation());
+            }
             if (cachedFileCount != Files.getOpenCachedFileCount() || fileCount != Files.getOpenFileCount()) {
                 Assert.fail(
                         "expected: cached file descriptors: " + cachedFileCount +

@@ -47,9 +47,30 @@ public interface FrameColumn extends Closeable {
      * @param sourceColumn         the source frame
      * @param sourceLo             low index in the source frame
      * @param sourceHi             high index in the source frame, exclusive
-     * @param commitMode           the commit mode, which drives durability of the change.
+     * @param commitMode           the commit mode, which drives durability of the change. The write is not flushed
+     *                             here: under {@link io.questdb.cairo.CommitMode#SYNC} it leaves its files for
+     *                             {@link #sync()} to flush, and any other mode flushes nothing.
      */
     void append(long appendOffsetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode);
+
+    /**
+     * Appends the MERGE of two sources to this column's tail, interleaved by {@code mergeIndexAddr}.
+     *
+     * @param mergeIndexAddr native address of the merge index
+     * @param mergeIndexRows number of rows the index describes, which is the number of rows appended
+     */
+    void merge(
+            long appendOffsetRowCount,
+            FrameColumn sourceColumn1,
+            long source1Lo,
+            long source1Hi,
+            FrameColumn sourceColumn2,
+            long source2Lo,
+            long source2Hi,
+            long mergeIndexAddr,
+            long mergeIndexRows,
+            int commitMode
+    );
 
     void appendNulls(long rowCount, long sourceColumnTop, int commitMode);
 
@@ -71,7 +92,60 @@ public interface FrameColumn extends Closeable {
 
     int getStorageType();
 
+    /**
+     * Whether a write under {@link io.questdb.cairo.CommitMode#SYNC} since the last {@link #sync()} left a file of
+     * this column unflushed.
+     */
+    default boolean isSyncPending() {
+        return false;
+    }
+
+    default boolean isTimestampIndex() {
+        return false;
+    }
+
+    /**
+     * Writable file columns only, a no-op for every other kind. Grows this column's files, in one allocation each,
+     * to the size the writes about to land on them need, and maps them when needed, so that none of those writes has
+     * to allocate or map itself. A plan of several appends and merges against one partition calls this once, ahead of
+     * its first action, with the extent the whole plan reaches. The reservation must cover every write: mixed-I/O
+     * appends use positioned writes, so growing the file later can force XFS to synchronously flush the dirty tail.
+     * Mixed I/O allocates without mapping; mmap I/O keeps the existing allocation-and-map behavior.
+     *
+     * @param rowLo     the partition row the first write starts at, i.e. the extent the column holds now
+     * @param rowHi     the partition row the last write ends at, exclusive
+     * @param dataBytes the data bytes the writes bring, for a var-size column; ignored by a fixed-size one
+     * @param isDedup   whether the table deduplicates: a dedup merge can write more var-size data than the sources
+     *                  the reservation was sized from, so a var-size column grows past it instead of failing
+     */
+    default void reserve(long rowLo, long rowHi, long dataBytes, boolean isDedup) {
+    }
+
+    /**
+     * Read-only file columns only, a no-op for every other kind. Lets one column serve several operations of a
+     * frame opened once over a whole partition, each reading one piece of it.
+     *
+     * @param logicalRowHi the end of the row window the next operation reads. The column reports its top as no
+     *                     higher than this, exactly as a column opened at this row count did, so code sizing the
+     *                     rows below a top sees the same numbers either way. {@code Long.MAX_VALUE} for no window.
+     * @param mapRowHi     how far the column's first mapping reaches at the least, so a column kept open across
+     *                     operations maps the whole frame once rather than growing piece by piece. {@code 0} maps
+     *                     only the rows asked for.
+     */
+    default void setReadWindow(long logicalRowHi, long mapRowHi) {
+    }
+
     void setRecycleBin(RecycleBin<FrameColumn> pool);
+
+    /**
+     * Writable file columns only, a no-op for every other kind. Has {@link #close()} give back what this open grew the
+     * column's files by and no write used: {@link #reserve} sizes a plan by an upper bound, which a dedup merge that
+     * drops rows does not reach. Only for a column that lives through the reservation and every write it was for - a
+     * column kept open for a whole plan. A column closed after each operation must not: its reservation serves the
+     * opens after it.
+     */
+    default void setTrimOnClose(boolean isTrimOnClose) {
+    }
 
     /**
      * Posting-index hook: tag chain entries published during the next
@@ -81,5 +155,13 @@ public interface FrameColumn extends Closeable {
      * do not own a posting index writer.
      */
     default void setUpcomingTableTxn(long upcomingTableTxn) {
+    }
+
+    /**
+     * Fsyncs each file of this column that a write under {@link io.questdb.cairo.CommitMode#SYNC} touched since the
+     * last call, so a frame that runs several appends and merges against the same files flushes each file once, after
+     * the last.
+     */
+    default void sync() {
     }
 }

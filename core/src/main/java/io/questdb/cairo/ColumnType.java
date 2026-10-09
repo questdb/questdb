@@ -151,6 +151,20 @@ public final class ColumnType {
     public static final int VARCHAR_AUX_SHL = 4;
     // column type version as written to the metadata file
     public static final int VERSION = 426;
+    // The highest storage version this binary can read and write. The database never
+    // migrates a table to it on its own (migrations target VERSION); only a table that
+    // currently holds composite partitions carries it, written straight into _meta at
+    // META_OFFSET_VERSION when the first composite partition appears. Folding every
+    // composite partition back to plain restores VERSION. This lets a user try composite
+    // partitions and still downgrade to a binary that only understands VERSION: that older
+    // binary rejects a table stamped MAX_STORAGE_VERSION instead of misreading it, while a
+    // table that never went composite (or was compacted back) stays readable.
+    //
+    // Fixed literal, deliberately placed above MIGRATION_VERSION (429) so it never collides
+    // with a migration-step number: a stored version in (VERSION, MAX_STORAGE_VERSION] means
+    // "composite", not "needs migration N". A stable on-disk marker must not float with VERSION,
+    // so it is written out as a constant rather than VERSION + 1.
+    public static final int MAX_STORAGE_VERSION = 430;
     static final int[] GEO_TYPE_SIZE_POW2;
     private static final boolean ALLOW_DEFAULT_STRING_CHANGE = false;
     private static final int ARRAY_ELEMTYPE_FIELD_MASK = 0x3F;

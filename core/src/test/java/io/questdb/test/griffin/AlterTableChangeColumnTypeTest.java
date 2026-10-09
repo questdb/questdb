@@ -50,6 +50,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -1795,8 +1796,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             Assert.assertNotEquals("destination column file was never opened for write", -1, dstFd.get());
             Assert.assertTrue("destination column data file was never mapped read-write", dstMappedForWrite.get());
             Assert.assertEquals(
-                    "ff.allocate() must reserve the exact destination byte size before mapping",
-                    2L * Long.BYTES,
+                    "ff.allocate() must reserve a page on Linux, or the exact destination size elsewhere, before mapping",
+                    Os.isLinux() ? Files.PAGE_SIZE : 2L * Long.BYTES,
                     allocatedSizeForDst.get()
             );
             Assert.assertFalse(

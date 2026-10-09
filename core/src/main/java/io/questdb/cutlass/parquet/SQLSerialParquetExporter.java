@@ -42,6 +42,7 @@ import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
+import io.questdb.griffin.engine.ops.CreateTableOperationImpl;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
@@ -147,6 +148,10 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
         CopyExportContext.ExportTaskEntry entry = task.getEntry();
         final CairoEngine cairoEngine = sqlExecutionContext.getCairoEngine();
         CreateTableOperation createOp = task.getCreateOp();
+        // The table this export reads partition by partition: the user's own table for a direct table export,
+        // the temp table for a materialized one.
+        String exportTableName = task.getTableName();
+        TableReader sourceReader = null;
         boolean success = false;
 
         try {
@@ -164,6 +169,28 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                 }
             }
 
+            if (createOp == null) {
+                // Direct table export. CopyExportFactory picked TABLE_READER on a reader it opened and closed at
+                // enqueue time, but this export reads a later snapshot: WAL apply may have turned a partition
+                // composite in between. A composite partition's live rows no longer span file rows [0, liveRows),
+                // so populateFromTableReader() would read the right NUMBER of rows from the wrong PLACE and the
+                // export would report success over stale data. Resolve the mode on the very reader that will be
+                // read, and materialize through a temp table when this snapshot is composite.
+                tableToken = cairoEngine.verifyTableName(exportTableName);
+                sqlExecutionContext.getSecurityContext().authorizeSelectOnAnyColumn(tableToken);
+                sourceReader = cairoEngine.getReader(tableToken);
+                if (sourceReader.getTxFile().hasCompositePartitions()) {
+                    final int sourcePartitionBy = sourceReader.getPartitionedBy();
+                    sourceReader = Misc.free(sourceReader);
+                    exportTableName = tempTableName(task.getCopyID());
+                    LOG.info().$("table turned composite after the export was queued, materializing [id=")
+                            .$hexPadded(task.getCopyID()).$(", table=").$(tableToken)
+                            .$(", tempTable=").$(exportTableName).$(']').$();
+                    createOp = materializingOp(cairoEngine, task.getTableName(), exportTableName, sourcePartitionBy);
+                    tableToken = null;
+                }
+            }
+
             if (createOp != null) {
                 // Multi-partition export: create temp table and populate with data
                 insertSelectReporter.of(circuitBreaker, entry, task.getCopyID(), task.getTableName());
@@ -173,7 +200,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                 copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
                 LOG.info().$("starting to create temporary table and populate with data [id=").$hexPadded(task.getCopyID()).$(", table=").$(task.getTableName()).$(']').$();
                 createOp.execute(sqlExecutionContext, null);
-                tableToken = cairoEngine.verifyTableName(task.getTableName());
+                tableToken = cairoEngine.verifyTableName(exportTableName);
                 LOG.info().$("completed creating temporary table and populating with data [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(']').$();
                 copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
             }
@@ -186,10 +213,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             // and always is assigned to this instance of the exporter
             final CharSequence fileName = task.getFileName() != null ? task.getFileName() : tableName;
             if (tableToken == null) {
-                tableToken = cairoEngine.verifyTableName(task.getTableName());
-            }
-            if (createOp == null) {
-                sqlExecutionContext.getSecurityContext().authorizeSelectOnAnyColumn(tableToken);
+                tableToken = cairoEngine.verifyTableName(exportTableName);
             }
 
             if (circuitBreaker.checkIfTrippedOrYield()) {
@@ -197,7 +221,17 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
             }
 
-            try (TableReader reader = cairoEngine.getReader(tableToken)) {
+            try (TableReader reader = sourceReader != null ? sourceReader : cairoEngine.getReader(tableToken)) {
+                sourceReader = null;
+                if (reader.getTxFile().hasCompositePartitions()) {
+                    // Backstop on the snapshot the encoder reads. The direct table export re-routes a composite
+                    // snapshot to the temp table above, and a temp table cannot found one of its own - it is
+                    // non-WAL and starts empty, and O3PartitionJob only builds composite partitions for a WAL
+                    // table or a partition that is composite already. Fail loudly if that ever stops holding,
+                    // rather than let PartitionEncoder read [0, liveRows) off a shape that does not span it.
+                    throw CopyExportException.instance(phase, -1)
+                            .put("cannot export a composite partition [table=").put(exportTableName).put(']');
+                }
                 // SEQUENTIAL_EVICT: MADV_SEQUENTIAL/DONTNEED hints to release
                 // page cache after each partition, plus a hard cleanup
                 // backstop -- closeExcessPartitions(keepOpen=0) on pool
@@ -341,8 +375,9 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             LOG.error().$("parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(e).$(']').$();
             throw CopyExportException.instance(phase, e.getMessage(), -1);
         } finally {
+            Misc.free(sourceReader);
             if (createOp != null) {
-                dropTempTable(entry, tableToken);
+                dropTempTable(entry, exportTableName, tableToken);
             }
             if (numOfFiles == 0 || !success) {
                 tempPath.trimTo(tempBaseDirLen);
@@ -358,6 +393,45 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                 throw CairoException.critical(ff.errno()).put("could not create directories [file=").put(path).put(']');
             }
         }
+    }
+
+    /**
+     * Builds the same create-as-select temp table operation {@link io.questdb.griffin.engine.ops.CopyExportFactory}
+     * builds when it already sees a composite table at enqueue time, so both routes materialize identically -
+     * including the quoting {@link CopyExportRequestTask#selectAllText} puts around the source table name.
+     * {@link CreateTableOperation#execute} compiles and validates the select on this worker. The source table name
+     * doubles as the operation's SQL text, which only feeds the query registry and the progress log - the COPY
+     * statement itself does not reach the worker.
+     */
+    private static CreateTableOperation materializingOp(
+            CairoEngine engine,
+            String sourceTableName,
+            String tempTableName,
+            int partitionBy
+    ) {
+        CreateTableOperationImpl op = new CreateTableOperationImpl(
+                CopyExportRequestTask.selectAllText(sourceTableName),
+                tempTableName,
+                partitionBy,
+                false,
+                engine.getConfiguration().getDefaultSymbolCapacity(),
+                sourceTableName,
+                false
+        );
+        op.setTableKind(TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
+        op.setBatchSize(engine.getConfiguration().getParquetExportBatchSize());
+        return op;
+    }
+
+    /**
+     * The temp table name an export materializes into, spelled exactly as
+     * {@link io.questdb.griffin.engine.ops.CopyExportFactory} spells it.
+     */
+    private static String tempTableName(long copyID) {
+        final StringSink sink = Misc.getThreadLocalSink();
+        sink.put("copy.");
+        Numbers.appendHex(sink, copyID, true);
+        return sink.toString();
     }
 
     private void moveAndOverwriteFiles() {

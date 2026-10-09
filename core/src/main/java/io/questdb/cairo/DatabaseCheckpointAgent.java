@@ -551,6 +551,15 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME);
                                         mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                                         reader.getMetadata().dumpTo(mem);
+                                        // The checkpoint image is a second producer of a (_meta, _txn) pair, so it owns the
+                                        // invariant COMPOSITE_PARTITIONS.md relies on: _meta stamps MAX_STORAGE_VERSION
+                                        // whenever _txn carries composite partition references. Derive the stamp from the
+                                        // _txn this image ships rather than trusting the bytes dumpTo() copied - a pooled
+                                        // reader copy keeps a private _meta snapshot that TableWriter's in-place storage
+                                        // version write never reaches, so those bytes can lag their own _txn.
+                                        mem.putInt(TableUtils.META_OFFSET_VERSION, reader.getTxFile().hasCompositePartitions()
+                                                ? ColumnType.MAX_STORAGE_VERSION
+                                                : ColumnType.VERSION);
                                         mem.close(false);
                                         // Copy _txn file.
                                         path.trimTo(rootLen).concat(TXN_FILE_NAME);

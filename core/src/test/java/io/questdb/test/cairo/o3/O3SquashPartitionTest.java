@@ -56,6 +56,9 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -160,6 +163,11 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testPartitionSquashCounterOverflow() throws Exception {
+        // This asserts the SQUASH bookkeeping - a .squash_ts file left behind once the counter overflows -
+        // which merge-append does not maintain: a composite partition is folded by its own path and never
+        // reaches the counter this test drives. Squash over composite partitions is a known gap; until it
+        // closes, pin the production default so the test keeps covering what it was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             final String tableName = "backup_squash_test";
             long start = MicrosTimestampDriver.floor("2020-02-03");
@@ -977,9 +985,19 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             }
         };
 
+        // Drives squashSplitPartitions over SPLIT sub-partitions. Merge-append folds a backdated
+        // write into the partition's own composite geometry instead of opening a split directory, so
+        // the split this test's setup asserts never appears. Squash over composite partitions is a
+        // known gap; until it closes, pin the production default so the test keeps covering what it
+        // was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(ff, () -> {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            // A WAL table's splits are left to compaction up to the cap, and only cold ones are squashed.
+            // Fold the split on the commit that makes it, so the commit squashes into the open partition.
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 1);
+            overrides.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
 
             executeWithRewriteTimestamp(
                     "CREATE TABLE x AS (" +
@@ -1083,9 +1101,19 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             }
         };
 
+        // Drives squashSplitPartitions over SPLIT sub-partitions. Merge-append folds a backdated
+        // write into the partition's own composite geometry instead of opening a split directory, so
+        // the split this test's setup asserts never appears. Squash over composite partitions is a
+        // known gap; until it closes, pin the production default so the test keeps covering what it
+        // was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(ff, () -> {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            // A WAL table's splits are left to compaction up to the cap, and only cold ones are squashed.
+            // Fold the split on the commit that makes it, so the commit squashes into the open partition.
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 1);
+            overrides.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
 
             executeWithRewriteTimestamp(
                     "CREATE TABLE y (i INT, sym SYMBOL INDEX TYPE POSTING, s STRING, ts #TIMESTAMP)" +
@@ -1190,24 +1218,20 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSquashIntoOpenPartitionReopensSquashTarget() throws Exception {
-        // squashSplitPartitions appends into the partition the writer holds open through the
-        // frame's own file descriptors, then drops the writer's now-stale append memories. It
-        // must re-open that partition afterwards: the posting-index reseal that runs immediately
-        // below it, and every later commit, expect live column memories and a dense indexer list
-        // that matches indexCount.
+    public void testSquashIntoOpenPartitionLeavesNoStaleMapping() throws Exception {
+        // squashSplitPartitions appends into the squash target through the frame's own file
+        // descriptors. If the writer still mapped the target from before the squash, those
+        // append memories would describe a SHORTER file than what is on disk, and the next
+        // truncating close would trim the squash's bytes back off ("binary is outside of file
+        // boundary").
         //
-        // openLastPartition() cannot do that on this branch. The squash target is never the last
-        // partition (the selection loop stops one short of it, and a partition survives after the
-        // target whenever lastPartitionSquashed is false), and the last partition here is parquet
-        // -- which is exactly why the writer holds an earlier partition open -- so
-        // openLastPartitionAndSetAppendPosition returns without opening anything.
-        //
-        // The contract shows up in the file descriptors: after the squashing commit the writer
-        // must still hold 2020-02-04's column files open, and it must hold them through a NEW
-        // openRW. Merely still holding the fds the previous commit opened is what the writer does
-        // when the reopen is missing entirely, so openedSinceMark -- the fds opened by the
-        // squashing commit and still open when it returns -- is what discriminates. It counts
+        // The writer maps native 2020-02-04 until 2020-02-05 is born parquet; the commit that
+        // makes the last partition append-blocked closes that mapping, so by the time the squash
+        // runs the writer maps nothing and has nothing to re-sync. Whatever the writer maps, the
+        // contract is the same, and it shows up in the file
+        // descriptors: no 2020-02-04 column file the writer opened BEFORE the squashing commit may
+        // still be open after it. openedSinceMark -- the fds opened by the squashing commit and
+        // still open when it returns -- must therefore account for every open target fd. It counts
         // opens rather than comparing fd numbers: the OS is free to hand the same number back
         // after a close.
         final String targetDataFile = "2020-02-04" + Files.SEPARATOR + "i.d";
@@ -1244,9 +1268,19 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             }
         };
 
+        // Drives squashSplitPartitions over SPLIT sub-partitions. Merge-append folds a backdated
+        // write into the partition's own composite geometry instead of opening a split directory, so
+        // the split this test's setup asserts never appears. Squash over composite partitions is a
+        // known gap; until it closes, pin the production default so the test keeps covering what it
+        // was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(ff, () -> {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            // A WAL table's splits are left to compaction up to the cap, and only cold ones are squashed.
+            // Fold the split on the commit that makes it, so the commit squashes into the open partition.
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 1);
+            overrides.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
 
             executeWithRewriteTimestamp(
                     "CREATE TABLE x AS (" +
@@ -1290,15 +1324,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             drainWalQueue();
 
             synchronized (openTargetFds) {
-                Assert.assertTrue(
-                        "the writer must hold the squash target's column files open after squashing into it",
-                        openTargetFds.size() > 0
-                );
-                Assert.assertTrue(
-                        "the squashing commit must RE-open the squash target: every column file the"
-                                + " writer holds open for 2020-02-04 was already open before the commit,"
-                                + " so nothing closed and re-opened the partition",
-                        openedSinceMark.size() > 0
+                Assert.assertEquals(
+                        "the writer still holds a 2020-02-04 column file it opened before squashing into"
+                                + " the partition, so its append memory describes a shorter file than the"
+                                + " squash left on disk",
+                        openedSinceMark.size(),
+                        openTargetFds.size()
                 );
             }
 
@@ -1338,7 +1369,23 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSquashAllocatesNothingForColumnUnderItsTop() throws Exception {
+        testSquashAllocatesNothingForColumnUnderItsTop(false);
+    }
+
+    @Test
+    public void testSquashAllocatesNothingForColumnUnderItsTopCopiedTarget() throws Exception {
+        testSquashAllocatesNothingForColumnUnderItsTop(true);
+    }
+
+    @Test
     public void testSquashPartitionClearsRemoteAndStampsTarget() throws Exception {
+        // Drives squashSplitPartitions over SPLIT sub-partitions. Merge-append folds a backdated
+        // write into the partition's own composite geometry instead of opening a split directory, so
+        // the split this test's setup asserts never appears. Squash over composite partitions is a
+        // known gap; until it closes, pin the production default so the test keeps covering what it
+        // was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -1631,6 +1678,55 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSquashPartitionsFailsToAllocateTarget() throws Exception {
+        // The squash grows the target's column files through the frame columns' ranged allocate. A facade that
+        // injects ENOSPC through allocate(fd, size) alone must still see that call.
+        final AtomicBoolean armed = new AtomicBoolean();
+        final Set<Long> targetFds = ConcurrentHashMap.newKeySet();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean allocate(long fd, long size) {
+                if (armed.get() && targetFds.contains(fd)) {
+                    return false;
+                }
+                return super.allocate(fd, size);
+            }
+
+            @Override
+            public boolean close(long fd) {
+                targetFds.remove(fd);
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (armed.get() && Utf8s.containsAscii(name, Files.SEPARATOR + "2020-02-04" + Files.SEPARATOR)) {
+                    targetFds.add(fd);
+                }
+                return fd;
+            }
+        };
+        testSquashPartitionsFails(ff, armed, "No space left");
+    }
+
+    @Test
+    public void testSquashPartitionsFailsToOpenSource() throws Exception {
+        final AtomicBoolean armed = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (armed.get() && Utf8s.containsAscii(name, "2020-02-04T200000")
+                        && Utf8s.endsWithAscii(name, Files.SEPARATOR + "str.i")) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        testSquashPartitionsFails(ff, armed, "could not open");
+    }
+
+    @Test
     public void testSquashPartitionsNoLogicalPartition() throws Exception {
         assertMemoryLeak(() -> {
             // 4kb prefix split threshold
@@ -1759,6 +1855,148 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         }
     }
 
+    private void testSquashAllocatesNothingForColumnUnderItsTop(boolean copyTarget) throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 3);
+            execute(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " timestamp_sequence('2020-02-04T00', 1000000L)::" + timestampType.getTypeName() + " ts" +
+                            " from long_sequence(86400 + 43200)" +
+                            ") timestamp (ts) partition by DAY"
+            );
+            // A reader from before the split makes the squash copy its target rather than append to it in place.
+            try (TableReader ignore = copyTarget ? getReader("x") : null) {
+                execute(
+                        "insert into x select cast(x as int) i," +
+                                " timestamp_sequence('2020-02-04T20:01:00.5', 1000000L)::" + timestampType.getTypeName() + " ts" +
+                                " from long_sequence(200)"
+                );
+                assertQuery("select count() c from table_partitions('x')")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("c\n3\n");
+
+                // Added after every row: every folder holds them entirely under their column tops.
+                execute("alter table x add column k long");
+                execute("alter table x add column s varchar");
+                execute("alter table x add column t string");
+                execute("alter table x squash partitions");
+            }
+            engine.releaseAllWriters();
+
+            assertQuery("select count() c from table_partitions('x')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("c\n2\n");
+            assertQuery("select count() c, count(k) ck, count(s) cs, count(t) ct from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("c\tck\tcs\tct\n129800\t0\t0\t0\n");
+
+            // The squash wrote no value of these columns, so it must not have allocated their files either.
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(engine.verifyTableName("x").getDirName());
+                final int tableLen = path.size();
+                final java.io.File tableDir = new java.io.File(path.toString());
+                final String[] partitionDirs = tableDir.list();
+                Assert.assertNotNull(partitionDirs);
+                int checkedFiles = 0;
+                for (String partitionDir : partitionDirs) {
+                    if (!partitionDir.startsWith("2020-02-04")) {
+                        continue;
+                    }
+                    final String[] files = new java.io.File(tableDir, partitionDir).list();
+                    Assert.assertNotNull(files);
+                    for (String file : files) {
+                        if (file.startsWith("k.") || file.startsWith("s.") || file.startsWith("t.")) {
+                            path.trimTo(tableLen).concat(partitionDir).concat(file);
+                            Assert.assertEquals(partitionDir + '/' + file, 0, ff.length(path.$()));
+                            checkedFiles++;
+                        }
+                    }
+                }
+                Assert.assertTrue("the squash target must have the late columns' files", checkedFiles > 0);
+            }
+        });
+    }
+
+    private void testSquashPartitionsFails(FilesFacade ff, AtomicBoolean armed, String expectedError) throws Exception {
+        assertMemoryLeak(ff, () -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
+            engine.resetFrameFactory();
+
+            // The squash grows the target by the 200 inserted rows only, past the page-rounded length its files were
+            // truncated to on close. The wide pad column - 404 bytes a row - makes that growth outrun any page size,
+            // 64KiB on Windows included, so the squash has to allocate.
+            execute(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " -x j," +
+                            " rnd_str(5,16,2) as str," +
+                            " rpad(x::string, 200, 'q') pad," +
+                            " timestamp_sequence('2020-02-04T00', 60*1000000L)::" + timestampType.getTypeName() + " ts" +
+                            " from long_sequence(60*36)" +
+                            ") timestamp (ts) partition by DAY"
+            );
+            // A reader on the partition keeps the commit from squashing the split straight back.
+            try (TableReader ignore = getReader("x")) {
+                execute(
+                        "insert into x select" +
+                                " cast(x as int) * 1000000 i," +
+                                " -x - 1000000L as j," +
+                                " rnd_str(5,16,2) as str," +
+                                " rpad(x::string, 200, 'q') pad," +
+                                " timestamp_sequence('2020-02-04T20:01', 1000000L) ts" +
+                                " from long_sequence(200)"
+                );
+            }
+
+            final String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
+            final String splitPartitions = replaceTimestampSuffix1("""
+                    minTimestamp\tnumRows\tname
+                    2020-02-04T00:00:00.000000Z\t1201\t2020-02-04
+                    2020-02-04T20:01:00.000000Z\t439\t2020-02-04T200000-000001
+                    2020-02-05T00:00:00.000000Z\t720\t2020-02-05
+                    """, timestampType.getTypeName());
+            assertQuery(partitionsSql).noLeakCheck().expectSize().noRandomAccess().returns(splitPartitions);
+            execute("create table before_squash as (select * from x)");
+
+            armed.set(true);
+            try {
+                execute("alter table x squash partitions");
+                Assert.fail("squash should have failed");
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), expectedError);
+            } finally {
+                armed.set(false);
+            }
+
+            assertQuery(partitionsSql).noLeakCheck().expectSize().noRandomAccess().returns(splitPartitions);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "before_squash", "x", LOG);
+
+            execute("alter table x squash partitions");
+            assertQuery(partitionsSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(replaceTimestampSuffix1("""
+                            minTimestamp\tnumRows\tname
+                            2020-02-04T00:00:00.000000Z\t1640\t2020-02-04
+                            2020-02-05T00:00:00.000000Z\t720\t2020-02-05
+                            """, timestampType.getTypeName()));
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "before_squash", "x", LOG);
+        });
+    }
+
     private void testSquashPartitionsOnEmptyTable(String wal) throws Exception {
         assertMemoryLeak(() -> {
             // 4kb prefix split threshold
@@ -1836,6 +2074,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
     private void testSquashPartitionsOnNonEmptyTable(String wal) throws Exception {
         assertMemoryLeak(() -> {
+            // This test drives the pre-merge-append split-then-squash mechanism directly (prefix
+            // split on size, then an explicit ALTER TABLE SQUASH PARTITIONS): with merge-append on,
+            // the very same O3 write lands as a composite piece inside the existing partition
+            // directory instead of a separate split directory, so the split/squash shape this test
+            // asserts never forms. Same reasoning as testPartitionSquashCounterOverflow above.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
             // 4kb prefix split threshold
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);

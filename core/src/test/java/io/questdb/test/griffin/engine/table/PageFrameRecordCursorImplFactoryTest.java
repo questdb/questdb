@@ -42,12 +42,14 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.BwdTableReaderPageFrameCursor;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
@@ -59,9 +61,11 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectString;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -69,6 +73,43 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
+    // One partition of 100 rows whose first two predate the ADD COLUMN. An ordinary walk cuts that
+    // partition into two frames at the column top; a skip walk cuts it at the skip target instead.
+    // Both cuts fit inside the default page frame size, so this needs no frame-size override.
+    private static final String COLUMN_TOP_TABLE_ADD_COLUMN = "ALTER TABLE t ADD COLUMN pad INT";
+    private static final String COLUMN_TOP_TABLE_DDL =
+            "CREATE TABLE t (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL";
+    private static final String COLUMN_TOP_TABLE_DML_ABOVE_TOP = """
+            INSERT INTO t
+            SELECT (x + 2)::INT, timestamp_sequence('2024-01-01T00:00:02', 1_000_000L), (x + 2)::INT
+            FROM long_sequence(98)
+            """;
+    private static final String COLUMN_TOP_TABLE_DML_BELOW_TOP = """
+            INSERT INTO t VALUES
+            (1, '2024-01-01T00:00:00.000000Z'),
+            (2, '2024-01-01T00:00:01.000000Z')
+            """;
+    // Three partitions of 5, 5 and 3 rows: a skip of 4 lands inside the first, which leaves the
+    // frames of the two that follow numbered one lower than an ordinary walk numbers them.
+    private static final String SKIP_WALK_TABLE_DDL =
+            "CREATE TABLE bids (i INT, rating STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY";
+    private static final String SKIP_WALK_TABLE_DML = """
+            INSERT INTO bids VALUES
+            (1, 'GOOD', '2000-01-01T00:00:00.000000Z'),
+            (2, 'GOOD', '2000-01-01T00:00:01.000000Z'),
+            (3, 'SCAM', '2000-01-01T00:00:02.000000Z'),
+            (4, 'SCAM', '2000-01-01T00:00:03.000000Z'),
+            (5, 'EXCELLENT', '2000-01-01T00:00:04.000000Z'),
+            (6, 'SCAM', '2000-01-02T00:00:00.000000Z'),
+            (7, 'GOOD', '2000-01-02T00:00:01.000000Z'),
+            (8, 'GOOD', '2000-01-02T00:00:02.000000Z'),
+            (9, 'GOOD', '2000-01-02T00:00:03.000000Z'),
+            (10, 'GOOD', '2000-01-02T00:00:04.000000Z'),
+            (11, 'SCAM', '2000-01-03T00:00:00.000000Z'),
+            (12, 'UNKNOWN', '2000-01-03T00:00:01.000000Z'),
+            (13, 'GOOD', '2000-01-03T00:00:02.000000Z')
+            """;
+
     @Override
     public void setUp() {
         Rnd rnd = TestUtils.generateRandom(LOG);
@@ -846,6 +887,500 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         } finally {
             record.close();
         }
+    }
+
+    /**
+     * A skip walk cuts page frames at the skip target, an ordinary walk cuts them at the partition,
+     * column-top and page-frame-size boundaries, and the two number the frames they produce
+     * differently. The address cache is keyed by that number and survives toTop(), so a skip walk
+     * that runs over the frames of an earlier ordinary walk used to read their addresses and page
+     * limits with its own row counts - reading a STRING past the end of its aux page, or returning
+     * another partition's rows.
+     * <p>
+     * The cursor-level tests below drive the cursor directly rather than through assertQuery(): the
+     * defect needs a specific call sequence on ONE cursor (walk, then toTop, then a skip of a chosen
+     * size), which a query's result alone cannot pin down - QueryAssertion picks its skip sizes at
+     * random. The one query-level test, testNestedLimitRereadsTheSameRows(), goes through
+     * assertQuery().returns() instead: a nested LIMIT issues that call sequence on its own, so a
+     * query's result does pin that one down.
+     */
+    @Test
+    public void testSkipRowsAfterFullWalkReadsTail() throws Exception {
+        assertMemoryLeak(() -> {
+            createSkipWalkTable();
+            try (
+                    RecordCursorFactory factory = engine.select("SELECT * FROM bids", sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertEquals(13, walk(cursor, null));
+                cursor.toTop();
+                skipRows(cursor, 4);
+                assertRemainingRows(cursor, """
+                        5|EXCELLENT
+                        6|SCAM
+                        7|GOOD
+                        8|GOOD
+                        9|GOOD
+                        10|GOOD
+                        11|SCAM
+                        12|UNKNOWN
+                        13|GOOD
+                        """);
+            }
+        });
+    }
+
+    /**
+     * The same defect through the other cut: a skip target that covers a whole partition collapses
+     * the two frames a column top splits that partition into.
+     */
+    @Test
+    public void testSkipRowsOverColumnTopAfterFullWalkReadsTail() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE bids (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO bids VALUES
+                    (1, '2000-01-01T00:00:00.000000Z'),
+                    (2, '2000-01-01T00:00:01.000000Z'),
+                    (3, '2000-01-01T00:00:02.000000Z')
+                    """);
+            execute("ALTER TABLE bids ADD COLUMN rating STRING");
+            execute("""
+                    INSERT INTO bids VALUES
+                    (4, '2000-01-01T00:00:03.000000Z', 'SCAM'),
+                    (5, '2000-01-01T00:00:04.000000Z', 'EXCELLENT'),
+                    (6, '2000-01-02T00:00:00.000000Z', 'SCAM'),
+                    (7, '2000-01-02T00:00:01.000000Z', 'GOOD'),
+                    (8, '2000-01-02T00:00:02.000000Z', 'GOOD'),
+                    (9, '2000-01-02T00:00:03.000000Z', 'GOOD'),
+                    (10, '2000-01-02T00:00:04.000000Z', 'GOOD'),
+                    (11, '2000-01-03T00:00:00.000000Z', 'SCAM'),
+                    (12, '2000-01-03T00:00:01.000000Z', 'UNKNOWN'),
+                    (13, '2000-01-03T00:00:02.000000Z', 'GOOD')
+                    """);
+            try (
+                    RecordCursorFactory factory = engine.select("SELECT i, rating FROM bids", sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertEquals(13, walk(cursor, null));
+                cursor.toTop();
+                skipRows(cursor, 5);
+                assertRemainingRows(cursor, """
+                        6|SCAM
+                        7|GOOD
+                        8|GOOD
+                        9|GOOD
+                        10|GOOD
+                        11|SCAM
+                        12|UNKNOWN
+                        13|GOOD
+                        """);
+            }
+        });
+    }
+
+    /**
+     * The reverse order: an ordinary walk must not run over the frames a skip walk cached either.
+     * A skipped frame carries no addresses at all, so reading its rows returns NULLs rather than
+     * throwing.
+     */
+    @Test
+    public void testFullWalkAfterSkipRowsReadsEveryRow() throws Exception {
+        assertMemoryLeak(() -> {
+            createSkipWalkTable();
+            try (
+                    RecordCursorFactory factory = engine.select("SELECT * FROM bids", sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                skipRows(cursor, 4);
+                Assert.assertEquals(9, walk(cursor, null));
+                cursor.toTop();
+                assertRemainingRows(cursor, """
+                        1|GOOD
+                        2|GOOD
+                        3|SCAM
+                        4|SCAM
+                        5|EXCELLENT
+                        6|SCAM
+                        7|GOOD
+                        8|GOOD
+                        9|GOOD
+                        10|GOOD
+                        11|SCAM
+                        12|UNKNOWN
+                        13|GOOD
+                        """);
+            }
+        });
+    }
+
+    /**
+     * A layout can be cut by more than one skip: a from-top skip shapes its leading frames and a
+     * later mid-walk skip appends its own, differently cut ones. The cursor must not then reuse that
+     * layout for a walk that repeats only the leading skip - past the landing it cuts frames where an
+     * ordinary walk cuts them, over ordinals the second skip filled with its own frames.
+     */
+    @Test
+    public void testSkipRowsRepeatedAfterMidWalkSkipReadsTail() throws Exception {
+        assertMemoryLeak(() -> {
+            createSkipWalkTable();
+            try (
+                    RecordCursorFactory factory = engine.select("SELECT * FROM bids", sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                skipRows(cursor, 4);
+                Assert.assertTrue("the skip of 4 left no rows behind", cursor.hasNext());
+                skipRows(cursor, 2);
+                cursor.toTop();
+                skipRows(cursor, 4);
+                assertRemainingRows(cursor, """
+                        5|EXCELLENT
+                        6|SCAM
+                        7|GOOD
+                        8|GOOD
+                        9|GOOD
+                        10|GOOD
+                        11|SCAM
+                        12|UNKNOWN
+                        13|GOOD
+                        """);
+            }
+        });
+    }
+
+    /**
+     * The same two cuts as the test above, but with the mid-walk skip asking for exactly as many rows
+     * as the leading one. Only the ordinal the skip was issued at then tells the two cuts apart: the
+     * mid-walk skip records its own, non-zero ordinal, which is what stops the last skip below -
+     * issued from the top, so at ordinal 0 - from reusing a layout whose frames past the landing are
+     * the second skip's, not an ordinary walk's.
+     */
+    @Test
+    public void testSkipRowsRepeatedAfterEqualMidWalkSkipReadsTail() throws Exception {
+        assertMemoryLeak(() -> {
+            createSkipWalkTable();
+            try (
+                    RecordCursorFactory factory = engine.select("SELECT * FROM bids", sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                skipRows(cursor, 4);
+                Assert.assertTrue("the skip of 4 left no rows behind", cursor.hasNext());
+                skipRows(cursor, 4);
+                cursor.toTop();
+                skipRows(cursor, 4);
+                assertRemainingRows(cursor, """
+                        5|EXCELLENT
+                        6|SCAM
+                        7|GOOD
+                        8|GOOD
+                        9|GOOD
+                        10|GOOD
+                        11|SCAM
+                        12|UNKNOWN
+                        13|GOOD
+                        """);
+            }
+        });
+    }
+
+    /**
+     * A skip issued past the first frame of a walk cannot drop the cache: this walk already handed
+     * out frame ordinal 0, and its live row cursor still resolves rows against frameCount - 1. So a
+     * mid-walk skip that finds frames of an earlier walk ahead of it has to skip row by row, which
+     * leaves the numbering alone. Cutting frames instead renumbers from zero underneath the live row
+     * cursor, and the skip of 2 below - which that row cursor absorbs whole - then leaves the next
+     * hasNext() resolving frame ordinal -1.
+     */
+    @Test
+    public void testSkipRowsMidWalkAfterFullWalkReadsTail() throws Exception {
+        assertMemoryLeak(() -> {
+            createSkipWalkTable();
+            try (
+                    RecordCursorFactory factory = engine.select("SELECT * FROM bids", sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertEquals(13, walk(cursor, null));
+                cursor.toTop();
+                Assert.assertTrue("the table is not empty, so the first frame must yield a row", cursor.hasNext());
+                skipRows(cursor, 2);
+                assertRemainingRows(cursor, """
+                        4|SCAM
+                        5|EXCELLENT
+                        6|SCAM
+                        7|GOOD
+                        8|GOOD
+                        9|GOOD
+                        10|GOOD
+                        11|SCAM
+                        12|UNKNOWN
+                        13|GOOD
+                        """);
+            }
+        });
+    }
+
+    /**
+     * The query shape that drives the sequence above: the inner LIMIT issues its skip of 4 from the
+     * top of the page frame cursor and the outer one immediately issues a mid-walk skip of 2 through
+     * it (LimitRecordCursor.skipRows -> ensureReadyToConsume -> toTop -> base.skipRows, then
+     * base.skipRows again). Reading the result twice - which the assertion battery does through
+     * toTop() - re-issues the same leading skip over the layout the second skip cut.
+     */
+    @Test
+    public void testNestedLimitRereadsTheSameRows() throws Exception {
+        assertQuery("SELECT * FROM (SELECT * FROM bids LIMIT 4, 100) LIMIT 2, 5")
+                .ddl(SKIP_WALK_TABLE_DDL, SKIP_WALK_TABLE_DML)
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        i\trating\tts
+                        7\tGOOD\t2000-01-02T00:00:01.000000Z
+                        8\tGOOD\t2000-01-02T00:00:02.000000Z
+                        9\tGOOD\t2000-01-02T00:00:03.000000Z
+                        """);
+    }
+
+    /**
+     * The shape a user runs into. A CROSS JOIN sizes its slave, rewinds it, and only then reads it
+     * ({@code CrossJoinRecordCursorFactory#getCursor}); the interval scan reports an unknown size, so the
+     * slave's LIMIT sizes itself by running {@code PageFrameRecordCursorImpl.skipRows()}. That sizing walk
+     * cuts frames at the skip target, the read after the rewind cuts them at the column top, and both
+     * number their frames from zero - so the read used to bind the sizing walk's addressless skip frame
+     * and report nulls for rows the LIMIT window does hold.
+     */
+    @Test
+    public void testCrossJoinLimitRereadsSkippedSlave() throws Exception {
+        assertQuery("""
+                SELECT m.x, s.i, s.pad
+                FROM long_sequence(2) m
+                CROSS JOIN (SELECT i, pad FROM t WHERE ts IN '2024-01-01' LIMIT 10) s
+                LIMIT 2,8""")
+                .ddl(COLUMN_TOP_TABLE_DDL, COLUMN_TOP_TABLE_DML_BELOW_TOP, COLUMN_TOP_TABLE_ADD_COLUMN, COLUMN_TOP_TABLE_DML_ABOVE_TOP)
+                .noRandomAccess()
+                .withPlanContaining("Interval forward scan on: t")
+                .returns("""
+                        x\ti\tpad
+                        1\t3\t3
+                        1\t4\t4
+                        1\t5\t5
+                        1\t6\t6
+                        1\t7\t7
+                        1\t8\t8
+                        """);
+    }
+
+    /**
+     * The same rewind, but with a skip that runs past the column top instead of landing before it: a
+     * tail LIMIT skips every row but the last ten, which collapses the frames of the whole leading part
+     * of the partition into skeletons. The read after the rewind then needs every one of those ordinals
+     * back.
+     */
+    @Test
+    public void testCrossJoinTailLimitRereadsSkippedSlave() throws Exception {
+        assertQuery("""
+                SELECT m.x, s.i, s.pad
+                FROM long_sequence(2) m
+                CROSS JOIN (SELECT i, pad FROM t WHERE ts IN '2024-01-01' LIMIT -10) s
+                LIMIT 2,8""")
+                .ddl(COLUMN_TOP_TABLE_DDL, COLUMN_TOP_TABLE_DML_BELOW_TOP, COLUMN_TOP_TABLE_ADD_COLUMN, COLUMN_TOP_TABLE_DML_ABOVE_TOP)
+                .noRandomAccess()
+                .withPlanContaining("Interval forward scan on: t")
+                .returns("""
+                        x\ti\tpad
+                        1\t93\t93
+                        1\t94\t94
+                        1\t95\t95
+                        1\t96\t96
+                        1\t97\t97
+                        1\t98\t98
+                        """);
+    }
+
+    /**
+     * A skip walk whose rows an order-by then reaches again by row id. The sort walks the LIMIT once,
+     * keeps a row id per row, and reads the rows back through {@code recordAt()}; a row id names a frame
+     * by its ordinal, so dropping the skip walk's frames must not strand the ids the sort is holding.
+     * The assertion battery re-reads the result, which drives that sequence twice.
+     */
+    @Test
+    public void testOrderByOverSkippedLimitReadsByRowId() throws Exception {
+        assertQuery("SELECT * FROM (SELECT i, pad FROM t WHERE ts IN '2024-01-01' LIMIT 2,12) ORDER BY i DESC")
+                .ddl(COLUMN_TOP_TABLE_DDL, COLUMN_TOP_TABLE_DML_BELOW_TOP, COLUMN_TOP_TABLE_ADD_COLUMN, COLUMN_TOP_TABLE_DML_ABOVE_TOP)
+                .withPlanContaining("Encode sort light", "Interval forward scan on: t")
+                .returns("""
+                        i\tpad
+                        12\t12
+                        11\t11
+                        10\t10
+                        9\t9
+                        8\t8
+                        7\t7
+                        6\t6
+                        5\t5
+                        4\t4
+                        3\t3
+                        """);
+    }
+
+    /**
+     * The same rewind with a PARQUET frame in the cache. A skip target that covers a whole partition
+     * collapses it whatever its format, so the landing frame of the skip walk takes the ordinal the
+     * ordinary walk gave the parquet partition - and a parquet ordinal carries a decoder and a row group
+     * rather than page addresses, so reusing it reads the wrong partition entirely.
+     */
+    @Test
+    public void testSkipRowsAfterFullWalkReadsTailOverParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            createSkipWalkTable();
+            // 2000-01-03 is the active partition, which leaves the middle one convertible.
+            execute("ALTER TABLE bids CONVERT PARTITION TO PARQUET LIST '2000-01-02'");
+            try (
+                    RecordCursorFactory factory = engine.select("SELECT * FROM bids", sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertEquals(13, walk(cursor, null));
+                cursor.toTop();
+                skipRows(cursor, 4);
+                assertRemainingRows(cursor, """
+                        5|EXCELLENT
+                        6|SCAM
+                        7|GOOD
+                        8|GOOD
+                        9|GOOD
+                        10|GOOD
+                        11|SCAM
+                        12|UNKNOWN
+                        13|GOOD
+                        """);
+            }
+        });
+    }
+
+    /**
+     * A skip walk, a rewind, then a skip to a DIFFERENT target. The second walk cuts its frames
+     * somewhere else than the cached ones are cut, so it must drop them rather than run over them.
+     */
+    @Test
+    public void testSkipRowsAfterRewindWithDifferentTargetReadsTail() throws Exception {
+        assertMemoryLeak(() -> {
+            createSkipWalkTable();
+            try (
+                    RecordCursorFactory factory = engine.select("SELECT * FROM bids", sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                skipRows(cursor, 4);
+                Assert.assertEquals(9, walk(cursor, null));
+                cursor.toTop();
+                skipRows(cursor, 7);
+                assertRemainingRows(cursor, """
+                        8|GOOD
+                        9|GOOD
+                        10|GOOD
+                        11|SCAM
+                        12|UNKNOWN
+                        13|GOOD
+                        """);
+            }
+        });
+    }
+
+    /**
+     * A skip walk, a rewind, then the SAME skip again - the one case where the cached frames do describe
+     * the walk that is about to run, so the cursor keeps them. This is the shape a CROSS JOIN re-scans its
+     * slave with, so it is also what stops the fix from re-pricing every frame on each master row.
+     */
+    @Test
+    public void testSkipRowsRepeatedAfterRewindReadsTail() throws Exception {
+        assertMemoryLeak(() -> {
+            createSkipWalkTable();
+            try (
+                    RecordCursorFactory factory = engine.select("SELECT * FROM bids", sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                skipRows(cursor, 4);
+                Assert.assertEquals(9, walk(cursor, null));
+                cursor.toTop();
+                skipRows(cursor, 4);
+                assertRemainingRows(cursor, """
+                        5|EXCELLENT
+                        6|SCAM
+                        7|GOOD
+                        8|GOOD
+                        9|GOOD
+                        10|GOOD
+                        11|SCAM
+                        12|UNKNOWN
+                        13|GOOD
+                        """);
+            }
+        });
+    }
+
+    /**
+     * The same rewind through {@link BwdTableReaderPageFrameCursor}, whose skip walk collapses frames
+     * the way the forward one's does. Driven directly so the skip size is pinned down: the planner turns
+     * every ORDER BY ts DESC + LIMIT shape this test could use into a Top K or a sort, so SQL alone
+     * cannot reach the backward skip walk. The factory assertion holds the test to a frame scan, and the
+     * descending row order - which a forward scan cannot produce - holds it to the backward one.
+     */
+    @Test
+    public void testSkipRowsAfterFullWalkReadsTailDescending() throws Exception {
+        assertMemoryLeak(() -> {
+            createSkipWalkTable();
+            try (
+                    RecordCursorFactory factory = engine.select("SELECT * FROM bids ORDER BY ts DESC", sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertTrue(
+                        "ORDER BY ts DESC no longer scans page frames, so this test stopped covering the backward cursor",
+                        factory.getBaseFactory() instanceof PageFrameRecordCursorFactory
+                );
+                Assert.assertEquals(13, walk(cursor, null));
+                cursor.toTop();
+                skipRows(cursor, 4);
+                assertRemainingRows(cursor, """
+                        9|GOOD
+                        8|GOOD
+                        7|GOOD
+                        6|SCAM
+                        5|EXCELLENT
+                        4|SCAM
+                        3|SCAM
+                        2|GOOD
+                        1|GOOD
+                        """);
+            }
+        });
+    }
+
+    private static void assertRemainingRows(RecordCursor cursor, String expected) {
+        final StringSink actual = new StringSink();
+        walk(cursor, actual);
+        TestUtils.assertEquals(expected, actual);
+    }
+
+    private static void skipRows(RecordCursor cursor, long rowCount) {
+        final RecordCursor.Counter counter = new RecordCursor.Counter();
+        counter.set(rowCount);
+        cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
+        Assert.assertEquals("skipRows() left rows unskipped", 0, counter.get());
+    }
+
+    private static int walk(RecordCursor cursor, @Nullable StringSink sink) {
+        final Record record = cursor.getRecord();
+        int count = 0;
+        while (cursor.hasNext()) {
+            count++;
+            if (sink != null) {
+                sink.put(record.getInt(0)).put('|').put(record.getStrA(1)).put('\n');
+            }
+        }
+        return count;
+    }
+
+    private void createSkipWalkTable() throws SqlException {
+        execute(SKIP_WALK_TABLE_DDL);
+        execute(SKIP_WALK_TABLE_DML);
     }
 
     private void populateColumnTypes(RecordMetadata metadata, IntList columnIndexes, IntList columnSizes) {

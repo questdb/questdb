@@ -96,6 +96,38 @@ public class FilesTest {
     }
 
     @Test
+    public void testAllocateFromKnownLength() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+            TestUtils.writeStringToFile(temp, "abcde");
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                long fd = Files.openRW(path.$());
+                try {
+                    // Grows from the length the caller knows the file has, and keeps what is below it.
+                    Assert.assertTrue(Files.allocate(fd, 5, 4096));
+                    Assert.assertEquals(4096, Files.length(path.$()));
+                    Assert.assertTrue(Files.allocate(fd, 4096, 3 * 4096));
+                    Assert.assertEquals(3 * 4096, Files.length(path.$()));
+                    // A size at or below the known length is a no-op, never a shrink.
+                    Assert.assertTrue(Files.allocate(fd, 3 * 4096, 4096));
+                    Assert.assertEquals(3 * 4096, Files.length(path.$()));
+                    final long buf = Unsafe.malloc(5, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        Assert.assertEquals(5, Files.read(fd, buf, 5, 0));
+                        for (int i = 0; i < 5; i++) {
+                            Assert.assertEquals('a' + i, Unsafe.getByte(buf + i));
+                        }
+                    } finally {
+                        Unsafe.free(buf, 5, MemoryTag.NATIVE_DEFAULT);
+                    }
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testOpenFdDebugInfoRendersCachedPaths() throws Exception {
         assertMemoryLeak(() -> {
             final FdCache cache = new FdCache();
