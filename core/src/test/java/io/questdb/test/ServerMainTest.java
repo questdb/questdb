@@ -1397,6 +1397,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 "http.net.connection.hint\tQDB_HTTP_NET_CONNECTION_HINT\tfalse\tdefault\tfalse\tfalse\n" +
                 "http.net.connection.limit\tQDB_HTTP_NET_CONNECTION_LIMIT\t256\tdefault\tfalse\ttrue\n" +
                 "http.net.connection.queue.timeout\tQDB_HTTP_NET_CONNECTION_QUEUE_TIMEOUT\t5000\tdefault\tfalse\tfalse\n" +
+                "http.net.poll.block.idle\tQDB_HTTP_NET_POLL_BLOCK_IDLE\t2\tdefault\tfalse\tfalse\n" +
+                "http.net.poll.block.timeout\tQDB_HTTP_NET_POLL_BLOCK_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
                 "http.net.connection.timeout\tQDB_HTTP_NET_CONNECTION_TIMEOUT\t300000\tdefault\tfalse\tfalse\n" +
                 "http.net.idle.connection.timeout\tQDB_HTTP_NET_IDLE_CONNECTION_TIMEOUT\t300000\tdefault\tfalse\tfalse\n" +
                 "http.net.queued.connection.timeout\tQDB_HTTP_NET_QUEUED_CONNECTION_TIMEOUT\t5000\tdefault\tfalse\tfalse\n" +

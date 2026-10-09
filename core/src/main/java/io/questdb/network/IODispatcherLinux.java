@@ -28,6 +28,9 @@ import io.questdb.std.Misc;
 
 public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatcher<C> {
     private final Epoll epoll;
+    private final long pollBlockIdleNanos;
+    private final int pollBlockTimeoutMillis;
+    private long lastUsefulNanos;
     private boolean pendingAccept;
 
     public IODispatcherLinux(
@@ -36,6 +39,9 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
     ) {
         super(configuration, ioContextFactory);
         this.epoll = new Epoll(configuration.getEpollFacade(), configuration.getEventCapacity());
+        this.pollBlockTimeoutMillis = Math.max(0, configuration.getPollBlockTimeout());
+        this.pollBlockIdleNanos = Math.max(0, configuration.getPollBlockIdle()) * 1_000_000L;
+        this.lastUsefulNanos = System.nanoTime();
         registerListenerFd();
     }
 
@@ -108,6 +114,25 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
         }
         rearmEpoll(context, id, requestedOp);
         return false;
+    }
+
+    /**
+     * The poll's timeout: 0, to return at once, unless the dispatcher may block, see
+     * {@link IODispatcherConfiguration#getPollBlockTimeout()}. It may when it has found nothing to do
+     * for a while, no accept is pending, and every open connection is armed in the poll. A
+     * connection that is not is out with a worker, which hands it back through a queue that cannot
+     * wake the poll, so its next request would wait for the timeout. With every connection armed,
+     * what can need the dispatcher is a socket event, which wakes the poll, or a timer it checks on
+     * every pass (idle connections, heartbeats), which can wait for the timeout.
+     */
+    private int pollTimeoutMillis() {
+        if (pollBlockTimeoutMillis == 0 || pendingAccept || closed || getConnectionCount() != pending.size()) {
+            return 0;
+        }
+        if (System.nanoTime() - lastUsefulNanos < pollBlockIdleNanos) {
+            return 0;
+        }
+        return pollBlockTimeoutMillis;
     }
 
     private void processHeartbeats(int watermark, long timestamp) {
@@ -250,7 +275,7 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
 
         final long timestamp = clock.getTicks();
         boolean useful = processDisconnects(timestamp);
-        final int n = epoll.poll();
+        final int n = epoll.poll(useful ? 0 : pollTimeoutMillis());
         int watermark = pending.size();
         int offset = 0;
         if (n > 0 || pendingAccept) {
@@ -300,7 +325,13 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
             useful = true;
         }
 
-        return processRegistrations(timestamp) || useful;
+        if (processRegistrations(timestamp) || useful) {
+            if (pollBlockTimeoutMillis > 0) {
+                lastUsefulNanos = System.nanoTime();
+            }
+            return true;
+        }
+        return false;
     }
 
     @Override

@@ -96,6 +96,26 @@ public interface IODispatcherConfiguration {
 
     NetworkFacade getNetworkFacade();
 
+    /**
+     * How long, in milliseconds, the dispatcher must have found nothing to do before it may block
+     * in its poll, see {@link #getPollBlockTimeout()}.
+     */
+    default long getPollBlockIdle() {
+        return 2;
+    }
+
+    /**
+     * The longest, in milliseconds, an idle dispatcher blocks in its poll waiting for a socket
+     * event, instead of returning at once and leaving the worker to back off. A worker that backs
+     * off parks for up to its sleep timeout and only then sees a request, while one blocked in the
+     * poll wakes when the request arrives. The dispatcher blocks only once it has been idle for
+     * {@link #getPollBlockIdle()} and every connection it handed out has come back to it, so no
+     * connection waits to be re-armed while it blocks. 0 disables blocking (Linux only).
+     */
+    default int getPollBlockTimeout() {
+        return 0;
+    }
+
     default boolean getPeerNoLinger() {
         return false;
     }

@@ -764,6 +764,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpNetBindPort;
     private int httpNetConnectionLimit;
     private long httpNetConnectionQueueTimeout;
+    private long httpNetPollBlockIdle;
+    private int httpNetPollBlockTimeout;
     private int httpNetConnectionRcvBuf;
     private int httpNetConnectionSndBuf;
     private long httpNetConnectionTimeout;
@@ -1446,6 +1448,15 @@ public class PropServerConfiguration implements ServerConfiguration {
             // deprecated
             this.httpNetConnectionQueueTimeout = getMillis(properties, env, PropertyKey.HTTP_NET_QUEUED_CONNECTION_TIMEOUT, 5 * 1000L);
             this.httpNetConnectionQueueTimeout = getMillis(properties, env, PropertyKey.HTTP_NET_CONNECTION_QUEUE_TIMEOUT, this.httpNetConnectionQueueTimeout);
+            this.httpNetPollBlockIdle = getMillis(properties, env, PropertyKey.HTTP_NET_POLL_BLOCK_IDLE, 2);
+            if (httpNetPollBlockIdle < 0) {
+                throw new ServerConfigurationException(PropertyKey.HTTP_NET_POLL_BLOCK_IDLE.getPropertyPath() + " must not be negative");
+            }
+            final long pollBlockTimeout = getMillis(properties, env, PropertyKey.HTTP_NET_POLL_BLOCK_TIMEOUT, 10);
+            if (pollBlockTimeout < 0 || pollBlockTimeout > 1_000) {
+                throw new ServerConfigurationException(PropertyKey.HTTP_NET_POLL_BLOCK_TIMEOUT.getPropertyPath() + " must be between 0 and 1000 milliseconds");
+            }
+            this.httpNetPollBlockTimeout = (int) pollBlockTimeout;
 
             // deprecated
             this.httpNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_SND_BUF_SIZE, -1);
@@ -2401,6 +2412,11 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgSelectCacheRowCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_ROW_COUNT, Math.max(effectivePGWorkerCount, 4));
             }
             final int effectiveHttpWorkerCount = httpWorkerCount > 0 ? httpWorkerCount : networkPoolWorkerCount;
+            if (effectiveHttpWorkerCount < 2) {
+                // the worker blocked in the poll is no wake target for the pool's other work, so it
+                // needs a sibling that is
+                this.httpNetPollBlockTimeout = 0;
+            }
             this.httpFiberEnabled = getBoolean(properties, env, PropertyKey.HTTP_WORKER_FIBER_ENABLED, true);
             this.httpSqlCacheEnabled = getBoolean(properties, env, PropertyKey.HTTP_QUERY_CACHE_ENABLED, true);
             this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 32);
@@ -6656,6 +6672,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public String getPoolName() {
             return "http";
+        }
+
+        @Override
+        public long getPollBlockIdle() {
+            return httpNetPollBlockIdle;
+        }
+
+        @Override
+        public int getPollBlockTimeout() {
+            return httpNetPollBlockTimeout;
         }
 
         @Override
