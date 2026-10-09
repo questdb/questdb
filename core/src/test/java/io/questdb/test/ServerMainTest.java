@@ -1063,6 +1063,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.horizon.join.max.offsets\tQDB_CAIRO_SQL_HORIZON_JOIN_MAX_OFFSETS\t10000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.join.enabled\tQDB_CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.asof.join.enabled\tQDB_CAIRO_SQL_PARALLEL_ASOF_JOIN_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.asof.join.virtual.key.enabled\tQDB_CAIRO_SQL_ASOF_JOIN_VIRTUAL_KEY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.enabled\tQDB_CAIRO_SQL_PARALLEL_WINDOW_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.key.runs.enabled\tQDB_CAIRO_SQL_PARALLEL_WINDOW_KEY_RUNS_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.chain.enabled\tQDB_CAIRO_SQL_PARALLEL_WINDOW_CHAIN_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
@@ -1594,6 +1595,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 "query.timeout.sec\tQDB_QUERY_TIMEOUT_SEC\t60\tdefault\tfalse\tfalse\n" +
                 "qwp.browser.tls.termination.enabled\tQDB_QWP_BROWSER_TLS_TERMINATION_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                 "qwp.egress.compression.force.level\tQDB_QWP_EGRESS_COMPRESSION_FORCE_LEVEL\t0\tdefault\tfalse\ttrue\n" +
+                "qwp.egress.symbol.dense.max.keys\tQDB_QWP_EGRESS_SYMBOL_DENSE_MAX_KEYS\t262144\tdefault\tfalse\tfalse\n" +
                 "qwp.max.rows.per.table\tQDB_QWP_MAX_ROWS_PER_TABLE\t1000000\tdefault\tfalse\tfalse\n" +
                 "qwp.max.tables.per.connection\tQDB_QWP_MAX_TABLES_PER_CONNECTION\t10000\tdefault\tfalse\tfalse\n" +
                 "qwp.max.uncommitted.rows\tQDB_QWP_MAX_UNCOMMITTED_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
@@ -1697,6 +1699,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 "cairo.file.descriptor.cache.enabled\tQDB_CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                 "cairo.sql.jit.max.in.list.size.threshold\tQDB_CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD\t10\tdefault\tfalse\ttrue\n" +
                 "cairo.sql.jit.symbol.in.bitset.enabled\tQDB_CAIRO_SQL_JIT_SYMBOL_IN_BITSET_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                "cairo.sql.jit.symbol.empty.constant.enabled\tQDB_CAIRO_SQL_JIT_SYMBOL_EMPTY_CONSTANT_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                "cairo.sql.jit.scalar.subquery.enabled\tQDB_CAIRO_SQL_JIT_SCALAR_SUBQUERY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                 "cairo.sql.symbol.in.bitset.enabled\tQDB_CAIRO_SQL_SYMBOL_IN_BITSET_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                 "cairo.sql.symbol.in.bitset.max.keys\tQDB_CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS\t16777216\tdefault\tfalse\tfalse\n" +
                 "cairo.auto.scale.symbol.capacity\tQDB_CAIRO_AUTO_SCALE_SYMBOL_CAPACITY\ttrue\tdefault\tfalse\tfalse\n" +

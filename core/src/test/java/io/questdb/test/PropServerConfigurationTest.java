@@ -315,6 +315,8 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelTopKEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowJoinEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelAsOfJoinEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlAsOfJoinVirtualKeyEnabled());
+        Assert.assertEquals(262144, configuration.getCairoConfiguration().getQwpEgressSymbolDenseMaxKeys());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowMinMaxRewriteEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowKeyRunsEnabled());
@@ -364,6 +366,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryMaxPages());
         Assert.assertFalse(configuration.getCairoConfiguration().isSqlJitDebugEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlJitSymbolInBitsetEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlJitSymbolEmptyConstantEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlJitScalarSubQueryEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlSymbolInBitsetEnabled());
         Assert.assertEquals(16 * 1024 * 1024, configuration.getCairoConfiguration().getSqlSymbolInBitsetMaxKeys());
 
@@ -596,6 +600,22 @@ public class PropServerConfigurationTest {
             try (java.io.BufferedReader reader = java.nio.file.Files.newBufferedReader(path, java.nio.charset.StandardCharsets.UTF_8)) {
                 validateConfigKeys(reader, configFile, properties, validator);
             }
+        }
+    }
+
+    @Test
+    public void testQwpEgressSymbolDenseMaxKeys() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_EGRESS_SYMBOL_DENSE_MAX_KEYS.getPropertyPath(), "1000");
+        Assert.assertEquals(1000, newPropServerConfiguration(properties).getCairoConfiguration().getQwpEgressSymbolDenseMaxKeys());
+        properties.setProperty(PropertyKey.QWP_EGRESS_SYMBOL_DENSE_MAX_KEYS.getPropertyPath(), "0");
+        Assert.assertEquals(0, newPropServerConfiguration(properties).getCairoConfiguration().getQwpEgressSymbolDenseMaxKeys());
+        properties.setProperty(PropertyKey.QWP_EGRESS_SYMBOL_DENSE_MAX_KEYS.getPropertyPath(), "-1");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "qwp.egress.symbol.dense.max.keys must be 0 (off) or positive");
         }
     }
 
@@ -3407,6 +3427,8 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isSqlParallelTopKEnabled());
         Assert.assertFalse(configuration.isSqlParallelWindowJoinEnabled());
         Assert.assertFalse(configuration.isSqlParallelAsOfJoinEnabled());
+        Assert.assertFalse(configuration.isSqlAsOfJoinVirtualKeyEnabled());
+        Assert.assertEquals(0, configuration.getQwpEgressSymbolDenseMaxKeys());
         Assert.assertFalse(configuration.isSqlParallelWindowKeyRunsEnabled());
         Assert.assertFalse(configuration.isSqlParallelWindowChainEnabled());
         Assert.assertFalse(configuration.isSqlParallelWindowShardEnabled());
@@ -3446,6 +3468,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1, configuration.getSqlJitBindVarsMemoryMaxPages());
         Assert.assertTrue(configuration.isSqlJitDebugEnabled());
         Assert.assertFalse(configuration.isSqlJitSymbolInBitsetEnabled());
+        Assert.assertFalse(configuration.isSqlJitSymbolEmptyConstantEnabled());
+        Assert.assertFalse(configuration.isSqlJitScalarSubQueryEnabled());
         Assert.assertFalse(configuration.isSqlSymbolInBitsetEnabled());
         Assert.assertEquals(4096, configuration.getSqlSymbolInBitsetMaxKeys());
 

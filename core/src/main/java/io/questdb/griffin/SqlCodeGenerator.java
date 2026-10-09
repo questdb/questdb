@@ -76,9 +76,14 @@ import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.TernaryFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.bind.CompiledFilterScalarSubQuery;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
 import io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
@@ -159,6 +164,7 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.decimal.Decimal64LoaderFunctionFactory;
+import io.questdb.griffin.engine.functions.lt.AbstractScalarCursorFunction;
 import io.questdb.griffin.engine.functions.memoization.ArrayFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.BooleanFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.ByteFunctionMemoizer;
@@ -546,6 +552,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ObjectPool<IntList> intListPool = new ObjectPool<>(IntList::new, 4);
     private final MemoryCARW jitIRMem;
     private final CompiledFilterIRSerializer jitIRSerializer = new CompiledFilterIRSerializer();
+    // the scalar sub-queries of the filter being compiled, see bindScalarSubQueries()
+    private final ObjList<AbstractScalarCursorFunction> scalarSubQuerySources = new ObjList<>();
+    private final ObjList<CharSequence> scalarSubQueryTokens = new ObjList<>();
     private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     // this list is used to generate record sinks
     private final ListColumnFilter listColumnFilterA = new ListColumnFilter();
@@ -5143,6 +5152,37 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
+    // Whether target is function or one of its arguments, at any depth, through the function kinds
+    // whose arguments are known. An unknown kind answers false: the caller then declines.
+    private static boolean isReachableFunction(Function function, Function target) {
+        if (function == null) {
+            return false;
+        }
+        if (function == target) {
+            return true;
+        }
+        if (function instanceof UnaryFunction unary) {
+            return isReachableFunction(unary.getArg(), target);
+        }
+        if (function instanceof BinaryFunction binary) {
+            return isReachableFunction(binary.getLeft(), target) || isReachableFunction(binary.getRight(), target);
+        }
+        if (function instanceof TernaryFunction ternary) {
+            return isReachableFunction(ternary.getLeft(), target)
+                    || isReachableFunction(ternary.getCenter(), target)
+                    || isReachableFunction(ternary.getRight(), target);
+        }
+        if (function instanceof MultiArgFunction multiArg) {
+            final ObjList<Function> args = multiArg.args();
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (isReachableFunction(args.getQuick(i), target)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     /**
      * Appends {@code WHERE <filter>} to an Async Window chain (see {@link AsyncWindowStage}) as a
      * step the workers compute after the window, so that only the rows it keeps are output: the
@@ -5801,12 +5841,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         model.setWhereClause(null);
 
         final RecordMetadata filterCompileMetadata = factory.getMetadata();
+        // the scalar sub-queries this parse compiles, for the JIT filter, see bindScalarSubQueries();
+        // installed for this parse only (null for none), so no later parse of filterExpr replaces them
+        final ScalarSubQueryLinks scalarSubQueryLinks = configuration.isSqlJitScalarSubQueryEnabled()
+                && executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED
+                && hasSubQuery(filterExpr) ? new ScalarSubQueryLinks() : null;
+        final ScalarSubQueryLinks outerScalarSubQueryLinks = functionParser.setScalarSubQueryLinks(scalarSubQueryLinks);
         final Function filter;
         try {
             filter = compileBooleanFilter(filterExpr, filterCompileMetadata, executionContext);
         } catch (Throwable e) {
             Misc.free(factory);
             throw e;
+        } finally {
+            functionParser.setScalarSubQueryLinks(outerScalarSubQueryLinks);
         }
 
         if (filter.isConstant()) {
@@ -5874,10 +5922,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         int jitOptions;
                         Throwable jitScratchFailure = null;
                         try {
+                            // uncorrelated scalar sub-queries become bind variables of the compiled filter
+                            final ExpressionNode jitFilterExpr = bindScalarSubQueries(filterExpr, filter, scalarSubQueryLinks);
                             try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext, ORDER_ANY)) {
                                 final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
                                 jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
-                                jitOptions = jitIRSerializer.serialize(filterExpr, forceScalar, enableJitDebug, enableJitNullChecks);
+                                for (int i = 0, n = scalarSubQueryTokens.size(); i < n; i++) {
+                                    jitIRSerializer.addScalarSubQuery(scalarSubQueryTokens.getQuick(i), scalarSubQuerySources.getQuick(i));
+                                }
+                                jitOptions = jitIRSerializer.serialize(jitFilterExpr, forceScalar, enableJitDebug, enableJitNullChecks);
+                            } finally {
+                                scalarSubQueryTokens.clear();
+                                scalarSubQuerySources.clear();
                             }
 
                             compiledFilter = new CompiledFilter();
@@ -6951,7 +7007,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // ASOF hint is given and the serial plan would be the forward-scan Dense default or the
     // filtered back-scan: the #7423 small-master choice (Indexed / Memoized) is kept.
     // Returns null, owning nothing, when the join does not qualify. Otherwise the factory owns the
-    // master's and the slave's page-frame factories and the join metadata.
+    // master's and the slave's page-frame factories and the join metadata, and symbolShortCircuit
+    // is freed. On a throw the caller still owns symbolShortCircuit.
     private @Nullable RecordCursorFactory generateParallelAsOfJoin(
             IQueryModel model,
             RecordCursorFactory master,
@@ -6963,6 +7020,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             JoinRecordMetadata joinMetadata,
             SymbolShortCircuit symbolShortCircuit,
             long toleranceInterval,
+            boolean isVirtualKey,
             SqlExecutionContext executionContext
     ) throws SqlException {
         final boolean hasParallelHint = SqlHints.hasAsOfParallelHint(model, masterAlias, slaveAlias);
@@ -7122,11 +7180,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterFilter != null,
                     reduceTaskFactory,
                     workerCount,
-                    selectReason
+                    isVirtualKey ? selectReason + ", virtual key" : selectReason
             );
         } catch (Throwable th) {
+            // the caller frees symbolShortCircuit, as on any other throw
             Misc.freeObjList(perWorkerMasterFilters, th);
-            Misc.free(symbolShortCircuit, th);
             throw th;
         }
         // nothing below can fail
@@ -7151,6 +7209,242 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
         Misc.free(symbolShortCircuit);
         return factory;
+    }
+
+    // A non-keyed ASOF JOIN whose master and slave are each filtered by an equality on a SYMBOL
+    // column against the same constant - (... WHERE sym = 'AAPL') t ASOF JOIN
+    // (... WHERE sym = 'AAPL') q - joins exactly as the keyed ASOF JOIN ON (t.sym = q.sym) over the same
+    // two filtered sides: every master row has the key's value, and the slave rows that are left
+    // after the filter are exactly those with that value (NULL included: sym = NULL keeps the NULL
+    // rows on both sides, and the keyed join matches NULL with NULL). That keyed join can run as
+    // Async AsOf Join with the slave's filter as its slave key filter, so the "virtual key" makes the
+    // non-keyed join parallel. The key columns need not be projected: the join runs over the filters'
+    // bases, which hold them, and a projection on top restores the columns the join returns. The
+    // same bind variable on both sides (sym = $1) is recognised, but the parallel join declines it
+    // (a bind variable makes the slave key filter non-deterministic), so it stays serial.
+    // Returns null, owning nothing and changing nothing, when the join does not qualify or the
+    // parallel join declines; otherwise the returned factory owns the joinMetadata, the master's and
+    // the slave's bases.
+    private @Nullable RecordCursorFactory generateVirtualKeyAsOfJoin(
+            IQueryModel model,
+            RecordCursorFactory master,
+            RecordMetadata masterMetadata,
+            CharSequence masterAlias,
+            RecordCursorFactory slave,
+            RecordMetadata slaveMetadata,
+            CharSequence slaveAlias,
+            JoinRecordMetadata joinMetadata,
+            long toleranceInterval,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (!configuration.isSqlAsOfJoinVirtualKeyEnabled()) {
+            return null;
+        }
+        final IntList masterCrossIndex = master.isProjection() ? master.getColumnCrossIndex() : null;
+        final RecordCursorFactory masterFilterFactory = master.isProjection() ? master.getBaseFactory() : master;
+        if (master.isProjection() && masterCrossIndex == null) {
+            return null;
+        }
+        final IntList slaveCrossIndex = slave.isProjection() ? slave.getColumnCrossIndex() : null;
+        final RecordCursorFactory slaveFilterFactory = slave.isProjection() ? slave.getBaseFactory() : slave;
+        if (slave.isProjection() && slaveCrossIndex == null) {
+            return null;
+        }
+        if (masterFilterFactory == null || slaveFilterFactory == null
+                || masterFilterFactory.isProjection() || slaveFilterFactory.isProjection()
+                || !masterFilterFactory.supportsFilterStealing() || masterFilterFactory.getFilter() == null
+                || masterFilterFactory.getBaseFactory() == null || !masterFilterFactory.getBaseFactory().supportsPageFrameCursor()
+                || !slaveFilterFactory.supportsFilterStealing() || slaveFilterFactory.getFilter() == null
+                || slaveFilterFactory.getBaseFactory() == null || !slaveFilterFactory.getBaseFactory().supportsTimeFrameCursor()) {
+            return null;
+        }
+        final ExpressionNode slaveFilterExpr = slaveFilterFactory.getStealFilterExpr();
+        final ExpressionNode masterFilterExpr = masterFilterFactory.getStealFilterExpr();
+        if (slaveFilterExpr == null || masterFilterExpr == null) {
+            return null;
+        }
+        final RecordMetadata masterFilterMetadata = masterFilterFactory.getMetadata();
+        final RecordMetadata slaveFilterMetadata = slaveFilterFactory.getMetadata();
+        // the slave's filter is the key equality alone
+        final int slaveKeyIndex = symbolKeyEqualityColumn(slaveFilterExpr, slaveFilterMetadata);
+        if (slaveKeyIndex < 0) {
+            return null;
+        }
+        final ExpressionNode slaveValue = symbolKeyEqualityValue(slaveFilterExpr);
+        // the master's filter has the same equality among its top-level conjuncts
+        int masterKeyIndex = -1;
+        final ObjList<ExpressionNode> conjuncts = new ObjList<>();
+        collectAndConjuncts(masterFilterExpr, conjuncts);
+        for (int i = 0, n = conjuncts.size(); i < n; i++) {
+            final ExpressionNode conjunct = conjuncts.getQuick(i);
+            final int index = symbolKeyEqualityColumn(conjunct, masterFilterMetadata);
+            if (index >= 0 && isSameKeyValue(symbolKeyEqualityValue(conjunct), slaveValue)) {
+                masterKeyIndex = index;
+                break;
+            }
+        }
+        if (masterKeyIndex < 0) {
+            return null;
+        }
+        // the parallel join, keyed on the two columns, over the filters
+        listColumnFilterA.clear();
+        listColumnFilterA.add(slaveKeyIndex + 1);
+        listColumnFilterB.clear();
+        listColumnFilterB.add(masterKeyIndex + 1);
+        final boolean projected = masterCrossIndex != null || slaveCrossIndex != null;
+        SymbolShortCircuit symbolShortCircuit = null;
+        JoinRecordMetadata innerJoinMetadata = null;
+        final RecordCursorFactory parallelJoin;
+        try {
+            symbolShortCircuit = createSymbolShortCircuit(masterFilterMetadata, slaveFilterMetadata, false);
+            innerJoinMetadata = projected
+                    ? createJoinMetadata(masterAlias, masterFilterMetadata, slaveAlias, slaveFilterMetadata)
+                    : joinMetadata;
+            asOfJoinRowEstimates.of(masterFilterFactory, slaveFilterFactory, executionContext);
+            parallelJoin = generateParallelAsOfJoin(
+                    model,
+                    masterFilterFactory,
+                    masterFilterMetadata,
+                    masterAlias,
+                    slaveFilterFactory,
+                    slaveFilterMetadata,
+                    slaveAlias,
+                    innerJoinMetadata,
+                    symbolShortCircuit,
+                    toleranceInterval,
+                    true,
+                    executionContext
+            );
+        } catch (Throwable th) {
+            Misc.free(symbolShortCircuit, th);
+            if (projected) {
+                Misc.free(innerJoinMetadata, th);
+            }
+            throw th;
+        } finally {
+            listColumnFilterA.clear();
+            listColumnFilterB.clear();
+        }
+        if (parallelJoin == null) {
+            Misc.free(symbolShortCircuit);
+            if (projected) {
+                Misc.free(innerJoinMetadata);
+            }
+            return null;
+        }
+        if (!projected) {
+            return parallelJoin;
+        }
+        // the columns of the non-keyed join: the master's projection, then the slave's
+        final int masterColumnCount = masterMetadata.getColumnCount();
+        final int innerMasterColumnCount = masterFilterMetadata.getColumnCount();
+        final IntList crossIndex = new IntList(masterColumnCount + slaveMetadata.getColumnCount());
+        for (int i = 0; i < masterColumnCount; i++) {
+            crossIndex.add(masterCrossIndex != null ? masterCrossIndex.getQuick(i) : i);
+        }
+        for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
+            crossIndex.add(innerMasterColumnCount + (slaveCrossIndex != null ? slaveCrossIndex.getQuick(i) : i));
+        }
+        try {
+            return new SelectedRecordCursorFactory(joinMetadata, crossIndex, parallelJoin, true);
+        } catch (Throwable th) {
+            Misc.free(parallelJoin, th);
+            throw th;
+        }
+    }
+
+    // Whether two key equality values are the same value at every execution: the same constant
+    // (NULL included) or the same bind variable.
+    private static boolean isSameKeyValue(ExpressionNode a, ExpressionNode b) {
+        return a != null && b != null && a.type == b.type
+                && (a.type == CONSTANT || a.type == BIND_VARIABLE)
+                && Chars.equals(a.token, b.token);
+    }
+
+    // The column of a node "col = value" or "value = col", where col is a SYMBOL column of
+    // metadata with a static symbol table and value is a constant or a bind variable; -1 otherwise.
+    private static int symbolKeyEqualityColumn(ExpressionNode node, RecordMetadata metadata) {
+        if (node == null || node.type != OPERATION || node.paramCount != 2 || !Chars.equals(node.token, '=')
+                || node.lhs == null || node.rhs == null) {
+            return -1;
+        }
+        final ExpressionNode column;
+        final ExpressionNode value;
+        if (node.lhs.type == LITERAL) {
+            column = node.lhs;
+            value = node.rhs;
+        } else {
+            column = node.rhs;
+            value = node.lhs;
+        }
+        if (column.type != LITERAL || (value.type != CONSTANT && value.type != BIND_VARIABLE)) {
+            return -1;
+        }
+        // a quoted constant or NULL: an unquoted number would be cast to a symbol by text
+        if (value.type == CONSTANT && !Chars.isQuoted(value.token) && !SqlKeywords.isNullKeyword(value.token)) {
+            return -1;
+        }
+        final int index = metadata.getColumnIndexQuiet(column.token);
+        if (index < 0 || metadata.getColumnType(index) != ColumnType.SYMBOL || !metadata.isSymbolTableStatic(index)) {
+            return -1;
+        }
+        return index;
+    }
+
+    // The value side of a SYMBOL key equality node, see symbolKeyEqualityColumn().
+    private static ExpressionNode symbolKeyEqualityValue(ExpressionNode node) {
+        return node.lhs.type == LITERAL ? node.rhs : node.lhs;
+    }
+
+    /**
+     * The filter the JIT compiles: {@code filterExpr}, or a copy of it in which each scalar sub-query
+     * operand of a comparison that {@code filter} evaluates once per execution (an
+     * {@link AbstractScalarCursorFunction} of this very filter) is a BIND_VARIABLE node, whose value
+     * {@link CompiledFilterScalarSubQuery} links to that function's (cairo.sql.jit.scalar.subquery.enabled).
+     * The tokens and sources go to {@link #scalarSubQueryTokens} and {@link #scalarSubQuerySources}.
+     * Any other sub-query stays a QUERY node, which the serializer declines, as before.
+     */
+    private ExpressionNode bindScalarSubQueries(ExpressionNode filterExpr, Function filter, @Nullable ScalarSubQueryLinks links) {
+        scalarSubQueryTokens.clear();
+        scalarSubQuerySources.clear();
+        if (links == null || links.isEmpty()) {
+            return filterExpr;
+        }
+        final ExpressionNode copy = deepClone(expressionNodePool, filterExpr);
+        bindScalarSubQueries0(filterExpr, copy, filter, links);
+        return scalarSubQueryTokens.size() > 0 ? copy : filterExpr;
+    }
+
+    private void bindScalarSubQueries0(
+            @Nullable ExpressionNode node,
+            @Nullable ExpressionNode copy,
+            Function filter,
+            ScalarSubQueryLinks links
+    ) {
+        if (node == null || copy == null) {
+            return;
+        }
+        if (node.type == QUERY) {
+            final AbstractScalarCursorFunction source = links.find(node);
+            if (source != null && isReachableFunction(filter, source)) {
+                final String token = "\0scalar sub-query " + scalarSubQueryTokens.size();
+                copy.type = BIND_VARIABLE;
+                copy.token = token;
+                copy.queryModel = null;
+                copy.paramCount = 0;
+                copy.lhs = null;
+                copy.rhs = null;
+                copy.args.clear();
+                scalarSubQueryTokens.add(token);
+                scalarSubQuerySources.add(source);
+            }
+            return;
+        }
+        bindScalarSubQueries0(node.lhs, copy.lhs, filter, links);
+        bindScalarSubQueries0(node.rhs, copy.rhs, filter, links);
+        for (int i = 0, n = Math.min(node.args.size(), copy.args.size()); i < n; i++) {
+            bindScalarSubQueries0(node.args.getQuick(i), copy.args.getQuick(i), filter, links);
+        }
     }
 
     private RecordCursorFactory generateJoinAsof(
@@ -7190,20 +7484,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int joinColumnSplit = masterMetadata.getColumnCount();
                 JoinContext slaveContext = slaveModel.getJoinContext();
                 if (!hasLinearHint) {
-                    asOfJoinRowEstimates.of(master, slave, executionContext);
-                    final RecordCursorFactory parallelJoin = generateParallelAsOfJoin(
-                            model,
-                            master,
-                            masterMetadata,
-                            masterAlias,
-                            slave,
-                            slaveMetadata,
-                            slaveAlias,
-                            joinMetadata,
-                            symbolShortCircuit,
-                            toleranceInterval,
-                            executionContext
-                    );
+                    final RecordCursorFactory parallelJoin;
+                    try {
+                        asOfJoinRowEstimates.of(master, slave, executionContext);
+                        parallelJoin = generateParallelAsOfJoin(
+                                model,
+                                master,
+                                masterMetadata,
+                                masterAlias,
+                                slave,
+                                slaveMetadata,
+                                slaveAlias,
+                                joinMetadata,
+                                symbolShortCircuit,
+                                toleranceInterval,
+                                false,
+                                executionContext
+                        );
+                    } catch (Throwable th) {
+                        Misc.free(symbolShortCircuit, th);
+                        throw th;
+                    }
                     if (parallelJoin != null) {
                         return parallelJoin;
                     }
@@ -7517,6 +7818,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             // reaching this point means the join is non-keyed
+            if (!hasLinearHint && listColumnFilterA.size() == 0 && listColumnFilterB.size() == 0) {
+                final RecordCursorFactory virtualKeyJoin = generateVirtualKeyAsOfJoin(
+                        model,
+                        master,
+                        masterMetadata,
+                        masterAlias,
+                        slave,
+                        slaveMetadata,
+                        slaveAlias,
+                        joinMetadata,
+                        toleranceInterval,
+                        executionContext
+                );
+                if (virtualKeyJoin != null) {
+                    return virtualKeyJoin;
+                }
+            }
             if (!hasLinearHint) {
                 if (slave.supportsTimeFrameCursor()) {
                     return new AsOfJoinNoKeyFastRecordCursorFactory(

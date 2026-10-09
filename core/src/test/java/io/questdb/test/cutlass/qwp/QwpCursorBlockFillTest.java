@@ -31,6 +31,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.qwp.codec.QwpEgressColumnDef;
 import io.questdb.cutlass.qwp.codec.QwpEgressConnSymbolDict;
 import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
+import io.questdb.cutlass.qwp.codec.QwpSymbolKeyMap;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressProcessorState;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -214,6 +216,96 @@ public class QwpCursorBlockFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolDenseKeyMapMatchesHashMap() throws Exception {
+        assertMemoryLeak(() -> {
+            final Rnd driver = TestUtils.generateRandom(LOG);
+            for (int round = 0; round < 3; round++) {
+                sqlExecutionContext.changePageFrameSizes(1, 32 + driver.nextInt(2000));
+                sqlExecutionContext.setRandom(new Rnd(driver.nextLong(), driver.nextLong()));
+                final int rows = 3_000 + driver.nextInt(20_000);
+                final int keys = 50 + driver.nextInt(3000);
+                // s0: keys 0..keys-1 in order, then scattered, so that a large key arrives before
+                // smaller new ones; s1: a high-cardinality column in random order; s2: a few keys
+                execute("drop table if exists m");
+                execute("create table m as (select " +
+                        "case when x <= " + keys + " then 'k' || x else 'k' || ((x * 104729) % " + keys + " + 1) end::symbol s0, " +
+                        "rnd_symbol(" + (100 + driver.nextInt(5000)) + ", 1, " + (1 + driver.nextInt(30)) + ", " + driver.nextInt(10) + ") s1, " +
+                        "rnd_symbol('p', 'q', null) s2, x l, timestamp_sequence(0, 1000000) ts from long_sequence(" + rows + ")) timestamp(ts) partition by hour");
+                final String[] queries = {
+                        "select * from m",
+                        "select s0, l from m where l > " + keys,
+                        "select s1, l from m",
+                        "select s2, s0, s1 from m where l % 3 <> 1",
+                        "select s0, s1, l from m order by l desc",
+                };
+                for (String query : queries) {
+                    for (int it = 0; it < 4; it++) {
+                        final long a = driver.nextLong();
+                        final long b = driver.nextLong();
+                        final long blockSeed = driver.nextLong();
+                        // the hash map for every key, row by row
+                        final List<byte[]> reference = stream(query, a, b, false, blockSeed, null, 0);
+                        final int cap = switch (driver.nextInt(4)) {
+                            case 0 -> 1 + driver.nextInt(64);
+                            case 1 -> 1 + driver.nextInt(keys + 10);
+                            case 2 -> 0;
+                            default -> QwpResultBatchBuffer.DEFAULT_SYMBOL_DENSE_MAX_KEYS;
+                        };
+                        for (boolean blocks : new boolean[]{false, true}) {
+                            final List<byte[]> batches = stream(query, a, b, blocks, blockSeed, null, cap);
+                            for (int i = 0, n = Math.min(reference.size(), batches.size()); i < n; i++) {
+                                if (!Arrays.equals(reference.get(i), batches.get(i))) {
+                                    Assert.fail(query + ": cap " + cap + ", blocks " + blocks + ": batch " + i + " of " + reference.size()
+                                            + " differs at byte " + Arrays.mismatch(reference.get(i), batches.get(i)));
+                                }
+                            }
+                            Assert.assertEquals(query + ": cap " + cap + ", blocks " + blocks + ": batch count", reference.size(), batches.size());
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolDenseKeyMapReleasedAcrossQueriesAndConnections() throws Exception {
+        assertMemoryLeak(() -> {
+            // 270 000 distinct symbols: 'k' || x has the key x - 1
+            execute("create table big as (select ('k' || x)::symbol s, x l, timestamp_sequence(0, 1000) ts " +
+                    "from long_sequence(270000)) timestamp(ts) partition by day");
+            for (boolean blocks : new boolean[]{false, true}) {
+                try (QwpEgressProcessorState state = new QwpEgressProcessorState(configuration)) {
+                    final QwpResultBatchBuffer buffer = state.getBatchBuffer();
+                    // one row with a rare large key grows the column's array to the cap: 1 MiB
+                    fillOneQuery(buffer, state.getConnSymbolDict(), "select s, l from big where l = 262001", blocks);
+                    Assert.assertEquals(QwpResultBatchBuffer.DEFAULT_SYMBOL_DENSE_MAX_KEYS, buffer.getSymbolDenseCapacity(0));
+                    // the next query on the connection does not keep it
+                    buffer.resetForNewQuery();
+                    Assert.assertEquals(0, buffer.getSymbolDenseCapacity(0));
+                    // an empty query in between keeps nothing either
+                    fillOneQuery(buffer, state.getConnSymbolDict(), "select s, l from big where l < 0", blocks);
+                    buffer.resetForNewQuery();
+                    Assert.assertEquals(0, buffer.getSymbolDenseCapacity(0));
+                    // small keys: a small array, kept from one query to the next
+                    fillOneQuery(buffer, state.getConnSymbolDict(), "select s, l from big where l <= 100", blocks);
+                    Assert.assertEquals(128, buffer.getSymbolDenseCapacity(0));
+                    buffer.resetForNewQuery();
+                    Assert.assertEquals(128, buffer.getSymbolDenseCapacity(0));
+                    Assert.assertTrue(buffer.getSymbolDenseCapacity(0) <= QwpSymbolKeyMap.RETAINED_DENSE_CAPACITY);
+                    // the large key again, then the connection ends: the pooled state keeps no array
+                    fillOneQuery(buffer, state.getConnSymbolDict(), "select s, l from big where l = 262001", blocks);
+                    Assert.assertEquals(QwpResultBatchBuffer.DEFAULT_SYMBOL_DENSE_MAX_KEYS, buffer.getSymbolDenseCapacity(0));
+                    state.clear();
+                    Assert.assertEquals(0, buffer.getSymbolDenseCapacity(0));
+                    // the next connection on the pooled state streams as before
+                    fillOneQuery(buffer, state.getConnSymbolDict(), "select s, l from big where l in (5, 262001)", blocks);
+                    Assert.assertEquals(QwpResultBatchBuffer.DEFAULT_SYMBOL_DENSE_MAX_KEYS, buffer.getSymbolDenseCapacity(0));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testStatefulProjectionsKeepRowOrder() throws Exception {
         assertMemoryLeak(() -> {
             final Rnd driver = TestUtils.generateRandom(LOG);
@@ -242,6 +334,27 @@ public class QwpCursorBlockFillTest extends AbstractCairoTest {
         return defs;
     }
 
+    // streams one query's rows into the buffer, a single batch, as the egress loop does
+    private static void fillOneQuery(QwpResultBatchBuffer buffer, QwpEgressConnSymbolDict dict, String query, boolean blocks) throws Exception {
+        try (RecordCursorFactory factory = select(query)) {
+            final ObjList<QwpEgressColumnDef> defs = columnDefs(factory.getMetadata());
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                buffer.beginBatch(defs, cursor, dict);
+                while (true) {
+                    final RecordBlock block = blocks && cursor.supportsRecordBlocks() ? cursor.peekRecordBlock(1000) : null;
+                    if (block != null) {
+                        cursor.skipRecordBlock(buffer.appendBlock(block, Integer.MAX_VALUE));
+                    } else if (cursor.hasNext()) {
+                        buffer.appendRow(cursor.getRecord());
+                    } else {
+                        break;
+                    }
+                }
+                buffer.reset();
+            }
+        }
+    }
+
     private static List<byte[]> stream(
             String query,
             long s0,
@@ -249,6 +362,18 @@ public class QwpCursorBlockFillTest extends AbstractCairoTest {
             boolean blocks,
             long blockSeed,
             long[] blockRowsOut
+    ) throws Exception {
+        return stream(query, s0, s1, blocks, blockSeed, blockRowsOut, QwpResultBatchBuffer.DEFAULT_SYMBOL_DENSE_MAX_KEYS);
+    }
+
+    private static List<byte[]> stream(
+            String query,
+            long s0,
+            long s1,
+            boolean blocks,
+            long blockSeed,
+            long[] blockRowsOut,
+            int symbolDenseMaxKeys
     ) throws Exception {
         final List<byte[]> batches = new ArrayList<>();
         // the batch caps and budgets come from the same seed in both runs
@@ -261,6 +386,7 @@ public class QwpCursorBlockFillTest extends AbstractCairoTest {
                 QwpResultBatchBuffer buffer = new QwpResultBatchBuffer();
                 QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict()
         ) {
+            buffer.setSymbolDenseMaxKeys(symbolDenseMaxKeys);
             final ObjList<QwpEgressColumnDef> defs = columnDefs(factory.getMetadata());
             sqlExecutionContext.setRandom(new Rnd(s0 ^ 0x5DEECE66DL, s1 ^ 0xB));
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -285,7 +411,9 @@ public class QwpCursorBlockFillTest extends AbstractCairoTest {
                                 final int taken = buffer.appendBlock(block, budget);
                                 cursor.skipRecordBlock(taken);
                                 rowsToAdd -= taken;
-                                blockRowsOut[0] += taken;
+                                if (blockRowsOut != null) {
+                                    blockRowsOut[0] += taken;
+                                }
                             } else if (hasMore = cursor.hasNext()) {
                                 buffer.appendRow(cursor.getRecord());
                                 rowsToAdd--;

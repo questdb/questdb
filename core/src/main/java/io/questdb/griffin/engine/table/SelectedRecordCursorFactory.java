@@ -57,6 +57,7 @@ import org.jetbrains.annotations.Nullable;
 public final class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final IntList columnCrossIndex;
+    private final boolean ownsMetadata;
     private final SelectedRecordCursor cursor;
     private final boolean needsProjection;
     private SelectedPageFrameCursor pageFrameCursor;
@@ -65,9 +66,18 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     private SelectedTimeFrameCursor timeFrameCursor;
 
     public SelectedRecordCursorFactory(RecordMetadata metadata, IntList columnCrossIndex, RecordCursorFactory base) {
+        this(metadata, columnCrossIndex, base, false);
+    }
+
+    /**
+     * @param ownsMetadata whether close() frees {@code metadata}, which must then be Closeable: a
+     *                     join's metadata, when this projection is the factory the join's caller gets
+     */
+    public SelectedRecordCursorFactory(RecordMetadata metadata, IntList columnCrossIndex, RecordCursorFactory base, boolean ownsMetadata) {
         super(metadata);
         this.base = base;
         this.columnCrossIndex = columnCrossIndex;
+        this.ownsMetadata = ownsMetadata;
         this.cursor = new SelectedRecordCursor(columnCrossIndex, base.recordCursorSupportsRandomAccess());
         // True when the cursor must wrap its base to expose only the projected columns.
         // isCrossedIndex covers reorder; the size check covers drop-only-with-identity-mapping
@@ -322,6 +332,9 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     protected void _close() {
         base.close();
         Misc.clear(sharedCursors);
+        if (ownsMetadata) {
+            Misc.freeIfCloseable(getMetadata());
+        }
     }
 
     // This wrapper handles column remapping for ConcurrentTimeFrameCursor when a

@@ -39,7 +39,6 @@ import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpGorillaEncoder;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -48,6 +47,8 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Utf8Sequence;
+
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 
@@ -63,6 +64,8 @@ import java.util.Arrays;
  * buffers grow to the maximum size observed and never shrink.
  */
 public class QwpResultBatchBuffer implements QuietCloseable {
+    // default of qwp.egress.symbol.dense.max.keys: up to 1 MiB of ids per SYMBOL column
+    public static final int DEFAULT_SYMBOL_DENSE_MAX_KEYS = 1 << 18;
 
     private static final QwpEgressColumnDef[] EMPTY_DEFS = new QwpEgressColumnDef[0];
     private static final int[] EMPTY_INTS = new int[0];
@@ -131,6 +134,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     private int startRow;
     // SYMBOL columns of the current schema, filled first by appendBlock
     private int symbolColumnCount;
+    private int symbolDenseMaxKeys = DEFAULT_SYMBOL_DENSE_MAX_KEYS;
     private SymbolTable[] symbolTablesArr = EMPTY_SYMBOL_TABLES;
     private byte[] wireTypesArr = EMPTY_WIRE_TYPES;
 
@@ -505,7 +509,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         this.batchDeltaStart = connDict.size();
         this.batchDeltaWireBytesAtStart = connDict.getTotalWireBytes();
         while (scratches.size() < columnCount) {
-            scratches.add(new QwpColumnScratch());
+            scratches.add(new QwpColumnScratch(symbolDenseMaxKeys));
         }
         if (defsArr.length < columnCount) {
             int cap = Math.max(columnCount, defsArr.length * 2);
@@ -687,6 +691,26 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         return physicalRowCount - startRow;
     }
 
+    /**
+     * @return the length, in keys, of the column's symbol key -> connection id array; 0 for a
+     * column the buffer has no scratch for
+     */
+    @TestOnly
+    public int getSymbolDenseCapacity(int column) {
+        return column < scratches.size() ? scratches.getQuick(column).connKeyToConnId.getDenseCapacity() : 0;
+    }
+
+    /**
+     * The connection ended: clears the per-column native-key -> connId caches and drops their
+     * key-indexed arrays, which the pooled connection state would otherwise keep for the next
+     * connection.
+     */
+    public void releaseConnKeyMaps() {
+        for (int i = 0, n = scratches.size(); i < n; i++) {
+            scratches.getQuick(i).releaseConnKeyMap();
+        }
+    }
+
     public void reset() {
         for (int i = 0, n = scratches.size(); i < n; i++) {
             scratches.getQuick(i).beginBatch(null);
@@ -734,6 +758,19 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         }
         physicalRowCount = 0;
         startRow = 0;
+    }
+
+    /**
+     * Sets how many native symbol keys of a SYMBOL column are mapped to connection ids by an array
+     * rather than a hash map: keys below it (see {@link QwpSymbolKeyMap}). 0 maps every key by the
+     * hash map. The connection ids, and so the wire bytes, are the same either way. Only between
+     * queries.
+     */
+    public void setSymbolDenseMaxKeys(int symbolDenseMaxKeys) {
+        this.symbolDenseMaxKeys = symbolDenseMaxKeys;
+        for (int i = 0, n = scratches.size(); i < n; i++) {
+            scratches.getQuick(i).connKeyToConnId.setDenseMaxKeys(symbolDenseMaxKeys);
+        }
     }
 
     /**
@@ -1090,7 +1127,9 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             int dictBudgetWireBytes
     ) {
         scratch.reserveSymbolRows(rows);
-        final IntIntHashMap k2c = scratch.connKeyToConnId;
+        final QwpSymbolKeyMap k2c = scratch.connKeyToConnId;
+        // re-read after every put(), which may grow the array
+        int[] dense = k2c.dense;
         int lastKey = SymbolTable.VALUE_IS_NULL;
         int lastConnId = -1;
         for (int r = 0; r < rows; r++) {
@@ -1105,13 +1144,14 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 continue;
             }
             lastKey = key;
-            final int mapIdx = k2c.keyIndex(key);
-            if (mapIdx < 0) {
-                lastConnId = k2c.valueAt(mapIdx);
+            final int connId = key >= 0 && key < dense.length ? dense[key] : k2c.getSlow(key);
+            if (connId != QwpSymbolKeyMap.NO_ID) {
+                lastConnId = connId;
                 scratch.appendSymbolConnIdReserved(lastConnId);
             } else {
                 lastConnId = connDict.addEntry(st.valueOf(key));
-                k2c.putAt(mapIdx, key, lastConnId);
+                k2c.put(key, lastConnId);
+                dense = k2c.dense;
                 scratch.appendSymbolConnIdReserved(lastConnId);
                 if (currentBatchDeltaWireBytes() > dictBudgetWireBytes) {
                     return r + 1;
@@ -1364,17 +1404,14 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             scratch.appendNull();
             return -1;
         } else {
-            IntIntHashMap k2c = scratch.connKeyToConnId;
-            int mapIdx = k2c.keyIndex(key);
-            int connId;
-            if (mapIdx < 0) {
-                connId = k2c.valueAt(mapIdx);
-            } else {
+            final QwpSymbolKeyMap k2c = scratch.connKeyToConnId;
+            int connId = k2c.get(key);
+            if (connId == QwpSymbolKeyMap.NO_ID) {
                 // First sight of this native key on this connection. Encode the
                 // UTF-8 bytes once into the shared connection dict and remember
                 // the assigned conn-id. Subsequent rows hit the cached branch.
                 connId = connDict.addEntry(st.valueOf(key));
-                k2c.putAt(mapIdx, key, connId);
+                k2c.put(key, connId);
             }
             scratch.appendSymbolConnId(connId);
             return connId;
@@ -1392,7 +1429,9 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         final long address = blockSymbolAddresses[2 * s];
         final long stride = blockSymbolAddresses[2 * s + 1];
         final long rowIndexes = blockSymbolRowIndexes[s];
-        final IntIntHashMap k2c = scratchesArr[blockSymbolColumns[s]].connKeyToConnId;
+        final QwpSymbolKeyMap k2c = scratchesArr[blockSymbolColumns[s]].connKeyToConnId;
+        // adds nothing, so the array does not change in the loop
+        final int[] dense = k2c.dense;
         int[] ids = blockSymbolIds[s];
         if (ids == null || ids.length < hi - lo) {
             ids = blockSymbolIds[s] = new int[Math.max(hi - lo, 1024)];
@@ -1408,13 +1447,13 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 } else if (key == lastKey) {
                     ids[r - lo] = lastConnId;
                 } else {
-                    final int mapIdx = k2c.keyIndex(key);
-                    if (mapIdx >= 0) {
+                    final int connId = key >= 0 && key < dense.length ? dense[key] : k2c.getSlow(key);
+                    if (connId == QwpSymbolKeyMap.NO_ID) {
                         return r;
                     }
                     lastKey = key;
-                    lastConnId = k2c.valueAt(mapIdx);
-                    ids[r - lo] = lastConnId;
+                    lastConnId = connId;
+                    ids[r - lo] = connId;
                 }
             }
             return hi;

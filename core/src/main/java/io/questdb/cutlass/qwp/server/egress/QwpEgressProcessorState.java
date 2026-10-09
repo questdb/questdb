@@ -80,6 +80,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     public static volatile int defaultMaxDictEntriesOverrideForTest = -1;
     @TestOnly
     public static volatile int defaultMaxDictHeapBytesOverrideForTest = -1;
+    // Test-only: when non-negative, replaces qwp.egress.symbol.dense.max.keys for new connections.
+    @TestOnly
+    public static volatile int symbolDenseMaxKeysOverrideForTest = -1;
     private final QwpResultBatchBuffer batchBuffer = new QwpResultBatchBuffer();
     private final BindVariableServiceImpl bindVariableService;
     private final CairoConfiguration cairoConfiguration;
@@ -296,6 +299,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     public QwpEgressProcessorState(CairoConfiguration cairoConfiguration) {
         this.cairoConfiguration = cairoConfiguration;
         this.bindVariableService = new BindVariableServiceImpl(cairoConfiguration);
+        final int symbolDenseMaxKeysOverride = symbolDenseMaxKeysOverrideForTest;
+        batchBuffer.setSymbolDenseMaxKeys(symbolDenseMaxKeysOverride >= 0
+                ? symbolDenseMaxKeysOverride
+                : cairoConfiguration.getQwpEgressSymbolDenseMaxKeys());
         // Pick up any test-only default overrides active at construction time
         // so tests that need tiny soft caps don't have to reach into every
         // per-connection state instance.
@@ -513,6 +520,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         negotiatedVersion = QwpConstants.VERSION;
         maxBatchRows = 0;  // reset to "unset"; will be set per-connection in onHeadersReady
         batchBuffer.reset();
+        // the pooled state outlives the connection: drop the symbol key -> id arrays a query grew
+        batchBuffer.releaseConnKeyMaps();
         bindVariableService.clear();
         // Connection dropped/reset -- client cannot reuse the delta dict on a
         // new connection so we discard it too. On a clean close() this is idempotent.

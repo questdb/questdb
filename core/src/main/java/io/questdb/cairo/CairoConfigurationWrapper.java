@@ -990,6 +990,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getQwpEgressSymbolDenseMaxKeys() {
+        return getDelegate().getQwpEgressSymbolDenseMaxKeys();
+    }
+
+    @Override
     public @NotNull QwpServerInfoProvider getQwpServerInfoProvider() {
         return getDelegate().getQwpServerInfoProvider();
     }
@@ -1927,6 +1932,21 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlJitSymbolInBitsetEnabled() {
         return getDelegate().isSqlJitSymbolInBitsetEnabled();
+    }
+
+    @Override
+    public boolean isSqlAsOfJoinVirtualKeyEnabled() {
+        return getDelegate().isSqlAsOfJoinVirtualKeyEnabled();
+    }
+
+    @Override
+    public boolean isSqlJitScalarSubQueryEnabled() {
+        return getDelegate().isSqlJitScalarSubQueryEnabled();
+    }
+
+    @Override
+    public boolean isSqlJitSymbolEmptyConstantEnabled() {
+        return getDelegate().isSqlJitSymbolEmptyConstantEnabled();
     }
 
     @Override

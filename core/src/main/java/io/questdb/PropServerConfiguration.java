@@ -53,6 +53,7 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
@@ -482,6 +483,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean queryWithinLatestByOptimisationEnabled;
     private final boolean qwpBrowserTlsTerminationEnabled;
     private final int qwpEgressForcedZstdLevel;
+    private final int qwpEgressSymbolDenseMaxKeys;
     private final int qwpMaxRowsPerTable;
     private final int qwpMaxTablesPerConnection;
     private final long qwpMaxUncommittedRows;
@@ -518,6 +520,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlAsOfJoinEvacuationThreshold;
     private final int sqlAsOfJoinLookahead;
     private final int sqlAsOfJoinShortCircuitCacheCapacity;
+    private final boolean sqlAsOfJoinVirtualKeyEnabled;
     private final int sqlBindVariablePoolSize;
     private final int sqlCharacterStoreCapacity;
     private final int sqlCharacterStoreSequencePoolCapacity;
@@ -560,6 +563,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlJitIRMemoryMaxPages;
     private final int sqlJitIRMemoryPageSize;
     private final int sqlJitMaxInListSizeThreshold;
+    private final boolean sqlJitScalarSubQueryEnabled;
+    private final boolean sqlJitSymbolEmptyConstantEnabled;
     private final boolean sqlJitSymbolInBitsetEnabled;
     private final boolean sqlSymbolInBitsetEnabled;
     private final int sqlSymbolInBitsetMaxKeys;
@@ -1887,6 +1892,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlJitDebugEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_JIT_DEBUG_ENABLED, false);
             this.sqlJitMaxInListSizeThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD, 10);
             this.sqlJitSymbolInBitsetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_JIT_SYMBOL_IN_BITSET_ENABLED, true);
+            this.sqlAsOfJoinVirtualKeyEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_VIRTUAL_KEY_ENABLED, true);
+            this.sqlJitScalarSubQueryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_JIT_SCALAR_SUBQUERY_ENABLED, true);
+            this.sqlJitSymbolEmptyConstantEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_JIT_SYMBOL_EMPTY_CONSTANT_ENABLED, true);
             this.sqlSymbolInBitsetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_ENABLED, true);
             this.sqlSymbolInBitsetMaxKeys = getInt(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS, 16 * 1024 * 1024);
 
@@ -2102,6 +2110,17 @@ public class PropServerConfiguration implements ServerConfiguration {
                                 + " must be 0 (off) or in ["
                                 + QwpConstants.COMPRESSION_ZSTD_MIN_LEVEL + ", "
                                 + QwpConstants.COMPRESSION_ZSTD_MAX_LEVEL + "]"
+                );
+            }
+            this.qwpEgressSymbolDenseMaxKeys = getInt(
+                    properties,
+                    env,
+                    PropertyKey.QWP_EGRESS_SYMBOL_DENSE_MAX_KEYS,
+                    QwpResultBatchBuffer.DEFAULT_SYMBOL_DENSE_MAX_KEYS
+            );
+            if (qwpEgressSymbolDenseMaxKeys < 0) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_EGRESS_SYMBOL_DENSE_MAX_KEYS.getPropertyPath() + " must be 0 (off) or positive"
                 );
             }
             this.qwpMaxRowsPerTable = getInt(properties, env, PropertyKey.QWP_MAX_ROWS_PER_TABLE, QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
@@ -5098,6 +5117,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getQwpEgressSymbolDenseMaxKeys() {
+            return qwpEgressSymbolDenseMaxKeys;
+        }
+
+        @Override
         public int getReaderPoolMaxSegments() {
             return readerPoolMaxSegments;
         }
@@ -5983,6 +6007,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isSqlAsOfJoinVirtualKeyEnabled() {
+            return sqlAsOfJoinVirtualKeyEnabled;
+        }
+
+        @Override
         public boolean isSqlDistinctGroupByRewriteEnabled() {
             // No production property backs this seam: the rewrite is always on in
             // a running server. Only tests override it (to reach
@@ -5993,6 +6022,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlJitDebugEnabled() {
             return sqlJitDebugEnabled;
+        }
+
+        @Override
+        public boolean isSqlJitScalarSubQueryEnabled() {
+            return sqlJitScalarSubQueryEnabled;
+        }
+
+        @Override
+        public boolean isSqlJitSymbolEmptyConstantEnabled() {
+            return sqlJitSymbolEmptyConstantEnabled;
         }
 
         @Override
