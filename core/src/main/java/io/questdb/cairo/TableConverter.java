@@ -330,26 +330,31 @@ public class TableConverter {
      * <p>
      * A replay that stops early, at a transaction that fails to apply or after a pass that applied nothing,
      * throws: the caller keeps {@code _convert}, the WAL and the save point, the table stays a WAL table and the
-     * next start retries. A failed flush stops the engine.
+     * next start retries. A sequencer that cannot be read refuses the conversion of a table with a save point. A
+     * failed flush stops the engine.
      */
     private static void replayWalBeforeConversion(CairoEngine engine, TableToken token) {
         final CairoConfiguration configuration = engine.getConfiguration();
         final FilesFacade ff = configuration.getFilesFacade();
-        final long lastSeqTxn;
-        try {
-            lastSeqTxn = engine.getTableSequencerAPI().lastTxn(token);
-        } catch (CairoException e) {
-            // No readable sequencer, so no WAL to replay. The conversion already handles a missing sequencer.
-            LOG.info().$("cannot read sequencer, converting without WAL replay [table=").$(token)
-                    .$(", error=").$((Throwable) e)
-                    .I$();
-            return;
-        }
         try (Path tablePath = new Path()) {
             tablePath.of(configuration.getDbRoot()).concat(token);
             final int tableRootLen = tablePath.size();
-            if (DurableEpochManifest.loadCandidates(ff, tablePath, tableRootLen, -1).length == 0
-                    && readSeqTxn(ff, tablePath, tableRootLen) >= lastSeqTxn) {
+            final boolean hasSavePoint = DurableEpochManifest.loadCandidates(ff, tablePath, tableRootLen, -1).length > 0;
+            final long lastSeqTxn;
+            try {
+                lastSeqTxn = engine.getTableSequencerAPI().lastTxn(token);
+            } catch (CairoException e) {
+                // Recovery rewound a table with a save point to it, so its WAL must be replayed: refuse.
+                if (hasSavePoint) {
+                    throw e;
+                }
+                // No readable sequencer, so no WAL to replay. The conversion already handles a missing sequencer.
+                LOG.info().$("cannot read sequencer, converting without WAL replay [table=").$(token)
+                        .$(", error=").$((Throwable) e)
+                        .I$();
+                return;
+            }
+            if (!hasSavePoint && readSeqTxn(ff, tablePath, tableRootLen) >= lastSeqTxn) {
                 return;
             }
             try {

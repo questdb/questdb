@@ -1635,6 +1635,87 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     /**
+     * A sequencer that cannot be read at the converting start refuses the conversion of a table with a save point,
+     * in every start mode: recovery has rewound the table to its save point, so converting without the replay would
+     * drop every row after it. The table stays a WAL table with its {@code _convert}, its WAL and its save point,
+     * and the next start, with a readable sequencer, converts it with every row.
+     */
+    @Test
+    public void testConversionToNonWalRefusedWhileSequencerUnreadable() throws Exception {
+        final AtomicBoolean failSeq = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (failSeq.get() && Utf8s.containsAscii(name, WalUtils.SEQ_DIR)) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failSeq.get() && Utf8s.containsAscii(name, WalUtils.SEQ_DIR)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        try {
+            assertMemoryLeak(ff, () -> {
+                final List<String> failures = new ArrayList<>();
+                for (String mode : new String[]{"adaptive", "nosync"}) {
+                    setCommitMode("adaptive");
+                    final String name = "unreadable_" + mode;
+                    buildAdaptiveLazyGapTable(name);
+                    final TableToken tt = engine.verifyTableName(name);
+                    execute("ALTER TABLE " + name + " SET TYPE BYPASS WAL");
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+                    engine.releaseAllWalWriters();
+
+                    setCommitMode(mode);
+                    engine.getTxnScoreboardPool().remove(tt);
+                    engine.getTableSequencerAPI().resetForReboot(tt);
+                    new RecoveryCoordinator(engine).recover();
+                    failSeq.set(true);
+                    try {
+                        engine.load();
+                    } finally {
+                        failSeq.set(false);
+                    }
+                    if (!engine.verifyTableName(name).isWal() || !epochArtifactExists(tt, WalUtils.CONVERT_FILE_NAME, "")) {
+                        failures.add(mode + " start: the conversion went ahead with " + rowCount(engine.verifyTableName(name)) + " rows");
+                        continue;
+                    }
+                    if (!hasSavePointFile(tt)) {
+                        failures.add(mode + " start: the refused conversion removed the save point");
+                    }
+
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+                    engine.getTxnScoreboardPool().remove(tt);
+                    engine.getTableSequencerAPI().resetForReboot(tt);
+                    new RecoveryCoordinator(engine).recover();
+                    engine.load();
+                    final TableToken converted = engine.verifyTableName(name);
+                    final long rows = rowCount(converted);
+                    if (converted.isWal() || rows != 7) {
+                        failures.add(mode + " start: at the next start wal=" + converted.isWal() + ", rows=" + rows);
+                    }
+                    engine.releaseAllReaders();
+                }
+                Assert.assertEquals("[]", failures.toString());
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        }
+    }
+
+    /**
      * A kill in the middle of the replay leaves the save point, so the next start rewinds the table to it and
      * replays again: however often the replay is interrupted, the start that finishes it keeps every row.
      */
