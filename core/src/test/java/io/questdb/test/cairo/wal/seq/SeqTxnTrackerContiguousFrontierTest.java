@@ -54,16 +54,11 @@ import static org.junit.Assert.fail;
 public class SeqTxnTrackerContiguousFrontierTest {
 
     /**
-     * The orphan-sweep race: a flusher may reap only the orphan pins that its own fdatasync covered.
-     *
-     * <p>{@code fdatasyncTxnLog} releases the sequencer write lock before the flusher reaches
-     * {@code markWriterDurable}, so inside that window a peer can sequence a new txn and be torn down, leaving
-     * an orphan pin whose record the fdatasync never touched. Reaping it would advance the frontier over a txn
-     * that is still only in the page cache, and a QWP durable ack would then cover data a crash can lose.
-     *
-     * <p>The mark taken before the fdatasync bounds the sweep: an orphan stamped at or before the mark was already
-     * dead, so every txn it covers was appended first and the fdatasync covered them all. An orphan stamped later
-     * stays pinned for the next flush.
+     * A flusher reaps only the orphan pins its own fdatasync covered. {@code fdatasyncTxnLog} releases the
+     * sequencer write lock before the flusher reaches {@code markWriterDurable}, so a peer can sequence a txn and
+     * be torn down in between, leaving an orphan pin whose record the fdatasync never touched. The mark taken
+     * before the fdatasync bounds the sweep: an orphan stamped after it stays pinned for the next flush, so the
+     * frontier does not advance over a txn a crash can lose.
      */
     @Test
     public void testOrphanSweepIgnoresWriterTornDownAfterTheSweepMark() {
@@ -88,22 +83,12 @@ public class SeqTxnTrackerContiguousFrontierTest {
     }
 
     /**
-     * The putIfAbsent trap: a pin's txn range keeps growing after registration, because
-     * {@code registerWriterPending} is putIfAbsent and a writer's later commits in the same batch reuse the pin
-     * without a new registration. A sweep bounded by registration order is therefore unsound:
-     *
-     * <ol>
-     *   <li>the flusher snapshots the mark (the peer's pin is already registered, so below the mark);</li>
-     *   <li>the flusher's fdatasync runs;</li>
-     *   <li>the peer commits one more txn while the sequencer write lock is free, and the fdatasync does not
-     *       cover it;</li>
-     *   <li>the peer is torn down;</li>
-     *   <li>a sweep that trusts the registration stamp reaps the pin and advances the frontier over the
-     *       uncovered txn.</li>
-     * </ol>
-     *
-     * <p>The tracker stamps a pin when it is orphaned: orphaning finalises the range, so that stamp is below the
-     * mark only if every txn the pin covers was already appended.
+     * A pin's txn range keeps growing after registration: {@code registerWriterPending} is putIfAbsent, so a
+     * writer's later commits in the same batch reuse the pin. Here the peer registers before the mark, commits
+     * one more txn after the flusher's fdatasync, and is torn down; a sweep bounded by registration order would
+     * reap that pin and advance the frontier over the uncovered txn. The tracker stamps a pin when it is
+     * orphaned, which finalises its range, so the stamp is below the mark only if the fdatasync covered every
+     * txn of the pin.
      */
     @Test
     public void testOrphanSweepIgnoresWriterThatCommittedAfterTheSweepMark() {
