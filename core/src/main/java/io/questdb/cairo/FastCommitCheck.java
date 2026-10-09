@@ -121,9 +121,9 @@ public final class FastCommitCheck {
      * whether to emit, and {@link #checkAndReport} applies it as a cheap early-out before
      * {@link #classifyDbRoot} touches {@code /proc}, so the two sites cannot drift apart.
      * <p>
-     * ADAPTIVE reaches the batched flush through the durable-epoch cadence; SYNC reaches it once per
-     * table when tables still enrolled ADAPTIVE reconcile out of it on restart
-     * ({@code TableWriter.reconcileAdaptiveExit}). NOSYNC and ASYNC reach it that same one-off way but
+     * ADAPTIVE reaches the batched flush through the durable-epoch cadence; SYNC reaches it once, when a
+     * start makes the tables that still have an adaptive save point durable before removing it
+     * ({@code RecoveryCoordinator.recover}). NOSYNC and ASYNC reach it that same one-off way but
      * stay silent on purpose: NOSYNC is {@link CommitMode#DEFAULT}, so warning them would fire on
      * nearly every install, almost none of which ever enrolled a table in adaptive.
      *

@@ -31,7 +31,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -566,11 +565,11 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
         }
     }
 
-    // A replica enrols a table without an anchor and applies at NOSYNC grade, so a crash can leave its _txn and
-    // _cv in any shape it leaves a NOSYNC table in. Startup leaves the repair to the table writer, as for a NOSYNC
-    // table, and the baseline is published only from the repaired state, once the node is promoted.
+    // A replica keeps no save point and applies at NOSYNC grade, so a crash can leave its _txn and _cv in any shape
+    // it leaves a NOSYNC table in. Startup leaves the repair to the table writer, as for a NOSYNC table, and the
+    // baseline is published only from the repaired state, once the node is promoted.
     private void assertReplicaTableRepairs(boolean isLastPartitions, CrashImage crash) throws Exception {
-        Assume.assumeTrue("only an adaptive table is enrolled without an anchor", "adaptive".equals(commitMode));
+        Assume.assumeTrue("only an adaptive replica applies lazily without an anchor", "adaptive".equals(commitMode));
         assertMemoryLeak(() -> {
             configureCommitMode();
             final String dir;
@@ -593,9 +592,7 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
             final String expected = selectAll(engine, sqlExecutionContext, "x");
             engine.clear();
             final File anchor = new File(dir + DurableEpochManifest.FILE_NAME + ".0");
-            final File marker = new File(dir + RecoveryCoordinator.RESTORE_ENROL_FILE_NAME);
             Assert.assertFalse("a replica keeps no anchor", anchor.exists());
-            Assert.assertTrue("a replica marks the table for enrolment", marker.exists());
             crash.install(dir, commits);
 
             try (CairoEngine restarted = new CairoEngine(configuration)) {
@@ -612,7 +609,6 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
                             .returns(expected);
                     assertWalTableCaughtUp(restarted, ctx);
                     Assert.assertFalse(anchor.exists());
-                    Assert.assertTrue(marker.exists());
                 } finally {
                     // Promotion: the next apply batch publishes the baseline from the repaired state.
                     restarted.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
@@ -620,7 +616,6 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
                 restarted.execute("insert into x values (" + NEW_ROW_TS + "::timestamp, 's9', 777, 777)", ctx);
                 TestUtils.drainWalQueue(restarted);
                 Assert.assertTrue(anchor.exists());
-                Assert.assertFalse(marker.exists());
                 restarted.clear();
             }
 

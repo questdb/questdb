@@ -720,8 +720,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         // S5: role-aware skip. On a replica the adaptive durable epoch is skipped: the replica keeps its
         // applied state at NOSYNC grade, so skip the per-batch fsyncMaterializedState + durable epoch
         // copies. Nothing re-downloads WAL a crash would need, so the replica must not keep an anchor to
-        // rewind to either: TableWriter.reconcileDurableEpochAnchor() swaps it for the enrolment marker
-        // before the batch, and startup then re-baselines at the live cut. Fail-safe: the OSS default is
+        // rewind to either: TableWriter.reconcileDurableEpochAnchor() makes the table durable and removes it
+        // before the batch, and startup then leaves the table at its live cut. Fail-safe: the OSS default is
         // ALWAYS_ON; only a live Enterprise replica installs REPLICA_SKIP. One volatile read on the hot
         // apply path.
         if (!engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {

@@ -26,15 +26,16 @@ package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -131,14 +132,13 @@ public class AdaptiveCommitModeFlipCrashTest extends AbstractCrashConsistencyTes
                 drainWalQueue();
                 Assert.assertEquals("roll-forward must rebuild every row", K + M, readVs(engine).size());
 
-                // The table is now reconciled: _meta no longer claims the state may be ahead of an epoch.
-                try (TableReaderMetadata md = new TableReaderMetadata(engine.getConfiguration(), tt)) {
-                    md.loadMetadata();
-                    Assert.assertNotEquals(
-                            "a downgraded table must not stay enrolled, or every restart rewinds to an epoch"
+                // The table is now reconciled: the start made it durable and removed its save point.
+                try (Path p = new Path()) {
+                    p.of(engine.getConfiguration().getDbRoot()).concat(tt);
+                    Assert.assertFalse(
+                            "a downgraded table must not keep its save point, or every restart rewinds to an epoch"
                                     + " nosync never advances",
-                            CommitMode.ADAPTIVE,
-                            md.getEnrolledCommitMode()
+                            DurableEpochManifest.exists(engine.getConfiguration().getFilesFacade(), p, p.size())
                     );
                 }
 

@@ -1251,7 +1251,7 @@ public class CairoEngine implements Closeable, WriterSource {
             // before completeInit is done and deliberately defers cleanup until adaptive baselines publish.
             if (isCompleteInitDone) {
                 tableNameRegistry.reload();
-                new RecoveryCoordinator(this, checkpointAgent.hasRecoveredCheckpoint()).recover();
+                new RecoveryCoordinator(this).recover();
                 checkpointAgent.completeRecovery();
             }
         } catch (Throwable th) {
@@ -1383,10 +1383,9 @@ public class CairoEngine implements Closeable, WriterSource {
         // is loaded (so tables are enumerable) but BEFORE any WAL apply (CheckWalTransactionsJob ->
         // ApplyWal2TableJob) or table open: for each adaptive WAL table with a durable epoch it rewinds
         // _txn/_cv to the epoch cut so the boot path idempotently re-applies (epoch.seqTxn, frontier]
-        // from the durable WAL. No-op for non-adaptive engines and for tables without a save point.
-        new RecoveryCoordinator(this, checkpointAgent.hasRecoveredCheckpoint()).recover();
-        // Only now is it safe to remove the restore trigger/checkpoint. Until every missing adaptive baseline
-        // above is durable, a crash must leave enough evidence for the next startup to repeat restoration.
+        // from the durable WAL; outside adaptive it then removes the save point. No-op for tables without one.
+        new RecoveryCoordinator(this).recover();
+        // Only now is it safe to remove the restore trigger/checkpoint: a crash before it repeats the restoration.
         try {
             checkpointAgent.completeRecovery();
         } catch (Throwable th) {
@@ -4377,22 +4376,18 @@ public class CairoEngine implements Closeable, WriterSource {
                         filesystemCreated = true;
 
                         if (struct.isWalEnabled() && !struct.isView()) {
-                            if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+                            // A replica keeps no save point: it would go stale behind WAL its purge does not keep.
+                            if (configuration.getCommitMode() == CommitMode.ADAPTIVE && localDurabilityPolicy.isLocalDurabilityEnabled()) {
                                 try {
-                                    if (localDurabilityPolicy.isLocalDurabilityEnabled()) {
-                                        final int timestampIndex = struct.getTimestampIndex();
-                                        final int timestampType = timestampIndex < 0 ? ColumnType.TIMESTAMP : struct.getColumnType(timestampIndex);
-                                        DurableEpochManifest.publishInitial(
-                                                configuration,
-                                                tableToken,
-                                                timestampType,
-                                                struct.getPartitionBy(),
-                                                configuration.getMicrosecondClock().getTicks() / 1000L
-                                        );
-                                    } else {
-                                        // A replica keeps no anchor; see RecoveryCoordinator.replaceAnchorWithEnrolmentMarker.
-                                        DurableEpochManifest.enrolWithoutAnchor(configuration, tableToken, null);
-                                    }
+                                    final int timestampIndex = struct.getTimestampIndex();
+                                    final int timestampType = timestampIndex < 0 ? ColumnType.TIMESTAMP : struct.getColumnType(timestampIndex);
+                                    DurableEpochManifest.publishInitial(
+                                            configuration,
+                                            tableToken,
+                                            timestampType,
+                                            struct.getPartitionBy(),
+                                            configuration.getMicrosecondClock().getTicks() / 1000L
+                                    );
                                 } catch (Throwable e) {
                                     if (CairoException.isDataSyncFailure(e)) {
                                         handleDataSyncFailure(e);

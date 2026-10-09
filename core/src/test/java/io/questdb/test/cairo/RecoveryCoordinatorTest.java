@@ -58,19 +58,29 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.crash.CrashFaultFilesFacade;
 import io.questdb.test.std.SyncAttributingFilesFacade;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 
 import static org.junit.Assert.assertTrue;
 
@@ -90,12 +100,6 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
      * refuse that table. It has nothing to roll forward: enrollment is what permits lazy apply, and it
      * publishes the anchor first, so a table that was never enrolled cannot be ahead of a cut.
      *
-     * <p>This test replaces one that pinned the opposite (the refusal, which failed the whole engine
-     * component and so took the instance down over a single table). The discriminator that makes the
-     * difference is the ENROLLED commit mode recorded in {@code _meta}: absent/non-adaptive here, which is
-     * what lets recovery permit the missing anchor instead of guessing.
-     * {@link #testEnrolledTableWithLostAnchorStillRefusesLiveStateFallback()} is the other half -- the same
-     * missing anchor on an ENROLLED table is still a hard refusal.
      */
     @Test
     public void testTableCreatedUnderNosyncEnrolsOnGlobalSwitchToAdaptive() throws Exception {
@@ -123,10 +127,10 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 engine.getTableSequencerAPI().resetForReboot(token);
 
                 setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-                // Boots. Recovery permits the absent anchor because _meta does not record the table as enrolled.
+                // Boots. A table without a save point is not enrolled.
                 new RecoveryCoordinator(engine).recover();
 
-                // The first writer to open the table enrols it: baseline at the LIVE cut, then the record.
+                // The first writer to open the table enrols it: a baseline at the LIVE cut.
                 try (io.questdb.cairo.TableWriter writer = getWriter(token)) {
                     Assert.assertEquals(CommitMode.ADAPTIVE, writer.getEffectiveCommitMode());
                 }
@@ -137,62 +141,11 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                     Assert.assertTrue("enrollment must publish the anchor",
                             TestFilesFacadeImpl.INSTANCE.exists(path.$()));
                 }
-                try (TableReaderMetadata md = new TableReaderMetadata(engine.getConfiguration(), token)) {
-                    md.loadMetadata();
-                    Assert.assertEquals("the anchor is only trustworthy if _meta records the enrollment with it",
-                            CommitMode.ADAPTIVE, md.getEnrolledCommitMode());
-                }
-
                 // The row written under nosync is still there, and the anchor now published is one an ordinary
                 // startup validates rather than merely tolerates.
                 new RecoveryCoordinator(engine).recover();
                 try (io.questdb.cairo.TableReader reader = engine.getReader(token)) {
                     Assert.assertEquals("the row written under nosync must survive enrollment", 1L, reader.size());
-                }
-            });
-        } finally {
-            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-        }
-    }
-
-    /**
-     * The safety half of {@link #testTableCreatedUnderNosyncEnrolsOnGlobalSwitchToAdaptive()}: permitting an
-     * absent anchor for a never-enrolled table must not make the refusal unreachable. An ENROLLED table has
-     * been applied lazily, so its live state may sit ahead of a durable cut that nothing can name any more.
-     * That is still fail-closed.
-     */
-    @Test
-    public void testEnrolledTableWithLostAnchorStillRefusesLiveStateFallback() throws Exception {
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        try {
-            assertMemoryLeak(() -> {
-                execute("create table lost_anchor (ts timestamp, v long) timestamp(ts) partition by day wal");
-                execute("insert into lost_anchor values ('2024-09-01T00:00:00.000000Z', 1)");
-                drainWalQueue();
-
-                final TableToken token = engine.verifyTableName("lost_anchor");
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-
-                try (TableReaderMetadata md = new TableReaderMetadata(engine.getConfiguration(), token)) {
-                    md.loadMetadata();
-                    Assert.assertEquals("precondition: an adaptive table is enrolled by its first writer",
-                            CommitMode.ADAPTIVE, md.getEnrolledCommitMode());
-                }
-
-                // Lose the anchor the way a filesystem or a stray hand would: the artifacts go, the record stays.
-                try (Path path = new Path()) {
-                    final int tableRootLen = path.of(engine.getConfiguration().getDbRoot()).concat(token).size();
-                    RecoveryCoordinator.removeAdaptiveEpochArtifacts(
-                            engine.getConfiguration().getFilesFacade(), path, tableRootLen);
-                }
-                engine.getTableSequencerAPI().resetForReboot(token);
-
-                try {
-                    new RecoveryCoordinator(engine).recover();
-                    Assert.fail("expected an enrolled table with no anchor to be refused");
-                } catch (CairoException expected) {
-                    TestUtils.assertContains(expected.getFlyweightMessage(), "adaptive save point is absent");
                 }
             });
         } finally {
@@ -222,7 +175,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRuntimeCheckpointBaselineHandsOverEpochPin() throws Exception {
+    public void testEnrolmentAfterSavePointRemovalHandsOverEpochPin() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
@@ -245,13 +198,18 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                     RecoveryCoordinator.removeAdaptiveEpochArtifacts(configuration.getFilesFacade(), path, rootLen);
                 }
 
-                new RecoveryCoordinator(engine, true).recover();
+                // A restore removes the save point; the table's next writer enrols it.
+                new RecoveryCoordinator(engine).recover();
+                Assert.assertEquals("a table without a save point keeps the pin until it enrols", priorEpochTxn, tracker.getPinnedEpochTxn());
+                try (io.questdb.cairo.TableWriter writer = getWriter(token)) {
+                    Assert.assertNotNull(writer);
+                }
                 final long newEpochTxn = tracker.getPinnedEpochTxn();
                 Assert.assertTrue(newEpochTxn > priorEpochTxn);
                 try (TxnScoreboard scoreboard = engine.getTxnScoreboard(token)) {
-                    Assert.assertTrue("the superseded checkpoint pin must be released",
+                    Assert.assertTrue("the superseded pin must be released",
                             scoreboard.isRangeAvailable(priorEpochTxn, priorEpochTxn + 1));
-                    Assert.assertFalse("the checkpoint-restored baseline must remain pinned",
+                    Assert.assertFalse("the enrolment baseline must remain pinned",
                             scoreboard.isRangeAvailable(newEpochTxn, newEpochTxn + 1));
                 }
             } finally {
@@ -392,6 +350,298 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     @Test
     public void testCleanRestartRestoresNothing() throws Exception {
         assertCleanRestartRestoresNothing("clean_restart");
+    }
+
+    /**
+     * A clean restart is not a recovery, whichever save point the live files stand at: the creation baseline of a
+     * table nothing has written yet, or the save point a table created outside adaptive takes when its writer
+     * enrols it. Recovery restores nothing, counts nothing and changes no file of the table, at this start and at
+     * the next.
+     */
+    @Test
+    public void testCleanRestartAtFirstSavePointCountsNoRecovery() throws Exception {
+        try {
+            assertMemoryLeak(() -> {
+                final List<String> failures = new ArrayList<>();
+                for (String origin : new String[]{"creation", "enrolment"}) {
+                    final boolean enrolment = "enrolment".equals(origin);
+                    setCommitMode(enrolment ? "nosync" : "adaptive");
+                    final String name = "clean_" + origin;
+                    execute("CREATE TABLE " + name + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    final TableToken tt = engine.verifyTableName(name);
+                    if (enrolment) {
+                        execute("INSERT INTO " + name + " VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                        drainWalQueue();
+                        engine.releaseAllWriters();
+                        setCommitMode("adaptive");
+                        try (TableWriter writer = getWriter(tt)) {
+                            Assert.assertNotNull(writer);
+                        }
+                    }
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+                    engine.releaseAllWalWriters();
+                    Assert.assertTrue("precondition: the " + origin + " published a save point", hasSavePointFile(tt));
+                    for (int start = 1; start < 3; start++) {
+                        final Map<String, byte[]> before = readTableFiles(tt, true);
+                        final long events = TestUtils.getMetricValue(engine, "questdb_wal_adaptive_recovery_events_total");
+                        engine.getTxnScoreboardPool().remove(tt);
+                        engine.getTableSequencerAPI().resetForReboot(tt);
+                        new RecoveryCoordinator(engine).recover();
+                        final long counted = TestUtils.getMetricValue(engine, "questdb_wal_adaptive_recovery_events_total") - events;
+                        final long incarnation = engine.getTableSequencerAPI().getTxnTracker(tt).getRecoveryIncarnation();
+                        final List<String> changed = changedFiles(before, readTableFiles(tt, true));
+                        if (counted != 0 || incarnation != 0 || !changed.isEmpty()) {
+                            failures.add(origin + ", start " + start + ": recovery events +" + counted + ", incarnation " + incarnation + ", changed " + changed);
+                        }
+                    }
+                    assertQuery("SELECT count() FROM " + name)
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\n" + (enrolment ? 1 : 0) + "\n");
+                }
+                Assert.assertEquals("a clean restart is not a recovery", "[]", failures.toString());
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    /**
+     * A lineage discard removes the save point and publishes none: the table is then not enrolled, and its first
+     * writer enrols it at the live cut. A second start in between leaves the table as it is.
+     */
+    @Test
+    public void testLineageDiscardLeavesEnrolmentToWriter() throws Exception {
+        org.junit.Assume.assumeFalse("replants files over existing destinations, which Windows forbids", Os.isWindows());
+        try {
+            assertMemoryLeak(() -> {
+                setCommitMode("adaptive");
+                execute("create table lin_writer (ts timestamp, v long) timestamp(ts) partition by day wal");
+                execute("insert into lin_writer values ('2024-09-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                execute("insert into lin_writer values ('2024-09-02T00:00:00.000000Z', 2)");
+                drainWalQueue();
+                final TableToken pre = engine.verifyTableName("lin_writer");
+                Assert.assertTrue("precondition: a save point beyond seqTxn 0", readTxnSeqTxn(pre) > 0);
+                copyEpochArtifacts(pre, false);
+
+                execute("alter table lin_writer set type bypass wal");
+                engine.releaseInactive();
+                engine.load();
+                execute("alter table lin_writer set type wal", sqlExecutionContext);
+                engine.releaseInactive();
+                engine.load();
+
+                final TableToken tt = engine.verifyTableName("lin_writer");
+                Assert.assertEquals("the conversion re-seeds the lineage at seqTxn 0", 0L, readTxnSeqTxn(tt));
+                copyEpochArtifacts(tt, true);
+
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                new RecoveryCoordinator(engine).recover();
+                Assert.assertEquals("the discarded save point must not rewind the live cut", 0L, readTxnSeqTxn(tt));
+                Assert.assertFalse("a lineage discard publishes no save point", hasSavePointFile(tt));
+                Assert.assertFalse("a lineage discard leaves no enrolment marker", epochArtifactExists(tt, "_epoch.enrol", ""));
+
+                final Map<String, byte[]> before = readTableFiles(tt, false);
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                new RecoveryCoordinator(engine).recover();
+                Assert.assertEquals("a second start leaves a table that is not enrolled as it is",
+                        "[]", changedFiles(before, readTableFiles(tt, false)).toString());
+
+                try (TableWriter writer = getWriter(tt)) {
+                    Assert.assertNotNull(writer);
+                }
+                try (Path p = new Path()) {
+                    p.of(engine.getConfiguration().getDbRoot()).concat(tt);
+                    final io.questdb.cairo.DurableEpochManifest.Candidate[] saved = io.questdb.cairo.DurableEpochManifest.loadCandidates(
+                            engine.getConfiguration().getFilesFacade(), p, p.size(), tt.getTableId());
+                    Assert.assertTrue("the writer enrols the table", saved.length > 0);
+                    Assert.assertEquals("the writer enrols at the live cut", 0L, saved[0].epochSeqTxn);
+                }
+                execute("insert into lin_writer values ('2024-09-03T00:00:00.000000Z', 3)");
+                drainWalQueue();
+                assertQuery("select count() from lin_writer")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n3\n");
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    /**
+     * The boot cost outside adaptive: for each WAL table without a save point, recovery makes at most two existence
+     * checks and no other file system call. Measured as the difference between a database of one such table and
+     * one of eleven.
+     */
+    @Test
+    public void testNosyncBootCostsAtMostTwoExistenceChecksPerWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            setCommitMode("nosync");
+            final int extraTables = 10;
+            for (int i = 0; i <= extraTables; i++) {
+                execute("CREATE TABLE boot_cost_" + i + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO boot_cost_" + i + " VALUES ('2024-09-01T00:00:00.000000Z', " + i + ')');
+                if (i == 0) {
+                    drainWalQueue();
+                }
+            }
+            drainWalQueue();
+            final Map<String, Integer> eleven = countRecoveryCalls();
+            for (int i = 1; i <= extraTables; i++) {
+                execute("DROP TABLE boot_cost_" + i);
+            }
+            drainWalQueue();
+            final Map<String, Integer> one = countRecoveryCalls();
+            final Map<String, Integer> perTable = new TreeMap<>();
+            for (Map.Entry<String, Integer> e : eleven.entrySet()) {
+                final int delta = e.getValue() - one.getOrDefault(e.getKey(), 0);
+                if (delta != 0) {
+                    perTable.put(e.getKey(), delta);
+                }
+            }
+            final int existenceChecks = perTable.getOrDefault("exists", 0);
+            perTable.remove("exists");
+            Assert.assertTrue("at most two existence checks per WAL table, got " + existenceChecks + " for " + extraTables + " tables",
+                    existenceChecks <= 2 * extraTables);
+            Assert.assertEquals("no other file system call per WAL table, for " + extraTables + " tables and "
+                    + existenceChecks + " existence checks", "{}", perTable.toString());
+        });
+    }
+
+    /**
+     * A power loss tore {@code _meta} while recovery wrote the save point's copy over it, and the next start runs
+     * outside adaptive. The table still has a valid save point, so it is enrolled: the start restores it, boots, and
+     * the WAL replays every row, whatever the tear left: an empty file, half of the copy, or the copy's length
+     * without its bytes.
+     */
+    @Test
+    public void testNosyncStartAfterTornMetaRestoreBoots() throws Exception {
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000L);
+        try {
+            assertMemoryLeak(() -> {
+                final List<String> failures = new ArrayList<>();
+                for (String tear : new String[]{"empty", "half", "zeros"}) {
+                    setCommitMode("adaptive");
+                    final String name = "torn_meta_" + tear;
+                    execute("CREATE TABLE " + name + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("INSERT INTO " + name + " VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                    drainWalQueue();
+                    final TableToken tt = engine.verifyTableName(name);
+                    try (TableWriter writer = getWriter(tt)) {
+                        writer.advanceDurableEpoch(engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+                    }
+                    final long savePointSeqTxn = readTxnSeqTxn(tt);
+                    final byte[] savedMeta = readTableFiles(tt, true).get(TableUtils.META_FILE_NAME);
+                    execute("ALTER TABLE " + name + " ADD COLUMN c INT");
+                    execute("INSERT INTO " + name + " VALUES ('2024-09-02T00:00:00.000000Z', 2, 7)");
+                    drainWalQueue();
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+                    engine.releaseAllWalWriters();
+                    Assert.assertEquals("precondition: the save point is still the one whose _meta was read",
+                            savePointSeqTxn, newestSavePointSeqTxn(tt));
+                    Assert.assertTrue("precondition: the live files are ahead of the save point", readTxnSeqTxn(tt) > savePointSeqTxn);
+                    final byte[] torn = switch (tear) {
+                        case "empty" -> new byte[0];
+                        case "half" -> Arrays.copyOf(Arrays.copyOf(savedMeta, savedMeta.length / 2), savedMeta.length);
+                        default -> new byte[savedMeta.length];
+                    };
+                    Files.write(Paths.get(engine.getConfiguration().getDbRoot().toString(), tt.getDirName(), TableUtils.META_FILE_NAME), torn);
+
+                    setCommitMode("nosync");
+                    engine.getTxnScoreboardPool().remove(tt);
+                    engine.getTableSequencerAPI().resetForReboot(tt);
+                    try {
+                        new RecoveryCoordinator(engine).recover();
+                    } catch (CairoException e) {
+                        failures.add(tear + " _meta: the start refused: " + e.getFlyweightMessage());
+                        continue;
+                    }
+                    engine.notifyWalTxnRepublisher(tt);
+                    drainWalQueue();
+                    if (engine.getTableSequencerAPI().isSuspended(tt)) {
+                        failures.add(tear + " _meta: the table is suspended");
+                        continue;
+                    }
+                    try {
+                        assertQuery("SELECT * FROM " + name)
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
+                                        ts\tv\tc
+                                        2024-09-01T00:00:00.000000Z\t1\tnull
+                                        2024-09-02T00:00:00.000000Z\t2\t7
+                                        """);
+                    } catch (Throwable th) {
+                        failures.add(tear + " _meta: the table reads back wrong: " + th.getMessage());
+                    }
+                }
+                Assert.assertEquals("[]", failures.toString());
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        }
+    }
+
+    /**
+     * The safe way back from adaptive: an adaptive run, a clean stop, then a start outside adaptive in which nothing
+     * writes the table, so no writer opens it. The start itself leaves the table durable without its save point: a
+     * power loss right after it, with no recovery to follow (an older release), finds every byte the start left in the
+     * table's files, and no save point.
+     */
+    @Test
+    public void testSafeWayBackLeavesUnwrittenTableDurableWithoutSavePoint() throws Exception {
+        org.junit.Assume.assumeFalse("the crash model rewrites files under a live engine, which Windows forbids", Os.isWindows());
+        final CrashFaultFilesFacade crashFf = new CrashFaultFilesFacade();
+        crashFf.setDbRoot(root);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        try {
+            assertMemoryLeak(crashFf, () -> {
+                final List<String> failures = new ArrayList<>();
+                for (String mode : new String[]{"nosync", "sync"}) {
+                    setCommitMode("adaptive");
+                    final String name = "way_back_" + mode;
+                    execute("CREATE TABLE " + name + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    final TableToken tt = engine.verifyTableName(name);
+                    crashFf.markDurableBaseline(engine.getConfiguration().getDbRoot());
+                    execute("INSERT INTO " + name + " VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                    drainWalQueue();
+                    execute("INSERT INTO " + name + " VALUES ('2024-09-02T00:00:00.000000Z', 2), ('2024-09-03T00:00:00.000000Z', 3)");
+                    drainWalQueue();
+                    Assert.assertFalse("precondition: the instrument sees the lazily applied bytes a power loss would lose",
+                            bytesLostAtPowerLoss(crashFf, tt, readTableFiles(tt, true)).isEmpty());
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+                    engine.releaseAllWalWriters();
+                    Assert.assertEquals("precondition: the clean stop leaves a save point at the live cut", readTxnSeqTxn(tt), newestSavePointSeqTxn(tt));
+
+                    setCommitMode(mode);
+                    engine.getTxnScoreboardPool().remove(tt);
+                    engine.getTableSequencerAPI().resetForReboot(tt);
+                    new RecoveryCoordinator(engine).recover();
+                    if (hasSavePointFile(tt)) {
+                        failures.add(mode + " start: the save point remains");
+                    }
+                    final Map<String, byte[]> started = readTableFiles(tt, true);
+                    final List<String> lost = bytesLostAtPowerLoss(crashFf, tt, started);
+                    crashFf.crash(engine.getConfiguration().getDbRoot());
+                    lost.addAll(changedPrefixes(started, readTableFiles(tt, true)));
+                    if (!lost.isEmpty()) {
+                        failures.add(mode + " start: a power loss after it loses bytes of " + lost);
+                    }
+                    engine.getTableSequencerAPI().resetForReboot(tt);
+                }
+                Assert.assertEquals("[]", failures.toString());
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
     }
 
     /**
@@ -543,43 +793,6 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     /**
-     * Missing the creation baseline selector is an untrusted startup state and must fail closed.
-     */
-    @Test
-    public void testRecoverWithNoSnapshotFailsClosed() throws Exception {
-        assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
-            try {
-                execute("create table noepoch (ts timestamp, v long) timestamp(ts) partition by day wal");
-                execute("insert into noepoch values ('2024-09-01T00:00:00.000000Z', 42)");
-                drainWalQueue();
-
-                final TableToken tt = engine.verifyTableName("noepoch");
-
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-                try (Path p = new Path()) {
-                    p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(io.questdb.cairo.DurableEpochManifest.FILE_NAME + ".0");
-                    Assert.assertTrue("creation baseline must exist", engine.getConfiguration().getFilesFacade().exists(p.$()));
-                    engine.getConfiguration().getFilesFacade().remove(p.$());
-                    Assert.assertFalse("save point removal must succeed", engine.getConfiguration().getFilesFacade().exists(p.$()));
-                }
-
-                try {
-                    new RecoveryCoordinator(engine).recover();
-                    Assert.fail("recovery without a trustworthy baseline must fail");
-                } catch (CairoException expected) {
-                    Assert.assertTrue(expected.getFlyweightMessage().toString().contains("save point is absent"));
-                }
-            } finally {
-                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
-            }
-        });
-    }
-
-    /**
      * The interrupted swap of {@link #testRecoverRepairsMetaSwapInterruptedBetweenRenames()} on an enrolled
      * adaptive table: the {@code _todo_} repair runs first, so the durable epoch is restored over a readable
      * {@code _meta}, and the writer later finds no {@code _meta.prev} to roll back over the restored cut.
@@ -631,68 +844,6 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         assertBootLeavesTablesWithUnreadableMetaToFail("nosync", "nosync");
     }
 
-    /**
-     * The one table a nosync startup still refuses: a table adaptive left enrolled, whose {@code _meta} exists
-     * but fails to read. Its writer opens once the read succeeds, finds the enrolment, and takes the lazily
-     * applied state as durable. The same table with its {@code _meta} gone cannot be opened by anything, so it
-     * is left to fail when opened, and its anchor is not restored from outside adaptive.
-     */
-    @Test
-    public void testNosyncBootRefusesEnrolledTableWhoseMetaFailsToRead() throws Exception {
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        try {
-            assertMemoryLeak(() -> {
-                execute("CREATE TABLE left_enrolled (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                execute("INSERT INTO left_enrolled VALUES ('2024-09-01T00:00:00.000000Z', 1)");
-                drainWalQueue();
-                final TableToken tt = engine.verifyTableName("left_enrolled");
-                try (TableReaderMetadata metadata = new TableReaderMetadata(engine.getConfiguration(), tt)) {
-                    metadata.loadMetadata();
-                    Assert.assertEquals("precondition: the table is enrolled", CommitMode.ADAPTIVE, metadata.getEnrolledCommitMode());
-                }
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-                engine.getTableSequencerAPI().resetForReboot(tt);
-
-                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-                final FilesFacade ffBefore = AbstractCairoTest.ff;
-                AbstractCairoTest.ff = new TestFilesFacadeImpl() {
-                    @Override
-                    public long openRO(LPSZ name) {
-                        return isTargetMeta(name) ? -1 : super.openRO(name);
-                    }
-
-                    @Override
-                    public long openRONoCache(LPSZ name) {
-                        return isTargetMeta(name) ? -1 : super.openRONoCache(name);
-                    }
-
-                    private boolean isTargetMeta(LPSZ name) {
-                        return Utf8s.containsAscii(name, tt.getDirName()) && Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME);
-                    }
-                };
-                try {
-                    new RecoveryCoordinator(engine).recover();
-                    Assert.fail("an enrolled table whose _meta fails to read must abort the startup");
-                } catch (CairoException expected) {
-                    TestUtils.assertContains(expected.getFlyweightMessage(), TableUtils.META_FILE_NAME);
-                } finally {
-                    AbstractCairoTest.ff = ffBefore;
-                }
-
-                final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-                try (Path path = new Path()) {
-                    path.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.META_FILE_NAME);
-                    Assert.assertTrue("remove _meta", ff.removeQuiet(path.$()));
-                    new RecoveryCoordinator(engine).recover();
-                    Assert.assertFalse("outside adaptive, _meta must not be restored from the anchor", ff.exists(path.$()));
-                }
-            });
-        } finally {
-            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-        }
-    }
-
     @Test
     public void testSyncBootLeavesTablesWithUnreadableMetaToFail() throws Exception {
         assertBootLeavesTablesWithUnreadableMetaToFail("sync", "sync");
@@ -700,9 +851,8 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
     /**
      * A crash between TableWriter's two metadata renames leaves no {@code _meta}, only {@code _meta.prev} and a
-     * {@code _todo_} armed to restore it. The writer restores it when it opens, but recovery runs first and reads
-     * {@code _meta} of every WAL table. It must finish the same repair rather than refuse to start, in nosync
-     * too, where the table has no adaptive state to recover at all.
+     * {@code _todo_} armed to restore it. On a table without a save point recovery does not read {@code _meta}:
+     * the instance starts and the writer restores it when it opens.
      */
     @Test
     public void testRecoverRepairsMetaSwapInterruptedBetweenRenames() throws Exception {
@@ -719,7 +869,11 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             try (CairoEngine rebooted = new CairoEngine(configuration)) {
                 Assert.assertNotNull(rebooted.getTableTokenIfExists("swap_gap"));
             }
+            assertMetaSwapFiles(tt, false, true);
 
+            try (io.questdb.cairo.TableWriter writer = getWriter(tt)) {
+                Assert.assertNotNull(writer);
+            }
             assertMetaSwapFiles(tt, true, false);
             Assert.assertEquals("the pre-ALTER schema must be restored", 2, readMetaColumnCount(tt));
             // The table opens and takes the interrupted ALTER again.
@@ -764,8 +918,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
     /**
      * A crash after the second rename, before {@code _txn} commits, leaves the uncommitted ALTER's {@code _meta}
-     * in place. The writer rolls it back when it opens; recovery must read the metadata the table will open
-     * with, so it applies the same rollback first.
+     * in place. On a table without a save point recovery leaves it, and the writer rolls it back when it opens.
      */
     @Test
     public void testRecoverRollsBackMetaSwapInterruptedBeforeTxnCommit() throws Exception {
@@ -780,7 +933,11 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             Assert.assertEquals("precondition: _meta holds the uncommitted ALTER", 3, readMetaColumnCount(tt));
 
             new RecoveryCoordinator(engine).recover();
+            assertMetaSwapFiles(tt, true, true);
 
+            try (io.questdb.cairo.TableWriter writer = getWriter(tt)) {
+                Assert.assertNotNull(writer);
+            }
             assertMetaSwapFiles(tt, true, false);
             Assert.assertEquals("the uncommitted ALTER must be rolled back", 2, readMetaColumnCount(tt));
             assertQuery("SELECT * FROM swap_uncommitted")
@@ -1064,6 +1221,52 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     /**
+     * The creation baselines other than CREATE: an {@code ALTER TABLE ... REBASE WAL} clone and a conversion to WAL
+     * each leave the new table with a valid save point at its live cut, and a restart accepts it and keeps every row.
+     */
+    @Test
+    public void testRebaseCloneAndConversionToWalLeaveValidCreationBaseline() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        try {
+            assertMemoryLeak(() -> {
+                setCommitMode("adaptive");
+                execute("CREATE TABLE rebased (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO rebased VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                execute("ALTER TABLE rebased SUSPEND WAL");
+                execute("ALTER TABLE rebased REBASE WAL");
+                drainWalQueue();
+                execute("CREATE TABLE converted (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("INSERT INTO converted VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                execute("ALTER TABLE converted SET TYPE WAL");
+                engine.releaseInactive();
+                engine.load();
+                for (String name : new String[]{"rebased", "converted"}) {
+                    final TableToken tt = engine.verifyTableName(name);
+                    Assert.assertTrue(name + ": a WAL table", tt.isWal());
+                    Assert.assertEquals(name + ": a valid save point at the live cut", readTxnSeqTxn(tt), newestSavePointSeqTxn(tt));
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+                    engine.getTxnScoreboardPool().remove(tt);
+                    engine.getTableSequencerAPI().resetForReboot(tt);
+                    new RecoveryCoordinator(engine).recover();
+                    engine.notifyWalTxnRepublisher(tt);
+                    drainWalQueue();
+                    assertQuery("SELECT * FROM " + name)
+                            .expectSize()
+                            .timestamp("ts")
+                            .returns("""
+                                    ts\tv
+                                    2024-09-01T00:00:00.000000Z\t1
+                                    """);
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    /**
      * A table-type conversion RESETS the WAL lineage: {@code TableConverter} zeroes {@code _txn.seqTxn}
      * and re-seeds {@code txn_seq} from txn 0. The durable epoch taken under the PREVIOUS lineage is then
      * unreachable, and left on disk it post-dates the live cut, which is a refusal that takes the whole
@@ -1239,12 +1442,12 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
      * A database written by a build that reset the WAL lineage WITHOUT clearing the anchor (every build
      * before the {@code TableConverter} fix above) still carries an epoch beyond the sequencer frontier.
      * Such an epoch names a cut no replay can reach, so it is a superseded lineage, not the lost-write case
-     * the freshness guard fails closed on: recovery must discard it and re-enrol at the live cut instead of
-     * refusing to start. The stale anchor is restored here from copies taken before the conversion, which is
+     * the freshness guard fails closed on: recovery must discard it instead of refusing to start, and the next
+     * writer enrols the table at the live cut. The stale anchor is restored here from copies taken before the conversion, which is
      * exactly the on-disk state such an upgrade presents.
      */
     @Test
-    public void testEpochBeyondSequencerFrontierIsDiscardedAndReEnrolled() throws Exception {
+    public void testEpochBeyondSequencerFrontierIsDiscarded() throws Exception {
         org.junit.Assume.assumeFalse("replants files over existing destinations, which Windows forbids", Os.isWindows());
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         try {
@@ -1276,11 +1479,14 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 new RecoveryCoordinator(engine).recover();
 
                 Assert.assertEquals("the discarded anchor must not rewind the live cut", 0L, readTxnSeqTxn(tt));
-                Assert.assertTrue("the table must be re-enrolled with a replacement anchor",
-                        epochArtifactExists(tt, io.questdb.cairo.DurableEpochManifest.FILE_NAME + ".0", ""));
+                Assert.assertFalse("the discarded anchor must be removed", hasSavePointFile(tt));
                 try (io.questdb.cairo.TableReader reader = engine.getReader(tt)) {
                     Assert.assertEquals("rows must survive the discarded anchor", 2L, reader.size());
                 }
+                try (io.questdb.cairo.TableWriter writer = getWriter(tt)) {
+                    Assert.assertNotNull(writer);
+                }
+                Assert.assertTrue("the next writer enrols the table", hasSavePointFile(tt));
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
@@ -2080,6 +2286,77 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         return epochSeqTxn;
     }
 
+    private static List<String> changedFiles(Map<String, byte[]> before, Map<String, byte[]> after) {
+        final List<String> changed = new ArrayList<>();
+        for (Map.Entry<String, byte[]> e : before.entrySet()) {
+            if (!Arrays.equals(e.getValue(), after.get(e.getKey()))) {
+                changed.add(e.getKey());
+            }
+        }
+        for (String name : after.keySet()) {
+            if (!before.containsKey(name)) {
+                changed.add(name);
+            }
+        }
+        return changed;
+    }
+
+    // Files whose bytes a power loss would not keep, by the crash model's durable content: a file may come back longer,
+    // with the space a writer allocated and a close trimmed, but never without the bytes it holds now.
+    private static List<String> bytesLostAtPowerLoss(
+            CrashFaultFilesFacade crashFf,
+            TableToken tt,
+            Map<String, byte[]> files
+    ) {
+        final Map<String, byte[]> durable = new TreeMap<>();
+        for (String name : files.keySet()) {
+            final byte[] content = crashFf.durableContentOf(Paths.get(engine.getConfiguration().getDbRoot().toString(), tt.getDirName(), name).toString());
+            if (content != null) {
+                durable.put(name, content);
+            }
+        }
+        return changedPrefixes(files, durable);
+    }
+
+    private static List<String> changedPrefixes(Map<String, byte[]> before, Map<String, byte[]> after) {
+        final List<String> changed = new ArrayList<>();
+        for (Map.Entry<String, byte[]> e : before.entrySet()) {
+            final byte[] kept = after.get(e.getKey());
+            if (kept == null || kept.length < e.getValue().length || !Arrays.equals(e.getValue(), Arrays.copyOf(kept, e.getValue().length))) {
+                changed.add(e.getKey());
+            }
+        }
+        return changed;
+    }
+
+    // The file system calls one recovery pass makes, by facade method name.
+    private Map<String, Integer> countRecoveryCalls() {
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
+        engine.releaseAllWalWriters();
+        final Map<String, Integer> calls = new TreeMap<>();
+        final FilesFacade ffBefore = AbstractCairoTest.ff;
+        final FilesFacade delegate = engine.getConfiguration().getFilesFacade();
+        AbstractCairoTest.ff = (FilesFacade) Proxy.newProxyInstance(
+                FilesFacade.class.getClassLoader(),
+                new Class<?>[]{FilesFacade.class},
+                (proxy, method, args) -> {
+                    calls.merge(method.getName(), 1, Integer::sum);
+                    try {
+                        return method.invoke(delegate, args);
+                    } catch (InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                }
+        );
+        try {
+            new RecoveryCoordinator(engine).recover();
+        } finally {
+            AbstractCairoTest.ff = ffBefore;
+        }
+        return calls;
+    }
+
     private boolean epochArtifactExists(TableToken tt, CharSequence base, CharSequence suffix) {
         final io.questdb.std.FilesFacade ff = engine.getConfiguration().getFilesFacade();
         try (Path p = new Path()) {
@@ -2179,6 +2456,20 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    private boolean hasSavePointFile(TableToken tt) {
+        return epochArtifactExists(tt, io.questdb.cairo.DurableEpochManifest.FILE_NAME, ".0")
+                || epochArtifactExists(tt, io.questdb.cairo.DurableEpochManifest.FILE_NAME, ".1");
+    }
+
+    private long newestSavePointSeqTxn(TableToken tt) {
+        try (Path p = new Path()) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(tt);
+            final io.questdb.cairo.DurableEpochManifest.Candidate[] saved = io.questdb.cairo.DurableEpochManifest.loadCandidates(
+                    engine.getConfiguration().getFilesFacade(), p, p.size(), tt.getTableId());
+            return saved.length > 0 ? saved[0].epochSeqTxn : -1;
         }
     }
 
@@ -2316,6 +2607,34 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             tx.unsafeLoadAll();
             return tx.getSeqTxn();
         }
+    }
+
+    // Every file of the table by its path relative to the table directory; without the WAL and the sequencer when
+    // materializedOnly is set.
+    private Map<String, byte[]> readTableFiles(TableToken tt, boolean materializedOnly) {
+        final java.nio.file.Path dir = Paths.get(engine.getConfiguration().getDbRoot().toString(), tt.getDirName());
+        final Map<String, byte[]> files = new TreeMap<>();
+        try (Stream<java.nio.file.Path> stream = Files.walk(dir)) {
+            stream.filter(Files::isRegularFile).forEach(p -> {
+                final String name = dir.relativize(p).toString();
+                if (materializedOnly && (name.startsWith(WalUtils.WAL_NAME_BASE) || name.startsWith(WalUtils.SEQ_DIR))) {
+                    return;
+                }
+                try {
+                    files.put(name, Files.readAllBytes(p));
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return files;
+    }
+
+    private void setCommitMode(String mode) {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
+        Assert.assertEquals(mode, CommitMode.toString(engine.getConfiguration().getCommitMode()));
     }
 
     // Serves a stashed file in place of one live _meta while armed, so a save point taken meanwhile saves it.

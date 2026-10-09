@@ -26,8 +26,6 @@ package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CommitMode;
-import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -46,26 +44,21 @@ import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * The {@code _meta} record this build writes, and the ones it reads, in every commit mode.
  * <p>
- * Every producer of the record writes the base layout plus the adaptive enrolment record: the minor format
- * version of the enrolment record, a minor-version checksum that keeps the version-gated fields readable, and
- * zeros from the end of the enrolment record to the column types. Earlier development
- * builds stamped minor versions 4 to 6 and stored a body length and checksum at [64, 80); this build never
- * reads those bytes and still reads every gated field of such a file.
- * <p>
- * The enrolment record is the one field written in place under live readers, as a single 4-byte store.
+ * Every producer of the record writes the base layout: the latest minor format version, a minor-version checksum
+ * that keeps the version-gated fields readable, and zeros from the end of the table format to the column types.
+ * Earlier development builds stamped minor versions 3 to 6 and stored an enrolment record at byte 53 and a body
+ * length and checksum at [64, 80); this build never reads those bytes and still reads every gated field of such
+ * a file.
  */
 @RunWith(Parameterized.class)
 public class MetaFormatTest extends AbstractCairoTest {
     private static final int EARLIER_BUILD_MINOR_VERSION = 6;
     private static final int HEADER_SIZE = (int) TableUtils.META_OFFSET_COLUMN_TYPES;
-    private static final long PADDING_LO = TableUtils.META_OFFSET_ENROLLED_COMMIT_MODE + Integer.BYTES;
+    private static final long PADDING_LO = TableUtils.META_OFFSET_TABLE_FORMAT + Integer.BYTES;
     private final String commitMode;
 
     public MetaFormatTest(String commitMode) {
@@ -91,10 +84,8 @@ public class MetaFormatTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1)");
             drainWalQueue();
             final TableToken token = engine.verifyTableName("t");
-            final int enrolledCommitMode;
             try (TableReader reader = getReader(token)) {
                 Assert.assertEquals(48, reader.getMetadata().getTtlHoursOrMonths());
-                enrolledCommitMode = reader.getMetadata().getEnrolledCommitMode();
             }
 
             // The earlier build's values at [64, 80) are not reproduced: this build must not read them at all.
@@ -102,7 +93,6 @@ public class MetaFormatTest extends AbstractCairoTest {
             engine.releaseInactive();
             try (TableReader reader = getReader(token)) {
                 Assert.assertEquals(48, reader.getMetadata().getTtlHoursOrMonths());
-                Assert.assertEquals(enrolledCommitMode, reader.getMetadata().getEnrolledCommitMode());
             }
             assertQuery("SELECT count() FROM t").noRandomAccess().expectSize().returns("count\n1\n");
 
@@ -111,72 +101,6 @@ public class MetaFormatTest extends AbstractCairoTest {
             drainWalQueue();
             assertBaseLayout(metaPath(token, TableUtils.META_FILE_NAME));
             assertQuery("SELECT v, w FROM t").expectSize().returns("v\tw\n1\tnull\n");
-        });
-    }
-
-    @Test
-    public void testEnrolmentRecordWriteRacesReaderOpen() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE meta_enrol_race (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            drainWalQueue();
-            final TableToken token = engine.verifyTableName("meta_enrol_race");
-
-            final int writes = 300;
-            final AtomicReference<Throwable> writerError = new AtomicReference<>();
-            final AtomicBoolean done = new AtomicBoolean();
-            final CyclicBarrier start = new CyclicBarrier(2);
-            final Thread writer = new Thread(() -> {
-                try {
-                    start.await();
-                    for (int i = 0; i < writes; i++) {
-                        DurableEpochManifest.recordEnrolledCommitMode(
-                                engine.getConfiguration(), token, (i & 1) == 0 ? CommitMode.ADAPTIVE : CommitMode.UNSET
-                        );
-                    }
-                } catch (Throwable t) {
-                    writerError.compareAndSet(null, t);
-                } finally {
-                    done.set(true);
-                }
-            });
-            writer.start();
-            start.await();
-            int reloads = 0;
-            try {
-                while (!done.get()) {
-                    forceMetadataReload(token);
-                    reloads++;
-                }
-            } finally {
-                writer.join();
-            }
-            if (writerError.get() != null) {
-                throw new AssertionError("enrolment writer failed", writerError.get());
-            }
-            Assert.assertTrue("the reader must have raced at least one write", reloads > 0);
-            forceMetadataReload(token);
-        });
-    }
-
-    @Test
-    public void testEnrolmentRecordWriteIsASingleStore() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE meta_enrol_store (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            drainWalQueue();
-            final TableToken token = engine.verifyTableName("meta_enrol_store");
-            final String metaPath = metaPath(token, TableUtils.META_FILE_NAME);
-            for (int mode : new int[]{CommitMode.ADAPTIVE, CommitMode.UNSET}) {
-                final byte[] before = readHeader(metaPath);
-                DurableEpochManifest.recordEnrolledCommitMode(engine.getConfiguration(), token, mode);
-                final byte[] after = readHeader(metaPath);
-                for (int offset = 0; offset < HEADER_SIZE; offset++) {
-                    if (offset < TableUtils.META_OFFSET_ENROLLED_COMMIT_MODE || offset >= PADDING_LO) {
-                        Assert.assertEquals("byte " + offset, before[offset], after[offset]);
-                    }
-                }
-                Assert.assertEquals(mode, Unsafe.byteArrayGetInt(after, (int) TableUtils.META_OFFSET_ENROLLED_COMMIT_MODE));
-                forceMetadataReload(token);
-            }
         });
     }
 
@@ -222,7 +146,7 @@ public class MetaFormatTest extends AbstractCairoTest {
         final byte[] header = readHeader(path);
         final int minorVersionField = Unsafe.byteArrayGetInt(header, (int) TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
         // The enrolment record is the newest field of this layout.
-        Assert.assertEquals(path, TableUtils.META_FORMAT_MINOR_VERSION_ENROLLED_COMMIT_MODE, Numbers.decodeHighShort(minorVersionField));
+        Assert.assertEquals(path, TableUtils.META_FORMAT_MINOR_VERSION_LATEST, Numbers.decodeHighShort(minorVersionField));
         // The version stays trusted: a mismatch here would switch off every version-gated field.
         Assert.assertEquals(
                 path,
@@ -235,12 +159,6 @@ public class MetaFormatTest extends AbstractCairoTest {
         for (int offset = (int) PADDING_LO; offset < HEADER_SIZE; offset++) {
             Assert.assertEquals(path + ", byte " + offset, 0, header[offset]);
         }
-    }
-
-    private static void forceMetadataReload(TableToken token) {
-        // Evict pooled metadata, or the load is served from a cached object.
-        engine.releaseInactive();
-        engine.getTableMetadata(token).close();
     }
 
     private static String metaPath(TableToken token, CharSequence fileName) {

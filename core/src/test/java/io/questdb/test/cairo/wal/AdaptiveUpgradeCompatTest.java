@@ -47,6 +47,7 @@ import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TxnCorruptionUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -86,65 +87,118 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
     // ------------------------------------------------------------------------------------------------
 
     /**
-     * A {@code _meta} written BEFORE the enrolment field existed must be read as {@link CommitMode#UNSET}
-     * &rarr; the field is ignored &rarr; the table reads as "never adaptive", which is the conservative
-     * answer. This is the gate an OLDER binary relies on (it never reads the field at all) and that a NEW
-     * binary applies when it opens such a table.
-     * <p>
-     * Method: run adaptive so a writer enrols the table and stamps the field with {@code ADAPTIVE}. Then
-     * flip ONLY the meta minor-version high short down to the table-format era on disk, keeping the
-     * low-short checksum valid. {@link TableUtils#getEnrolledCommitMode} short-circuits on
-     * {@code isMetaFormatAtLeast(mem, META_FORMAT_MINOR_VERSION_ENROLLED_COMMIT_MODE) == false} and
-     * returns {@code UNSET} without reading the field.
-     * <p>
-     * <b>Non-vacuity A/B on the identical file:</b> before the flip the field reads {@code ADAPTIVE};
-     * after the flip it reads {@code UNSET}. Only the one version-gate word changed, so the version gate
-     * is provably what makes the field inert. If the field were NOT gated, the downgraded read would still
-     * return {@code ADAPTIVE} and this test would fail.
+     * A {@code _meta} written by a development build that kept the enrolment record (minor format version 3, the
+     * record at byte 53) loads, reads, takes writes and a schema change, and survives a restart, under ADAPTIVE and
+     * NOSYNC. The offsets and values are spelled out because the constants that name them are not part of the format
+     * any more once the record goes.
      */
     @Test
-    public void testMetaEnrolmentFieldIsInertOnPreEnrolmentMeta() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+    public void testDevelopmentMetaWithEnrolmentRecordLoads() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table m (ts timestamp, v long) timestamp(ts) partition by day wal");
-            execute("insert into m values ('2024-01-01T00:00:00.000000Z', 1)");
-            drainWalQueue();
-            final TableToken tt = engine.verifyTableName("m");
-            // Drop the pooled writer so _meta is unmapped and we can poke it and re-read it from disk.
-            engine.releaseInactive();
-
-            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
-            try (Path path = new Path()) {
-                path.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.META_FILE_NAME);
-                final LPSZ metaPath = path.$();
-
-                // (control / non-vacuity) current meta: the field IS read -> ADAPTIVE.
-                try (TableReaderMetadata md = new TableReaderMetadata(configuration, tt)) {
-                    md.loadMetadata();
-                    Assert.assertEquals("current meta must read the stored enrolment field",
-                            CommitMode.ADAPTIVE, md.getEnrolledCommitMode());
+            for (String mode : new String[]{"adaptive", "nosync"}) {
+                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+                final String name = "dev_meta_" + mode;
+                execute("create table " + name + " (ts timestamp, v long) timestamp(ts) partition by day wal");
+                execute("insert into " + name + " values ('2024-01-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                final TableToken token = engine.verifyTableName(name);
+                releaseHandles();
+                final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
+                    final int minorVersionField = peekInt(ff, path.$(), TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
+                    // The low short is the field's checksum over the metadata version and column count; keep it.
+                    pokeInt(ff, path.$(), TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION,
+                            Numbers.encodeLowHighShorts(Numbers.decodeLowShort(minorVersionField), (short) 3));
+                    pokeInt(ff, path.$(), 53, CommitMode.ADAPTIVE);
                 }
 
-                // Flip the meta minor version down (keep the checksum low short) => a valid pre-enrolment meta.
-                final int cur = peekInt(ff, metaPath, TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
-                // The invariant this precondition needs is that the field is LIVE in the file we are about
-                // to downgrade, not that the file sits at any particular version: META_FORMAT_MINOR_VERSION
-                // _LATEST legitimately moves whenever a tail field is added. Pinning the exact value would
-                // fail on every such addition while proving nothing about the gate under test.
-                Assert.assertTrue("precondition: an enrolled table must be written at or above the enrolment"
-                                + " meta version, or the field being downgraded away is not live to begin with",
-                        Numbers.decodeHighShort(cur) >= TableUtils.META_FORMAT_MINOR_VERSION_ENROLLED_COMMIT_MODE);
-                final int downgraded = Numbers.encodeLowHighShorts(
-                        Numbers.decodeLowShort(cur),                         // keep the checksum valid
-                        TableUtils.META_FORMAT_MINOR_VERSION_TABLE_FORMAT);  // pre-enrolment
-                pokeInt(ff, metaPath, TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION, downgraded);
+                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
+                engine.getTxnScoreboardPool().remove(token);
+                engine.getTableSequencerAPI().resetForReboot(token);
+                new RecoveryCoordinator(engine).recover();
+                engine.notifyWalTxnRepublisher(token);
+                drainWalQueue();
+                execute("insert into " + name + " values ('2024-01-02T00:00:00.000000Z', 2)");
+                execute("alter table " + name + " add column c int");
+                execute("insert into " + name + " values ('2024-01-03T00:00:00.000000Z', 3, 7)");
+                drainWalQueue();
+                Assert.assertFalse(mode + ": the table must not be suspended", engine.getTableSequencerAPI().isSuspended(token));
+                releaseHandles();
+                engine.getTxnScoreboardPool().remove(token);
+                engine.getTableSequencerAPI().resetForReboot(token);
+                new RecoveryCoordinator(engine).recover();
+                assertQuery("select * from " + name)
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tv\tc
+                                2024-01-01T00:00:00.000000Z\t1\tnull
+                                2024-01-02T00:00:00.000000Z\t2\tnull
+                                2024-01-03T00:00:00.000000Z\t3\t7
+                                """);
+            }
+        });
+    }
 
-                // (the gate) pre-enrolment meta: the field is IGNORED -> UNSET -> "never adaptive".
-                try (TableReaderMetadata md = new TableReaderMetadata(configuration, tt)) {
-                    md.loadMetadata();
-                    Assert.assertEquals("pre-enrolment meta must read the record as UNSET (field gated away)",
-                            CommitMode.UNSET, md.getEnrolledCommitMode());
+    /**
+     * A table directory as a released version leaves it: {@code _txn} areas without checksum stamps, {@code _meta}
+     * below the enrolment format, no save point. Its files read as unverified, never torn: an ADAPTIVE start enrols
+     * the table at its live cut with a valid save point, a NOSYNC start opens it as it is, and both read every row
+     * and take writes.
+     */
+    @Test
+    public void testReleasedTableDirectoryReadsUnverifiedInEveryMode() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String mode : new String[]{"adaptive", "nosync"}) {
+                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                final String name = "released_" + mode;
+                execute("create table " + name + " (ts timestamp, v long) timestamp(ts) partition by day wal");
+                execute("insert into " + name + " values ('2024-01-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                execute("insert into " + name + " values ('2024-01-02T00:00:00.000000Z', 2)");
+                drainWalQueue();
+                final TableToken token = engine.verifyTableName(name);
+                releaseHandles();
+                TxnCorruptionUtils.makeAreasLookLegacy(engine, name);
+                final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+                try (Path path = new Path()) {
+                    final int tablePathLen = path.of(configuration.getDbRoot()).concat(token).size();
+                    path.concat(TableUtils.META_FILE_NAME);
+                    final int minorVersionField = peekInt(ff, path.$(), TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
+                    pokeInt(ff, path.$(), TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION,
+                            Numbers.encodeLowHighShorts(Numbers.decodeLowShort(minorVersionField), TableUtils.META_FORMAT_MINOR_VERSION_TABLE_FORMAT));
+                    path.trimTo(tablePathLen).concat(DurableEpochManifest.FILE_NAME).put(".0");
+                    Assert.assertFalse("precondition: no save point", ff.exists(path.$()));
+                    path.trimTo(tablePathLen).concat(DurableEpochManifest.FILE_NAME).put(".1");
+                    Assert.assertFalse("precondition: no save point", ff.exists(path.$()));
                 }
+
+                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
+                engine.getTxnScoreboardPool().remove(token);
+                engine.getTableSequencerAPI().resetForReboot(token);
+                new RecoveryCoordinator(engine).recover();
+                try (io.questdb.cairo.TableWriter writer = getWriter(token)) {
+                    Assert.assertNotNull(writer);
+                }
+                if ("adaptive".equals(mode)) {
+                    final DurableEpochManifest.Candidate savePoint = currentSavePoint(token);
+                    Assert.assertNotNull("an adaptive start enrols the released table", savePoint);
+                    Assert.assertEquals("at its live cut", readLiveSeqTxn(token), savePoint.epochSeqTxn);
+                }
+                execute("insert into " + name + " values ('2024-01-03T00:00:00.000000Z', 3)");
+                drainWalQueue();
+                Assert.assertFalse(mode + ": the table must not be suspended", engine.getTableSequencerAPI().isSuspended(token));
+                assertQuery("select * from " + name)
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tv
+                                2024-01-01T00:00:00.000000Z\t1
+                                2024-01-02T00:00:00.000000Z\t2
+                                2024-01-03T00:00:00.000000Z\t3
+                                """);
+                releaseHandles();
             }
         });
     }
@@ -184,16 +238,14 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
             }
             engine.releaseInactive();
 
-            try (Path path = new Path(); TableReaderMetadata metadata = new TableReaderMetadata(configuration, token)) {
+            try (Path path = new Path()) {
                 path.of(configuration.getDbRoot()).concat(token).concat(DurableEpochManifest.FILE_NAME + ".0");
                 Assert.assertTrue("opening the writer must publish the enrollment baseline", ff.exists(path.$()));
-                metadata.loadMetadata();
-                Assert.assertEquals(CommitMode.ADAPTIVE, metadata.getEnrolledCommitMode());
 
                 path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
-                final int upgraded = peekInt(ff, path.$(), TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
-                Assert.assertTrue("enrollment must upgrade metadata to the enrolment-aware format",
-                        Numbers.decodeHighShort(upgraded) >= TableUtils.META_FORMAT_MINOR_VERSION_ENROLLED_COMMIT_MODE);
+                final int minorVersion = peekInt(ff, path.$(), TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
+                Assert.assertEquals("enrollment must not rewrite metadata",
+                        TableUtils.META_FORMAT_MINOR_VERSION_TABLE_FORMAT, Numbers.decodeHighShort(minorVersion));
             }
 
             new RecoveryCoordinator(engine).recover();
@@ -201,7 +253,7 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCheckpointRestorePublishesBaselineForNextOrdinaryStartup() throws Exception {
+    public void testRestoredTableEnrolsAtItsFirstWriter() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         assertMemoryLeak(() -> {
             execute("create table checkpoint_enroll (ts timestamp, v long) timestamp(ts) partition by day wal");
@@ -216,11 +268,15 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
                 RecoveryCoordinator.removeAdaptiveEpochArtifacts(configuration.getFilesFacade(), path, tableRootLen);
             }
 
-            // The checkpoint-aware startup must do more than grant a one-process exemption: it publishes a
-            // bound baseline that an immediately following ordinary startup can validate and recover.
-            new RecoveryCoordinator(engine, true).recover();
+            // A restore leaves no save point: the startup leaves the table as it is, its first writer enrols it, and
+            // an ordinary startup after that validates and recovers the baseline.
+            new RecoveryCoordinator(engine).recover();
+            assertArtifactAbsent(token, DurableEpochManifest.FILE_NAME + ".0");
+            try (io.questdb.cairo.TableWriter writer = getWriter(token)) {
+                Assert.assertNotNull(writer);
+            }
             assertArtifactExists(token, DurableEpochManifest.FILE_NAME + ".0");
-            new RecoveryCoordinator(engine, false).recover();
+            new RecoveryCoordinator(engine).recover();
             try (TableReader reader = engine.getReader(token)) {
                 Assert.assertEquals(1L, reader.size());
             }
@@ -299,10 +355,8 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
     /**
      * Downgrade: an adaptive table that has taken a durable epoch is restarted on an instance configured
      * {@code cairo.commit.mode=nosync}. The commit mode is instance-wide and fixed for the life of a
-     * process, so a downgrade is exactly this — a restart under the new mode. The first writer to open the
-     * table reconciles it out of adaptive, it keeps applying WAL cleanly (no suspend, no corruption), and
-     * the leftover {@code _snapshot}/{@code .epoch} artifacts remain on disk, inert (the live read/apply
-     * path never opens them).
+     * process, so a downgrade is exactly this — a restart under the new mode. The start makes the table
+     * durable and removes its save point, and the table keeps applying WAL cleanly (no suspend, no corruption).
      */
     @Test
     public void testDowngradeFromAdaptiveDrainsCleanlyAndArtifactsAreInert() throws Exception {
@@ -335,27 +389,16 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
                 }
             }
 
-            // Leftover artifacts remain, inert (nothing on the live path opens them).
-            assertArtifactExists(tt, DurableEpochManifest.FILE_NAME + ".0");
-            assertCurrentEpochArtifactExists(tt, TableUtils.TXN_FILE_NAME);
+            Assert.assertFalse("the downgrade start removes the save point", hasSavePoint(tt));
         });
     }
 
     /**
      * Downgrade + reboot: the hard case. After a downgrade (a restart under {@code nosync}) the WAL purge
      * floor drops from the durable epoch to the applied seqTxn (the epoch floor applies ONLY under
-     * ADAPTIVE — {@code WalPurgeJob}), so
-     * WAL segments above the frozen epoch become purgeable. If {@code recover()} still rolled the live
-     * {@code _txn}/{@code _cv} back to the stale epoch, the subsequent replay of {@code (epoch, live]}
-     * could hit purged WAL &rarr; data loss / suspend. It must NOT: {@code RecoveryCoordinator} skips
-     * roll-forward for a non-adaptive table (effective mode != ADAPTIVE), leaving the live {@code _txn}
-     * untouched.
-     * <p>
-     * <b>Non-vacuity:</b> after the reboot the stale {@code _snapshot} marker still exists and its
-     * {@code epochSeqTxn} is strictly below the live seqTxn (a stale epoch behind live), and we forced a
-     * WAL purge under the nosync floor first — so a roll-forward would have been observably lossy. All
-     * rows nonetheless survive and the table is not suspended, which is only possible if recovery ignored
-     * the stale epoch.
+     * ADAPTIVE — {@code WalPurgeJob}), so WAL segments above the epoch become purgeable. A save point left
+     * behind would rewind the table onto purged WAL at the next start. The downgrade start removes it, so
+     * every row survives the purge and the next restart.
      */
     @Test
     public void testDowngradeThenRebootPreservesDataAndIgnoresStaleEpoch() throws Exception {
@@ -370,14 +413,11 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
             assertArtifactExists(tt, DurableEpochManifest.FILE_NAME + ".0");
             Assert.assertTrue("adaptive must have recorded a durable epoch", readMarkerEpochSeqTxn(tt) > 0);
 
-            // Downgrade the instance and reboot on it. The first writer to open the table reconciles it out
-            // of adaptive: it forces the materialized state durable, re-anchors the marker at that cut, and
-            // stops claiming the state may be lazily ahead of the epoch. Then apply MORE rows so the live
-            // seqTxn advances well past that now-frozen epoch while NO new epoch is taken (nosync).
+            // Downgrade the instance and reboot on it: the start makes the table durable and removes its save
+            // point. Then apply MORE rows so the live seqTxn advances past the old save point.
             releaseHandles();
             final CairoConfiguration nosyncConfiguration = nosyncConfiguration();
-            final long frozenEpoch;
-            final long liveSeqTxn;
+            final long epochSeqTxn = readMarkerEpochSeqTxn(tt);
             try (CairoEngine downgraded = new CairoEngine(nosyncConfiguration)) {
                 final TableToken dtt = downgraded.verifyTableName("dr");
                 downgraded.execute("insert into dr values ('2024-04-01T02:00:00.000000Z', 3)");
@@ -385,11 +425,10 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
                 downgraded.execute("insert into dr values ('2024-04-01T04:00:00.000000Z', 5)");
                 TestUtils.drainWalQueue(downgraded);
 
-                // The epoch is now FROZEN (nosync takes no new epochs); capture its on-disk value.
-                frozenEpoch = readMarkerEpochSeqTxn(tt);
-                liveSeqTxn = downgraded.getTableSequencerAPI().getTxnTracker(dtt).getSeqTxn();
-                Assert.assertTrue("live seqTxn (" + liveSeqTxn + ") must be ahead of the frozen epoch ("
-                        + frozenEpoch + ")", liveSeqTxn > frozenEpoch);
+                Assert.assertFalse("the downgrade start removes the save point", hasSavePoint(tt));
+                final long liveSeqTxn = downgraded.getTableSequencerAPI().getTxnTracker(dtt).getSeqTxn();
+                Assert.assertTrue("live seqTxn (" + liveSeqTxn + ") must be ahead of the old save point ("
+                        + epochSeqTxn + ")", liveSeqTxn > epochSeqTxn);
 
                 // Force a WAL purge under the (now nosync) floor: segments below the applied txn become
                 // purgeable — exactly the condition that would make a rollback to the stale epoch lossy.
@@ -397,7 +436,7 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
             }
 
             // Reboot again, still nosync: completeInit() -> RecoveryCoordinator.recover() runs as on a real
-            // restart. The stale marker is still on disk and behind live; recovery must ignore it.
+            // restart.
             try (CairoEngine restarted = new CairoEngine(nosyncConfiguration)) {
                 TestUtils.drainWalQueue(restarted);
                 final TableToken rtt = restarted.verifyTableName("dr");
@@ -407,76 +446,14 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
                     Assert.assertEquals("all 5 rows must survive the downgrade+purge+reboot", 5L, r.size());
                 }
             }
-
-            // Non-vacuity: the stale epoch marker is STILL present, unchanged, and STILL behind the live
-            // seqTxn — a roll-forward WOULD have rewound to it (and, with WAL purged, been lossy). Data
-            // survived => recovery skipped it.
-            assertArtifactExists(tt, DurableEpochManifest.FILE_NAME + ".0");
-            Assert.assertEquals("the stale epoch marker must be unchanged (inert), not advanced/purged",
-                    frozenEpoch, readMarkerEpochSeqTxn(tt));
-            Assert.assertTrue("stale epoch must remain behind the live seqTxn",
-                    frozenEpoch < liveSeqTxn);
         });
     }
 
     /**
-     * Outside adaptive, recovery never restores a table from its anchor, even when the table's {@code _meta}
-     * cannot be read. The anchor a table leaves behind when it leaves adaptive is frozen while the WAL purge
-     * floor drops below it, and without {@code _meta} nothing tells it from a current one. Restoring from it
-     * would rewind {@code _txn} past WAL that no longer exists. The table is left to fail when opened instead,
-     * as it would without adaptive recovery, and the instance starts.
-     * <p>
-     * <b>Non-vacuity:</b> the anchor here carries a bound {@code _meta} copy, which is exactly what recovery
-     * restores from on an adaptive instance. Before the instance mode gated that path, this startup restored
-     * {@code _meta} and rewound the live {@code _txn} to the stale anchor.
-     */
-    @Test
-    public void testNosyncBootDoesNotRestoreUnreadableMetaFromStaleAnchor() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
-        assertMemoryLeak(() -> {
-            execute("create table sm (ts timestamp, v long) timestamp(ts) partition by day wal");
-            execute("insert into sm values ('2024-05-01T00:00:00.000000Z', 1)");
-            execute("insert into sm values ('2024-05-01T01:00:00.000000Z', 2)");
-            drainWalQueue();
-            final TableToken tt = engine.verifyTableName("sm");
-
-            releaseHandles();
-            final CairoConfiguration nosyncConfiguration = nosyncConfiguration();
-            try (CairoEngine downgraded = new CairoEngine(nosyncConfiguration)) {
-                downgraded.execute("insert into sm values ('2024-05-01T02:00:00.000000Z', 3)");
-                downgraded.execute("insert into sm values ('2024-05-01T03:00:00.000000Z', 4)");
-                TestUtils.drainWalQueue(downgraded);
-                forceWalPurge(downgraded);
-            }
-            final long liveSeqTxn = readLiveSeqTxn(tt);
-            Assert.assertTrue("precondition: the anchor left behind must be below the live cut",
-                    readMarkerEpochSeqTxn(tt) < liveSeqTxn);
-
-            final FilesFacade ff = configuration.getFilesFacade();
-            try (Path path = new Path()) {
-                path.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.META_FILE_NAME);
-                Assert.assertTrue("remove _meta", ff.removeQuiet(path.$()));
-
-                try (CairoEngine restarted = new CairoEngine(nosyncConfiguration)) {
-                    Assert.assertNotNull("the table stays registered", restarted.getTableTokenIfExists("sm"));
-                }
-
-                Assert.assertFalse("outside adaptive, _meta must not be restored from the anchor", ff.exists(path.$()));
-            }
-            Assert.assertEquals("the live _txn must not be rewound to the stale anchor", liveSeqTxn, readLiveSeqTxn(tt));
-        });
-    }
-
-    /**
-     * Re-enabling adaptive after a nosync period. The table left adaptive during that period: its writer made
-     * the state durable, cleared the enrolment and left the anchor on disk, frozen, while the WAL purge floor
-     * dropped below it. The restart that turns adaptive back on must not rewind the table to that anchor,
-     * because the WAL it would replay is gone. The table is not enrolled, so there is nothing to roll forward;
-     * the first writer to open it enrols it again at its live cut.
-     * <p>
-     * <b>Non-vacuity:</b> while the instance mode could start the roll-forward, this restart rewound the
-     * table to the stale anchor, kept 2 of its 5 rows and suspended it on the first purged WAL segment.
+     * Re-enabling adaptive after a nosync period. The nosync start made the table durable and removed its save
+     * point, and the WAL purge then dropped the WAL behind it. The restart that turns adaptive back on finds no
+     * save point, so there is nothing to roll forward; the first writer to open it enrols it again at its live
+     * cut, and every row survives.
      */
     @Test
     public void testReEnablingAdaptiveKeepsRowsWrittenUnderNosync() throws Exception {
@@ -497,11 +474,7 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
                 TestUtils.drainWalQueue(downgraded);
                 forceWalPurge(downgraded);
             }
-            final long staleEpoch = readMarkerEpochSeqTxn(tt);
-            Assert.assertTrue("precondition: the anchor left behind must be below the live cut",
-                    staleEpoch < readLiveSeqTxn(tt));
-            Assert.assertNotEquals("precondition: leaving adaptive must clear the enrolment",
-                    CommitMode.ADAPTIVE, readEnrolledCommitMode(tt));
+            Assert.assertFalse("leaving adaptive must remove the save point", hasSavePoint(tt));
 
             try (CairoEngine reEnabled = new CairoEngine(configuration)) {
                 final TableToken rtt = reEnabled.verifyTableName("re");
@@ -513,9 +486,7 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
                     Assert.assertEquals("every row written under nosync must survive", 6L, reader.size());
                 }
             }
-            Assert.assertEquals("the first writer must enrol the table again",
-                    CommitMode.ADAPTIVE, readEnrolledCommitMode(tt));
-            Assert.assertTrue("enrolment must publish a fresh anchor", readMarkerEpochSeqTxn(tt) > staleEpoch);
+            Assert.assertTrue("the first writer must enrol the table again", hasSavePoint(tt));
 
             // An ordinary adaptive restart now rolls forward from the fresh anchor.
             try (CairoEngine restarted = new CairoEngine(configuration)) {
@@ -554,10 +525,10 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
         }
     }
 
-    private int readEnrolledCommitMode(TableToken tt) {
-        try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tt)) {
-            metadata.loadMetadata();
-            return metadata.getEnrolledCommitMode();
+    private boolean hasSavePoint(TableToken tt) {
+        try (Path p = new Path()) {
+            p.of(configuration.getDbRoot()).concat(tt);
+            return DurableEpochManifest.exists(configuration.getFilesFacade(), p, p.size());
         }
     }
 
@@ -589,6 +560,14 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
             assertArtifactExists(tt, DurableEpochManifest.FILE_NAME + "." + generation);
             final long[] section = TestUtils.savePointSection(configuration.getFilesFacade(), markerPath, configuration.getDbRoot(), tt, generation, baseFileName.toString());
             Assert.assertTrue("the save point must hold a copy of " + baseFileName, section[1] > 0);
+        }
+    }
+
+    private void assertArtifactAbsent(TableToken tt, CharSequence fileName) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path p = new Path()) {
+            p.of(configuration.getDbRoot()).concat(tt).concat(fileName);
+            Assert.assertFalse("artifact must not exist: " + p, ff.exists(p.$()));
         }
     }
 

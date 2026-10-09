@@ -157,19 +157,11 @@ public class TableConverter {
                                 // (TableSnapshotRestore on checkpoint restore, and the REBASE WAL staging
                                 // clone, which excludes the source anchor and publishes its own). Left behind,
                                 // the stale anchor post-dates the reset live _txn and startup recovery refuses
-                                // to bring the instance up.
-                                //
-                                // The order is crash-safe at every point. The restore-enrolment marker goes
-                                // down FIRST: between the removal and the new baseline the table is enrolled
-                                // in _meta with no anchor, which recovery refuses unless that marker tells it
-                                // to re-enrol at the live cut. A crash before the marker leaves the old,
-                                // still-valid anchor with the lineage it describes; a crash after the removal
-                                // leaves a table recovery re-enrols; either way _convert survives and the
-                                // conversion runs again on the next boot.
+                                // to bring the instance up. A crash after the removal leaves a table without a
+                                // save point, which is not enrolled; _convert survives and the conversion runs
+                                // again on the next boot.
                                 path.trimTo(rootLen).concat(dirNameSink);
-                                final int tableRootLen = path.size();
-                                RecoveryCoordinator.markRestoredForEnrolment(ff, path, tableRootLen);
-                                RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, path, tableRootLen);
+                                RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, path, path.size());
 
                                 txWriter.resetLagValuesUnsafe();
 
@@ -189,8 +181,7 @@ public class TableConverter {
                                     // resetMetadataVersion, never a raw putLong: the metadataVersion is
                                     // checksummed into the meta-format minor-version field, so rewriting it
                                     // in place otherwise switches off every version-gated tail field and the
-                                    // converted table silently loses its TTL, table format and per-table
-                                    // commit mode.
+                                    // converted table silently loses its TTL and table format.
                                     TableUtils.resetMetadataVersion(metaMem, 0);
                                     path.trimTo(rootLen).concat(dirNameSink);
                                     txWriter.resetStructureVersionUnsafe();
@@ -205,11 +196,8 @@ public class TableConverter {
                                 metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
 
                                 // The converted table is a fresh WAL lineage sitting at seqTxn 0, so give it
-                                // its own generation-zero anchor here, the way the REBASE WAL clone does. The
-                                // next boot then validates an anchor instead of refusing an absent one. A
-                                // non-adaptive instance publishes nothing, and must not leave the PREVIOUS
-                                // enrolment record behind either: it would claim lazy state on a table whose
-                                // _txn was just reset, with nothing to rewind to.
+                                // its own generation-zero anchor here, the way the REBASE WAL clone does. A
+                                // non-adaptive instance publishes nothing.
                                 path.trimTo(rootLen).concat(dirNameSink);
                                 if (walEnabled && configuration.getCommitMode() == CommitMode.ADAPTIVE) {
                                     DurableEpochManifest.publishInitialAt(
@@ -220,13 +208,7 @@ public class TableConverter {
                                             convertedPartitionBy,
                                             configuration.getMicrosecondClock().getTicks() / 1000L
                                     );
-                                } else {
-                                    DurableEpochManifest.clearEnrollmentRecord(configuration, token, path.trimTo(rootLen).concat(dirNameSink), tableRootLen);
                                 }
-                                // Consume the crash bridge: the anchor above is durable, or this table has no
-                                // lazy state by construction (non-WAL, or a non-adaptive instance).
-                                path.trimTo(rootLen).concat(dirNameSink).concat(RecoveryCoordinator.RESTORE_ENROL_FILE_NAME);
-                                ff.removeQuiet(path.$());
 
                                 convertedTables.add(token);
 
@@ -312,20 +294,9 @@ public class TableConverter {
         engine.unlock(AllowAllSecurityContext.INSTANCE, token, null, false);
     }
 
+    // Enrolled means a valid save point.
     private static boolean isEnrolledAdaptive(FilesFacade ff, Path path) {
-        final int tableRootLen = path.size();
-        try {
-            path.concat(META_FILE_NAME);
-            final long size = ff.length(path.$());
-            if (size <= 0) {
-                return false;
-            }
-            try (MemoryCMR metaMem = Vm.getCMRInstance(ff, path.$(), size, MemoryTag.MMAP_DEFAULT)) {
-                return TableUtils.getEnrolledCommitMode(metaMem) == CommitMode.ADAPTIVE;
-            }
-        } finally {
-            path.trimTo(tableRootLen);
-        }
+        return DurableEpochManifest.loadCandidates(ff, path, path.size(), -1).length > 0;
     }
 
     // The seqTxn in the table's _txn file. Returns Long.MAX_VALUE when the file does not load, so that the
@@ -342,7 +313,7 @@ public class TableConverter {
         }
     }
 
-    private static boolean readWalEnabled(LPSZ path, FilesFacade ff) {
+    static boolean readWalEnabled(LPSZ path, FilesFacade ff) {
         long fd = -1;
         try {
             fd = ff.openRO(path);

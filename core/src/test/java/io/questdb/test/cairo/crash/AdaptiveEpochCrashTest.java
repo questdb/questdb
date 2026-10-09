@@ -375,12 +375,6 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                             };
                         }
                         final boolean crashed = deletions == 0 ? crashAtOperation(s, n, action) : crashAfterRemoval(s, n, action);
-                        if (!crashed && "sync exit".equals(removal)) {
-                            // Not judged: the SYNC replay rewrites a partition directory the rewind left on disk
-                            // and does not sync its entry, which the exit does not flush yet.
-                            dropScenario(s);
-                            break;
-                        }
                         final String label;
                         if (crashed) {
                             label = removal + ", power loss after " + (deletions == 0 ? "durability operation " : "deletion ") + n;
@@ -402,39 +396,52 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * A power loss at every durability operation of the baseline a table marked for enrolment gets: at the start
-     * after a demote clear, at the writer's reconcile after a promote, and at the start after a restore of a table
-     * that was never enrolled. The last row of each sweep loses power after the baseline, more rows and a WAL purge.
+     * A power loss at every durability operation of the baseline a table without a save point gets: at the start
+     * and first write after a demote clear, at the writer's reconcile after a promote (also with rows a replica
+     * tenure applied lazily, which the baseline must flush), and at the start and first write of a table created
+     * outside adaptive. The last row of each sweep loses power after the baseline, more rows and a WAL purge.
      */
     @Test
-    public void testPowerLossAtEveryDurabilityOperationOfMarkedBaseline() throws Exception {
+    public void testPowerLossAtEveryDurabilityOperationOfBaselineWithoutSavePoint() throws Exception {
         runWithFaultFacade(() -> {
             configureSavePoints();
-            for (String baseline : new String[]{"demote clear, then a start", "demote clear, then a promote", "restore, then a start"}) {
-                final boolean restore = baseline.startsWith("restore");
+            for (String baseline : new String[]{"demote clear, then a start", "demote clear, then a promote",
+                    "replica rows, then a promote", "nosync table, then a start"}) {
+                final boolean nosync = baseline.startsWith("nosync");
+                final boolean tenure = baseline.startsWith("replica rows");
                 final boolean promote = baseline.endsWith("promote");
                 for (int op = 1; op <= MAX_SWEEP; op++) {
-                    setCommitMode(restore ? "nosync" : "adaptive");
-                    final Scenario s = newScenario("m" + (restore ? 'r' : promote ? 'p' : 's') + op);
+                    setCommitMode(nosync ? "nosync" : "adaptive");
+                    final Scenario s = newScenario("m" + (nosync ? 'r' : tenure ? 't' : promote ? 'p' : 's') + op);
                     insertRows(s, 0, 2);
                     drainWalQueue();
                     engine.releaseAllWalWriters();
                     markDurableBaseline();
                     s.markUnsyncedRowsDurable();
-                    if (restore) {
-                        try (Path p = new Path()) {
-                            final int rootLen = p.of(configuration.getDbRoot()).concat(s.token).size();
-                            RecoveryCoordinator.markRestoredForEnrolment(configuration.getFilesFacade(), p, rootLen);
-                            DurableEpochManifest.fsyncDirectory(configuration, p, rootLen);
-                        }
-                    } else {
+                    if (!nosync) {
                         reconcileSavePoint(s, LocalDurabilityPolicy.REPLICA_SKIP);
                     }
-                    assertFilePresent(s.token, RecoveryCoordinator.RESTORE_ENROL_FILE_NAME);
+                    if (tenure) {
+                        // The tenure applies rows lazily; only its WAL and sequencer files are durable.
+                        engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
+                        try {
+                            insertRows(s, 1, 2);
+                            drainWalQueue();
+                        } finally {
+                            engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+                        }
+                        engine.releaseAllWalWriters();
+                        markWalAndSequencerDurable(s.token);
+                    }
                     Assert.assertEquals(0, savePointCount(s));
                     final boolean crashed = crashAtOperation(s, op, promote
                             ? () -> reconcileSavePoint(s, LocalDurabilityPolicy.ALWAYS_ON)
-                            : () -> cleanRestart(s, "adaptive"));
+                            : () -> {
+                        cleanRestart(s, "adaptive");
+                        // The first write enrols the table.
+                        insertRows(s, 1, 1, false, true, false);
+                        drainWalQueue();
+                    });
                     if (!crashed) {
                         insertRows(s, 2, 2);
                         drainWalQueue();
@@ -443,6 +450,49 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                     powerLossAndCheck(s, crashed
                             ? baseline + ", power loss after durability operation " + op
                             : baseline + " completed, then rows and a WAL purge");
+                    if (!crashed) {
+                        break;
+                    }
+                }
+            }
+            assertNoRowFailures();
+        });
+    }
+
+    /**
+     * A power loss at every durability operation of recovery's restore, from the creation baseline and from a
+     * periodic save point, with {@code _meta}, {@code _txn} and {@code _cv} all ahead of the save point: a column
+     * added, rows and an UPDATE applied lazily after it, then a kill. The next start must finish the restore and
+     * read back every row, and a start after it must change nothing.
+     */
+    @Test
+    public void testPowerLossAtEveryDurabilityOperationOfRestore() throws Exception {
+        runWithFaultFacade(() -> {
+            configureSavePoints();
+            for (String savePoint : new String[]{"creation baseline", "periodic save point"}) {
+                final boolean periodic = savePoint.startsWith("periodic");
+                for (int op = 1; op <= MAX_SWEEP; op++) {
+                    setCommitMode("adaptive");
+                    final Scenario s = newScenario("r" + (periodic ? 'p' : 'c') + op);
+                    if (periodic) {
+                        insertRows(s, 0, 2);
+                        drainWalQueue();
+                        publishSavePoint(s);
+                    }
+                    execute("alter table " + s.table + " add column c int");
+                    insertRows(s, 1, 2);
+                    execute("update " + s.table + " set c = 7");
+                    drainWalQueue();
+                    engine.releaseAllReaders();
+                    engine.releaseAllWriters();
+                    engine.releaseAllWalWriters();
+                    restart(s);
+                    // A kill keeps the page cache: the live files ahead of the save point are on disk.
+                    markDurableBaseline();
+                    final boolean crashed = crashAtOperation(s, op, () -> new RecoveryCoordinator(engine).recover());
+                    powerLossAndCheck(s, crashed
+                            ? "restore from the " + savePoint + ", power loss after durability operation " + op
+                            : "restore from the " + savePoint + " completed");
                     if (!crashed) {
                         break;
                     }
@@ -811,7 +861,7 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     // a durable mode and `covered` says the durable frontier covers it. Rows at the day's start precede every row
     // inserted otherwise.
     private void insertRows(Scenario s, int day, int count, boolean covered, boolean mayFail, boolean atDayStart) {
-        final StringBuilder sql = new StringBuilder("insert into ").append(s.table).append(" values ");
+        final StringBuilder sql = new StringBuilder("insert into ").append(s.table).append("(ts, v) values ");
         final long[] ts = new long[count];
         final long[] v = new long[count];
         for (int i = 0; i < count; i++) {
@@ -833,6 +883,18 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                 : "nosync".equals(commitMode) ? s.unsynced : s.expected;
         for (int i = 0; i < count; i++) {
             target.put(ts[i], v[i]);
+        }
+    }
+
+    private void markWalAndSequencerDurable(TableToken token) throws Exception {
+        final java.nio.file.Path tableDir = Paths.get(configuration.getDbRoot().toString(), token.getDirName());
+        try (Stream<java.nio.file.Path> files = Files.walk(tableDir)) {
+            files.filter(Files::isRegularFile).forEach(p -> {
+                final String rel = tableDir.relativize(p).toString();
+                if (rel.startsWith("wal") || rel.startsWith("txn_seq")) {
+                    faultFf.markFileDurable(p.toAbsolutePath().toString());
+                }
+            });
         }
     }
 

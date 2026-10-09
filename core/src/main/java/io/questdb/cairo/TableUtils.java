@@ -119,10 +119,10 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    // Development builds of the adaptive commit work stamped 4 to 6 and stored a body length and checksum in
-    // the padding at [64, 80). Nothing reads those bytes; such a file passes every gate up to LATEST.
-    public static final short META_FORMAT_MINOR_VERSION_LATEST = 3;
-    public static final short META_FORMAT_MINOR_VERSION_ENROLLED_COMMIT_MODE = 3;
+    // Development builds of the adaptive commit work stamped 3 to 6, and stored an enrolment record at byte 53 and
+    // a body length and checksum in the padding at [64, 80). Nothing reads those bytes; such a file passes every
+    // gate up to LATEST.
+    public static final short META_FORMAT_MINOR_VERSION_LATEST = 2;
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
     public static final short META_FORMAT_MINOR_VERSION_TABLE_FORMAT = 2;
     public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
@@ -141,20 +141,6 @@ public final class TableUtils {
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
     public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
     public static final long META_OFFSET_TABLE_FORMAT = META_OFFSET_TTL_HOURS_OR_MONTHS + 4; // INT
-    // The commit mode this table's MATERIALIZED STATE is enrolled under. Durability itself is instance-wide
-    // (cairo.commit.mode), so this is NOT a per-table mode: it answers exactly one question, and only this
-    // question: may the materialized state be lazily AHEAD of the durable epoch? ADAPTIVE means yes;
-    // anything else (including CommitMode.UNSET, which is what a table written before this field existed
-    // reads back as) means no. The global mode can differ between restarts, so the answer has to be on disk.
-    //
-    // It is rewritten only when a table ENTERS or LEAVES adaptive, always AFTER the durable state that
-    // justifies the new value: entering, the generation-zero baseline is published first; leaving, a final
-    // forced epoch reconciles the table first. A crash in between therefore leaves the OLD value, which is
-    // always the conservative one -- entering, "not yet adaptive" (re-enrol, publishing a fresh baseline);
-    // leaving, "still adaptive" (roll forward again, which is idempotent). Between two non-adaptive modes
-    // it is not rewritten at all, so a stale non-ADAPTIVE value is normal and answers the question above
-    // correctly. Additive field at the meta tail, gated by META_FORMAT_MINOR_VERSION_ENROLLED_COMMIT_MODE.
-    public static final long META_OFFSET_ENROLLED_COMMIT_MODE = META_OFFSET_TABLE_FORMAT + 4; // INT
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(2);
@@ -700,8 +686,8 @@ public final class TableUtils {
      * {@link #META_OFFSET_META_FORMAT_MINOR_VERSION} matches a checksum over (metadataVersion, columnCount).
      * A caller that resets the metadataVersion of a table it is cloning or converting — {@code REBASE WAL},
      * {@code SET TYPE WAL} — invalidates that checksum, and every version-gated tail field then reads as
-     * absent: TTL becomes 0, the table format reverts to NATIVE, the adaptive enrolment record reverts to
-     * UNSET. Nothing fails; the table just quietly loses those properties.
+     * absent: TTL becomes 0 and the table format reverts to NATIVE. Nothing fails; the table just quietly loses
+     * those properties.
      *
      * <p>The stored minor version is PRESERVED, never re-stamped to {@link #META_FORMAT_MINOR_VERSION_LATEST}.
      * Claiming a newer format than the bytes actually carry would make the reader interpret never-written
@@ -3446,12 +3432,6 @@ public final class TableUtils {
         mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
         mem.putInt(tableStruct.getTableFormat());
-        // A brand-new table is NOT enrolled, whatever mode it is being created under. The generation-zero
-        // anchor is published after this file exists (CairoEngine.createTableUnsafe), so recording ADAPTIVE
-        // here would name a durable epoch that is not on disk yet: a crash in that window would leave a
-        // table claiming lazy state with no anchor to rewind to. The first TableWriter to open an adaptive
-        // table records the enrolment, and it does so before the table can be applied lazily.
-        mem.putInt(CommitMode.UNSET);
 
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
         assert count > 0;
@@ -3694,25 +3674,6 @@ public final class TableUtils {
 
     static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
-    }
-
-    /**
-     * The commit mode this table's materialized state is enrolled under; see
-     * {@link #META_OFFSET_ENROLLED_COMMIT_MODE}. Returns {@link CommitMode#UNSET} for a {@code _meta}
-     * written before the field existed, which reads as "never adaptive" and therefore enrols at the live
-     * cut rather than refusing to start.
-     * <p>
-     * That is sound for every RELEASED build: lazy adaptive apply ships together with this field, so no
-     * released binary can have left a table lazily torn while writing a {@code _meta} without it. It is
-     * deliberately fail-OPEN for one case that exists only before this branch merges — a development
-     * database whose tables were written by an intermediate adaptive build and whose anchor has since been
-     * lost. Such a table enrols at its live cut instead of refusing; there is no signal left on disk to
-     * tell it from a table that was never adaptive at all.
-     */
-    static int getEnrolledCommitMode(MemoryR metaMem) {
-        return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_ENROLLED_COMMIT_MODE)
-                ? metaMem.getInt(TableUtils.META_OFFSET_ENROLLED_COMMIT_MODE)
-                : CommitMode.UNSET;
     }
 
     static int getTableFormat(MemoryR metaMem) {

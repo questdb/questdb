@@ -33,18 +33,8 @@ public final class CommitMode {
      */
     public static final int UNKNOWN = -2;
     /**
-     * "No enrolment recorded" sentinel for the ENROLMENT record in {@code _meta}
-     * ({@link io.questdb.cairo.TableUtils#META_OFFSET_ENROLLED_COMMIT_MODE}), which is the only place a
-     * commit mode is stored per table. It is not a mode a table can run under: durability is an
-     * instance-wide property set by {@code cairo.commit.mode}, so every durability decision point reads
-     * {@code configuration.getCommitMode()}.
-     * <p>
-     * A {@code _meta} written before the enrolment field existed reads back UNSET, which answers the only
-     * question the field asks -- "may this table's materialized state be lazily ahead of its durable
-     * epoch?" -- with "no".
-     * <p>
-     * The same sentinel marks "no mode threaded in yet" on the writer-scoped {@code setCommitMode} seams
-     * ({@code MemoryMA}), whose holders then read the instance-global mode.
+     * "No mode threaded in yet" on the writer-scoped {@code setCommitMode} seams ({@code MemoryMA}), whose holders
+     * then read the instance-global mode. Not a mode anything runs under.
      */
     public static final int UNSET = -1;
     public static final int ASYNC = 0;
