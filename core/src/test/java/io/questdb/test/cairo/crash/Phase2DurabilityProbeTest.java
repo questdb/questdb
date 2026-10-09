@@ -10,23 +10,19 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Asserts B1 SYNC durability (SP2): after fsync-on-extend is applied in MemoryCMARWImpl and
- * MemoryPMARImpl, every row committed in SYNC mode must survive a simulated power-loss crash
- * (file extends are now inode-journaled via fsync). A crash after a SYNC commit must leave ALL
- * committed rows intact — zero loss.
+ * Checks that every row committed in SYNC mode survives a simulated power loss when the commit
+ * extends a column file. MemoryCMARWImpl and MemoryPMARImpl fsync on extend, which journals the
+ * new inode size.
  *
- * <p>We use a minimal mmap-page size (one OS page = 4096 bytes on Linux) so the column data file
- * extends to a second page during the batch. This forces the fsync-on-extend path we are
- * verifying. The crash harness truncates grown files back to their last-fsynced (baseline) size;
- * with B1 in place the fsync records the new inode size, so the harness preserves the extended
- * data after crash.
+ * <p>The test uses a one-page append size so the column data file grows past its first page
+ * during the batch and takes the fsync-on-extend path. The crash harness truncates grown files
+ * back to their last fsynced size, so a missing fsync on extend loses rows.
  */
 public class Phase2DurabilityProbeTest extends AbstractCrashConsistencyTest {
 
     /**
-     * One OS page in bytes. The STRING primary column (.d) stores 4 + 2*N bytes per value, so
-     * 200 rows of 15-char strings ≈ 6 800 bytes — more than one page — guaranteeing at least one
-     * file-extend call that the harness will roll back on crash.
+     * One OS page in bytes, used as the append page size so the string column's data file
+     * extends during the batch.
      */
     private static final long MIN_PAGE = Files.PAGE_SIZE; // 4096 on Linux x86
 
@@ -34,8 +30,7 @@ public class Phase2DurabilityProbeTest extends AbstractCrashConsistencyTest {
     public void testSyncCommitLosesExtendOnCrash_currentBehaviour() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         // Use a minimal mmap page size so the extra rows overflow the pre-allocated segment and
-        // force a file extend. With B1 (fsync-on-extend) the new inode size is journaled, so the
-        // crash harness preserves all extended data.
+        // force a file extend.
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, String.valueOf(MIN_PAGE));
         try {
             // engine.getConfiguration() live-delegates to the property store updated above, so
@@ -48,7 +43,7 @@ public class Phase2DurabilityProbeTest extends AbstractCrashConsistencyTest {
                 markDurableBaseline(); // the seed is "old, already journaled"
 
                 // Scale row count to page size so the .d column file always crosses a page
-                // boundary, even on platforms with large pages (16K/64K, e.g. Apple Silicon CI).
+                // boundary, even on platforms with 16K or 64K pages.
                 // STRING data cost: 4-byte length prefix + 2 bytes per UTF-16 char.
                 final long pageSize = MIN_PAGE;
                 final String VAL = "grow-row-row-row-row"; // 20 chars; last 6 replaced per row
@@ -65,7 +60,7 @@ public class Phase2DurabilityProbeTest extends AbstractCrashConsistencyTest {
 
                 crashAndReopen();
 
-                // B1 makes the SYNC extend durable: ALL committed rows must survive the crash.
+                // fsync on extend makes the SYNC commit durable: all committed rows must survive the crash.
                 assertSyncDurable("p", "s", all);
             });
         } finally {
