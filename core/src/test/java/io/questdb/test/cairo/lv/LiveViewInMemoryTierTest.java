@@ -890,11 +890,14 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSymbolRewindToTheStoreOriginRebasesTheStore() throws Exception {
+    public void testSymbolRewindToTheStoreOriginTakesBackEveryIdTheStoreHolds() throws Exception {
         // The first id a column ever assigns fixes the id -> string store's origin page. A
         // discarded pass that was the column's first, over a committed count on a page
-        // boundary, is rewound to exactly that origin, so the store drops every page and the
-        // next assignment fixes the origin again, as after close.
+        // boundary, is rewound to exactly that origin, which takes back every id the store
+        // holds: none of them resolves any more, and the next value takes the first of them.
+        // The store drops every page there and lets the next assignment fix the origin again,
+        // as after close. Nothing here tells that from pages emptied in place: the next id
+        // lands on the origin page either way.
         assertMemoryLeak(() -> {
             final int col = 1;
             final int committedCount = 256;
@@ -963,6 +966,53 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
                 for (int slotIdx = 0; slotIdx < 2; slotIdx++) {
                     Assert.assertNotNull(
                             "slot " + slotIdx + " must drop its sentinel even when the rewind throws",
+                            tier.tryAcquireWrite(slotIdx)
+                    );
+                    tier.releaseWriteWithoutPublish(slotIdx);
+                }
+                final int pin = tier.acquireRead();
+                Assert.assertEquals(tier.getPublishedIdx(), pin);
+                tier.releaseRead(pin);
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolRewindWhoseFirstSentinelReleaseThrowsStillReleasesTheSecond() throws Exception {
+        // tryRewindSymbolCache drops its two writer sentinels one after the other, the
+        // non-published slot's first, and each release prunes the reverse index on its way,
+        // which can throw. The case above throws inside the rewind, so both of its releases
+        // run clean and it cannot tell whether the second depends on the first. Here the
+        // rewind completes and the first release is what throws: the published slot's
+        // sentinel has to drop all the same, or every reader of the view spins on it forever.
+        assertMemoryLeak(() -> {
+            final int col = 1;
+            final int committedCount = 0;
+            final IntList committedCounts = new IntList();
+            committedCounts.extendAndSet(col, committedCount);
+            IntList types = new IntList(2);
+            types.add(ColumnType.TIMESTAMP);
+            types.add(ColumnType.SYMBOL);
+            try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE)) {
+                final LiveViewSymbolCache cache = tier.getSymbolCache();
+                // A discarded pass left the column an id to take back.
+                Assert.assertEquals(0, cache.intern(col, "discarded", new UncommittedValuesReader(committedCount)));
+
+                final RuntimeException injected = new RuntimeException("reverse-index prune failed");
+                tier.setFailNextSymbolHorizonStamp(injected);
+                try {
+                    tier.tryRewindSymbolCache(committedCounts);
+                    Assert.fail("expected the first release's stamp failure to propagate");
+                } catch (RuntimeException e) {
+                    Assert.assertSame(injected, e);
+                }
+                Assert.assertFalse("the rewind must have completed ahead of the releases", cache.hasStrandedIds(col, committedCount));
+
+                // Re-acquirable means the sentinel is gone. Asserting it this way before any
+                // acquireRead keeps a regression a failure instead of a hang.
+                for (int slotIdx = 0; slotIdx < 2; slotIdx++) {
+                    Assert.assertNotNull(
+                            "slot " + slotIdx + " must drop its sentinel even when the other slot's release throws",
                             tier.tryAcquireWrite(slotIdx)
                     );
                     tier.releaseWriteWithoutPublish(slotIdx);

@@ -5399,6 +5399,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * rebuild that replaces it. A disk-subset publish whose apply left its block pending
      * marks the tier stale too ({@link #publishSubsetToInMemoryTier}): that block owns the
      * ids above the committed count until it lands.
+     * <p>
+     * The lead has to be gone from both places that count it: the instance and the
+     * published slot. An out-of-order hand-off zeroes the instance's count ahead of its
+     * repair ({@link #finishLeadRefresh}, {@link #drainAppliedBase}), and only a repair that
+     * completes restages the slot. One that fails before it records any window-state debt
+     * runs no recovery either, so the slot keeps the lead it was published with under a
+     * stamp the fence still passes, and readers resolve that lead's ids through the cache.
+     * A rewind there would drop them, and the lead's SYMBOL values would read as NULL until
+     * a repair completed.
+     * See LiveViewRuntimeRestoreTest.testALateRowHandOffThatFindsNoBaseReaderKeepsTheLeadsNewAccountLabel
+     * and its WhileItsRetryIsParked twin.
+     * <p>
      * {@link #rewindStrandedSymbolIds(LiveViewInstance, TableReader)} checks the rest.
      */
     private boolean isSymbolRewindCandidate(LiveViewInstance instance) {
@@ -5406,6 +5418,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         return tier != null
                 && tier.getSymbolCache().hasSymbolColumns()
                 && instance.getLeadRowCount() == 0
+                // The worker is the slot's only writer, so its lead count reads without the sentinel.
+                && tier.getSlot(tier.getPublishedIdx()).leadRowCount() == 0
                 && instance.getSuspendedRepair() == null
                 && !instance.isTierStale();
     }
@@ -14761,11 +14775,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .$(", appliedBefore=").$(lvAppliedBefore)
                         .$(", appliedSeqTxn=").$(lvAppliedSeqTxn).I$();
             }
+            // Stale first, as in flushLead: restampSlot's release of the writer sentinel
+            // can throw, and a marking behind it would be skipped.
+            instance.setTierStale(true);
             // Best-effort, like every re-stamp: a reader on the published slot keeps the
             // old stamp in place. That slot holds no row disk lacks, since this cycle
             // added nothing to it, so a read it still fences returns the applied table too.
             restampSlot(instance, Numbers.LONG_NULL, 0);
-            instance.setTierStale(true);
             return;
         }
         // The worker is the slot's only writer, so its stamp reads without the sentinel.

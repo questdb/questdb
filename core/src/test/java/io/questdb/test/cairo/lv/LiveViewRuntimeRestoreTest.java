@@ -26,6 +26,7 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -50,7 +51,9 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -1369,6 +1372,17 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                     fault.arm(2);
                     drainJob(job);
                     Assert.assertTrue("the mid-drain segment read must have been failed exactly once", fault.hasFired());
+
+                    // The restore dropped the lead and restaged the published slot from the
+                    // view's table, so only this reader's pin, on the other slot, keeps the
+                    // restore's tier rebuild from taking the three ids back. The pinned slot still
+                    // carries acct-3's row under the first of them, which no flush has committed
+                    // and no drain has interned again yet: a rewind here would leave that row
+                    // naming no account at all.
+                    cursor.toTop();
+                    println(factory.getMetadata(), cursor, pinnedSink);
+                    TestUtils.assertEquals(pinnedRows, pinnedSink);
+
                     driveRefreshToQuiescence(job);
 
                     // Reads in the meantime agree with the base.
@@ -1394,8 +1408,10 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                             pendingTier.getSlot(pendingTier.getPublishedIdx()).lvSeqTxn()
                     );
 
-                    // The pinned reader still resolves the lead it holds: nothing re-bound the
-                    // id acct-3 sits at in its slot.
+                    // The pinned reader still reads the slot it opened on, through the retry and
+                    // its flush. This read cannot tell a rewind any more: the retry derives acct-3
+                    // first again, so it binds an id a rewind took back to the same account. The
+                    // read right behind the restore is the one that can.
                     cursor.toTop();
                     println(factory.getMetadata(), cursor, pinnedSink);
                     TestUtils.assertEquals(pinnedRows, pinnedSink);
@@ -1428,6 +1444,208 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                     + "2026-01-02T10:10:00.000000Z\tacct-8\t512.0\t1\n");
             assertAccountCountsMatchTheBase(sixAccounts + "acct-7\t1\nacct-8\t1\n");
             assertAccountRowsMatchTheBase("acct-3", "2026-01-02T09:20:00.000000Z\tacct-3\n");
+        });
+    }
+
+    @Test
+    public void testALateRowHandOffThatFindsNoBaseReaderKeepsTheLeadsNewAccountLabel() throws Exception {
+        assertMemoryLeak(() -> assertLeadKeepsItsNewAccountLabelBehindALateRowHandOffThatFindsNoBaseReader(false));
+    }
+
+    @Test
+    public void testALateRowHandOffThatFindsNoBaseReaderKeepsTheLeadsNewAccountLabelWhileItsRetryIsParked() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> assertLeadKeepsItsNewAccountLabelBehindALateRowHandOffThatFindsNoBaseReader(true));
+    }
+
+    @Test
+    public void testARepairParkedBehindAMidDrainRestoreDefersTheSymbolRewind() throws Exception {
+        // A mid-drain restore whose replay of the gap meets an out-of-order commit hands off to
+        // the out-of-order repair, and a repair that parks on its turn budget is still attached
+        // to the view when the restore restages the tier. The restaged slot is not stale and the
+        // view counts no lead, while the symbol cache holds the id the discarded turn interned
+        // its new account at, one past the table's committed count. That id is not stranded:
+        // the parked repair stands on an uncommitted replacement that reaches the same commit,
+        // and its own commit gives the account that very id. So the rewind the restage attempts
+        // has to stand down for as long as the repair is parked.
+        //
+        // No read tells the two apart: the restaged slot holds committed ids only, no turn
+        // drains while the repair is parked, and the drain after it anchors the cache on the
+        // table's count again. So the case asserts the id the cache holds while the repair is
+        // parked, and that nothing logged a rewind.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(fault.facade(), () -> {
+            // A deduplicating base, which is what leaves an out-of-order commit in the replay
+            // gap. See testARestartRestoreWhoseParkedRepairEndsTheTurn.
+            createBase("DEDUP UPSERT KEYS(created_at, account_id)");
+            createView();
+            fault.of(engine.verifyTableName("tx").getDirName());
+            insertAndRefresh(O3_IN_THE_REPLAY_GAP);
+            assertViewRows(O3_GAP_OUTPUT);
+            final LiveViewInstance instance = instance("lv");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // The first commit drains on its own turn, and the next two coalesce behind it,
+                // so the fault strikes after the failing turn fed the second: the one that
+                // brings acct-2, an account the view's table has never held.
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-04T09:00:00.000000Z', 'acct-1', 1.0)");
+                drainWalQueue();
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-04T09:10:00.000000Z', 'acct-2', 2.0)");
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-04T09:20:00.000000Z', 'acct-1', 4.0)");
+                drainWalQueue();
+                runOnePass(job);
+                assertViewRows(O3_GAP_OUTPUT + DAY_FOUR_FIRST_ROW_OUTPUT);
+                assertAccountIdsStandAt(instance, 1, 1);
+
+                fault.arm(1);
+                runOnePass(job);
+                Assert.assertTrue("the mid-drain segment read must have been failed", fault.hasFired());
+                Assert.assertEquals(
+                        "the failing turn's own recovery must have restored the runtime",
+                        1,
+                        instance.getCheckpointRuntimeRestores()
+                );
+                Assert.assertNotNull(
+                        "the restore must leave the repair it handed off to parked on the view",
+                        instance.getSuspendedRepair()
+                );
+                Assert.assertFalse("the restore must have restaged the tier behind the parked repair", instance.isTierStale());
+                capture.drain();
+                capture.assertLoggedRE("live view O3 repair yielded on its turn budget \\[view=lv, turns=1,");
+                // The restage ran with the repair attached, so acct-2 keeps the id the
+                // discarded turn interned it at, one past the table's only account.
+                assertAccountIdsStandAt(instance, 1, 2);
+                capture.assertNotLogged(SYMBOL_IDS_REWOUND);
+                assertViewRows(O3_GAP_OUTPUT + DAY_FOUR_FIRST_ROW_OUTPUT);
+
+                driveRefreshToQuiescence(job);
+            }
+
+            // The repair finished across the turns after it. Its replacement reached the commits
+            // the failed turn was draining, so it committed acct-2 at the id the cache held for
+            // it, and no rebuild found an id to take back.
+            Assert.assertNull(instance.getSuspendedRepair());
+            Assert.assertFalse(instance.isWindowStateDirty());
+            Assert.assertFalse(instance.isInvalid());
+            Assert.assertEquals("the injected mid-drain failure is the one fault", 1, instance.getRefreshFaultCount());
+            capture.drain();
+            capture.assertNotLogged(SYMBOL_IDS_REWOUND);
+            capture.assertNotLogged(SYMBOL_IDS_OUT_OF_STEP_REBUILT);
+            assertAccountIdsStandAt(instance, 2, 2);
+            assertSlotStampedAtTheViewTable(instance);
+            assertViewRows(O3_GAP_OUTPUT + DAY_FOUR_FIRST_ROW_OUTPUT + """
+                    2026-01-04T09:10:00.000000Z\tacct-2\t2.0\t1
+                    2026-01-04T09:20:00.000000Z\tacct-1\t5.0\t2
+                    """);
+            assertAccountCountsMatchTheBase("""
+                    acct-1\t9
+                    acct-2\t1
+                    """);
+            assertAccountRowsMatchTheBase("acct-2", "2026-01-04T09:10:00.000000Z\tacct-2\n");
+        });
+    }
+
+    @Test
+    public void testATierRebuildOverUnappliedViewBlocksDefersTheSymbolRewind() throws Exception {
+        // A turn that finds the tier marked for a rebuild flushes its row straight to the view's
+        // WAL and restages the slot from the view's table. Under a held writer neither that
+        // block nor the one before it applies, so the restaged slot is not stale, the view
+        // counts no lead and no repair is parked, while the symbol cache stands two ids past
+        // the table's committed count: the ids the two blocks' accounts were interned at, and
+        // will be committed at once the blocks land. Only the view's own WAL tells those ids
+        // from the ones a discarded turn leaves behind, so the rewind that rebuild attempts has
+        // to find the blocks pending and stand down. A rewind there would hand the next new
+        // account an id one of the pending accounts is about to be committed at.
+        //
+        // No read shows it: whatever lands the pending blocks next, a retry of their apply or a
+        // later flush's own, either rebuilds the slot from the table or takes it out of the read
+        // path. So the case asserts the ids the cache still holds behind that rebuild, and that
+        // nothing logged a rewind.
+        assertMemoryLeak(() -> {
+            createBase("");
+            createView();
+            insertAndRefresh(FOUR_ROWS);
+            final LiveViewInstance instance = instance("lv");
+            final TableToken viewToken = instance.getLiveViewToken();
+            final SeqTxnTracker viewTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
+            final LiveViewSymbolCache symbolCache = instance.getInMemoryTier().getSymbolCache();
+            final String sixRows = """
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-01T09:10:00.000000Z\tacct-2\t2.0\t1
+                    2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
+                    2026-01-02T09:10:00.000000Z\tacct-1\t12.0\t2
+                    2026-01-02T09:20:00.000000Z\tacct-3\t16.0\t1
+                    2026-01-02T09:30:00.000000Z\tacct-4\t32.0\t1
+                    """;
+            final String fourAccounts = """
+                    acct-1\t3
+                    acct-2\t1
+                    acct-3\t1
+                    acct-4\t1
+                    """;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // The lock reason is the WAL apply's own, which the inline apply takes for a
+                // concurrent holder and returns from without suspending the table.
+                try (TableWriter ignore = engine.getWriterUnsafe(viewToken, TableUtils.WAL_2_TABLE_WRITE_REASON)) {
+                    // The first held flush lands nothing, so it takes the tier out of the read
+                    // path and marks it for a rebuild.
+                    execute("INSERT INTO tx VALUES ('2026-01-02T09:20:00.000000Z', 'acct-3', 16.0)");
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                    Assert.assertTrue("a flush whose apply landed nothing must mark the tier for a rebuild", instance.isTierStale());
+                    // The second turn finds the tier so, flushes its row straight to the WAL and
+                    // restages the slot from the table as it stands, without either block.
+                    execute("INSERT INTO tx VALUES ('2026-01-02T09:30:00.000000Z', 'acct-4', 32.0)");
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                    Assert.assertEquals(
+                            "the two held flushes must leave two blocks committed but unapplied",
+                            2,
+                            viewTracker.getSeqTxn() - viewTracker.getWriterTxn()
+                    );
+                    Assert.assertFalse("the second held flush must have restaged the slot from the table", instance.isTierStale());
+                    Assert.assertEquals(0, instance.getLeadRowCount());
+                    assertNoRefreshFaults("lv");
+
+                    // The pending blocks own the two ids past the table's two accounts.
+                    assertAccountIdsStandAt(instance, 2, 4);
+                    try (TableReader reader = getReader("lv")) {
+                        final int accountCol = reader.getMetadata().getColumnIndex("account_id");
+                        TestUtils.assertEquals("acct-3", symbolCache.newSymbolValueOf(accountCol, 2));
+                        TestUtils.assertEquals("acct-4", symbolCache.newSymbolValueOf(accountCol, 3));
+                    }
+                    capture.drain();
+                    capture.assertNotLogged(SYMBOL_IDS_REWOUND);
+                    assertViewTrailsAtTheFourAppliedRows();
+                }
+
+                // The writer is free: the next pass lands both blocks, at the ids their accounts
+                // were interned at, and rebuilds the slot behind them.
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("both blocks must have landed", viewTracker.getSeqTxn(), viewTracker.getWriterTxn());
+                assertAccountIdsStandAt(instance, 4, 4);
+                assertViewRows(sixRows);
+                assertAccountCountsMatchTheBase(fourAccounts);
+
+                // One more account: the next id past the committed ones goes to it.
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:40:00.000000Z', 'acct-5', 64.0)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+
+            capture.drain();
+            capture.assertNotLogged(SYMBOL_IDS_REWOUND);
+            capture.assertNotLogged(SYMBOL_IDS_OUT_OF_STEP);
+            assertNoRefreshFaults("lv");
+            assertAccountIdsStandAt(instance, 5, 5);
+            assertSlotStampedAtTheViewTable(instance);
+            assertViewRows(sixRows + "2026-01-02T09:40:00.000000Z\tacct-5\t64.0\t1\n");
+            assertAccountCountsMatchTheBase(fourAccounts + "acct-5\t1\n");
+            assertAccountRowsMatchTheBase("acct-3", "2026-01-02T09:20:00.000000Z\tacct-3\n");
+            assertAccountRowsMatchTheBase("acct-4", "2026-01-02T09:30:00.000000Z\tacct-4\n");
+            assertAccountRowsMatchTheBase("acct-5", "2026-01-02T09:40:00.000000Z\tacct-5\n");
         });
     }
 
@@ -1682,6 +1900,14 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                     final long consumedSeqTxn = instance.getStateReader().getLvConsumedSeqTxn();
                     Assert.assertEquals("the consumed watermark must start level with the processed one", durableSeqTxn, consumedSeqTxn);
 
+                    // The pinned slot carries acct-3's row under the first of the stranded ids,
+                    // and only the pin keeps the restore's tier rebuild from taking them back.
+                    // This read comes ahead of the retry, which interns acct-3 again: a rewind
+                    // under the pin would leave the row naming no account until then.
+                    cursor.toTop();
+                    println(factory.getMetadata(), cursor, pinnedSink);
+                    TestUtils.assertEquals(pinnedRows, pinnedSink);
+
                     // The retry derives the four accounts again, above the ids the pin kept
                     // stranded, and flushes them. The flush opens the view's state file twice:
                     // to persist the consumed watermark its apply earned, which the fault fails,
@@ -1734,7 +1960,9 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                             tier.getSlot(tier.getPublishedIdx()).lvSeqTxn()
                     );
 
-                    // The pinned reader still resolves the lead it holds.
+                    // The pinned reader still reads the slot it opened on. Behind the retry this
+                    // read cannot tell a rewind: the retry binds an id a rewind took back to
+                    // acct-3 again.
                     cursor.toTop();
                     println(factory.getMetadata(), cursor, pinnedSink);
                     TestUtils.assertEquals(pinnedRows, pinnedSink);
@@ -1779,6 +2007,21 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             assertAccountCountsMatchTheBase(sixAccounts + "acct-7\t1\nacct-8\t1\n");
             assertAccountRowsMatchTheBase("acct-3", "2026-01-02T09:20:00.000000Z\tacct-3\n");
         });
+    }
+
+    @Test
+    public void testADrainThatFailsBeforeItsFirstRowLeavesAnOutOfStepSlotsSymbolIdsToItsRebuild() throws Exception {
+        assertOutOfStepLeadFlushKeepsAccountsOnTheirIds(false, false);
+    }
+
+    @Test
+    public void testALeadFlushThatCannotReadTheCommittedSymbolsKeepsOutOfStepSymbolIdsOutOfTheTier() throws Exception {
+        assertOutOfStepLeadFlushKeepsAccountsOnTheirIds(true, false);
+    }
+
+    @Test
+    public void testALeadFlushWhoseOutOfStepSlotUnstampFailsKeepsItsSymbolIdsOutOfTheTier() throws Exception {
+        assertOutOfStepLeadFlushKeepsAccountsOnTheirIds(false, true);
     }
 
     @Test
@@ -2104,10 +2347,16 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                     assertAccountRowsMatchTheBase("acct-3", "2026-01-02T09:20:00.000000Z\tacct-3\n");
                     capture.drain();
                     capture.assertLoggedRE(RESTORED + " \\[view=lv, cause=mid-drain refresh failure, ");
+                    // The pin held at every rewind attempt, so the id the restore stranded stays
+                    // bound and the retry interned acct-4 and acct-5 above it: the cache stands
+                    // one id past the five accounts the view's table committed.
+                    assertAccountIdsStandAt(instance("lv"), 5, 6);
                     capture.assertNotLogged(SYMBOL_IDS_REWOUND);
                     capture.assertOnlyOnce(SYMBOL_IDS_OUT_OF_STEP_REBUILT);
                     // The rebuild left a disk-staged slot behind, not a stale one, and the pinned
-                    // reader still reads the slot it opened on.
+                    // reader still reads the slot it opened on. Its rows carry committed ids
+                    // alone, as do all rows a view publishes while its base deduplicates, and a
+                    // rewind takes none of those back, so this read cannot tell whether one ran.
                     Assert.assertFalse(instance("lv").isTierStale());
                     cursor.toTop();
                     println(factory.getMetadata(), cursor, pinnedSink);
@@ -2150,13 +2399,11 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
         // retry interns both accounts above it and its publish rebuilds the slot from disk. Once
         // the reader is gone, the next turn that drains the applied base takes the id back before
         // it interns, and its publish keeps the slot.
-        final AtomicBoolean isArmed = new AtomicBoolean();
-        final AtomicBoolean hasFired = new AtomicBoolean();
-        final AtomicReference<String> baseDir = new AtomicReference<>();
-        assertMemoryLeak(newDayAmountOpenFault(baseDir, isArmed, hasFired), () -> {
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
             createBase("DEDUP UPSERT KEYS(created_at, account_id)");
             createView();
-            baseDir.set(engine.verifyTableName("tx").getDirName());
+            fault.of(engine.verifyTableName("tx").getDirName());
             insertAndRefresh(FOUR_ROWS);
             final long rawWalCleanCycles = instance("lv").getDedupRawWalCleanCycles();
             final String pinnedRows = """
@@ -2198,9 +2445,9 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                             """);
                     execute("INSERT INTO tx VALUES ('2026-01-03T09:00:00.000000Z', 'acct-1', 4.0)");
                     drainWalQueue();
-                    isArmed.set(true);
+                    fault.armAppliedScan("2026-01-03");
                     runOnePass(job);
-                    Assert.assertTrue("the applied scan's open of the new day must have been failed", hasFired.get());
+                    Assert.assertTrue("the applied scan's open of the new day must have been failed", fault.hasAppliedScanFired());
                     execute("INSERT INTO tx VALUES ('2026-01-02T09:20:00.000000Z', 'acct-Y', 8.0)");
                     drainWalQueue();
                     driveRefreshToQuiescence(job);
@@ -2212,10 +2459,14 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                     capture.drain();
                     capture.assertLoggedRE(RESTORED + " \\[view=lv, cause=mid-drain refresh failure, ");
                     // The pin held at the restore's rebuild and at the top of the retry's applied
-                    // scan, so the retry interned acct-Y and acct-X above the stranded id.
+                    // scan, so the retry interned acct-Y and acct-X above the stranded id: the
+                    // cache stands one id past the four accounts the view's table committed.
+                    assertAccountIdsStandAt(instance("lv"), 4, 5);
                     capture.assertNotLogged(SYMBOL_IDS_REWOUND);
                     capture.assertOnlyOnce(SYMBOL_IDS_OUT_OF_STEP_REBUILT);
                     Assert.assertFalse(instance("lv").isTierStale());
+                    // The pinned slot carries committed ids alone, which a rewind never takes
+                    // back, so this read shows that nothing wrote the slot, not that no rewind ran.
                     cursor.toTop();
                     println(factory.getMetadata(), cursor, pinnedSink);
                     TestUtils.assertEquals(pinnedRows, pinnedSink);
@@ -2561,9 +2812,8 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
         // and skips the publish. The published slot then lacks those rows, as it does after a
         // publish that readers on both slots stalled, and the next turn must not append its own
         // on top of the gap.
-        final AtomicBoolean isArmed = new AtomicBoolean();
-        final AtomicBoolean hasFired = new AtomicBoolean();
-        assertMemoryLeak(newViewStateOpenFault(isArmed, hasFired), () -> {
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
             createBase("DEDUP UPSERT KEYS(created_at, account_id)");
             createView();
             insertAndRefresh(FOUR_ROWS);
@@ -2579,9 +2829,9 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO tx VALUES ('2026-01-02T09:20:00.000000Z', 'acct-3', 16.0)");
                 drainWalQueue();
-                isArmed.set(true);
+                fault.armViewStateOpen();
                 driveRefreshToQuiescence(job);
-                Assert.assertTrue("the turn's first write of the view's state file must have been failed", hasFired.get());
+                Assert.assertTrue("the turn's first write of the view's state file must have been failed", fault.hasViewStateOpenFired());
                 capture.drain();
                 capture.assertLogged("could not advance live view consumed seqTxn after apply [view=lv, ");
                 assertNoRefreshFaults("lv");
@@ -2841,9 +3091,11 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             // and the restore that puts the runtime back replays the raw base WAL above the newest
             // root, as a restart does.
             execute("ALTER TABLE tx ADD COLUMN note INT");
-            execute("INSERT INTO tx (created_at, account_id, amount) VALUES "
-                    + "('2026-01-03T10:00:00.000000Z', 'acct-1', 30.0), "
-                    + "('2026-01-03T10:00:00.000000Z', 'acct-1', 32.0)");
+            execute("""
+                    INSERT INTO tx (created_at, account_id, amount) VALUES
+                        ('2026-01-03T10:00:00.000000Z', 'acct-1', 30.0),
+                        ('2026-01-03T10:00:00.000000Z', 'acct-1', 32.0)
+                    """);
             drainWalQueue();
             final LiveViewRebuildRestatementGuard guard;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -2939,13 +3191,41 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
 
     @Test
     public void testAMidDrainFailureOverABaseThatLostADayRefusesTheRebuildBehindARestoreThatFails() throws Exception {
+        // This test pins the dedup-keys term of the guard's stand-down
+        // (LiveViewRefreshJob.armRebuildRestatementGuard): behind a restore whose replay
+        // disagrees with the view's durable output, the guard stands down only when the snapshot
+        // the rebuild pins has dedup keys. Here the replay disagrees and that snapshot has none:
+        // the base collapsed a duplicate while it deduplicated, the view derived the one row it
+        // kept, and the base dropped its dedup keys afterwards. Its WAL still holds both copies,
+        // so the restore fails its row count as it does over a deduplicating base, and the guard
+        // compares and refuses to drop the day the base lost. The test needs the DEDUP DISABLE to
+        // reach a mismatch without dedup keys: over a base that never had them, the restore would
+        // replay the very WAL rows the view drained, and its row count would match.
+        //
+        // The blocked view this test expects is a known limit of the stand-down, not the outcome
+        // it aims for. The timeline is intact, and the mismatch comes from the same collapsed
+        // duplicate the stand-down exists for; the guard stays only because the stand-down reads
+        // the dedup keys at rebuild time, when the base no longer has them. A stand-down that
+        // went by the dedup keys the base had when it collapsed the duplicate would restate the
+        // view here, and this test's expectations would then become those of
+        // testAMidDrainFailureOverADedupBaseThatLostADayRestatesTheViewWhenItsRestoreMeetsACollapsedDuplicate.
+        // Such a change fails this test as written, and these expectations change with it.
         final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
         assertMemoryLeak(fault.facade(), () -> {
-            createBase("");
+            createBase("DEDUP UPSERT KEYS(created_at, account_id)");
             createView();
             fault.of(engine.verifyTableName("tx").getDirName());
-            insertAndRefresh(FOUR_ROWS);
+            // COLLAPSED_DUPLICATE_ROWS without its day-three commit, so the duplicate sits in the
+            // last commit, above the only root the default cadence seals, and the three commits
+            // insertThreeAndFailMidDrain brings on day two stay above the view's frontier.
+            insertAndRefresh(
+                    COLLAPSED_DUPLICATE_ROWS[0],
+                    COLLAPSED_DUPLICATE_ROWS[1],
+                    COLLAPSED_DUPLICATE_ROWS[2],
+                    COLLAPSED_DUPLICATE_ROWS[3]
+            );
             execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-01'");
+            execute("ALTER TABLE tx DEDUP DISABLE");
             drainWalQueue();
             final LiveViewInstance instance = instance("lv");
             final long processedBefore;
@@ -2953,12 +3233,10 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 processedBefore = instance.getLastProcessedSeqTxn();
-                // The recovery's restore fails on the timeline's open, which stands in for an IO
-                // error or a root it cannot read, so the recovery falls back to the rebuild. Over
-                // a base without dedup keys no restore failure stands the guard down.
-                fault.armTimelineOpen();
+                // The recovery's restore replays the base's WAL above the root, feeds both copies
+                // of the duplicate where the view's table holds one row, and fails its own row
+                // count, so the recovery falls back to the rebuild.
                 insertThreeAndFailMidDrain(job, fault);
-                Assert.assertFalse("the recovery's restore must have been failed", fault.isTimelineOpenArmed());
                 driveRefreshToQuiescence(job);
                 guard = job.rebuildRestatementGuardForTest();
             }
@@ -2969,11 +3247,21 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_NONE, guard.getAbstention());
             Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR, guard.getVerdict());
             capture.drain();
-            capture.assertLogged("live view could not restore its runtime from the checkpoint timeline, rebuilding from the applied base "
-                    + "[view=lv, cause=mid-drain refresh failure, ");
+            capture.assertLoggedRE("live view could not restore its runtime from the checkpoint timeline, rebuilding from the applied base "
+                    + "\\[view=lv, cause=mid-drain refresh failure, .*does not match durable materialization");
             capture.assertNotLogged(GUARD_STAND_DOWN);
             capture.assertLogged("live view rebuild from the applied base refused, it would drop rows the view retains "
                     + "[view=lv, cause=mid-drain refresh failure, ");
+            // The refusal committed nothing and rebuilt nothing: the view keeps the day the base
+            // lost, under the lead the first of the three commits published before the fault.
+            assertViewRows("""
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-01T09:10:00.000000Z\tacct-2\t2.0\t1
+                    2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
+                    2026-01-02T09:10:00.000000Z\tacct-1\t12.0\t2
+                    2026-01-02T09:20:00.000000Z\tacct-2\t16.0\t1
+                    """);
         });
     }
 
@@ -4035,11 +4323,10 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
 
     /**
      * Asserts what a disk-subset publish leaves behind when its apply did not land the turn's
-     * block: no lead, a tier marked stale, and a published slot without a stamp, which the
-     * fence of no read passes.
+     * block: a tier marked stale and a published slot without a stamp, which the fence of no
+     * read passes.
      */
     private static void assertTierStandsDownForAnUnappliedBlock(LiveViewInstance instance) {
-        Assert.assertEquals(0, instance.getLeadRowCount());
         Assert.assertTrue("the publish must mark the tier stale", instance.isTierStale());
         final LiveViewInMemoryTier tier = instance.getInMemoryTier();
         Assert.assertEquals(
@@ -4074,31 +4361,6 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
     }
 
     /**
-     * Fails the first open of the base's own {@code amount} column in the 2026-01-03 partition
-     * once {@code isArmed} is set. The applied scan of a deduplicating base reaches that file only
-     * after it appended every row of the day before, and the raw-WAL drain never opens it.
-     */
-    private static FilesFacade newDayAmountOpenFault(AtomicReference<String> baseDir, AtomicBoolean isArmed, AtomicBoolean hasFired) {
-        return new TestFilesFacadeImpl() {
-            @Override
-            public long openRO(LPSZ name) {
-                final String dir = baseDir.get();
-                if (isArmed.get()
-                        && dir != null
-                        && Utf8s.containsAscii(name, dir)
-                        && !Utf8s.containsAscii(name, "wal")
-                        && Utf8s.containsAscii(name, "2026-01-03")
-                        && Utf8s.endsWithAscii(name, "amount.d")
-                        && isArmed.compareAndSet(true, false)) {
-                    hasFired.set(true);
-                    return -1;
-                }
-                return super.openRO(name);
-            }
-        };
-    }
-
-    /**
      * Fails the first open for writing of the view's own {@code cumulative_sum} column in the
      * 2026-01-03 partition once {@code isArmed} is set: the apply of a block that opens that day
      * in the view's table.
@@ -4114,24 +4376,6 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                         && Utf8s.containsAscii(name, "2026-01-03")
                         && Utf8s.endsWithAscii(name, "cumulative_sum.d")
                         && isArmed.compareAndSet(true, false)) {
-                    hasFired.set(true);
-                    return -1;
-                }
-                return super.openRW(name, opts);
-            }
-        };
-    }
-
-    /**
-     * Fails the first open for writing of a live view's state file once {@code isArmed} is set.
-     * A turn of a view over a deduplicating base opens that file first to persist the consumed
-     * watermark its apply earned, and again to persist the rest of its state when that fails.
-     */
-    private static FilesFacade newViewStateOpenFault(AtomicBoolean isArmed, AtomicBoolean hasFired) {
-        return new TestFilesFacadeImpl() {
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                if (Utf8s.endsWithAscii(name, LiveViewState.LIVE_VIEW_STATE_FILE_NAME) && isArmed.compareAndSet(true, false)) {
                     hasFired.set(true);
                     return -1;
                 }
@@ -4176,6 +4420,28 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
     }
 
     /**
+     * Asserts where the view's account ids stand: the accounts the view's table has committed,
+     * and the exclusive bound of the ids the tier's symbol cache holds. The cache stands past
+     * the table by the ids of an un-flushed lead, of a block the table has yet to apply, or of
+     * a turn a recovery discarded, until a rewind takes the last of those back.
+     */
+    private void assertAccountIdsStandAt(LiveViewInstance instance, int committedCount, int cachedIdBound) {
+        try (TableReader reader = getReader("lv")) {
+            final int accountCol = reader.getMetadata().getColumnIndex("account_id");
+            Assert.assertEquals(
+                    "the accounts the view's table has committed",
+                    committedCount,
+                    reader.getSymbolMapReader(accountCol).getSymbolCount()
+            );
+            Assert.assertEquals(
+                    "the bound of the account ids the tier's symbol cache holds",
+                    cachedIdBound,
+                    instance.getInMemoryTier().getSymbolCache().newSymbolMaxIdExclusive(accountCol)
+            );
+        }
+    }
+
+    /**
      * Asserts the view filters {@code account} by its SYMBOL key exactly as the base does: the
      * filter resolves the value to a raw id through the table's own symbol table, so a row the
      * view stores under an id its table committed to another account matches as that account.
@@ -4206,13 +4472,11 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
      *                            which reorders the new accounts against the writer's
      */
     private void assertAppliedScanRestoreKeepsAccountsOnTheirIds(boolean isLaterAccountBelow) throws Exception {
-        final AtomicBoolean isArmed = new AtomicBoolean();
-        final AtomicBoolean hasFired = new AtomicBoolean();
-        final AtomicReference<String> baseDir = new AtomicReference<>();
-        assertMemoryLeak(newDayAmountOpenFault(baseDir, isArmed, hasFired), () -> {
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
             createBase("DEDUP UPSERT KEYS(created_at, account_id)");
             createView();
-            baseDir.set(engine.verifyTableName("tx").getDirName());
+            fault.of(engine.verifyTableName("tx").getDirName());
             insertAndRefresh(FOUR_ROWS);
             final long rawWalCleanCycles = instance("lv").getDedupRawWalCleanCycles();
             final String laterTs = isLaterAccountBelow ? "2026-01-02T09:20:00.000000Z" : "2026-01-02T09:40:00.000000Z";
@@ -4244,9 +4508,9 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                         """);
                 execute("INSERT INTO tx VALUES ('2026-01-03T09:00:00.000000Z', 'acct-1', 4.0)");
                 drainWalQueue();
-                isArmed.set(true);
+                fault.armAppliedScan("2026-01-03");
                 runOnePass(job);
-                Assert.assertTrue("the applied scan's open of the new day must have been failed", hasFired.get());
+                Assert.assertTrue("the applied scan's open of the new day must have been failed", fault.hasAppliedScanFired());
                 capture.drain();
                 capture.assertLoggedRE(RESTORED + " \\[view=lv, cause=mid-drain refresh failure, ");
 
@@ -4352,9 +4616,11 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                     restatedRows = COLLAPSED_DUPLICATE_RESTATED_OUTPUT;
                 } else {
                     execute("ALTER TABLE tx ADD COLUMN note INT");
-                    execute("INSERT INTO tx (created_at, account_id, amount) VALUES "
-                            + "('2026-01-03T10:00:00.000000Z', 'acct-1', 30.0), "
-                            + "('2026-01-03T10:00:00.000000Z', 'acct-1', 32.0)");
+                    execute("""
+                            INSERT INTO tx (created_at, account_id, amount) VALUES
+                                ('2026-01-03T10:00:00.000000Z', 'acct-1', 30.0),
+                                ('2026-01-03T10:00:00.000000Z', 'acct-1', 32.0)
+                            """);
                     drainWalQueue();
                     driveRefreshToQuiescence(job);
                     restatedRows = COLLAPSED_DUPLICATE_RESTATED_OUTPUT + "2026-01-03T10:00:00.000000Z\tacct-1\t48.0\t2\n";
@@ -4372,9 +4638,11 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                 assertViewRows(restatedRows);
                 writeRepairMarker(instance("lv"));
                 execute("ALTER TABLE tx ADD COLUMN note2 INT");
-                execute("INSERT INTO tx (created_at, account_id, amount) VALUES "
-                        + "('2026-01-03T11:00:00.000000Z', 'acct-1', 1.0), "
-                        + "('2026-01-03T11:00:00.000000Z', 'acct-1', 2.0)");
+                execute("""
+                        INSERT INTO tx (created_at, account_id, amount) VALUES
+                            ('2026-01-03T11:00:00.000000Z', 'acct-1', 1.0),
+                            ('2026-01-03T11:00:00.000000Z', 'acct-1', 2.0)
+                        """);
                 drainWalQueue();
                 driveRefreshToQuiescence(job);
                 guard = job.rebuildRestatementGuardForTest();
@@ -4569,6 +4837,144 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
     }
 
     /**
+     * A late row hands its turn off to the out-of-order repair before the drain has fed a row,
+     * and the hand-off zeroes the view's lead count ahead of the repair's first step, which pins
+     * an applied reader of the base. With every pooled reader of the base in use that step
+     * throws, and nothing has recorded a window-state debt by then: no recovery runs and nothing
+     * rebuilds the tier, so the published slot keeps the un-flushed lead, whose new account sits
+     * at the first id past the committed ones. The retry's drain therefore starts with a zero
+     * lead count over a slot that still holds a lead. A symbol-id rewind there takes that id
+     * back, and every read the fence still serves from the slot then resolves the lead's account
+     * to NULL, on a full scan, a grouped count and an equality filter alike, until a repair
+     * completes and rebuilds the tier.
+     * <p>
+     * The lead also holds a row that names no account. That row has to read as NULL all along,
+     * and to be the only one that does.
+     *
+     * @param isRetryParked whether the base's readers come back after the first failed hand-off
+     *                      and the retry's repair parks on its turn budget, so the reads run
+     *                      while that repair is in progress, instead of the retry's hand-off
+     *                      failing as well, so they run between two failed turns
+     */
+    private void assertLeadKeepsItsNewAccountLabelBehindALateRowHandOffThatFindsNoBaseReader(boolean isRetryParked) throws Exception {
+        createBase("");
+        if (isRetryParked) {
+            // The columns createView() gives the view, over an hour-wide frame in place of the
+            // daily anchor. A repair over a bounded frame localizes, so it runs under the turn
+            // budget and can park; an anchored one resumes from its root within one turn. No
+            // account has two rows more than an hour apart on one day, so both views hold the
+            // same rows.
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                    SELECT created_at, account_id, sum(amount) OVER w AS cumulative_sum,
+                        count(account_id) OVER w AS cumulative_count
+                    FROM tx
+                    WINDOW w AS (PARTITION BY account_id ORDER BY created_at RANGE BETWEEN 1 HOUR PRECEDING AND CURRENT ROW)
+                    """);
+        } else {
+            createView();
+        }
+        insertAndRefresh(FOUR_ROWS);
+        final LiveViewInstance instance = instance("lv");
+        final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+        final int failedHandOffs = isRetryParked ? 1 : 2;
+        final ObjList<TableReader> baseReaders = new ObjList<>();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            // Two rows drain on a turn of their own into the un-flushed lead: acct-3's, at the
+            // first id past the two committed accounts, and one that names no account, which
+            // has to read as NULL throughout and be the only row that does. The clock stays on
+            // the last flush, so nothing flushes.
+            setCurrentMicros(instance.getLastFlushTimeUs());
+            execute("""
+                    INSERT INTO tx VALUES
+                        ('2026-01-02T09:20:00.000000Z', 'acct-3', 16.0),
+                        ('2026-01-02T09:25:00.000000Z', NULL, 2.0)
+                    """);
+            drainWalQueue();
+            drainJob(job);
+            Assert.assertEquals(2, instance.getLeadRowCount());
+            assertViewServesTheLeadUnderItsAccounts();
+
+            // The late row is the next turn's first commit, and the base applies it before that
+            // turn runs, so the hand-off gets as far as pinning a reader of the applied base.
+            execute(CORRECTION_COMMIT);
+            drainWalQueue();
+            try {
+                borrowEveryBaseReader(baseReaders);
+                for (int handOff = 1; handOff <= failedHandOffs; handOff++) {
+                    if (handOff > 1) {
+                        // The retry runs at the deadline the failed turn armed.
+                        Assert.assertNotEquals("the failed hand-off must arm a retry", Numbers.LONG_NULL, nextRefreshRetryMicros());
+                        advanceClockToNextRefreshPass();
+                    }
+                    drainJob(job);
+                    Assert.assertEquals("the hand-off must fault its turn", handOff, instance.getRefreshFaultCount());
+                    Assert.assertFalse("the hand-off must fail before anything records a window-state debt", instance.isWindowStateDirty());
+                    Assert.assertFalse("nothing may mark the tier for a rebuild", instance.isTierStale());
+                    Assert.assertEquals(
+                            "the published slot must still hold the lead",
+                            2,
+                            tier.getSlot(tier.getPublishedIdx()).leadRowCount()
+                    );
+                    capture.drain();
+                    capture.assertLoggedRE("live view refresh failed \\[view=lv, retryCount=" + handOff
+                            + ", error=.*table busy \\[reason=pool size exceeded]");
+                    capture.assertNotLogged("live view O3 replay [view=lv");
+                    assertViewServesTheLeadUnderItsAccounts();
+                }
+            } finally {
+                Misc.freeObjList(baseReaders);
+            }
+
+            if (isRetryParked) {
+                // The retry finds a reader, and its repair replays one row and parks.
+                Assert.assertNotEquals("the failed hand-off must arm a retry", Numbers.LONG_NULL, nextRefreshRetryMicros());
+                advanceClockToNextRefreshPass();
+                job.run();
+                Assert.assertNotNull("the retry's repair must park on its turn budget", instance.getSuspendedRepair());
+                assertViewServesTheLeadUnderItsAccounts();
+            }
+            // The slot holds the lead through all of it, so nothing may take its ids back.
+            capture.drain();
+            capture.assertNotLogged(SYMBOL_IDS_REWOUND);
+
+            driveRefreshToQuiescence(job);
+
+            // One more account after the repair: the next id past the committed ones goes to it.
+            execute("INSERT INTO tx VALUES ('2026-01-02T09:30:00.000000Z', 'acct-4', 32.0)");
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        }
+
+        Assert.assertNull(instance.getSuspendedRepair());
+        Assert.assertFalse(instance.isInvalid());
+        Assert.assertEquals("only the hand-offs that found no base reader fault", failedHandOffs, instance.getRefreshFaultCount());
+        assertSlotStampedAtTheViewTable(instance);
+        assertViewRows("""
+                created_at\taccount_id\tcumulative_sum\tcumulative_count
+                2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                2026-01-01T09:10:00.000000Z\tacct-2\t2.0\t1
+                2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
+                2026-01-02T09:05:00.000000Z\tacct-1\t68.0\t2
+                2026-01-02T09:10:00.000000Z\tacct-1\t76.0\t3
+                2026-01-02T09:20:00.000000Z\tacct-3\t16.0\t1
+                2026-01-02T09:25:00.000000Z\t\t2.0\t0
+                2026-01-02T09:30:00.000000Z\tacct-4\t32.0\t1
+                """);
+        assertAccountCountsMatchTheBase("""
+                \t1
+                acct-1\t4
+                acct-2\t1
+                acct-3\t1
+                acct-4\t1
+                """);
+        assertAccountRowsMatchTheBase("acct-3", "2026-01-02T09:20:00.000000Z\tacct-3\n");
+        assertAccountRowsMatchTheBase("acct-4", "2026-01-02T09:30:00.000000Z\tacct-4\n");
+        capture.drain();
+        capture.assertNotLogged(SYMBOL_IDS_OUT_OF_STEP);
+    }
+
+    /**
      * A lead flush whose inline apply lands an older backlog with its own block must take the
      * published slot out of the read path: the slot was staged from the table as it stood before
      * the backlog, so the backlog's rows sit in the table under the slot's rows and the slot lacks
@@ -4670,6 +5076,222 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                     isStateFileUnwritable ? 1 : 0,
                     instance.getRefreshFaultCount()
             );
+        });
+    }
+
+    /**
+     * A reader that pins the tier across a mid-drain restore keeps the restore, and the drain
+     * behind it, from taking back the ids the discarded turns interned. That drain interns its
+     * accounts above them and the flush commits them below, so the lead's ids are out of step
+     * with the view's table. The flush has to take the published slot out of the read path and
+     * mark the tier, so that a rebuild replaces the slot before anything stamps it again. And
+     * nothing may take the stranded ids back ahead of that rebuild, since the slot's rows still
+     * sit at them.
+     * <p>
+     * The view flushes every 200ms, twice the refresh-retry backoff, so the restored turn's
+     * retry drains at its deadline with no flush due, and the flush gets a turn of its own.
+     * That is still inside the step the drive helpers move the clock by, so each of their passes
+     * crosses a flush deadline as before.
+     * <p>
+     * When the flush does not fault its turn, a drain comes next that starts over the marked
+     * slot and fails before its first row. It rebuilds nothing, so it is the one drain that
+     * could take the ids back while the slot still holds its rows. No read tells whether it
+     * did: the slot carries no stamp, so no read's fence passes. The case therefore asserts the
+     * ids the cache still holds behind that drain, and that nothing logged a rewind.
+     *
+     * @param isIdCheckFailed whether the reader the flush opens to check its ids against the
+     *                        view's table cannot reload, which leaves the flush nothing to
+     *                        compare and has to read as out of step
+     * @param isUnstampFailed whether the flush's un-stamp of the slot throws while it releases
+     *                        the slot's writer sentinel, which fails the flush's turn behind
+     *                        its commit and its apply
+     */
+    private void assertOutOfStepLeadFlushKeepsAccountsOnTheirIds(boolean isIdCheckFailed, boolean isUnstampFailed) throws Exception {
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            createBase("");
+            // The columns createView() gives the view, on the longer flush interval.
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 200ms START FROM BEGINNING AS
+                    SELECT created_at, account_id, sum(amount) OVER w AS cumulative_sum,
+                        count(account_id) OVER w AS cumulative_count
+                    FROM tx
+                    WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')
+                    """);
+            fault.of(engine.verifyTableName("tx").getDirName());
+            insertAndRefresh(FOUR_ROWS);
+            final LiveViewInstance instance = instance("lv");
+            final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            final long durableSeqTxn = instance.getLastProcessedSeqTxn();
+            final String injectedUnstampFailure = "injected reverse-index prune failure";
+            final String sixAccountRows = """
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-01T09:10:00.000000Z\tacct-2\t2.0\t1
+                    2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
+                    2026-01-02T09:10:00.000000Z\tacct-1\t12.0\t2
+                    2026-01-02T09:20:00.000000Z\tacct-3\t16.0\t1
+                    2026-01-02T09:30:00.000000Z\tacct-4\t32.0\t1
+                    2026-01-02T09:40:00.000000Z\tacct-5\t64.0\t1
+                    2026-01-02T09:50:00.000000Z\tacct-6\t128.0\t1
+                    """;
+            final String sixAccounts = """
+                    acct-1\t3
+                    acct-2\t1
+                    acct-3\t1
+                    acct-4\t1
+                    acct-5\t1
+                    acct-6\t1
+                    """;
+            final String acctSevenRow = "2026-01-02T10:00:00.000000Z\tacct-7\t256.0\t1\n";
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // acct-3 drains on a turn of its own into the un-flushed lead, at the first id
+                // past the two committed accounts. The clock stays on the last flush, so nothing
+                // flushes.
+                setCurrentMicros(instance.getLastFlushTimeUs());
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:20:00.000000Z', 'acct-3', 16.0)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals(1, instance.getLeadRowCount());
+
+                // A reader pins the slot that holds that lead, and keeps it through the flush.
+                // Every publish from here on goes to the other slot, which nothing pins.
+                final int pin = tier.acquireRead();
+                try {
+                    // As insertThreeAndFailMidDrain: acct-4 drains on a turn of its own, the
+                    // next two coalesce behind it, and the fault fails the read of the last one
+                    // after acct-5 fed. The restore discards three interned accounts, and the
+                    // pin keeps its tier rebuild from taking their ids back.
+                    execute("INSERT INTO tx VALUES ('2026-01-02T09:30:00.000000Z', 'acct-4', 32.0)");
+                    drainWalQueue();
+                    execute("INSERT INTO tx VALUES ('2026-01-02T09:40:00.000000Z', 'acct-5', 64.0)");
+                    execute("INSERT INTO tx VALUES ('2026-01-02T09:50:00.000000Z', 'acct-6', 128.0)");
+                    drainWalQueue();
+                    fault.arm(2);
+                    drainJob(job);
+                    Assert.assertTrue("the mid-drain segment read must have been failed exactly once", fault.hasFired());
+
+                    // The retry runs at the deadline the failed turn armed, short of the next
+                    // flush. The pin holds its drain's rewind back as well, so it derives the
+                    // four accounts again above the three stranded ids.
+                    Assert.assertNotEquals("the failed turn must arm a retry", Numbers.LONG_NULL, nextRefreshRetryMicros());
+                    advanceClockToNextRefreshPass();
+                    drainJob(job);
+                    Assert.assertEquals("the retry must derive the four accounts again as a lead", 4, instance.getLeadRowCount());
+                    Assert.assertEquals("no flush is due at the retry's deadline", durableSeqTxn, instance.getLastProcessedSeqTxn());
+                    capture.drain();
+                    capture.assertLoggedRE(RESTORED + " \\[view=lv, cause=mid-drain refresh failure, ");
+                    capture.assertNotLogged(SYMBOL_IDS_REWOUND);
+                    assertAccountIdsStandAt(instance, 2, 9);
+
+                    // The flush, on a turn of its own. The base is quiet, so the turn opens no
+                    // reader of the view's table ahead of the flush, and its un-stamp is the
+                    // turn's first release of a writer sentinel.
+                    if (isIdCheckFailed) {
+                        fault.armViewSymbolKeyOpen(instance.getLiveViewToken().getDirName());
+                    }
+                    if (isUnstampFailed) {
+                        tier.setFailNextSymbolHorizonStamp(new RuntimeException(injectedUnstampFailure));
+                    }
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    drainJob(job);
+                    capture.drain();
+                    if (isIdCheckFailed) {
+                        Assert.assertTrue(
+                                "the reload of the reader behind the flush's apply must have been failed",
+                                fault.hasViewSymbolKeyOpenFired()
+                        );
+                        capture.assertLoggedRE("live view could not check its symbol ids against the committed symbols "
+                                + "\\[view=lv, error=[^\\n]*account_id\\.k");
+                    }
+                    if (isUnstampFailed) {
+                        Assert.assertEquals("the failed un-stamp must fault the flush's turn", 2, instance.getRefreshFaultCount());
+                        capture.assertLogged("live view refresh failed [view=lv, retryCount=1, ");
+                        capture.assertLogged(injectedUnstampFailure);
+                    } else {
+                        Assert.assertEquals("the flush must fault no turn of its own", 1, instance.getRefreshFaultCount());
+                    }
+                    Assert.assertEquals("the flush must have landed the four commits", durableSeqTxn + 4, instance.getLastProcessedSeqTxn());
+                    Assert.assertEquals("the flush must have stopped counting the committed lead as un-flushed", 0, instance.getLeadRowCount());
+                    // The view's table committed the four accounts right behind the first two,
+                    // below the ids the slot's rows carry.
+                    assertAccountIdsStandAt(instance, 6, 9);
+
+                    // Reads behind that flush name every row's own account. Through a slot the
+                    // flush had stamped as a subset of the table, acct-3's row would read as
+                    // acct-6, the account the table committed at the id that row carries.
+                    assertViewRows(sixAccountRows);
+                    assertAccountCountsMatchTheBase(sixAccounts);
+                    assertAccountRowsMatchTheBase("acct-3", "2026-01-02T09:20:00.000000Z\tacct-3\n");
+                    assertAccountRowsMatchTheBase("acct-6", "2026-01-02T09:50:00.000000Z\tacct-6\n");
+                    capture.assertOnlyOnce(SYMBOL_IDS_OUT_OF_STEP);
+                    Assert.assertEquals(
+                            "the out-of-step flush must un-stamp the published slot",
+                            Numbers.LONG_NULL,
+                            tier.getSlot(tier.getPublishedIdx()).lvSeqTxn()
+                    );
+                    // A flush whose un-stamp failed leaves its marking to the reads behind
+                    // acct-7 below: they are what a flush that marked nothing would get wrong.
+                    if (!isUnstampFailed) {
+                        Assert.assertTrue("the out-of-step flush must mark the tier stale", instance.isTierStale());
+                    }
+                } finally {
+                    tier.releaseRead(pin);
+                }
+
+                execute("INSERT INTO tx VALUES ('2026-01-02T10:00:00.000000Z', 'acct-7', 256.0)");
+                drainWalQueue();
+                if (!isUnstampFailed) {
+                    // With the pin gone, the drain of acct-7 starts over the marked slot and
+                    // fails on its first segment read, before it feeds a row: no recovery runs
+                    // and nothing rebuilds the slot, so its rows' ids have to stay bound.
+                    fault.arm(0);
+                    advanceClockToNextRefreshPass();
+                    drainJob(job);
+                    Assert.assertTrue("the drain's first segment read must have been failed", fault.hasFired());
+                    Assert.assertEquals("the drain that fed no row must fault its turn", 2, instance.getRefreshFaultCount());
+                    Assert.assertFalse("a drain that fed no row owes no recovery", instance.isWindowStateDirty());
+                    Assert.assertTrue("nothing has rebuilt the slot yet", instance.isTierStale());
+                    assertAccountIdsStandAt(instance, 6, 9);
+                    capture.drain();
+                    capture.assertNotLogged(SYMBOL_IDS_REWOUND);
+                    assertViewRows(sixAccountRows);
+                    assertViewAccountCounts(sixAccounts);
+                }
+                // acct-7 drains with the pin gone. A tier the flush had not marked would take it
+                // as a lead on top of the four flushed rows and stamp the slot at the table's
+                // seqTxn, and reads would then resolve those rows' ids through the table's
+                // symbols, which give them to other accounts. A flush whose un-stamp failed
+                // shows only here whether it marked the tier first: its slot carries no stamp
+                // either way, so the reads above could not tell. The marked tier routes acct-7
+                // straight to disk instead and rebuilds the slot behind it, and the rebuild
+                // takes the stranded ids back.
+                driveRefreshToQuiescence(job);
+                assertViewRows(sixAccountRows + acctSevenRow);
+                assertAccountCountsMatchTheBase(sixAccounts + "acct-7\t1\n");
+                assertAccountRowsMatchTheBase("acct-3", "2026-01-02T09:20:00.000000Z\tacct-3\n");
+                assertAccountRowsMatchTheBase("acct-6", "2026-01-02T09:50:00.000000Z\tacct-6\n");
+                capture.drain();
+                capture.assertOnlyOnce(SYMBOL_IDS_REWOUND);
+                Assert.assertFalse("the rebuild must clear the stale marking", instance.isTierStale());
+                assertAccountIdsStandAt(instance, 7, 7);
+
+                // From here on the drain interns at the committed ids again, so a lead flush
+                // finds them in step and re-stamps the slot as a subset of disk.
+                execute("INSERT INTO tx VALUES ('2026-01-02T10:10:00.000000Z', 'acct-8', 512.0)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+
+            capture.drain();
+            capture.assertOnlyOnce(SYMBOL_IDS_REWOUND);
+            capture.assertOnlyOnce(SYMBOL_IDS_OUT_OF_STEP);
+            Assert.assertEquals("no later turn faults", 2, instance.getRefreshFaultCount());
+            assertAccountIdsStandAt(instance, 8, 8);
+            assertSlotStampedAtTheViewTable(instance);
+            assertViewRows(sixAccountRows + acctSevenRow + "2026-01-02T10:10:00.000000Z\tacct-8\t512.0\t1\n");
+            assertAccountCountsMatchTheBase(sixAccounts + "acct-7\t1\nacct-8\t1\n");
+            assertAccountRowsMatchTheBase("acct-3", "2026-01-02T09:20:00.000000Z\tacct-3\n");
         });
     }
 
@@ -5225,7 +5847,9 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                         opensToFail.set(2);
                     }
                     driveRefreshToQuiescence(job);
-                    Assert.assertEquals("the held flush's writes of the view's state file must have been failed", 0, opensToFail.get());
+                    if (isStateFileUnwritableThroughout) {
+                        Assert.assertEquals("the held flush's writes of the view's state file must have been failed", 0, opensToFail.get());
+                    }
                     Assert.assertEquals(
                             "the held writer must leave the flush's block committed but unapplied",
                             1,
@@ -5354,6 +5978,38 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
     }
 
     /**
+     * Asserts what a read of the view returns while two rows are an un-flushed lead on top of
+     * {@link #FOUR_ROWS}, acct-3's and one that names no account: each under its own account,
+     * and the second one alone as NULL, on a full scan, a grouped count and a filter alike. The
+     * base's readers may all be in use, so none of these reads it.
+     */
+    private void assertViewServesTheLeadUnderItsAccounts() throws Exception {
+        assertViewRows("""
+                created_at\taccount_id\tcumulative_sum\tcumulative_count
+                2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                2026-01-01T09:10:00.000000Z\tacct-2\t2.0\t1
+                2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
+                2026-01-02T09:10:00.000000Z\tacct-1\t12.0\t2
+                2026-01-02T09:20:00.000000Z\tacct-3\t16.0\t1
+                2026-01-02T09:25:00.000000Z\t\t2.0\t0
+                """);
+        assertViewAccountCounts("""
+                \t1
+                acct-1\t3
+                acct-2\t1
+                acct-3\t1
+                """);
+        assertViewAccountRows("acct-3", "2026-01-02T09:20:00.000000Z\tacct-3\n");
+        assertQuery("SELECT created_at, account_id FROM lv WHERE account_id IS NULL")
+                .noLeakCheck()
+                .timestamp("created_at")
+                .returns("""
+                        created_at\taccount_id
+                        2026-01-02T09:25:00.000000Z\t
+                        """);
+    }
+
+    /**
      * Asserts what a read of the view returns while blocks of its own WAL are still unapplied
      * on top of {@link #FOUR_ROWS}: the applied table, on a full scan, a grouped count and an
      * equality filter alike. The base is ahead by the pending rows, so none of these compares
@@ -5395,6 +6051,25 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
     private int baseColumnStructureVersion() {
         try (TableReader reader = getReader("tx")) {
             return reader.getTxFile().getColumnStructureVersion();
+        }
+    }
+
+    /**
+     * Takes every reader the pool hands out for the base table, through the engine's public API,
+     * so the next borrow of one throws {@link EntryUnavailableException}: the state a burst of
+     * long-running queries of the base leaves the pool in. The caller frees {@code readers} to
+     * give them back.
+     */
+    private void borrowEveryBaseReader(ObjList<TableReader> readers) {
+        final TableToken baseToken = engine.verifyTableName("tx");
+        final int poolSize = engine.getConfiguration().getReaderPoolMaxSegments() * engine.getConfiguration().getPoolSegmentSize();
+        for (int i = 0; i < poolSize; i++) {
+            readers.add(engine.getReader(baseToken));
+        }
+        try (TableReader reader = engine.getReader(baseToken)) {
+            Assert.fail("the pool must have no reader of the base left [seqTxn=" + reader.getSeqTxn() + ']');
+        } catch (EntryUnavailableException expected) {
+            // The state the caller asked for.
         }
     }
 

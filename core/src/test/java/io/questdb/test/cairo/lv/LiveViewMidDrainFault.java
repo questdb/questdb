@@ -60,7 +60,15 @@ import java.util.concurrent.atomic.AtomicInteger;
  * {@link #armViewStateOpen} fails nothing mid-drain: it fails the next open for writing of a live
  * view's state file, once. A lead flush opens that file first to persist the consumed watermark
  * its apply earned, and again to persist the rest of its state when that fails, so the fault
- * fails the first of the two and lets the second through.
+ * fails the first of the two and lets the second through. A turn of a view over a deduplicating
+ * base opens it in the same order.
+ * <p>
+ * {@link #armViewSymbolKeyOpen} fails nothing mid-drain either: it fails the next open of the
+ * {@code account_id} symbol's key file in a view's own table, outside its WAL, once. A pooled
+ * reader of that table opens the file again each time it reloads to a newer transaction, and
+ * only an apply of the view's own WAL moves the table there. So armed right before a lead
+ * flush, the fault fails the first reader that reloads behind the flush's apply: the one the
+ * flush checks its symbol ids with.
  */
 final class LiveViewMidDrainFault {
     private final AtomicBoolean appliedScanArmed = new AtomicBoolean();
@@ -69,15 +77,21 @@ final class LiveViewMidDrainFault {
     private final AtomicInteger countdown = new AtomicInteger(-1);
     private final AtomicBoolean fired = new AtomicBoolean();
     private final AtomicBoolean hasViewStateOpenFired = new AtomicBoolean();
+    private final AtomicBoolean hasViewSymbolKeyOpenFired = new AtomicBoolean();
     // Set by a failed WAL read that reports readErrno, until the errno read that reports it.
     private final AtomicBoolean isReadErrnoPending = new AtomicBoolean();
     private final AtomicBoolean isViewStateOpenArmed = new AtomicBoolean();
+    private final AtomicBoolean isViewSymbolKeyOpenArmed = new AtomicBoolean();
     private final AtomicBoolean timelineOpenArmed = new AtomicBoolean();
+    // The partition the open armAppliedScan fails must be in; null fails it in any partition.
+    private volatile String appliedScanPartition;
     private volatile String baseDir;
     // The tracker the armed WAL read breaches instead of failing its open; null fails the open.
     private volatile MemoryTracker breachTracker;
     // The errno the failed WAL read reports; 0 leaves whatever errno the thread last saw.
     private volatile int readErrno;
+    // The directory of the view table whose symbol key file armViewSymbolKeyOpen fails.
+    private volatile String viewDir;
 
     void arm(int skip) {
         breachTracker = null;
@@ -86,6 +100,16 @@ final class LiveViewMidDrainFault {
     }
 
     void armAppliedScan() {
+        armAppliedScan(null);
+    }
+
+    /**
+     * Arms the open {@link #armAppliedScan()} fails, in the partition named {@code partition}
+     * alone. The applied scan of a deduplicating base reaches a later partition's file only
+     * after it appended every row of the one before, and the raw-WAL drain never opens it.
+     */
+    void armAppliedScan(String partition) {
+        appliedScanPartition = partition;
         appliedScanFired.set(false);
         appliedScanArmed.set(true);
     }
@@ -112,6 +136,16 @@ final class LiveViewMidDrainFault {
     }
 
     /**
+     * Arms the failure of the next open of the {@code account_id} symbol's key file in the table
+     * under {@code viewDir}, a live view's own directory.
+     */
+    void armViewSymbolKeyOpen(String viewDir) {
+        this.viewDir = viewDir;
+        hasViewSymbolKeyOpenFired.set(false);
+        isViewSymbolKeyOpenArmed.set(true);
+    }
+
+    /**
      * Withdraws a WAL read {@link #arm} armed and that no read has met yet, which is how a test
      * ends a fault it kept re-arming turn after turn.
      */
@@ -134,6 +168,7 @@ final class LiveViewMidDrainFault {
                         && dir != null
                         && Utf8s.containsAscii(name, dir)
                         && !Utf8s.containsAscii(name, "wal")
+                        && isInAppliedScanPartition(name)
                         && Utf8s.endsWithAscii(name, "amount.d")
                         && appliedScanArmed.compareAndSet(true, false)) {
                     appliedScanFired.set(true);
@@ -154,6 +189,16 @@ final class LiveViewMidDrainFault {
                         isReadErrnoPending.set(readErrno != 0);
                         return -1;
                     }
+                }
+                final String viewTableDir = viewDir;
+                if (isViewSymbolKeyOpenArmed.get()
+                        && viewTableDir != null
+                        && Utf8s.containsAscii(name, viewTableDir)
+                        && !Utf8s.containsAscii(name, "wal")
+                        && Utf8s.endsWithAscii(name, "account_id.k")
+                        && isViewSymbolKeyOpenArmed.compareAndSet(true, false)) {
+                    hasViewSymbolKeyOpenFired.set(true);
+                    return -1;
                 }
                 return super.openRO(name);
             }
@@ -188,6 +233,10 @@ final class LiveViewMidDrainFault {
         return hasViewStateOpenFired.get();
     }
 
+    boolean hasViewSymbolKeyOpenFired() {
+        return hasViewSymbolKeyOpenFired.get();
+    }
+
     boolean isTimelineOpenArmed() {
         return timelineOpenArmed.get();
     }
@@ -210,5 +259,11 @@ final class LiveViewMidDrainFault {
             overflow.extend(tracker.getLimit() - tracker.getUsed() + 1);
         }
         throw new AssertionError("the view's tracker admitted a charge past its limit");
+    }
+
+    // Read behind the armed check: armAppliedScan sets the partition before it arms.
+    private boolean isInAppliedScanPartition(LPSZ name) {
+        final String partition = appliedScanPartition;
+        return partition == null || Utf8s.containsAscii(name, partition);
     }
 }
