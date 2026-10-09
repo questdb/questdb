@@ -36,20 +36,20 @@ import java.nio.file.Paths;
 import java.util.List;
 
 /**
- * RENAME ≠ PUBLISH, applied to the table-name registry's own file.
+ * Checks that table-name registry compaction keeps at least one registry file durable across a power loss.
  * <p>
  * Registry compaction ({@code TableNameRegistryStore.compactTableNameFile}, run from a registry load once
- * enough dropped entries accumulate) writes {@code tables.d.tmp}, msyncs its CONTENT, renames it to
+ * enough dropped entries accumulate) writes {@code tables.d.tmp}, msyncs its content, renames it to
  * {@code tables.d.<N+1>}, and then unlinks {@code tables.d.<N>}. Both namespace changes live in the db root
  * and neither is durable until the db root itself is fsynced, so POSIX permits a power loss that keeps the
- * unlink and loses the new dentry — leaving the instance with NO registry file. The registry is the pointer
- * store every name resolves through; without it, startup falls back to a directory scan that cannot know
- * which tables were dropped but not yet purged, so dropped tables come back.
+ * unlink and loses the new dentry, leaving the instance with no registry file. Every name resolves through
+ * the registry; without it, startup falls back to a directory scan that cannot know which tables were
+ * dropped but not yet purged, so dropped tables come back.
  * <p>
  * The barrier is one db-root fsync between the rename and the unlink: after it, at least one version is
- * always durably present. This is an ORDERING bar rather than a crash-state bar on purpose — the crash model
- * rolls back an unsynced rename AND an unsynced unlink together, so a state assertion would pass with or
- * without the barrier and prove nothing.
+ * always durably present. The test asserts that ordering rather than a crash state, because the crash model
+ * rolls back an unsynced rename and an unsynced unlink together, so a state assertion would pass with or
+ * without the barrier.
  */
 public class TableRegistryCompactionCrashTest extends AbstractCrashConsistencyTest {
 
