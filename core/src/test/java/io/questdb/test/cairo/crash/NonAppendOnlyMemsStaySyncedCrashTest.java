@@ -33,18 +33,18 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Trap guard for the append-scoped msync narrowing/skip change: the memories that are NOT marked
- * appendOnly must keep their full-extent SYNC durability. This exercises, across many SYNC commits:
+ * The append-scoped msync applies only to memories marked appendOnly; every other memory keeps its
+ * full-extent SYNC durability. The test exercises, across many SYNC commits:
  * <ul>
- *   <li>{@code _txn} / {@code _cv} — in-place updated metadata files (never appendOnly);</li>
- *   <li>a SYMBOL column with NULL values — drives {@code SymbolMapWriter.offsetMem.updateNullFlag()},
- *       an in-place {@code putBool(0,..)} (offset mem stays full-extent);</li>
- *   <li>an INDEXED symbol column — drives the bitmap index {@code .k}/{@code .v} files, whose entries
- *       are random-access writes below the high-water mark (stay full-extent).</li>
+ *   <li>{@code _txn} / {@code _cv}: metadata files updated in place (never appendOnly);</li>
+ *   <li>a SYMBOL column with NULL values, which drives {@code SymbolMapWriter.offsetMem.updateNullFlag()},
+ *       an in-place {@code putBool(0,..)} (the offset mem stays full-extent);</li>
+ *   <li>an indexed symbol column, which drives the bitmap index {@code .k}/{@code .v} files, whose entries
+ *       are random-access writes below the high-water mark (full-extent).</li>
  * </ul>
- * After a crash following a LATE commit, every committed row must survive (zero loss). If the
- * narrowing change had wrongly narrowed/skipped these in-place memories, the offset mem null flag,
- * the index, or the _txn/_cv state would be lost and the row count / values would not reconcile.
+ * After a crash following the late commits, every committed row must survive. If these in-place memories
+ * were narrowed or skipped, the offset mem null flag, the index, or the _txn/_cv state would be lost and
+ * the row count or values would not reconcile.
  */
 public class NonAppendOnlyMemsStaySyncedCrashTest extends AbstractCrashConsistencyTest {
 
@@ -58,7 +58,7 @@ public class NonAppendOnlyMemsStaySyncedCrashTest extends AbstractCrashConsisten
             runWithCrashFacade(() -> {
                 // s   : indexed SYMBOL -> exercises bitmap .k/.v (random-access, full-extent sync)
                 // g   : SYMBOL allowed to be NULL -> exercises offsetMem.updateNullFlag in-place putBool
-                // v   : plain STRING payload we read back for an exact value-by-value durability check
+                // v   : plain STRING payload read back for an exact value-by-value durability check
                 execute("create table t (" +
                         "ts timestamp, " +
                         "s symbol index, " +
@@ -66,14 +66,14 @@ public class NonAppendOnlyMemsStaySyncedCrashTest extends AbstractCrashConsisten
                         "v string" +
                         ") timestamp(ts) partition by none");
 
-                // Seed one row and mark the on-disk state durable: the table STRUCTURE (_meta and the
+                // Seed one row and mark the on-disk state durable: the table structure (_meta and the
                 // freshly created files) is "prior, already journaled" so the reader can open after the
-                // crash. The rows we actually test for durability are the ones committed AFTER this
-                // baseline -- their survival must come purely from the per-commit SYNC fdatasync/msync.
+                // crash. The rows under test are the ones committed after this baseline; their survival
+                // must come purely from the per-commit SYNC fdatasync/msync.
                 execute("insert into t values (0, 'sym0', 'grp0', 'val-seed')");
                 markDurableBaseline();
 
-                // Many SEPARATE commits: each insert is its own transaction, so _txn/_cv are updated
+                // Many separate commits: each insert is its own transaction, so _txn/_cv are updated
                 // in place repeatedly and every column/symbol/index memory is sync()'d on each commit.
                 final int rows = 240;
                 final List<String> expectedV = new ArrayList<>();
@@ -90,25 +90,25 @@ public class NonAppendOnlyMemsStaySyncedCrashTest extends AbstractCrashConsisten
                     expectedV.add(v);
                 }
 
-                // Crash AFTER the late commits (no markDurableBaseline -> nothing is "pre-journaled";
+                // Crash after the late commits (no markDurableBaseline -> nothing is "pre-journaled";
                 // durability here must come entirely from the SYNC fdatasync/msync on each commit).
                 crashAndReopen();
 
-                // Bar 2: every committed row present and correct -> the non-appendOnly memories were
-                // fully synced. A regression that narrowed/skipped them would drop the tail or the
-                // index/null-flag state and fail this reconciliation.
+                // Every committed row present and correct -> the non-appendOnly memories were fully
+                // synced. Narrowing or skipping them would drop the tail or the index/null-flag state and
+                // fail this reconciliation.
                 assertSyncDurable("t", "v", expectedV);
 
                 // The indexed symbol column must still resolve via its (.k/.v) bitmap index after crash:
                 // an index-driven query for every distinct key must return all rows, proving the index
-                // was made durable. Total over the 5 keys must equal the row count.
+                // is durable. Total over the 5 keys must equal the row count.
                 long viaIndex = 0;
                 for (int k = 0; k < 5; k++) {
                     viaIndex += count("select count(*) from t where s = 'sym" + k + "'");
                 }
                 Assert.assertEquals("indexed symbol rows must all survive via .k/.v index", rows, viaIndex);
 
-                // The nullable symbol column must have exactly the NULL rows we wrote (offset-mem null
+                // The nullable symbol column must have exactly the NULL rows written (offset-mem null
                 // flag + null entries durable). The seed row (i==0) is non-null; the loop writes a NULL
                 // whenever i % 4 == 0 for i in [1, rows).
                 long expectedNulls = 0;
