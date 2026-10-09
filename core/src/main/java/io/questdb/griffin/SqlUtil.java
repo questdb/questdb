@@ -88,6 +88,10 @@ public class SqlUtil {
     private static final int IMPLICIT_CAST_FORMATS_SIZE;
     private static final FiberLocal<StringSink> IMPLICIT_CAST_VARCHAR_SINK = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<Long256ConstantFactory> LONG256_FACTORY = new FiberLocal<>(Long256ConstantFactory::new);
+    // Representations of 2^31 and 2^63 used as exclusive upper bounds for INT and LONG casts.
+    // Converting Integer.MAX_VALUE (2147483647) to float rounds up to 2^31 (2147483648.0f),
+    // and Long.MAX_VALUE (9223372036854775807L) to float/double rounds up to 2^63.
+    // Using '<' prevents out-of-range floats/doubles from erroneously clamping to MAX_VALUE.
     private static final float INT_MAX_EXCLUSIVE_FLOAT = 2147483648.0f;
     private static final float LONG_MAX_EXCLUSIVE_FLOAT = 9223372036854775808.0f;
     private static final double LONG_MAX_EXCLUSIVE_DOUBLE = 9223372036854775808.0;
