@@ -41,25 +41,17 @@ import org.junit.Test;
  * <p>{@code doClose()} runs from the constructor's own catch block, when {@code columns},
  * {@code denseSymbolMapWriters} and {@code denseIndexers} may be only partly built while
  * {@code effectiveCommitMode} is already ADAPTIVE. An error from an epoch flush that walks those lists would
- * replace the real one, and {@code ApplyWal2TableJob.purgeTableFiles} catches only {@code CairoException}
- * when it reopens a half-deleted table, so the WAL drop-table retry would abort and leave the table's files
- * on disk. {@code WalTableSqlTest.testDropFailedWhileSymbolFileLocked} covers that end to end; this class
- * tests the mechanism directly.
+ * replace the real one, and {@code ApplyWal2TableJob.purgeTableFiles}, which catches only
+ * {@code CairoException}, would then leave a dropped table's files on disk.
  */
 public class TableWriterCloseEpochGuardsTest extends AbstractCairoTest {
 
     /**
-     * A data-sync (fsync/msync) failure during the close epoch is indeterminate: the device may or may not
-     * hold the bytes. The broad catch around the close epoch must not soften that: the failure still poisons
-     * the engine and surfaces as a {@code CairoError}. The catch routes to
-     * {@code handleBestEffortDurableEpochFailure}, which hands anything {@code CairoException.isDataSyncFailure}
-     * recognises (it walks the whole cause chain) to {@code engine.handleDataSyncFailure}. Swallowing it would
-     * let a writer close cleanly after an epoch whose data never reached the device, and a later boot would
-     * trust that save point.
-     *
-     * <p>{@code advanceDurableEpoch} writes into the inactive {@code _epoch.manifest} generation and writes
-     * its header last, after the payload fsyncs. A failure part-way leaves the previous generation
-     * authoritative: the epoch is skipped, never corrupted.
+     * A data-sync (fsync/msync) failure during the close epoch is indeterminate, so the broad catch around the
+     * close epoch must not soften it: the failure still poisons the engine and surfaces as a
+     * {@code CairoError}. Swallowing it would let a writer close cleanly after an epoch whose data never
+     * reached the device. The failed epoch itself is skipped, not corrupted: {@code advanceDurableEpoch}
+     * writes the inactive {@code _epoch.manifest} generation and its header last.
      */
     @Test
     public void testCloseEpochDataSyncFailureRemainsFatal() throws Exception {
