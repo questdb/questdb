@@ -39,16 +39,11 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Cleanup bar for {@code WalWriter}'s column-pair free path.
- * <p>
- * Changing a column's type makes the WalWriter drop the old column pair. Under any commit mode other than
- * NOSYNC those closes carry a durability barrier ({@code MemoryPMARImpl.close} -> {@code releaseCurrentPage}
- * -> {@code msync}), so the close itself can fail, for a simulated crash or a genuine EIO.
- * <p>
- * The failure stays fail-stop (it is rethrown), but it must not escape the free path part-way.
- * {@code freeAndRemoveColumnPair} detaches both slots from {@code columns} before closing either, so a throw
- * from the primary's close must not leave the secondary mapped: {@code freeColumns} can no longer see it, and
- * nothing else would release its mapping and descriptor.
+ * A failed close in {@code WalWriter}'s column-pair free path must not leak the other column. Changing a column's
+ * type drops the old pair, and under any mode but NOSYNC each close carries an {@code msync} that can fail. The
+ * failure is rethrown, but {@code freeAndRemoveColumnPair} detaches both slots from {@code columns} before closing
+ * either, so a throw from the primary's close must not leave the secondary mapped: {@code freeColumns} can no
+ * longer see it, and nothing else would release its mapping and descriptor.
  */
 public class WalWriterColumnPairCloseCleanupTest extends AbstractCairoTest {
 
