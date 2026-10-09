@@ -39,18 +39,12 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * A durable epoch must never be published from a writer that is part-way through a structural change.
- * <p>
- * Recovery restores the save point's copies of {@code _meta} and {@code _txn} together, so they must describe
- * the same table shape: the symbol columns in {@code _meta} must match the symbol area the writer writes to
- * {@code _txn} from {@code denseSymbolMapWriters}. {@code TableWriter.changeColumnType} to SYMBOL creates the
- * new map writer before it publishes the column to {@code _meta}. An epoch cut in that window would pass the
- * identity checks in {@code RecoveryCoordinator.epochCopiesValid}, since the {@code metadataVersion} matches,
- * and restore a table that cannot open: WAL apply rejects it and the table stays suspended.
- * <p>
- * The test converts a column of a parquet partition to SYMBOL and checks the published save point directly,
- * with no crash machinery. The cut is best-effort, so publishing nothing is valid, and the assertion applies
- * only when an epoch exists.
+ * A durable epoch must never be published from a writer that is part-way through a structural change. Recovery
+ * restores the save point's copies of {@code _meta} and {@code _txn} together, so their symbol columns must agree.
+ * {@code TableWriter.changeColumnType} to SYMBOL creates the new map writer before it publishes the column to
+ * {@code _meta}; an epoch cut in that window would pass {@code RecoveryCoordinator.epochCopiesValid} and restore a
+ * table that WAL apply rejects. The test converts a column of a parquet partition to SYMBOL and checks the
+ * published save point directly. The cut is best-effort, so the assertion applies only when an epoch exists.
  */
 public class AdaptiveEpochStructuralConsistencyTest extends AbstractCairoTest {
 
