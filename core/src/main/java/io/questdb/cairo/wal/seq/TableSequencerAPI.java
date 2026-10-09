@@ -298,9 +298,9 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     /**
-     * The engine's adaptive group-commit (Deferred 2) pending-flush registry. Exposed here so a
-     * {@link io.questdb.cairo.wal.WalWriter} (which holds the sequencer API, not the engine) can register
-     * itself when it defers a device flush under {@code cairo.adaptive.commit.group.window > 0}.
+     * The engine's set of WAL writers with a pending adaptive group-commit flush. A
+     * {@link io.questdb.cairo.wal.WalWriter}, which holds the sequencer API and not the engine, registers itself
+     * here when it defers a device flush.
      */
     @NotNull
     public io.questdb.cairo.wal.WalGroupCommitFlushQueue getWalGroupCommitFlushQueue() {
@@ -390,11 +390,10 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     /**
-     * Adaptive group-commit (Deferred 2): perform the DEFERRED device flush ({@code fdatasync}) of the
-     * sequencer txn log for {@code tableToken}, the final (seq) step of the batched data→events→seq flush.
-     * Opens the sequencer under the WRITE lock (the same lock {@code nextTxn} takes) so the flush cannot
-     * race a concurrent sequencer append/rotation. A no-op-safe call: callers only invoke it for ADAPTIVE
-     * tables that have deferred at least one sequencer commit under {@code W > 0}.
+     * Flushes the sequencer transaction log of {@code tableToken} to the device, the last step of the adaptive
+     * group commit's batched flush, after the data and the events. Opens the sequencer under the write lock, the
+     * lock {@code nextTxn} takes, so the flush cannot race an append or a rotation. Callers invoke it only for
+     * adaptive tables with at least one deferred sequencer commit.
      *
      * @return the highest seqTxn the flush covered; see {@link TableSequencerImpl#fdatasyncTxnLog()}.
      */
@@ -463,22 +462,14 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     /**
-     * TEST-ONLY reboot model for crash-consistency sweeps: force-close the table's cached sequencer AND drop
-     * its in-memory {@link SeqTxnTracker}, so the next access reloads BOTH from the durable txnlog on disk,
-     * exactly as a freshly booted engine does.
+     * Closes the table's cached sequencer and drops its {@link SeqTxnTracker}, so the next access reloads both
+     * from the transaction log on disk, as a freshly started engine does. A simulated crash can roll back a txn
+     * that the open sequencer still counts in its in-memory {@code lastTxn}; through that sequencer,
+     * {@link #forAllWalTables} would seed the tracker above the durable writer txn, and the apply job would wait
+     * forever for a txn the WAL no longer has.
      * <p>
-     * Needed because a sequenced-but-non-durable txn (adaptive group commit {@code W > 0}: the transaction
-     * was assigned a seqTxn in memory, but its txnlog record's device flush was DEFERRED to the WAL writer's
-     * close and a swept crash rolled it back) otherwise wedges recovery. The still-open sequencer keeps the
-     * stale in-memory {@code lastTxn}; {@link #forAllWalTables} reads it (the slow path) instead of the
-     * durable txnlog high-water and re-seeds the tracker's {@code seqTxn} above the durable {@code writerTxn},
-     * so the apply job spins forever (updateWriterTxns keeps returning {@code writerTxn < seqTxn} for a txn
-     * the rolled-back WAL no longer has). Closing the sequencer discards that stale high-water and forces
-     * {@code forAllWalTables} onto the fast path (reads the durable txnlog), so the fresh tracker re-inits to
-     * the rolled-back frontier and the apply converges.
-     * <p>
-     * Closes only an idle sequencer ({@link TableSequencerImpl#checkClose()} takes the schema write lock);
-     * the crash-sweep driver has already released readers/writers/WAL writers, so it is unreferenced.
+     * Closes only an idle sequencer ({@link TableSequencerImpl#checkClose()} takes the schema write lock); the
+     * caller has already released every reader and writer of the table.
      */
     @TestOnly
     public void resetForReboot(TableToken tableToken) {
@@ -584,7 +575,8 @@ public class TableSequencerAPI implements QuietCloseable {
                             }
                         }
                     } else if (getTxnTracker(tableToken).isDurableEpochOwed()) {
-                        // A plain RESUME after a durable epoch failed, of a RESUME WAL FROM TXN for one.
+                        // A plain RESUME while a durable epoch is still owed, such as after a RESUME WAL FROM TXN
+                        // whose epoch failed.
                         final TableWriter tableWriter = engine.getWriter(tableToken, WAL_2_TABLE_RESUME_REASON);
                         if (tableWriter.isEnrolledAdaptive()) {
                             skipWriter = tableWriter;
