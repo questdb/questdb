@@ -914,7 +914,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         ff = new TestFilesFacadeImpl() {
             @Override
             public boolean rmdir(Path path, boolean lazy) {
-                if (Utf8s.containsAscii(path, "2022-06-03")) {
+                // The partition directory, not the temporary name the detached copy leaves.
+                if (Utf8s.containsAscii(path, "2022-06-03") && !Utf8s.containsAscii(path, TableUtils.DETACHING_DIR_MARKER)) {
                     if (counter.getAndIncrement() == 0) {
                         return false;
                     }
