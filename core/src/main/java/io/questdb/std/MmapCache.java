@@ -262,36 +262,37 @@ public final class MmapCache {
         synchronized (this) {
             int addrMapIndex = mmapAddrCache.keyIndex(address);
             if (addrMapIndex > -1) {
-                // Not cached
-                unmap0(address, len, memoryTag);
-                return;
-            }
+                // Not cached, the caller owns the mapping exclusively. Unmap after exiting the lock.
+                unmapPtr = address;
+                unmapLen = len;
+                unmapTag = memoryTag;
+            } else {
+                var record = mmapAddrCache.valueAt(addrMapIndex);
+                record.count--;
 
-            var record = mmapAddrCache.valueAt(addrMapIndex);
-            record.count--;
+                if (record.count != 0) {
+                    assert record.count > -1;
+                    return;
+                }
 
-            if (record.count != 0) {
-                assert record.count > -1;
-                return;
-            }
+                // Remove the record from the cache, the last usage of the address is unmapped
+                mmapAddrCache.removeAt(addrMapIndex);
 
-            // Remove the record from the cache, the last usage of the address is unmapped
-            mmapAddrCache.removeAt(addrMapIndex);
+                // Check if the same map record is used for the FD,
+                // it can be already overwritten by a longer map over the same file
+                int fdIndex = mmapFileCache.keyIndex(record.fileCacheKey);
+                if (fdIndex < 0 && mmapFileCache.valueAt(fdIndex) == record) {
+                    mmapFileCache.removeAt(fdIndex);
+                }
 
-            // Check if the same map record is used for the FD,
-            // it can be already overwritten by a longer map over the same file
-            int fdIndex = mmapFileCache.keyIndex(record.fileCacheKey);
-            if (fdIndex < 0 && mmapFileCache.valueAt(fdIndex) == record) {
-                mmapFileCache.removeAt(fdIndex);
-            }
-
-            // Unmap after exiting the lock.
-            unmapPtr = record.address;
-            unmapLen = record.length;
-            unmapTag = record.memoryTag;
-            record.address = 0;
-            if (recordPool.size() < MAX_RECORD_POOL_CAPACITY) {
-                recordPool.push(record);
+                // Unmap after exiting the lock.
+                unmapPtr = record.address;
+                unmapLen = record.length;
+                unmapTag = record.memoryTag;
+                record.address = 0;
+                if (recordPool.size() < MAX_RECORD_POOL_CAPACITY) {
+                    recordPool.push(record);
+                }
             }
         }
 
