@@ -196,20 +196,18 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
      * core/pom.xml). tmpfs is not on QuestDB's supported-filesystem list, so
      * {@link io.questdb.std.FilesFacadeImpl#allowMixedIO} answers false for it, and that answer reaches
      * every writer through {@code writerMixedIOEnabled}: {@code O3CopyJob}, {@code O3OpenColumnJob} and
-     * {@code ContiguousFileVarFrameColumn} would all silently take their non-mixed-IO variants, so the run
-     * would exercise the opposite write path to an on-disk one. Answering true is not a fiction: tmpfs is
-     * page-cache backed, so mmap and write are coherent on it, which is the property mixed I/O needs; it is
-     * excluded from the supported list for being volatile.
+     * {@code ContiguousFileVarFrameColumn} would all take their non-mixed-IO variants, so the run would
+     * exercise the opposite write path to an on-disk one. Answering true is sound: tmpfs is page-cache
+     * backed, so mmap and write are coherent on it, which is the property mixed I/O needs; it is excluded
+     * from the supported list for being volatile.
      * <p>
-     * Two guards, both learned the hard way — an unguarded version of this turned every WalWriterFuzzTest
-     * red on all three CI platforms:
+     * Two guards:
      * <ul>
      *   <li><b>Opt-in only.</b> Applies solely when {@code QDB_TEST_TMPDIR} is exported, i.e. when someone
-     *   asked for a RAM-disk root. Never assume where a test root lives: an agent whose {@code /tmp} is
-     *   itself tmpfs would otherwise have every test silently flipped onto the other write path.</li>
-     *   <li><b>Never outvote an explicit choice.</b> {@code WalWriterFuzzTest} pins
-     *   {@code DEBUG_CAIRO_ALLOW_MIXED_IO} to the real probe and asserts the configuration agrees; a test
-     *   that states its own answer owns it.</li>
+     *   asked for a RAM-disk root. A machine whose {@code /tmp} is itself tmpfs would otherwise have every
+     *   test flipped onto the other write path.</li>
+     *   <li><b>Never outvote an explicit choice.</b> A test that sets {@code DEBUG_CAIRO_ALLOW_MIXED_IO}
+     *   itself, as {@code WalWriterFuzzTest} does, owns the answer.</li>
      * </ul>
      */
     @Override
