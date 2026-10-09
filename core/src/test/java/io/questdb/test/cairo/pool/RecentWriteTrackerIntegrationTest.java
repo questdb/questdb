@@ -346,6 +346,46 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     }
 
     /**
+     * A writer that drops a WAL lag applies its transactions again: after it reopens, and before a change outside
+     * the WAL. Their rows leave wal_pending_row_count once, when they first enter the lag.
+     */
+    @Test
+    public void testPendingWalRowCountAfterReplay() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String table : new String[]{"lag_reopen", "lag_outside_wal"}) {
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+                execute("CREATE TABLE " + table + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL WITH maxUncommittedRows=50");
+                execute("INSERT INTO " + table + " VALUES ('2022-02-24', 1), ('2022-02-25', 2)");
+                drainWalQueue();
+                // the 1,000 rows fill the lag; the out-of-order row, through a second WAL, keeps them there
+                execute("INSERT INTO " + table + " SELECT timestamp_sequence('2022-02-25T01:00', 1_000_000L), x FROM long_sequence(1_000)");
+                try (WalWriter ignore = engine.getWalWriter(engine.verifyTableName(table))) {
+                    execute("INSERT INTO " + table + " VALUES ('2022-02-25T00:30', -1)");
+                }
+                tickWalQueue(1);
+                assertQuery("SELECT wal_pending_row_count FROM tables() WHERE table_name = '" + table + "'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("wal_pending_row_count\n1\n");
+                if (table.equals("lag_reopen")) {
+                    engine.releaseAllWriters();
+                } else {
+                    execute("ALTER TABLE " + table + " FORCE DROP PARTITION LIST '2022-02-24'");
+                }
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, -1);
+                drainWalQueue();
+            }
+            assertQuery("SELECT table_name, table_row_count, wal_pending_row_count FROM tables() WHERE table_name IN ('lag_reopen', 'lag_outside_wal') ORDER BY table_name")
+                    .noLeakCheck()
+                    .returns("""
+                            table_name\ttable_row_count\twal_pending_row_count
+                            lag_outside_wal\t1002\t0
+                            lag_reopen\t1003\t0
+                            """);
+        });
+    }
+
+    /**
      * Demonstrates removing a table from tracking (e.g., when table is dropped).
      * <p>
      * Use case: Clean up tracking when table is dropped.

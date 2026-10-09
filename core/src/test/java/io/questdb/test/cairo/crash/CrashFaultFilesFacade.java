@@ -122,6 +122,18 @@ import java.util.stream.Stream;
  * toward the device; {@code read()} merely lets the model snapshot the current page-cache state at a sync
  * point.
  *
+ * <h3>The process-kill model (opt-in, {@link #armKillAt})</h3>
+ * Everything above models a power loss. A process kill ({@code kill -9}, the OOM killer, a JVM crash) is a
+ * different failure: the page cache survives it, so every byte the process wrote before it died is still
+ * there, flushed or not, and nothing it would have written later is. The two models disagree on a byte that
+ * is rewritten in place after its last flush: a power loss brings back the flushed value, a kill keeps the
+ * new one. {@link #armKillAt} places the kill just before the n-th kill point (a {@code close},
+ * {@code munmap}, {@code truncate}, {@code rename}, {@code removeQuiet} or {@code rmdir}), and
+ * {@link #takeKillImage} places it at the moment of the call. Either way the bytes of every file and the
+ * directory tree under the root become the kill image; the engine runs on, and the next {@link #crash}
+ * restores exactly that image instead of the last flushed content. Without an armed kill the facade
+ * behaves as before.
+ *
  * <h3>Modeling limitations</h3>
  * <ul>
  *   <li>{@code write}/{@code append} are intercepted ONLY to advance {@code writtenDataEnd} (real bytes
@@ -198,8 +210,14 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
      */
     public boolean modelSharedJournal = true;
 
+    private final Set<String> killImageDirectories = new HashSet<>();
+    private final Map<String, byte[]> killImageFiles = new HashMap<>();
     private int durabilityOps = 0;
     private int crashAtOp = -1; // -1 = disarmed
+    private int killAtPoint = -1; // -1 = disarmed
+    private boolean killImageTaken;
+    private int killPoints = 0;
+    private String killRoot;
     private int syncfsCount = 0; // number of syncfs(2) calls observed (filesystem-wide flushes)
     private String dbRootPrefix; // set via setDbRoot(); scopes cached-fd reclamation to per-table files
 
@@ -281,6 +299,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public boolean close(long fd) {
+        countKillPoint();
         fdToPath.remove(fd);
         noCacheOpenFds.remove(fd);
         return super.close(fd);
@@ -380,6 +399,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public void munmap(long address, long size, int memoryTag) {
+        countKillPoint();
         // Drop the addr->path mapping but KEEP the content model state keyed by path: a file's durable
         // content must outlive its mapping (e.g. unmap-then-crash), exactly like the size model.
         mmapAddrRange.remove(address);
@@ -519,6 +539,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public boolean removeQuiet(LPSZ name) {
+        countKillPoint();
         final String removedPath = toAbsPath(name);
         final byte[] restoreImage = durableFileEntries.contains(removedPath) ? durableImage(removedPath) : null;
         final boolean removed = super.removeQuiet(name);
@@ -533,6 +554,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public boolean rmdir(io.questdb.std.str.Path name, boolean haltOnError) {
+        countKillPoint();
         final String removedRoot = toAbsPath(name.$());
         preserveDurableSubtreeImages(removedRoot);
         final boolean removed = super.rmdir(name, haltOnError);
@@ -573,6 +595,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public int rename(LPSZ from, LPSZ to) {
+        countKillPoint();
         final String fromPath = toAbsPath(from);
         final String toPath = toAbsPath(to);
         final byte[] restoreImage = durableFileEntries.contains(fromPath) ? durableImage(fromPath) : null;
@@ -810,6 +833,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public boolean truncate(long fd, long size) {
+        countKillPoint();
         final boolean ok = super.truncate(fd, size);
         final String p = fdToPath.get(fd);
         if (ok && p != null) {
@@ -845,6 +869,12 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         pendingRenameTargetImages.clear();
         durabilityOps = 0;
         crashAtOp = -1;
+        killImageDirectories.clear();
+        killImageFiles.clear();
+        killAtPoint = -1;
+        killImageTaken = false;
+        killPoints = 0;
+        killRoot = null;
         // NB: modelSharedJournal is a configured policy, NOT per-cycle state -> intentionally NOT reset here.
     }
 
@@ -920,8 +950,15 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
      * A file with a {@code durableContent} snapshot is restored to those exact bytes (content rollback,
      * which also fixes the durable length); this GENERALIZES the size-only rollback. A file the content
      * model never tracked falls back to truncation at its last-durable size.
+     * <p>
+     * When a kill image was taken ({@link #armKillAt}, {@link #takeKillImage}), the tree under the kill's
+     * root is restored to exactly that image instead, and the image is consumed.
      */
     public void crash(CharSequence dbRoot) {
+        if (killImageTaken) {
+            restoreKillImage();
+            return;
+        }
         restoreNamespace(Paths.get(dbRoot.toString()).toAbsolutePath());
         walk(dbRoot, p -> {
             String key = p.toAbsolutePath().toString();
@@ -988,6 +1025,47 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
      */
     public boolean isCrashArmed() {
         return crashAtOp > 0;
+    }
+
+    /**
+     * Arm a process kill just before the {@code n}-th kill point (counted by {@link #killPointCount()}, so
+     * pass {@code killPointCount() + k} for the k-th point from now). At that point the bytes of every file
+     * and the directory tree under {@code dbRoot} become the kill image, and the next {@link #crash}
+     * restores it. The calling code is not interrupted: a killed process does nothing after the kill, and
+     * restoring the image discards whatever the engine does after it. {@code n < 1} disarms.
+     */
+    public void armKillAt(int n, CharSequence dbRoot) {
+        killAtPoint = n;
+        killRoot = dbRoot != null ? Paths.get(dbRoot.toString()).toAbsolutePath().toString() : null;
+        killImageTaken = false;
+        killImageFiles.clear();
+        killImageDirectories.clear();
+    }
+
+    /**
+     * True once an armed kill point was reached, or {@link #takeKillImage} ran, and the image has not yet
+     * been restored by {@link #crash}.
+     */
+    public boolean isKillImageTaken() {
+        return killImageTaken;
+    }
+
+    /**
+     * Number of kill points ({@code close}, {@code munmap}, {@code truncate}, {@code rename},
+     * {@code removeQuiet}, {@code rmdir}) observed so far.
+     */
+    public int killPointCount() {
+        return killPoints;
+    }
+
+    /**
+     * Kill the process now: the bytes of every file and the directory tree under {@code dbRoot} become the
+     * image the next {@link #crash} restores. Disarms a pending {@link #armKillAt}.
+     */
+    public void takeKillImage(CharSequence dbRoot) {
+        killAtPoint = -1;
+        killRoot = Paths.get(dbRoot.toString()).toAbsolutePath().toString();
+        captureKillImage();
     }
 
     /**
@@ -1175,6 +1253,74 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             return path.substring(dbRootPrefix.length());
         }
         return path;
+    }
+
+    private void captureKillImage() {
+        killImageFiles.clear();
+        killImageDirectories.clear();
+        final Path root = Paths.get(killRoot);
+        if (Files.exists(root)) {
+            try (Stream<Path> stream = Files.walk(root)) {
+                stream.forEach(path -> {
+                    final String key = path.toAbsolutePath().toString();
+                    if (Files.isDirectory(path)) {
+                        killImageDirectories.add(key);
+                    } else if (Files.isRegularFile(path)) {
+                        killImageFiles.put(key, readCurrent(key));
+                    }
+                });
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+        killImageTaken = true;
+    }
+
+    private void countKillPoint() {
+        killPoints++;
+        if (killAtPoint > 0 && killPoints >= killAtPoint) {
+            killAtPoint = -1;
+            captureKillImage();
+        }
+    }
+
+    private void restoreKillImage() {
+        final Path root = Paths.get(killRoot);
+        if (Files.exists(root)) {
+            try (Stream<Path> stream = Files.walk(root)) {
+                stream.sorted(Comparator.reverseOrder()).forEach(path -> {
+                    final String key = path.toAbsolutePath().toString();
+                    final boolean inImage = Files.isDirectory(path) ? killImageDirectories.contains(key) : killImageFiles.containsKey(key);
+                    if (!inImage && !path.equals(root)) {
+                        try {
+                            Files.delete(path);
+                        } catch (IOException e) {
+                            throw new UncheckedIOException(e);
+                        }
+                    }
+                });
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+        try {
+            for (String dir : killImageDirectories) {
+                Files.createDirectories(Paths.get(dir));
+            }
+            for (Map.Entry<String, byte[]> e : killImageFiles.entrySet()) {
+                try (FileChannel ch = FileChannel.open(Paths.get(e.getKey()), StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
+                    ch.write(ByteBuffer.wrap(e.getValue()), 0);
+                    ch.truncate(e.getValue().length);
+                    ch.force(true);
+                }
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        killImageFiles.clear();
+        killImageDirectories.clear();
+        killImageTaken = false;
+        pendingRenameTargetImages.clear();
     }
 
     private void bumpDurabilityOp(String kind, String path) {

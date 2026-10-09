@@ -27,18 +27,23 @@ package io.questdb.test.cairo.crash;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.LPSZ;
@@ -546,6 +551,69 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         });
     }
 
+    /**
+     * The apply job stops on its time quota, saves the WAL lag in {@code _txn} and takes a save point on that
+     * {@code _txn}; a clean restart follows while the lag is held, the next commit consumes the lag and
+     * finishes, no newer save point follows, and the process is killed. Recovery restores the save point, whose
+     * {@code _txn} counts the lag rows, and the consuming commit has rewritten their bytes in place. Every row
+     * of both WAL transactions must read back with its value.
+     */
+    @Test
+    public void testSavedLagSurvivesRestartAndKillAfterConsumingCommit() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        runWithCrashFacade(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+            Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
+            final String rows = "insert into %s select timestamp_sequence('2022-02-25T01:00', 1_000_000L), x, 'k' || (x %% 7), 'r' || x from long_sequence(1_000)";
+            execute("create table lag (ts timestamp, v long, s symbol, vc varchar) timestamp(ts) partition by day wal with maxUncommittedRows=50");
+            final TableToken tt = engine.verifyTableName("lag");
+            execute("insert into lag values ('2022-02-25', 1_000_000, 'c', 'c1')");
+            drainWalQueue();
+            // 1,000 rows, the lag limit (maxUncommittedRows times the lag multiplier, 20), then one row below
+            // them through a second WAL: one apply pass applies the first alone and saves its rows as lag
+            execute(String.format(rows, "lag"));
+            try (WalWriter ignore = engine.getWalWriter(tt)) {
+                execute("insert into lag values ('2022-02-25T00:30', -1, 'neg', 'neg')");
+            }
+            tickWalQueue(1);
+            Assert.assertEquals("_txn does not hold the saved WAL lag", 1_000, savedLagRows(tt));
+            try (Path p = new Path(); TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade())) {
+                p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.TXN_FILE_NAME);
+                txReader.ofRO(p.$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+                txReader.unsafeLoadAll();
+                p.of(engine.getConfiguration().getDbRoot()).concat(tt);
+                final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(
+                        engine.getConfiguration().getFilesFacade(), p, p.size(), tt.getTableId());
+                Assert.assertTrue("a save point must exist", saved.length > 0);
+                Assert.assertEquals("the save point is not cut on the _txn that holds the lag", txReader.getTxn(), saved[0].epochTxn);
+            }
+            purgeWal();
+
+            // clean restart while the lag is held, then no newer save point
+            engine.releaseAllWriters();
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, EPOCH_INTERVAL_MS);
+            drainWalQueue();
+            Assert.assertEquals("the consuming commit left lag in _txn", 0, savedLagRows(tt));
+
+            crashFf.takeKillImage(engine.getConfiguration().getDbRoot());
+            recoverAfterCrash(new TableToken[]{tt});
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tt));
+            execute("create table lag_expected (ts timestamp, v long, s symbol, vc varchar) timestamp(ts) partition by day bypass wal");
+            execute("insert into lag_expected values ('2022-02-25', 1_000_000, 'c', 'c1')");
+            execute(String.format(rows, "lag_expected"));
+            execute("insert into lag_expected values ('2022-02-25T00:30', -1, 'neg', 'neg')");
+            assertSqlCursors("select count(), sum(v) from lag_expected", "select count(), sum(v) from lag");
+            assertSqlCursors("lag_expected", "lag");
+            execute("drop table lag");
+            execute("drop table lag_expected");
+            drainWalQueue();
+            releaseEngineHandles();
+        });
+    }
+
     // ---- helpers ----
 
     private static long nowMs() {
@@ -948,6 +1016,15 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     // Switches the instance mode and checks the configuration reports it. The test harness drops a pending
     // configuration change when a property is set again to the value it already has, so the epoch interval, set
     // last, takes a value no earlier switch used.
+    private int savedLagRows(TableToken tt) {
+        try (TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade()); Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.TXN_FILE_NAME);
+            txReader.ofRO(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+            txReader.unsafeLoadAll();
+            return txReader.getLagRowCount();
+        }
+    }
+
     private void setCommitMode(String mode) {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
         final long epochIntervalMs = EPOCH_INTERVAL_MS + ++modeSwitches;

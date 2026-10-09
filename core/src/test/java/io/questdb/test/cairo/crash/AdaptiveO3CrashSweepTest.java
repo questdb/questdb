@@ -27,15 +27,23 @@ package io.questdb.test.cairo.crash;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.time.Instant;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -216,6 +224,73 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
                         + LAZY_GAP_CRASH_K + " for this O3 lazy-gap scenario (the SP-D1 W1 finding)",
                 withRecovery, withoutRecovery
         );
+    }
+
+    /**
+     * Save point taken at the saved lag, then the consuming commit finishes and no newer save point
+     * follows; the process is killed after that. Recovery restores the save point, whose {@code _txn}
+     * counts the lag rows, and the consuming commit has rewritten their bytes in place. NOSYNC has no save
+     * point and is safe in this case; ADAPTIVE is pinned.
+     */
+    @Test
+    public void testSavedLagSavePointSurvivesKillAfterConsumingCommit() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        runWithCrashFacade(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
+            final SavedLagWorkload workload = SavedLagWorkload.inPlaceAppend(false);
+            workload.savePointsInCommitPhase = false;
+            final Set<Long> nonCacheFdBaseline = new HashSet<>(crashFf.noCacheOpenFdsSnapshot());
+            final TableToken[] tokens = workload.setup(1);
+            workload.commit();
+            Assert.assertEquals("the consuming commit left lag in _txn", 0, workload.savedLagRows());
+            crashFf.takeKillImage(engine.getConfiguration().getDbRoot());
+            recoverAfterCrash(tokens);
+            workload.oracle(1, 1);
+            workload.teardown();
+            releaseEngineHandles();
+            reclaimLingeringNonCacheFds(nonCacheFdBaseline);
+        });
+    }
+
+    @Test
+    public void testSavedLagSurvivesEveryKillPointAcrossPartitionBoundary() throws Exception {
+        assertSavedLagSurvivesEveryKillPoint(SavedLagWorkload.acrossPartitionBoundary());
+    }
+
+    @Test
+    public void testSavedLagSurvivesEveryKillPointDedup() throws Exception {
+        assertSavedLagSurvivesEveryKillPoint(SavedLagWorkload.inPlaceAppend(true));
+    }
+
+    @Test
+    public void testSavedLagSurvivesEveryKillPointEmptyTable() throws Exception {
+        assertSavedLagSurvivesEveryKillPoint(SavedLagWorkload.emptyTable());
+    }
+
+    @Test
+    public void testSavedLagSurvivesEveryKillPointInPlaceAppend() throws Exception {
+        assertSavedLagSurvivesEveryKillPoint(SavedLagWorkload.inPlaceAppend(false));
+    }
+
+    @Test
+    public void testSavedLagSurvivesEveryKillPointSplitLastPartition() throws Exception {
+        assertSavedLagSurvivesEveryKillPoint(SavedLagWorkload.splitLastPartition());
+    }
+
+    /**
+     * A WAL apply pass that stops early saves the WAL lag in {@code _txn}; the lag rows sit in the last
+     * partition's files after its committed rows, and the next commit consumes them. Kill the process at
+     * every kill point of that consuming commit, in the suite's commit mode: after recovery the table must
+     * hold every row of both WAL transactions, by value, because a kill keeps the WAL.
+     */
+    private void assertSavedLagSurvivesEveryKillPoint(SavedLagWorkload workload) throws Exception {
+        runWithCrashFacade(() -> {
+            final SweepResult r = forEachKillPoint(workload);
+            LOG.info().$("[saved lag kill sweep] ").$(workload.name).$(" N=").$(r.n)
+                    .$(", recoveredByK=").$(Arrays.toString(r.recoveredByK())).$();
+            Assert.assertEquals(r.n + 1, r.sweptPoints);
+        });
     }
 
     /**
@@ -468,6 +543,229 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
                 drainWalQueue();
             } catch (Exception e) {
                 LOG.info().$("[O3 sweep] teardown drop skipped for ").$(table).$(": ").$(e.getMessage()).$();
+            }
+        }
+    }
+
+    /**
+     * The saved-lag workload. Setup: the table's committed rows, then two WAL transactions: the first
+     * holds exactly the table's lag limit of rows ({@code maxUncommittedRows} times the lag multiplier),
+     * the second one row out of order below them, written through a second WAL so that no later
+     * transaction shares the first one's WAL segment. One apply pass with a zero time quota applies the
+     * first transaction on its own, keeps its rows in WAL lag (the second sorts below them), stops on the
+     * quota and saves the lag in {@code _txn}; under ADAPTIVE a save point lands on it. Setup asserts
+     * {@code _txn} holds that lag, so a green result can never come from a workload that saved none, and
+     * then runs the WAL purge, which must not take the lag's WAL segment. Commit phase: the drain that
+     * consumes the lag. Oracle: every row of the table and of both transactions, by value.
+     */
+    private static final class SavedLagWorkload implements AdaptiveCrashWorkload {
+        private final boolean dedup;
+        private final List<String> expectedRows = new ArrayList<>();
+        private final String[] initialInserts;
+        private final int lagRows;
+        private final int maxUncommittedRows;
+        private final String name;
+        private final String outOfOrderTs;
+        private final String table;
+        private final String[] lagInsert;
+        private final boolean splitLastPartition;
+        boolean savePointsInCommitPhase = true;
+        private TableToken tt;
+
+        private SavedLagWorkload(
+                String name,
+                int maxUncommittedRows,
+                boolean dedup,
+                boolean splitLastPartition,
+                String[] initialInserts,
+                String[] lagInsert,
+                String outOfOrderTs
+        ) {
+            this.name = name;
+            this.maxUncommittedRows = maxUncommittedRows;
+            this.dedup = dedup;
+            this.splitLastPartition = splitLastPartition;
+            this.initialInserts = initialInserts;
+            this.lagInsert = lagInsert;
+            this.lagRows = Integer.parseInt(lagInsert[1]);
+            this.outOfOrderTs = outOfOrderTs;
+            // a table per row: a red row must not leave its table to the next one
+            this.table = "sweep_lag_" + name;
+            for (int i = 0; i < initialInserts.length; i += 3) {
+                addExpectedRows(initialInserts[i], Integer.parseInt(initialInserts[i + 1]), Long.parseLong(initialInserts[i + 2]));
+            }
+            addExpectedRows(lagInsert[0], lagRows, Long.parseLong(lagInsert[2]));
+            expectedRows.add(row(micros(outOfOrderTs), -1, "neg", "neg"));
+            expectedRows.sort(null);
+        }
+
+        @Override
+        public int oracle(int k, int n) throws Exception {
+            if (engine.getTableSequencerAPI().isSuspended(tt)) {
+                final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+                Assert.fail(name + " kill point k=" + k + " of " + n + ": the table is suspended after recovery [error="
+                        + tracker.getErrorMessage() + "]");
+            }
+            final List<String> actual = new ArrayList<>();
+            try (RecordCursorFactory f = select("select ts, v, s, vc from " + table)) {
+                try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
+                    final Record r = c.getRecord();
+                    while (c.hasNext()) {
+                        final CharSequence sym = r.getSymA(2);
+                        final io.questdb.std.str.Utf8Sequence vc = r.getVarcharA(3);
+                        actual.add(row(r.getTimestamp(0), r.getLong(1), sym == null ? null : sym.toString(), vc == null ? null : vc.toString()));
+                    }
+                }
+            }
+            actual.sort(null);
+            if (!expectedRows.equals(actual)) {
+                int firstDiff = 0;
+                while (firstDiff < Math.min(actual.size(), expectedRows.size()) && actual.get(firstDiff).equals(expectedRows.get(firstDiff))) {
+                    firstDiff++;
+                }
+                Assert.fail(name + " kill point k=" + k + " of " + n + ": the table does not hold the rows of both WAL transactions"
+                        + " [rows=" + actual.size() + ", sum(v)=" + sumV(actual)
+                        + ", expected rows=" + expectedRows.size() + ", sum(v)=" + sumV(expectedRows)
+                        + ", first difference at " + firstDiff + ": "
+                        + (firstDiff < actual.size() ? actual.get(firstDiff) : "<none>") + " instead of "
+                        + (firstDiff < expectedRows.size() ? expectedRows.get(firstDiff) : "<none>") + "]");
+            }
+            return actual.size();
+        }
+
+        @Override
+        public TableToken[] setup(int iteration) throws Exception {
+            execute("drop table if exists " + table);
+            drainWalQueue();
+            // set inside the assertMemoryLeak body: a quota set before it does not reach the engine
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+            if (splitLastPartition) {
+                setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            }
+            execute("create table " + table + " (ts timestamp, v long, s symbol, vc varchar) timestamp(ts) partition by day wal"
+                    + " with maxUncommittedRows=" + maxUncommittedRows);
+            if (dedup) {
+                execute("alter table " + table + " dedup enable upsert keys(ts)");
+            }
+            tt = engine.verifyTableName(table);
+            for (int i = 0; i < initialInserts.length; i += 3) {
+                execute(insertSql(initialInserts[i], initialInserts[i + 1], initialInserts[i + 2]));
+            }
+            drainWalQueue();
+
+            execute(insertSql(lagInsert[0], lagInsert[1], lagInsert[2]));
+            // hold the first WAL so the out-of-order row goes to a second one
+            try (WalWriter ignore = engine.getWalWriter(tt)) {
+                execute("insert into " + table + " values ('" + outOfOrderTs + "', -1, 'neg', 'neg')");
+            }
+            tickWalQueue(1);
+            Assert.assertEquals(name + ": _txn does not hold the saved WAL lag", lagRows, savedLagRows());
+            engine.releaseAllWalWriters();
+            drainPurgeJob();
+            if (!savePointsInCommitPhase) {
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+            }
+            return new TableToken[]{tt};
+        }
+
+        @Override
+        public void commit() {
+            drainWalQueue();
+        }
+
+        @Override
+        public void teardown() throws Exception {
+            try {
+                execute("drop table if exists " + table);
+                drainWalQueue();
+            } catch (Exception e) {
+                LOG.info().$("[saved lag sweep] teardown drop skipped: ").$(e.getMessage()).$();
+            }
+        }
+
+        static SavedLagWorkload acrossPartitionBoundary() {
+            // lag limit 2,000 rows: 600 lag rows on day 2, 1,400 on day 3; the out-of-order row lands on
+            // day 1, the lag's day-2 rows append in place, and day 2 is trimmed when day 3 becomes last
+            return new SavedLagWorkload(
+                    "acrossPartitionBoundary", 100, false, false,
+                    new String[]{"2022-02-24T00:00:00.000000Z", "1", "1000000", "2022-02-25T00:00:00.000000Z", "1", "2000000"},
+                    new String[]{"2022-02-25T23:50:00.000000Z", "2000", "0"},
+                    "2022-02-24T12:00:00.000000Z"
+            );
+        }
+
+        static SavedLagWorkload emptyTable() {
+            // no committed rows: the lag lives in an artificial partition the consuming commit removes
+            return new SavedLagWorkload(
+                    "emptyTable", 50, false, false,
+                    new String[0],
+                    new String[]{"2022-02-25T01:00:00.000000Z", "1000", "0"},
+                    "2022-02-25T00:30:00.000000Z"
+            );
+        }
+
+        static SavedLagWorkload inPlaceAppend(boolean dedup) {
+            // one committed row; the out-of-order row sorts between it and the lag, so the consuming commit
+            // appends the merged rows in place over the lag
+            return new SavedLagWorkload(
+                    dedup ? "inPlaceAppendDedup" : "inPlaceAppend", 50, dedup, false,
+                    new String[]{"2022-02-25T00:00:00.000000Z", "1", "1000000"},
+                    new String[]{"2022-02-25T01:00:00.000000Z", "1000", "0"},
+                    "2022-02-25T00:30:00.000000Z"
+            );
+        }
+
+        static SavedLagWorkload splitLastPartition() {
+            // the out-of-order row lands inside the committed tail; with a 1-byte split threshold the
+            // consuming commit splits the last partition and cuts the old directory to its committed rows
+            return new SavedLagWorkload(
+                    "splitLastPartition", 50, false, true,
+                    new String[]{"2022-02-25T00:00:00.000000Z", "5000", "1000000"},
+                    new String[]{"2022-02-25T02:00:00.000000Z", "1000", "0"},
+                    "2022-02-25T01:23:00.500000Z"
+            );
+        }
+
+        private static long micros(String ts) {
+            final Instant instant = Instant.parse(ts);
+            return instant.getEpochSecond() * 1_000_000L + instant.getNano() / 1_000L;
+        }
+
+        private static String row(long ts, long v, String s, String vc) {
+            // zero-padded, so the natural string order is the timestamp order
+            return String.format("%020d|%d|%s|%s", ts, v, s, vc);
+        }
+
+        private static long sumV(List<String> rows) {
+            long sum = 0;
+            for (String r : rows) {
+                final int from = r.indexOf('|') + 1;
+                sum += Long.parseLong(r.substring(from, r.indexOf('|', from)));
+            }
+            return sum;
+        }
+
+        private void addExpectedRows(String fromTs, int rows, long vBase) {
+            final long from = micros(fromTs);
+            for (int x = 1; x <= rows; x++) {
+                final long v = vBase + x;
+                expectedRows.add(row(from + (x - 1) * 1_000_000L, v, "k" + (x % 7), "r" + v));
+            }
+        }
+
+        private String insertSql(String fromTs, String rows, String vBase) {
+            return "insert into " + table + " select timestamp_sequence('" + fromTs + "', 1000000L), " + vBase + " + x,"
+                    + " 'k' || (x % 7), 'r' || (" + vBase + " + x) from long_sequence(" + rows + ")";
+        }
+
+        int savedLagRows() {
+            try (TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade()); Path path = new Path()) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.TXN_FILE_NAME);
+                txReader.ofRO(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+                txReader.unsafeLoadAll();
+                return txReader.getLagRowCount();
             }
         }
     }
