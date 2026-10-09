@@ -62,7 +62,7 @@ import java.util.Arrays;
  *   <li>ADAPTIVE takes no directory barrier in {@code TableWriter.openPartition}: the durable epoch makes
  *   directory entries durable, and recovery re-creates the later ones when it replays the WAL. That holds
  *   also when {@code syncfs} is not filesystem-wide (macOS, Windows), where the epoch fsyncs the dirty
- *   partition directories itself.</li>
+ *   partition directories itself, and then the table directory that holds their entries.</li>
  *   <li>The WAL writer, under SYNC and ADAPTIVE, fsyncs each new segment's entry in {@code wal<N>} and, once
  *   per writer, the table directory that holds {@code wal<N>}.</li>
  * </ul>
@@ -71,17 +71,27 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testAdaptiveEpochCoversPartitionDirs() throws Exception {
-        assertAdaptiveWalPartitionsSurviveCrash(true, new CrashFaultFilesFacade());
+        assertAdaptiveWalPartitionsSurviveCrash(true, false, new CrashFaultFilesFacade());
     }
 
     @Test
     public void testAdaptiveEpochCoversPartitionDirsWithoutFsWideSyncfs() throws Exception {
-        assertAdaptiveWalPartitionsSurviveCrash(true, new SingleFileSyncfsFacade());
+        assertAdaptiveWalPartitionsSurviveCrash(true, false, new SingleFileSyncfsFacade());
+    }
+
+    @Test
+    public void testAdaptiveEpochCoversRewrittenPartitionDirs() throws Exception {
+        assertAdaptiveWalPartitionsSurviveCrash(true, true, new CrashFaultFilesFacade());
+    }
+
+    @Test
+    public void testAdaptiveEpochCoversRewrittenPartitionDirsWithoutFsWideSyncfs() throws Exception {
+        assertAdaptiveWalPartitionsSurviveCrash(true, true, new SingleFileSyncfsFacade());
     }
 
     @Test
     public void testAdaptiveLazyPartitionsSurviveCrash() throws Exception {
-        assertAdaptiveWalPartitionsSurviveCrash(false, new CrashFaultFilesFacade());
+        assertAdaptiveWalPartitionsSurviveCrash(false, false, new CrashFaultFilesFacade());
     }
 
     @Test
@@ -293,16 +303,20 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * An ADAPTIVE WAL table gets two new partitions after the baseline. The kernel wrote {@code _txn} and
-     * {@code _cv} back before the power loss, so they name both partitions, while no directory barrier made
-     * either partition's entries durable. Recovery must rewind the pointers to the durable epoch and replay
-     * the WAL.
+     * An ADAPTIVE WAL table gets two new partition directories after the baseline. The kernel wrote {@code _txn}
+     * and {@code _cv} back before the power loss, so they name both directories, while no directory barrier made
+     * either directory's entries durable. Recovery must rewind the pointers to the durable epoch and replay the
+     * WAL.
      *
-     * @param isEpochAfterFirstPartition when true, a durable epoch covers the first new partition; the second
-     *                                   is applied lazily in both variants
+     * @param isEpochAfterFirstPartition when true, a durable epoch covers the first new directory; the second is
+     *                                   applied lazily in both variants
+     * @param isPartitionRewritten       when true, the first new directory is a new version of the first
+     *                                   partition, written by an out-of-order insert into its middle; when false,
+     *                                   it is a new partition
      */
     private void assertAdaptiveWalPartitionsSurviveCrash(
             boolean isEpochAfterFirstPartition,
+            boolean isPartitionRewritten,
             CrashFaultFilesFacade facade
     ) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
@@ -311,34 +325,56 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         runWithFacade(facade, () -> {
             crashFf.modelSharedJournal = false;
             execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            if (isPartitionRewritten) {
+                execute("INSERT INTO x VALUES ('2024-01-01T12:00:00.000000Z', 1), ('2024-01-02T00:00:00.000000Z', 2)");
+            } else {
+                execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            }
             drainWalQueue();
             final TableToken token = engine.verifyTableName("x");
             final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            final String tableDir = root + File.separator + token.getDirName();
             markDurableBaseline();
 
-            execute("INSERT INTO x VALUES ('2024-01-02T00:00:00.000000Z', 2)");
-            drainWalQueue();
+            if (isPartitionRewritten) {
+                execute("INSERT INTO x VALUES ('2024-01-01T06:00:00.000000Z', 4)");
+                drainWalQueue();
+                final String[] versions = new File(tableDir).list((dir, name) -> name.startsWith("2024-01-01."));
+                Assert.assertNotNull(versions);
+                Assert.assertEquals("the insert must write a new version of the first partition", 1, versions.length);
+            } else {
+                execute("INSERT INTO x VALUES ('2024-01-02T00:00:00.000000Z', 2)");
+                drainWalQueue();
+            }
             if (isEpochAfterFirstPartition) {
-                Assert.assertEquals("an epoch must cover the first new partition", 2, tracker.getDurableEpochSeqTxn());
+                Assert.assertEquals("an epoch must cover the first new directory", 2, tracker.getDurableEpochSeqTxn());
             }
             node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
             execute("INSERT INTO x VALUES ('2024-01-03T00:00:00.000000Z', 3)");
             drainWalQueue();
             Assert.assertTrue("the second new partition must be applied lazily", tracker.getDurableEpochSeqTxn() < 3);
 
-            final String tableDir = root + File.separator + token.getDirName();
             crashFf.markFileDurable(tableDir + File.separator + TableUtils.TXN_FILE_NAME);
             crashFf.markFileDurable(tableDir + File.separator + TableUtils.COLUMN_VERSION_FILE_NAME);
 
             recoverAfterCrash(new TableToken[]{token});
             assertNotSuspended(token);
-            assertRows("""
-                    ts\tv
-                    2024-01-01T00:00:00.000000Z\t1
-                    2024-01-02T00:00:00.000000Z\t2
-                    2024-01-03T00:00:00.000000Z\t3
-                    """);
+            if (isPartitionRewritten) {
+                assertRows("""
+                        ts\tv
+                        2024-01-01T06:00:00.000000Z\t4
+                        2024-01-01T12:00:00.000000Z\t1
+                        2024-01-02T00:00:00.000000Z\t2
+                        2024-01-03T00:00:00.000000Z\t3
+                        """);
+            } else {
+                assertRows("""
+                        ts\tv
+                        2024-01-01T00:00:00.000000Z\t1
+                        2024-01-02T00:00:00.000000Z\t2
+                        2024-01-03T00:00:00.000000Z\t3
+                        """);
+            }
             releaseEngineHandles();
         });
     }
