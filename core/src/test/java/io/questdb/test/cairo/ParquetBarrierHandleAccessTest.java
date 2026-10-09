@@ -33,19 +33,15 @@ import org.junit.Test;
 /**
  * The {@code data.parquet} barrier must be issued through a handle the platform will actually accept.
  * <p>
- * Both parquet producers -- the CONVERT path ({@code TableUtils.produceParquetFromNative}) and the O3
- * rewrite path ({@code O3PartitionJob}) -- fsync {@code data.parquet} before {@code _pm} is published, so
- * that a committed {@code _pm} can never name data-file bytes still sitting in the page cache. That barrier
- * is only worth having if it runs on every supported platform.
+ * Both parquet producers, the CONVERT path ({@code TableUtils.produceParquetFromNative}) and the O3
+ * rewrite path ({@code O3PartitionJob}), fsync {@code data.parquet} before they publish {@code _pm}, so a
+ * committed {@code _pm} never names data-file bytes still in the page cache. Windows refuses an fsync on a
+ * read-only handle ({@code ERROR_ACCESS_DENIED}), so a barrier on an {@code openRONoCache} fd would stop a
+ * Windows instance producing parquet under any commit mode other than {@code nosync}. See
+ * {@link WindowsBarrierContractFilesFacade} for the mechanism.
  * <p>
- * It did not. Both sites opened the file with {@code openRONoCache} and fsynced THAT fd, which
- * {@code ERROR_ACCESS_DENIED}s on Windows -- so under any commit mode other than {@code nosync} a Windows
- * instance could not produce parquet at all, taking Enterprise cold storage (whose promotion path is
- * exactly this conversion) with it. See {@link WindowsBarrierContractFilesFacade} for the mechanism.
- * <p>
- * These two tests pin the two sites individually. {@code WriteAccessBarrierSweepTest} covers the wider
- * storage surface, so a NEW barrier written the same wrong way is caught without anyone remembering to
- * come back here.
+ * The two tests cover the two sites individually. {@code WriteAccessBarrierSweepTest} covers the wider
+ * storage surface, so it catches a new barrier on a read-only handle.
  */
 public class ParquetBarrierHandleAccessTest extends AbstractCairoTest {
 
@@ -87,7 +83,7 @@ public class ParquetBarrierHandleAccessTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
 
             ff.clearCounters();
-            // Lands INSIDE the parquet partition and before its existing row, so the partition is rewritten
+            // Lands inside the parquet partition and before its existing row, so the partition is rewritten
             // through O3PartitionJob rather than appended to.
             execute("INSERT INTO x VALUES (2, '2024-06-10T00:00:05.000000Z')");
 
