@@ -413,6 +413,11 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
+    public void testSyncConvertToParquetNonWalFailedTxnMsyncThenWriterOpenThenCrashReadsTable() throws Exception {
+        assertSyncConvertTxnMsyncFailureKeepsTable(false, true, true, false);
+    }
+
+    @Test
     public void testSyncConvertToParquetNonWalSurvivesCrash() throws Exception {
         assertSyncSchemaChangeSurvivesCrash(false, false, "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'", this::assertParquetPartitionNames);
     }

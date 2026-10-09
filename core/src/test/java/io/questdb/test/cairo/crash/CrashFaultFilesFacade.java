@@ -928,12 +928,20 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             byte[] durable = durableContent.get(key);
             try (FileChannel ch = FileChannel.open(p, StandardOpenOption.WRITE)) {
                 if (durable != null) {
-                    // Content rollback: overwrite the prefix with durable bytes, then truncate to its length.
+                    // Content rollback: overwrite the prefix with durable bytes, then set the durable length. A
+                    // whole-file sync makes the file size durable even where the content model cannot tell written
+                    // zero bytes from unwritten space (bytes stored by native code past the last non-zero one): the
+                    // file keeps that size, unless it was truncated below it since, and what lies past the durable
+                    // bytes reads as zero.
+                    final long length = Math.max(durable.length, Math.min(durableSize.getOrDefault(key, 0L), ch.size()));
                     if (durable.length > 0) {
                         ch.write(ByteBuffer.wrap(durable), 0);
                     }
-                    if (ch.size() > durable.length) {
-                        ch.truncate(durable.length);
+                    if (length > durable.length) {
+                        ch.write(ByteBuffer.allocate((int) (length - durable.length)), durable.length);
+                    }
+                    if (ch.size() > length) {
+                        ch.truncate(length);
                     }
                 } else {
                     // No content snapshot for this file: original size-only rollback.
