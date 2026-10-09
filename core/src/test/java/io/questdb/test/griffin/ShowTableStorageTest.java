@@ -25,10 +25,21 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class ShowTableStorageTest extends AbstractCairoTest {
@@ -166,6 +177,25 @@ public class ShowTableStorageTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountExcludesSystemTables() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("x", false);
+            createTable(configuration.getSystemTableNamePrefix() + "x", false);
+            // size() of the cursor matches the rows it returns, so count() and LIMIT -N skip system tables too
+            assertQuery("SELECT count() FROM table_storage()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1\n");
+            assertQuery("SELECT tableName FROM table_storage() LIMIT -1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("tableName\nx\n");
+        });
+    }
+
+    @Test
     public void testFetchNonExistingColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table trades_1(timestamp TIMESTAMP, " +
@@ -184,6 +214,65 @@ public class ShowTableStorageTest extends AbstractCairoTest {
             engine.releaseAllWriters();
             assertQuery("select *, size_pretty(hello) from table_storage()")
                     .fails(22, "Invalid column: hello");
+        });
+    }
+
+    @Test
+    public void testFilterOnTableNameWalksOnlyMatchingTable() throws Exception {
+        final DirListingRecordingFilesFacade ff = new DirListingRecordingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            createTable("x", false);
+            createTable("y", false);
+            final String expected = "tableName\tdiskSize\nx\t" + getDirSize("x") + "\n";
+            ff.listedDirs.clear();
+            assertQuery("SELECT tableName, diskSize FROM table_storage() WHERE tableName = 'x'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+            Assert.assertTrue(ff.listedDirs.size() > 0);
+            final String yDir = Files.SEPARATOR + engine.verifyTableName("y").getDirName();
+            for (int i = 0, n = ff.listedDirs.size(); i < n; i++) {
+                final String dir = ff.listedDirs.getQuick(i);
+                Assert.assertFalse(dir, dir.endsWith(yDir) || dir.contains(yDir + Files.SEPARATOR));
+            }
+        });
+    }
+
+    @Test
+    public void testProjectionWithoutDiskSizeDoesNotListDirectories() throws Exception {
+        final DirListingRecordingFilesFacade ff = new DirListingRecordingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            createTable("x", false);
+            createTable("y", true);
+            ff.listedDirs.clear();
+            assertQuery("SELECT tableName, walEnabled, partitionBy, partitionCount, rowCount FROM table_storage() ORDER BY tableName")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount
+                            x\tfalse\tDAY\t3\t3
+                            y\ttrue\tDAY\t3\t3
+                            """);
+            Assert.assertEquals(0, ff.listedDirs.size());
+            Assert.assertEquals(0, engine.getTableDiskSizeCache().getTableCount());
+        });
+    }
+
+    @Test
+    public void testTableDroppedDuringIteration() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("a", false);
+            createTable("b", false);
+            assertRowOfVanishedTable("DROP TABLE %s");
+        });
+    }
+
+    @Test
+    public void testTableRenamedDuringIteration() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("a", false);
+            createTable("b", false);
+            assertRowOfVanishedTable("RENAME TABLE %s TO c");
         });
     }
 
@@ -208,9 +297,99 @@ public class ShowTableStorageTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("t", true);
+            execute("CREATE VIEW v AS (SELECT ts, v FROM t WHERE v > 0)");
+            drainWalQueue();
+            engine.releaseAllWriters();
+            // a view stores no rows, its directory holds the definition and the WAL files
+            assertQuery("SELECT * FROM table_storage() WHERE tableName = 'v'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
+                            "v\ttrue\tN/A\t0\t0\t" + getDirSize("v") + "\n");
+        });
+    }
+
+    @Test
+    public void testWalTableDroppedDuringIteration() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("a", true);
+            createTable("b", true);
+            assertRowOfVanishedTable("DROP TABLE %s");
+        });
+    }
+
+    @Test
+    public void testWalTableStorage() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("w", true);
+            // the size includes the WAL segments and the sequencer files next to the partitions
+            assertQuery("SELECT * FROM table_storage()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
+                            "w\ttrue\tDAY\t3\t3\t" + getDirSize("w") + "\n");
+        });
+    }
+
+    // Lists the tables a and b, applies the DDL to the table listed second, then reads its row.
+    private static void assertRowOfVanishedTable(String ddlTemplate) throws SqlException {
+        try (
+                RecordCursorFactory factory = select("SELECT * FROM table_storage()");
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            final Record record = cursor.getRecord();
+            Assert.assertTrue(cursor.hasNext());
+            final String vanished = Chars.equals(record.getStrA(0), "a") ? "b" : "a";
+            execute(String.format(ddlTemplate, vanished));
+
+            Assert.assertTrue(cursor.hasNext());
+            TestUtils.assertEquals(vanished, record.getStrA(0));
+            Assert.assertNull(record.getStrA(2));
+            Assert.assertEquals(Numbers.LONG_NULL, record.getLong(3));
+            Assert.assertEquals(Numbers.LONG_NULL, record.getLong(4));
+            Assert.assertEquals(Numbers.LONG_NULL, record.getLong(5));
+            Assert.assertFalse(cursor.hasNext());
+        }
+    }
+
+    private static void createTable(String tableName, boolean isWal) throws SqlException {
+        execute("CREATE TABLE '" + tableName + "' (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+        execute("""
+                INSERT INTO '%s' VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1),
+                    ('2024-01-02T00:00:00.000000Z', 2),
+                    ('2024-01-03T00:00:00.000000Z', 3)
+                """.formatted(tableName));
+        if (isWal) {
+            drainWalQueue();
+        }
+        engine.releaseAllWriters();
+    }
+
     private long getDirSize(@NotNull CharSequence tableName) {
         final TableToken token = sqlExecutionContext.getTableToken(tableName);
         return Files.getDirSize(
                 Path.getThreadLocal(configuration.getDbRoot()).concat(token.getDirName()));
+    }
+
+    private static class DirListingRecordingFilesFacade extends TestFilesFacadeImpl {
+        private final ObjList<String> listedDirs = new ObjList<>();
+
+        @Override
+        public long findFirst(LPSZ path) {
+            listedDirs.add(path.toString());
+            return super.findFirst(path);
+        }
+
+        @Override
+        public long getDirSize(Path path) {
+            listedDirs.add(path.toString());
+            return super.getDirSize(path);
+        }
     }
 }
