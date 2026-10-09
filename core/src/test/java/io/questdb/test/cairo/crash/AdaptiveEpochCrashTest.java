@@ -259,6 +259,21 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         }
     }
 
+    @Test
+    public void testFailedHeaderSyncThenPowerLoss() throws Exception {
+        assertFailedHeaderSyncKeepsData(false, false);
+    }
+
+    @Test
+    public void testFailedHeaderSyncThenRestartVacuumThenPowerLoss() throws Exception {
+        assertFailedHeaderSyncKeepsData(true, false);
+    }
+
+    @Test
+    public void testFailedHeaderSyncThenRestartWriterOpenThenPowerLoss() throws Exception {
+        assertFailedHeaderSyncKeepsData(true, true);
+    }
+
     /**
      * A data-sync fault at every durability operation of an O3 write whose apply takes a save point; the operation
      * completes on disk and then reports the error. Later O3 rewrites, a partition purge and a WAL purge follow
@@ -733,6 +748,67 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         assertFilePresent(tt, io.questdb.cairo.DurableEpochManifest.FILE_NAME + ".0");
     }
 
+    /**
+     * An O3 merge writes a new version of the first day, then the header sync of the save point that names it fails
+     * and leaves the header only in the page cache. A restart without a power loss selects that save point, and a
+     * writer open, or VACUUM TABLE, runs the partition purge before the power loss. Whichever save point recovery then
+     * selects, the partition versions it names must be there.
+     *
+     * @param isRestartedFirst the process restarts and purges before the power loss; otherwise the power fails at once
+     * @param isWriterOpened   with a restart: the WAL apply and a writer open run before the purge; otherwise VACUUM
+     */
+    private void assertFailedHeaderSyncKeepsData(boolean isRestartedFirst, boolean isWriterOpened) throws Exception {
+        runWithFaultFacade(() -> {
+            configureSavePoints();
+            final Scenario s = newScenario("hdr");
+            insertRows(s, 0, 2);
+            insertRows(s, 1, 2);
+            drainWalQueue();
+            engine.releaseAllWalWriters();
+            publishSavePoint(s);
+            markDurableBaseline();
+            insertRows(s, 0, 2, true, false, true);
+            drainWalQueue();
+            engine.releaseAllReaders();
+            faultFf.isHeaderSyncDropped = true;
+            Throwable failure = null;
+            try {
+                publishSavePoint(s);
+            } catch (CairoException | CairoError th) {
+                failure = th;
+            }
+            Assert.assertFalse("the header sync must have been reached", faultFf.isHeaderSyncDropped);
+            Assert.assertNotNull("the failed header sync must fail the save point", failure);
+            engine.resetDurabilityFailure();
+            if (isRestartedFirst) {
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                engine.releaseAllWalWriters();
+                restart(s);
+                new RecoveryCoordinator(engine).recover();
+                if (isWriterOpened) {
+                    engine.notifyWalTxnRepublisher(s.token);
+                    drainWalQueue();
+                    try (TableWriter w = getWriter(s.token)) {
+                        Assert.assertNotNull(w);
+                    }
+                    engine.releaseAllWriters();
+                } else {
+                    execute("VACUUM TABLE " + s.table);
+                }
+                engine.releaseAllReaders();
+                purgePartitions();
+                // the filesystem journals the directory changes on its own, as ext4 does within seconds
+                try (Path path = new Path()) {
+                    path.of(root).concat(s.token.getDirName());
+                    faultFf.fsyncAndClose(faultFf.openRO(path.$()));
+                }
+            }
+            powerLossAndCheck(s, isRestartedFirst ? (isWriterOpened ? "restart, writer open, purge" : "restart, VACUUM, purge") : "power loss");
+            assertNoRowFailures();
+        });
+    }
+
     private void assertFilePresent(TableToken tt, String fileName) {
         try (Path p = new Path()) {
             p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(fileName);
@@ -1113,6 +1189,7 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     private static final class SavePointFaultFacade extends CrashFaultFilesFacade {
         private final Map<String, byte[]> frozenContent = new HashMap<>();
         String faultedOp;
+        boolean isHeaderSyncDropped;
         String removedPath;
         private int faultAtOp = -1;
         private int ioCalls;
@@ -1179,6 +1256,19 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                 poweredOff = true;
                 throw e;
             }
+        }
+
+        @Override
+        public void fsyncDurable(long fd) {
+            if (isHeaderSyncDropped && StackWalker.getInstance().walk(frames -> frames.anyMatch(
+                    frame -> frame.getClassName().endsWith(".DurableEpochManifest") && frame.getMethodName().equals("write")))
+            ) {
+                // the header write stays in the page cache
+                isHeaderSyncDropped = false;
+                faultedOp = "fsyncDurable of the save point header";
+                throw CairoException.dataSyncFailure(EIO, "fsyncDurable");
+            }
+            super.fsyncDurable(fd);
         }
 
         @Override

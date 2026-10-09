@@ -292,6 +292,8 @@ public class CairoEngine implements Closeable, WriterSource {
     private final MessageBusImpl messageBus;
     private final Metrics metrics;
     private final PartitionOverwriteControl partitionOverwriteControl = new PartitionOverwriteControl();
+    // Tables, by directory name, that a writer has opened in this process; see isPartitionPurgeSafe().
+    private final ConcurrentHashMap<TableToken> partitionPurgeSafeTables = new ConcurrentHashMap<>();
     private final QueryRegistry queryRegistry;
     private final ReaderPool readerPool;
     private final RecentWriteTracker recentWriteTracker;
@@ -3101,6 +3103,17 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
+     * Whether the partition purge job may remove a table's superseded partition versions under SYNC or ADAPTIVE.
+     * After a failed flush and a restart, the page cache may hold a {@code _txn} (SYNC) or a save point header
+     * (ADAPTIVE) the device never got, so a version it no longer names may be the one the device still names. A
+     * writer open makes that state durable before it removes such versions, so the job waits until a writer has
+     * opened the table in this process, and stops after a failed data sync.
+     */
+    public boolean isPartitionPurgeSafe(TableToken tableToken) {
+        return !isDurabilityFailed() && partitionPurgeSafeTables.containsKey(tableToken.getDirName());
+    }
+
+    /**
      * Reports whether this engine currently refuses writes. Reads the LIVE state on every
      * call so callers can re-check it per write batch rather than trusting a value captured
      * earlier (for example, a SecurityContext cached at connection time). The base engine
@@ -3265,6 +3278,14 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public boolean lockWalWriters(TableToken tableToken) {
         return walWriterPool.lock(tableToken);
+    }
+
+    /**
+     * Called by a writer open once the table's partition versions agree with a durable {@code _txn} or save point;
+     * see {@link #isPartitionPurgeSafe(TableToken)}.
+     */
+    public void markPartitionPurgeSafe(TableToken tableToken) {
+        partitionPurgeSafeTables.putIfAbsent(tableToken.getDirName(), tableToken);
     }
 
     /**
@@ -3693,10 +3714,12 @@ public class CairoEngine implements Closeable, WriterSource {
 
     /**
      * Un-poisons the engine after a test injected a durability failure, and restores the default handler,
-     * which only fences the engine. Production never un-poisons: ServerMain halts on the first failure.
+     * which only fences the engine. Production never un-poisons: ServerMain halts on the first failure. The test
+     * stands for a restart, so no table is purge-safe until a writer opens it again.
      */
     @TestOnly
     public void resetDurabilityFailure() {
+        partitionPurgeSafeTables.clear();
         durabilityFailure.set(null);
         durabilityFailureHandler = failure -> {
         };
@@ -4821,6 +4844,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     private void notifyPoolsTableDropped(TableToken tableToken, boolean fullDropped) {
+        partitionPurgeSafeTables.remove(tableToken.getDirName());
         readerPool.notifyDropped(tableToken, fullDropped);
         walWriterPool.notifyDropped(tableToken, fullDropped);
         viewWalWriterPool.notifyDropped(tableToken, fullDropped);
