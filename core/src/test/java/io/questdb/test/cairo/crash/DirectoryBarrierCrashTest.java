@@ -837,9 +837,6 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * Reads the index files of every partition.
-     */
-    /**
      * Fails one fsync of a change, in the given commit mode: the engine must be poisoned.
      *
      * @param prepare   runs once the rows are inserted, before they are applied to a WAL table; null for none
@@ -858,6 +855,9 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         assertSyncFailure(commitMode, wal, prepare, change, new FsyncFailureFacade(caller, skipCount, false), true);
     }
 
+    /**
+     * Reads the index files of every partition.
+     */
     private void assertIndexedSymbolFilter() throws Exception {
         assertQuery("SELECT ts FROM x WHERE s = 'a'").timestamp("ts").returns("""
                 ts

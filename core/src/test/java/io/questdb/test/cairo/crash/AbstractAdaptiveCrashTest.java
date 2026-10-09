@@ -32,22 +32,18 @@ import io.questdb.cairo.TxReader;
 import io.questdb.std.str.Path;
 
 /**
- * Shared ADAPTIVE crash-test machinery: the production-faithful "model a fresh-process restart" sequence
- * ({@link #recoverAfterCrash}), the handle/fd reclamation that keeps a live-JVM crash simulation leak-clean,
- * and the two probes every adaptive crash oracle needs ({@link #anyTableSuspended},
- * {@link #readOnDiskTxnSeqTxn}).
- *
- * <p>This sits BETWEEN {@link AbstractCrashConsistencyTest} (the generic crash oracle) and
- * {@link AbstractAdaptiveCrashSweepTest} (the exhaustive per-durability-op sweep driver, which is
- * nightly-only). Adaptive crash tests that assert ONE deliberately-constructed crash state rather than
- * sweeping every op extend this class directly, so they run in PR CI while still recovering exactly the way
- * the sweeps do. Before the split these helpers lived on the sweep base, which forced such tests either into
- * the nightly gate or into private, drift-prone copies of the restart sequence.
+ * Shared adaptive crash-test machinery: the fresh-process restart sequence ({@link #recoverAfterCrash}), the
+ * handle and fd reclamation that keeps a live-JVM crash simulation leak-clean, and two helpers every adaptive
+ * crash oracle needs ({@link #anyTableSuspended}, {@link #readOnDiskTxnSeqTxn}).
+ * <p>
+ * It sits between {@link AbstractCrashConsistencyTest}, the generic crash oracle, and
+ * {@link AbstractAdaptiveCrashSweepTest}, the nightly per-durability-op sweep driver. A test that asserts one
+ * constructed crash state extends this class directly, so it runs in PR CI and recovers the same way the sweeps do.
  */
 public abstract class AbstractAdaptiveCrashTest extends AbstractCrashConsistencyTest {
 
     /**
-     * True if ANY of the given tables is currently suspended (a swallowed WAL-apply crash).
+     * True if any of the given tables is suspended (a swallowed WAL-apply crash).
      */
     protected boolean anyTableSuspended(TableToken... tokens) {
         for (TableToken tt : tokens) {
@@ -62,11 +58,10 @@ public abstract class AbstractAdaptiveCrashTest extends AbstractCrashConsistency
      * The on-disk {@code _txn}'s committed {@code seqTxn}, read straight from the file with a private
      * {@link TxReader}: no pool, no engine state, no recovery. Returns -1 if {@code _txn} will not load.
      * <p>
-     * This exists to pin the load-bearing adaptive invariant that the lazy-gap sweeps' negative controls
-     * used to reach indirectly: the commit POINTER is never published ahead of the data it exposes. After a
-     * crash and BEFORE any recovery, an adaptive table's {@code _txn} must sit at or below its durable epoch
-     * cut. When it does not, a reader sees rows whose column data was never flushed -- the zero-filled shape
-     * ({@code [0, 0, 1, 2, 3]} instead of {@code [0, 1, 2, 3, 4]}) that only recovery could then repair.
+     * After a crash and before any recovery, an adaptive table's {@code _txn} must sit at or below its durable epoch
+     * cut: the commit pointer is never published ahead of the data it exposes. Otherwise a reader sees rows whose
+     * column data was never flushed, the zero-filled shape ({@code [0, 0, 1, 2, 3]} instead of
+     * {@code [0, 1, 2, 3, 4]}) that only recovery can repair.
      * <p>
      * Assumes a micro-timestamp designated column, which every sweep workload here uses.
      */
@@ -81,11 +76,10 @@ public abstract class AbstractAdaptiveCrashTest extends AbstractCrashConsistency
     }
 
     /**
-     * Reclaim any NON-cached fd left open beyond {@code baseline} — a fault-injection artifact: a simulated
-     * crash unwinds an fsync mid-operation on the LIVE JVM, so an {@code openRWNoCache}/{@code openRONoCache}
-     * fd whose owning operation was interrupted before its close lingers, whereas a real power loss's process
-     * death has the OS reclaim every fd. Closing the per-cycle delta (after all pooled handles are released)
-     * models that, keeping the sweep leak-clean over many cycles without touching the engine's own fds.
+     * Reclaims any non-cached fd left open beyond {@code baseline}. A simulated crash unwinds an fsync mid-operation
+     * on the live JVM, so an {@code openRWNoCache}/{@code openRONoCache} fd whose operation was interrupted before
+     * its close lingers; a real power loss has the OS reclaim every fd. Closing the per-cycle delta, after all pooled
+     * handles are released, models that and keeps the sweep leak-clean without touching the engine's own fds.
      */
     protected void reclaimLingeringNonCacheFds(java.util.Set<Long> baseline) {
         for (long fd : crashFf.noCacheOpenFdsSnapshot()) {
@@ -96,10 +90,9 @@ public abstract class AbstractAdaptiveCrashTest extends AbstractCrashConsistency
     }
 
     /**
-     * Power-loss rollback + production-faithful recovery on the live engine, in {@code
-     * CairoEngine.completeInit()} order: release handles, {@code crash()} (roll files back to their durable
-     * content), clear the transient in-memory suspend that a live-engine apply-crash left (a real power
-     * loss never ran that catch), then the recovery triple —
+     * Power-loss rollback and recovery on the live engine, in {@code CairoEngine.completeInit()} order: release
+     * handles, {@code crash()} (roll files back to their durable content), clear the transient in-memory suspend that
+     * a live-engine apply crash left (a real power loss never runs that catch), then
      * {@code RecoveryCoordinator.recover()} -> {@code notifyWalTxnRepublisher(tt)} -> {@code drainWalQueue()}.
      */
     protected void recoverAfterCrash(TableToken[] tokens) {
@@ -117,34 +110,25 @@ public abstract class AbstractAdaptiveCrashTest extends AbstractCrashConsistency
     protected void releaseEngineHandles() {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
-        // Force-reclaim any writer this (single-threaded) sweep left checked out or locked when a simulated
-        // crash unwound a TableWriter.close()/unlock mid-operation: releaseAllWriters() above skips OWNED
-        // entries (only their owner can return them), so without this they linger busy with an open .lock fd
-        // and trip the enclosing assertMemoryLeak's busy-writer / open-fd checks. A real power loss's process
-        // death reclaims them; this models that on the live JVM, the writer-pool analogue of the non-cache fd
-        // reclaim in reclaimLingeringNonCacheFds. A no-op on a healthy engine (production never leaks a writer).
+        // Force-reclaim any writer that a simulated crash left checked out or locked by unwinding
+        // TableWriter.close()/unlock. releaseAllWriters() skips owned entries, so without this they linger with an
+        // open .lock fd and trip assertMemoryLeak's busy-writer and open-fd checks. A real power loss reclaims them.
+        // No-op on a healthy engine.
         engine.releaseCrashOrphanedWriters();
-        // WAL-writer analogue of the line above: a swept crash on the deferred close-time fdatasync under
-        // group commit (W>0) leaves a distressed WalWriter owned in the pool (see recoverAfterCrash); reclaim
-        // it before releaseAllWalWriters() so the full release does not trip "left behind on pool shutdown".
+        // The WAL-writer analogue: a crash on the deferred close-time fdatasync under group commit (W>0) leaves a
+        // distressed WalWriter owned in the pool. Reclaim it so releaseAllWalWriters() does not trip "left behind on
+        // pool shutdown".
         engine.releaseCrashOrphanedWalWriters();
         engine.releaseAllWalWriters();
         engine.releaseInactiveTableSequencers();
-        // Table writers must be released LAST. The WAL-writer and sequencer releases above re-enter the
-        // engine (draining/finalising WAL work opens a TableWriter), so a writer released on the first pass
-        // can exist AGAIN by the time this method returns -- and the caller's next step is
-        // reclaimLingeringNonCacheFds, which treats every non-baseline no-cache fd as a crash artifact and
-        // force-closes it. A live pooled writer's symbol/index fds are no-cache too, so that reclaim would
-        // strand them, and the NEXT iteration's legitimate close would then operate on a dead descriptor
-        // ("Invalid fd, not found in cache" out of TableWriter.doClose -> freeSymbolMapWriters).
+        // Table writers are released last. The WAL-writer and sequencer releases above re-enter the engine (draining
+        // WAL work opens a TableWriter), so a writer released earlier can exist again here. The caller's next step,
+        // reclaimLingeringNonCacheFds, force-closes every non-baseline no-cache fd, and a live pooled writer's symbol
+        // and index fds are no-cache too: reclaiming them makes the next iteration's close fail with "Invalid fd, not
+        // found in cache" (TableWriter.doClose -> freeSymbolMapWriters).
         //
-        // NOT COVERED BY A TEST. Three attempts at a single-shot pin (plain release, crash-orphaned writer,
-        // outstanding WAL work) all passed with this release removed, i.e. proved nothing. The condition
-        // needs the sweep's multi-iteration context -- the reclaim runs against a baseline captured an
-        // iteration earlier -- which a unit test does not cheaply reproduce. Evidence for the fix is an
-        // A/B on the fuzz: seeds 1858466998207609950,7098192113821025591 and
-        // -5599363307717330847,-4230914800796809183 fail with "Invalid fd, not found in cache" without it
-        // and pass with it. If you touch this ordering, re-run those seeds.
+        // No unit test covers this ordering: it needs the sweep's multi-iteration baseline. The fuzz seeds
+        // 1858466998207609950,7098192113821025591 and -5599363307717330847,-4230914800796809183 fail without it.
         engine.releaseAllWriters();
         engine.releaseCrashOrphanedWriters();
     }
@@ -156,63 +140,41 @@ public abstract class AbstractAdaptiveCrashTest extends AbstractCrashConsistency
     protected void simulateRestart(TableToken[] tokens) {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
-        // Empty the WAL-writer pool BEFORE crash(), while the segment files are still their intact
-        // (fallocate'd) size: a pooled WalWriter's close rolls back only its UNCOMMITTED tail (no fsync, so
-        // the durable content the crash preserves is untouched) and drops its stale mmap. Doing this AFTER
-        // crash() instead would roll back against the already-truncated file and DESTROY the durable WAL
-        // (setAppendPosition truncating committed rows) that recovery must roll forward. A freshly booted
-        // engine's WAL-writer pool is empty; this models that so recovery and the workload's follow-up
-        // write both open fresh, correctly-mapped writers.
+        // Empty the WAL-writer pool before crash(), while the segment files still have their fallocated size: a pooled
+        // WalWriter's close rolls back only its uncommitted tail and drops its mmap. After crash() the same close would
+        // roll back against the truncated file and destroy durable WAL rows that recovery must roll forward. A freshly
+        // booted engine's WAL-writer pool is empty.
         //
-        // Force-reclaim any WAL writer the swept crash left checked out FIRST: under adaptive group commit
-        // (W>0) the crash can fire on the deferred close-time fdatasync inside WalWriter.cleanupBeforeClose
-        // (flushPendingDurable), which distresses the writer and RETHROWS, so WalWriterTenant.close() unwinds
-        // with the pool slot still OWNED. releaseAllWalWriters() below cannot reclaim an owned slot (its CAS
-        // from UNALLOCATED fails -> "table is left behind on pool shutdown"); this reclaims it first, the WAL
-        // analogue of releaseEngineHandles()'s releaseCrashOrphanedWriters for table writers. Run BEFORE
-        // crash() for the same intact-file reason as the pool release below. A no-op under W=0.
+        // Reclaim crash-orphaned WAL writers first: under group commit (W>0) the crash can fire on the deferred
+        // close-time fdatasync in WalWriter.cleanupBeforeClose, which distresses the writer and rethrows, leaving its
+        // pool slot owned. releaseAllWalWriters() cannot reclaim an owned slot. No-op under W=0.
         engine.releaseCrashOrphanedWalWriters();
         engine.releaseAllWalWriters();
         crashFf.crash(engine.getConfiguration().getDbRoot());
 
-        // Model a fresh-process restart: clear the transient suspend the apply job's catch(Throwable) set
-        // when it swallowed the CrashSimulationError. A freshly booted engine starts with un-suspended
-        // trackers; without this, the suspended table is excluded from apply and recovery cannot re-apply.
+        // A fresh process starts with un-suspended trackers: clear the suspend the apply job's catch set when it
+        // swallowed the CrashSimulationError, or recovery excludes the table from apply.
         for (TableToken tt : tokens) {
             if (engine.getTableSequencerAPI().isSuspended(tt)) {
                 engine.getTableSequencerAPI().getTxnTracker(tt).setUnsuspended();
             }
         }
 
-        // Model a fresh-process restart, part 2: evict the pooled TxnScoreboard. The V2 scoreboard is
-        // ANONYMOUS native memory held alive by the engine's scoreboard pool, NOT a file crash() can roll
-        // back, so its monotonic `max` txn high-water mark survives the simulated crash on this live engine
-        // where a real power loss's process death would have discarded it (the next boot re-creates it
-        // empty). This matters ONLY when recovery REWINDS the on-disk _txn below that stale pre-crash max —
-        // exactly what a sustained-lazy-gap epoch rewind does: the pre-crash O3 apply pushed `max` up, then
-        // RecoveryCoordinator rewinds _txn/_cv to the (lower) durable epoch cut and re-applies. A reader then
-        // opening at the rewound txn can never satisfy TxnScoreboardV2.acquireTxn (updateMax fails on
-        // txn < max), spinning to a spurious "Transaction read timeout" that a fresh boot would never see.
-        // (No-op for the epoch-every-batch sweeps, whose _txn is never rewound below max.) Readers/writers
-        // are already released above, so the pooled scoreboards are idle (refCount 0) and removed cleanly;
-        // the post-recovery apply + oracle read then open a FRESH scoreboard, exactly as a booted engine does.
+        // Evict the pooled TxnScoreboard. The V2 scoreboard is anonymous native memory, not a file crash() rolls back,
+        // so its monotonic max txn survives the simulated crash where a fresh process would start empty. That matters
+        // when recovery rewinds _txn below the stale max (a sustained-lazy-gap epoch rewind):
+        // TxnScoreboardV2.acquireTxn then fails for txn < max and a reader spins to a spurious "Transaction read
+        // timeout". Readers and writers are released above, so the pooled scoreboards are idle and removed cleanly.
         for (TableToken tt : tokens) {
             engine.getTxnScoreboardPool().remove(tt);
         }
 
-        // Model a fresh-process restart, part 3: force-close the cached table sequencer AND drop its
-        // SeqTxnTracker (resetForReboot), so both reload from the durable txnlog on disk — exactly as a
-        // booted engine does. Under group commit (W>0) a crash on the DEFERRED close-time fdatasync
-        // (flushPendingDurable inside WalWriter.cleanupBeforeClose) distresses the WAL WRITER but NOT the
-        // sequencer (unlike W=0, whose inline sequencer sync distresses+closes the sequencer), so a
-        // convert/alter that was assigned a seqTxn in memory (lastTxn=N) but whose txnlog record rolled back
-        // (durable high-water N-1) leaves the STILL-OPEN sequencer advertising the stale N. forAllWalTables
-        // then reads that in-memory N (its open-sequencer slow path) instead of the durable txnlog, re-seeds
-        // the tracker's seqTxn to N, and recovery's apply spins forever: updateWriterTxns keeps returning
-        // `writerTxn(N-1) < seqTxn(N)` == true, re-notifying ApplyWal2TableJob for a txn the rolled-back WAL
-        // no longer has. Closing the sequencer discards that stale high-water and forces forAllWalTables onto
-        // its durable-txnlog fast path, so the fresh tracker re-inits to N-1 and the apply converges. (A
-        // monotonic tracker purge alone is insufficient: the open sequencer would just re-seed N.)
+        // Close the cached sequencer and reset its SeqTxnTracker (resetForReboot) so both reload from the durable
+        // txnlog, as on boot. Under group commit (W>0) a crash on the deferred close-time fdatasync distresses the WAL
+        // writer but not the sequencer, so a convert or alter that got seqTxn N in memory while its txnlog record
+        // rolled back to N-1 leaves the open sequencer advertising N. forAllWalTables would re-seed the tracker to N
+        // and recovery's apply would wait forever for a txn the WAL no longer has. Closing the sequencer makes
+        // forAllWalTables read the durable txnlog, so the tracker restarts at N-1.
         for (TableToken tt : tokens) {
             engine.getTableSequencerAPI().resetForReboot(tt);
         }

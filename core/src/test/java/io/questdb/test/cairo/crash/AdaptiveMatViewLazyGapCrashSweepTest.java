@@ -46,90 +46,80 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * SP-D Task W4 (the flagged-risk workload): does a MATERIALIZED VIEW and its ADAPTIVE base table recover to
- * a MUTUALLY CONSISTENT state after a crash swept across every durability op of a sustained lazy gap?
+ * Does a materialized view and its adaptive base table recover to a mutually consistent state after a crash at
+ * every durability op of a sustained lazy gap?
  *
- * <p>This is the one recovery path the adaptive design docs left explicitly open
- * (adaptive-commit-mode-design.md: "confirm epoch + durable-frontier semantics compose with mat-view
- * refresh state and the V2 split txnlog"). {@link RecoveryCoordinator#recover()} EXPLICITLY recovers
- * mat-views: its loop skips regular VIEWs but a mat-view is {@code isView()==false} with an on-disk
- * {@code _meta}/{@code _txn}/{@code _cv} and (under global ADAPTIVE) an effective ADAPTIVE commit mode, so
- * it goes through {@code recoverTable} exactly like a normal table. Nothing before this sweep exercised
+ * <p>{@link RecoveryCoordinator#recover()} recovers mat views: its loop skips regular views, but a mat view is
+ * {@code isView()==false} with an on-disk {@code _meta}/{@code _txn}/{@code _cv} and, under global adaptive, an
+ * effective adaptive commit mode, so it goes through {@code recoverTable} like a normal table. This sweep exercises
  * that path together with the {@code _mv.s} refresh watermark.
  *
  * <h3>The schema and the sustained lazy gap</h3>
- * A base adaptive WAL table {@code base(ts, v)} and a mat-view {@code mv} =
- * {@code select ts, count() cnt from base sample by 1h}. Each base row lands in a DISTINCT hour of a single
- * day (out-of-order among themselves so every apply after the first engages the O3 merge path), so the mv
- * is a clean bijection: one mv bucket (hour, count=1) per surviving base row. {@code v} equals commit order
- * 0..8, so the base oracle can order by {@code v} and assert an identity prefix independent of ts order.
+ * A base adaptive WAL table {@code base(ts, v)} and a mat view {@code mv} =
+ * {@code select ts, count() cnt from base sample by 1h}. Each base row lands in a distinct hour of a single day
+ * (out of order among themselves, so every apply after the first takes the O3 merge path), so the mv is a
+ * bijection: one mv bucket (hour, count=1) per surviving base row. {@code v} equals commit order 0..8, so the base
+ * oracle can order by {@code v} and assert an identity prefix independent of ts order.
  *
- * <p>Setup drives K base rows with the durable epoch ENABLED (a durable cut is taken at seqTxn=K for BOTH
- * base and mv, since the epoch cadence is a global property both tables observe), then DISABLES the epoch;
- * the driver's swept {@code commit()} phase applies the M remaining base rows LAZILY, each one refreshing
- * the mv lazily too — the sustained gap between the durable cut and the frontier, for both tables at once.
+ * <p>Setup drives K base rows with the durable epoch enabled (a durable cut at seqTxn=K for both base and mv,
+ * since the epoch cadence is a global property both tables observe), then disables the epoch; the driver's swept
+ * {@code commit()} phase applies the M remaining base rows lazily, each refreshing the mv lazily too: the
+ * sustained gap between the durable cut and the frontier, for both tables at once.
  *
- * <h3>Determinism / how the refresh is driven synchronously</h3>
- * The mat-view refresh is NOT a background thread here: {@link #drainWalAndMatViewQueues()} runs
- * {@code drainWalQueue -> drainMatViewQueue (while(refreshJob.run());) -> drainWalQueue} entirely on the
- * test thread. With fixed data and a pinned clock the per-commit durability-op sequence is reproducible
- * across the count pass and every sweep pass — the property {@code forEachAdaptiveCrashPoint} needs.
+ * <h3>Synchronous refresh</h3>
+ * The mat view refresh runs on the test thread: {@link #drainWalAndMatViewQueues()} runs
+ * {@code drainWalQueue -> drainMatViewQueue (while(refreshJob.run());) -> drainWalQueue}. With fixed data and a
+ * pinned clock the per-commit durability-op sequence is the same in the count pass and every sweep pass, as
+ * {@code forEachAdaptiveCrashPoint} requires.
  *
- * <h3>Detecting a crash that the refresh swallows (the one wrinkle)</h3>
- * A {@link CrashSimulationError} (an {@code Error}) fired during the mv REFRESH-commit fsync is caught by
- * {@code MatViewRefreshJob}'s {@code catch (Throwable)} and turned into a view INVALIDATION
- * ({@code refreshFailState}) — not a propagated error and not a table suspend, so the driver's
- * {@code fired = CrashSimulationError | anyTableSuspended} contract cannot see it. This workload's
- * {@code commit()} therefore also polls {@link #viewInvalid} after each drain and RE-THROWS a
- * {@code CrashSimulationError} so the crash is faithfully reported as fired. (A crash in the mv WAL APPLY,
- * or base insert/apply, still manifests as suspend/propagate and is detected normally.) In the controlled
- * commit phase the ONLY thing that invalidates the view is a fired crash, so this bridge is exact.
+ * <h3>A crash the refresh swallows</h3>
+ * A {@link CrashSimulationError} fired during the mv refresh-commit fsync is caught by {@code MatViewRefreshJob}'s
+ * {@code catch (Throwable)} and turned into a view invalidation ({@code refreshFailState}): neither a propagated
+ * error nor a table suspend, so the driver's {@code fired = CrashSimulationError | anyTableSuspended} contract
+ * cannot see it. The workload's {@code commit()} therefore polls {@link #viewInvalid} after each drain and rethrows
+ * a {@code CrashSimulationError}. A crash in the mv WAL apply, or the base insert or apply, still shows up as a
+ * suspend or a propagated error. In the commit phase only a fired crash invalidates the view, so this is exact.
  *
- * <h3>Modelling a fresh restart for the mat-view state</h3>
- * The driver already models a booted engine for the tables (release handles, {@code crash()}, clear the
- * transient suspend, evict the pooled {@code TxnScoreboard}, {@code recover()}, republish, apply). The
- * in-memory {@code MatViewStateStore}, however, is anonymous memory the simulated {@code crash()} cannot
- * roll back, so it keeps a STALE pre-crash {@code lastRefreshBaseTxn} where a real boot would re-read the
- * (recovered) on-disk {@code _mv.s}. The oracle therefore calls {@link io.questdb.cairo.CairoEngine#hydrateMatViewStateStore()}
- * — the exact boot/promote rehydration entry point — before it inspects the view, the mat-view analog of
- * the scoreboard eviction. It then drives the refresh once more to model the post-boot reconciliation.
+ * <h3>Modelling a fresh restart for the mat view state</h3>
+ * The driver models a booted engine for the tables (release handles, {@code crash()}, clear the transient
+ * suspend, evict the pooled {@code TxnScoreboard}, {@code recover()}, republish, apply). The in-memory
+ * {@code MatViewStateStore} is anonymous memory {@code crash()} cannot roll back, so it keeps a stale pre-crash
+ * {@code lastRefreshBaseTxn} where a real boot re-reads the recovered on-disk {@code _mv.s}. The oracle therefore
+ * calls {@link io.questdb.cairo.CairoEngine#hydrateMatViewStateStore()}, the boot and promote rehydration entry
+ * point, before it inspects the view, and then drives the refresh once more to model post-boot reconciliation.
  *
- * <h3>The base/view mutual-consistency oracle (NOT weakened)</h3>
- * At every crash point k, after recovery + restart-model rehydration:
+ * <h3>The base/view consistency oracle</h3>
+ * At every crash point k, after recovery and rehydration:
  * <ol>
- *   <li>base is NOT suspended and reads back a clean identity prefix {@code {0..p-1}} ordered by v;</li>
- *   <li>mv is NOT suspended;</li>
- *   <li><b>no phantom</b>: while the view still reports VALID (i.e. the engine would serve it), every mv
- *       bucket must aggregate ONLY base rows that survived recovery — the mv contents are a subset of the
- *       aggregation recomputed from the RECOVERED base. A single mv bucket referencing a base row that
- *       recovery rewound away is the flagged consistency bug;</li>
- *   <li><b>exact reconciliation</b>: after the post-boot refresh (and, only if the view came back INVALID,
- *       a {@code REFRESH ... FULL} — the safe operator/auto recovery of a flagged view), the view is VALID
- *       and its contents EQUAL the aggregation recomputed from the recovered base, exactly (no missing
- *       surviving rows, no phantom rows);</li>
+ *   <li>base is not suspended and reads back an identity prefix {@code {0..p-1}} ordered by v;</li>
+ *   <li>mv is not suspended;</li>
+ *   <li><b>no phantom</b>: while the view reports valid (the engine would serve it), every mv bucket aggregates
+ *       only base rows that survived recovery: the mv contents are a subset of the aggregation recomputed from
+ *       the recovered base;</li>
+ *   <li><b>exact reconciliation</b>: after the post-boot refresh (and, only if the view came back invalid, a
+ *       {@code REFRESH ... FULL}, the recovery of an invalidated view), the view is valid and its contents
+ *       equal the aggregation recomputed from the recovered base (no missing rows, no phantom rows);</li>
  *   <li>at k=N every committed base row is restored and the mv has the full bucket set;</li>
- *   <li>a follow-up insert lands in the base AND flows through to the mv (both writable after recovery);</li>
- *   <li>the recovered base count is monotonic non-decreasing in k (the Bar-2 durable-survival floor).</li>
+ *   <li>a follow-up insert lands in the base and flows through to the mv;</li>
+ *   <li>the recovered base count is non-decreasing in k (the durable-survival floor).</li>
  * </ol>
- * GREEN at every crash point => mat-view + adaptive epoch/recovery compose safely. A RED here — a valid mv
- * that references rewound-away base rows, a surviving base row the reconciled mv is missing, or a stuck
- * suspended/invalid view — is a REAL mat-view recovery consistency bug and a GA-blocker candidate.
+ * A failure here (a valid mv that references base rows recovery removed, a surviving base row the reconciled mv
+ * is missing, or a stuck suspended or invalid view) is a mat view recovery consistency bug.
  */
 public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepTest {
 
     /**
-     * Crash-point cap for this sweep. The base+view commit phase runs a little past the shared
-     * {@link #DEFAULT_ADAPTIVE_CRASH_POINT_CAP} of 200, so this test raises its own ceiling to keep the
-     * sweep EXHAUSTIVE (the assertions demand no truncation). Sized with headroom so a small future
-     * change in the durability-op tail does not silently truncate the sweep again.
+     * Crash-point cap for this sweep. The base and view commit phase runs past the shared
+     * {@link #DEFAULT_ADAPTIVE_CRASH_POINT_CAP} of 200, and the assertions demand no truncation, so this test raises
+     * its own ceiling with headroom for a small change in the durability-op tail.
      */
     private static final int MAT_VIEW_CRASH_POINT_CAP = 256;
     /**
-     * Pre-epoch base rows: a durable epoch is taken after these (interval=0), for base AND mv.
+     * Pre-epoch base rows: a durable epoch is taken after these (interval 0), for base and mv.
      */
     private static final int LAZY_K = 4;
     /**
-     * Post-epoch base rows applied LAZILY (epoch disabled) — the sustained lazy gap this sweep crashes into.
+     * Post-epoch base rows applied lazily (epoch disabled): the sustained lazy gap this sweep crashes into.
      */
     private static final int LAZY_M = 5;
     /**
@@ -138,17 +128,17 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
     private static final int ROWS = LAZY_K + LAZY_M; // 9
 
     /**
-     * DISTINCT hour-of-day (single {@code partition by day} bucket 2024-10-01), in commit order v=0..8.
-     * Index 0 (v=0) is the CEILING (hour 23, inserted FIRST); every later element is strictly below it and
-     * visits the timeline non-monotonically, so every apply after v=0 engages the O3 merge path. Distinct
-     * hours => the mv ({@code count() ... sample by 1h}) is a clean bijection: one bucket per base row.
+     * Distinct hour of day within the single {@code partition by day} bucket 2024-10-01, in commit order v=0..8.
+     * Index 0 (v=0) is the ceiling (hour 23, inserted first); every later element is below it and visits the
+     * timeline non-monotonically, so every apply after v=0 takes the O3 merge path. Distinct hours make the mv
+     * ({@code count() ... sample by 1h}) a bijection: one bucket per base row.
      */
     private static final int[] LAZY_TS_HOUR = {23, 9, 14, 4, 11, 2, 17, 7, 20};
 
     /**
-     * THE HEADLINE mutual-consistency sweep. Crashes across EVERY durability op of the M lazily-applied
-     * base rows (each of which also drives a lazy mv refresh), running the full recovery triple + restart
-     * rehydration + the base/view mutual-consistency oracle at each point.
+     * The mutual-consistency sweep. Crashes at every durability op of the M lazily applied base rows (each also
+     * drives a lazy mv refresh), running the recovery triple, restart rehydration and the base/view consistency
+     * oracle at each point.
      */
     @Test
     public void testMatViewLazyGapSweepRecoversMutuallyConsistentAtEveryCrashPoint() throws Exception {
@@ -156,10 +146,8 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
             crashFf.modelSharedJournal = false; // per-inode strictness (ext4 fast_commit)
 
             final MatViewLazyGapWorkload workload = new MatViewLazyGapWorkload();
-            // The base+view commit phase performs N=205 durability ops — just past the 200 default cap
-            // since metadata-bound epochs added a third epoch copy (_meta.epoch) per epoch. Sweeping
-            // EXHAUSTIVELY is the point of this test (the assertions below demand no truncation), so
-            // raise the cap for this workload rather than let the tail crash points go unswept.
+            // Sweeping every crash point is the point of this test (the assertions below demand no truncation), and
+            // the base and view commit phase runs past the default cap of 200, so raise the cap for this workload.
             final SweepResult r = forEachAdaptiveCrashPoint(workload, MAT_VIEW_CRASH_POINT_CAP);
 
             LOG.info().$("[mat-view lazy-gap sweep] N=").$(r.n).$(", sweptPoints=").$(r.sweptPoints)
@@ -167,17 +155,10 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
                     .$(", invalidViewPoints=").$(workload.invalidViewPoints)
                     .$(", recoveredBaseByK=").$(Arrays.toString(r.recoveredByK())).$();
 
-            // NON-VACUITY self-check: the sharp "no phantom in a VALID view" clause is the load-bearing
-            // detector for the flagged bug, so it must actually FIRE — a GREEN sweep where the view came
-            // back INVALID at every point (phantom check always skipped) would be a hollow pass.
-            //
-            // An ABSOLUTE floor, not a fraction of sweptPoints, because the fraction was a knife edge.
-            // Gating commit pointers on the table's EFFECTIVE mode removed 15 per-apply msyncs (N 205 ->
-            // 190). The INVALID count did not move (100 in both nightly runs on record), so the whole loss
-            // came off the VALID side (100 -> 90) and the old `>= sweptPoints / 2` tipped over — a threshold
-            // failure that says nothing about whether the detector fired. 90 firings is emphatically
-            // meaningful; the floor below keeps ~3.5x headroom for ordinary op-count drift while still
-            // failing loudly if the view starts coming back INVALID nearly everywhere.
+            // The "no phantom in a valid view" clause is the detector for the consistency bug, so it must run: a
+            // passing sweep where the view came back invalid at every point (phantom check always skipped) proves
+            // nothing. The floor is absolute rather than a fraction of sweptPoints, so ordinary op-count drift does
+            // not trip it, while it still fails if the view starts coming back invalid nearly everywhere.
             Assert.assertTrue(
                     "the phantom check must run on a meaningful number of VALID post-recovery views (else the "
                             + "GREEN sweep is vacuous); validViewPoints=" + workload.validViewPoints
@@ -190,7 +171,7 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
             Assert.assertEquals("the cap must not truncate this small workload", r.n, r.sweptPoints);
             Assert.assertFalse("small workload must not be truncated", r.truncated);
 
-            // Oracle clause 7 (Bar-2 durable-survival FLOOR): recovered base counts non-decreasing in k.
+            // Oracle clause 7 (durable-survival floor): recovered base counts non-decreasing in k.
             for (int k = 2; k <= r.sweptPoints; k++) {
                 Assert.assertTrue(
                         "recovered base counts must be non-decreasing at k=" + k + " ("
@@ -198,7 +179,7 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
                         r.recoveredByK()[k] >= r.recoveredByK()[k - 1]
                 );
             }
-            // A genuine rise, not a degenerate all-full sweep.
+            // A real rise, not a degenerate all-full sweep.
             Assert.assertTrue(
                     "sweep must show a genuine rise (earliest crash point < full set)",
                     r.recoveredByK()[1] < ROWS
@@ -208,7 +189,7 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
                     "every crash point must recover at least the K durable epoch rows (floor)",
                     r.recoveredByK()[1] >= LAZY_K
             );
-            // k=N: recovery restores ALL committed base rows.
+            // k=N: recovery restores all committed base rows.
             Assert.assertEquals(
                     "k=N must recover ALL committed base rows (W=0 => every returned commit's WAL is durable)",
                     ROWS, r.recoveredByK()[r.sweptPoints]
@@ -217,8 +198,8 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
     }
 
     /**
-     * The full lazy gap (all M rows applied lazily), crashed and reopened WITH recovery enabled: restores
-     * every base row AND leaves the mv exactly consistent with the restored base.
+     * The full lazy gap (all M rows applied lazily), crashed and reopened with recovery enabled: restores every
+     * base row and leaves the mv exactly consistent with the restored base.
      */
     @Test
     public void testRollForwardRebuildsMatViewMutuallyConsistentAfterCrash() throws Exception {
@@ -226,44 +207,34 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
     }
 
     /**
-     * DATA BEFORE POINTER, for a base table and the mat-view reading through it.
+     * Data before pointer, for a base table and the mat view reading through it.
      *
-     * <p>This arm used to assert that the identical crash with recovery DISABLED could NOT be reconciled to
-     * the full, correct, mutually-consistent result. That was true while {@code _txn}/{@code _cv}/the index
-     * files made their per-commit flush decision on the INSTANCE-GLOBAL {@code cairo.commit.mode} ({@code
-     * != NOSYNC}): under ADAPTIVE the eager msync published a commit pointer over base columns that were
-     * still only lazily durable, so a crash left the base torn past its epoch and the mv aggregating rows
-     * that no longer existed. Gating those writes on the table's EFFECTIVE mode made the pointer as lazy as
-     * the data it describes, and the torn-forward window went with it. See {@link
-     * AdaptiveIndexedSymbolLazyGapCrashSweepTest} for the measured single-variable A/B.
-     *
-     * <p>Both arms are therefore held to the SAME bar now, and what distinguishes a healthy branch from a
-     * regressed one is the invariant in {@link #assertMatViewRollForward}: after the crash and before any
-     * recovery, the base's {@code _txn} must not claim a seqTxn beyond the durable epoch cut. Roll-forward's
-     * own value is proved by {@link AdaptiveRecoveryRollForwardCrashTest}.
+     * <p>The same crash with recovery disabled is held to the same bar as with recovery: {@code _txn}, {@code _cv}
+     * and the index files make their per-commit flush decision on the table's effective mode, so the commit pointer
+     * is as lazy as the data it describes and a crash never leaves the base torn past its epoch. What distinguishes a
+     * healthy build from a regressed one is the invariant in {@link #assertMatViewRollForward}: after the crash and
+     * before any recovery, the base's {@code _txn} does not claim a seqTxn beyond the durable epoch cut. See
+     * {@link AdaptiveIndexedSymbolLazyGapCrashSweepTest} for the single-variable A/B, and
+     * {@link AdaptiveRecoveryRollForwardCrashTest} for roll-forward itself.
      */
     @Test
     public void testWithoutRecoveryMatViewStillReconcilesFromTheDurableWal() throws Exception {
         assertMatViewRollForward(false);
     }
 
-    // ------------------------------------------------------------------------------------------------
-    // Workload
-    // ------------------------------------------------------------------------------------------------
-
     /**
-     * W4 mat-view lazy-gap workload. {@code setup} builds the durable epoch prefix (K base rows + the mv
-     * refreshed against them, epoch ENABLED, then DISABLED), returning BOTH the base token and the mv's own
-     * table token so {@code recover()} + the driver's per-token scoreboard eviction cover both. The swept
-     * {@code commit} phase applies the M lazily-applied base rows, each driving a lazy mv refresh.
+     * The mat view lazy-gap workload. {@code setup} builds the durable epoch prefix (K base rows and the mv refreshed
+     * against them, epoch enabled, then disabled) and returns both the base token and the mv's table token, so
+     * {@code recover()} and the driver's per-token scoreboard eviction cover both. The swept {@code commit} phase
+     * applies the M lazily applied base rows, each driving a lazy mv refresh.
      */
     private final class MatViewLazyGapWorkload implements AdaptiveCrashWorkload {
         /**
-         * Crash points whose view came back VALID post-recovery (the phantom check ran there).
+         * Crash points whose view came back valid after recovery (the phantom check ran there).
          */
         int validViewPoints;
         /**
-         * Crash points whose view came back INVALID post-recovery (reconciled via a full refresh).
+         * Crash points whose view came back invalid after recovery (reconciled via a full refresh).
          */
         int invalidViewPoints;
         private TableToken baseTt;
@@ -271,7 +242,7 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
 
         @Override
         public TableToken[] setup(int iteration) throws Exception {
-            // Epoch ENABLED for the K-row prefix so a durable cut is taken at seqTxn=K (base and mv).
+            // Epoch enabled for the K-row prefix, so a durable cut is taken at seqTxn=K (base and mv).
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
             execute("drop materialized view if exists mv");
             execute("drop table if exists base");
@@ -282,21 +253,21 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
             baseTt = engine.verifyTableName("base");
             mvTt = engine.verifyTableName("mv");
 
-            // The instance must be ADAPTIVE for the epoch/recovery machinery to engage. Assert it so a silent
-            // mode regression (never epoch'd => this whole sweep would be vacuous) fails loudly.
+            // The instance must be adaptive for the epoch and recovery machinery to engage; assert it, so a mode
+            // regression (never an epoch, so the whole sweep would prove nothing) fails.
             Assert.assertEquals(
                     "instance must run ADAPTIVE (else the sweep is vacuous)",
                     CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode()
             );
 
-            // K base rows -> apply + refresh mv -> durable epoch at seqTxn=K for both tables.
+            // K base rows, then apply and refresh the mv: durable epoch at seqTxn=K for both tables.
             for (int i = 0; i < LAZY_K; i++) {
                 insertBaseRow(LAZY_TS_HOUR[i], i);
             }
             drainWalAndMatViewQueues();
 
-            // DISABLE further epochs: the driver's swept commit() phase (the M rows + their mv refreshes) is
-            // applied LAZILY, building the sustained gap between the durable cut and the frontier.
+            // Disable further epochs: the swept commit() phase (the M rows and their mv refreshes) is applied lazily,
+            // building the sustained gap between the durable cut and the frontier.
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
             return new TableToken[]{baseTt, mvTt};
         }
@@ -305,16 +276,14 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
         public void commit() throws Exception {
             for (int i = LAZY_K; i < LAZY_K + LAZY_M; i++) {
                 insertBaseRow(LAZY_TS_HOUR[i], i);
-                // Drive base apply + mv refresh + mv apply synchronously. W=0: base WAL commit fdatasyncs
-                // synchronously so an armed crash on that leg propagates out as CrashSimulationError; a
-                // crash on a lazy apply msync is swallowed into a table SUSPEND; a crash on the mv
-                // refresh-commit fsync is swallowed into a view INVALIDATION.
+                // Drive base apply, mv refresh and mv apply synchronously. W=0: the base WAL commit fdatasyncs
+                // synchronously, so an armed crash on that leg propagates as CrashSimulationError; a crash on a lazy
+                // apply msync becomes a table suspend; a crash on the mv refresh-commit fsync becomes a view
+                // invalidation.
                 drainWalAndMatViewQueues();
-                // Detect the crash as a real power loss would halt everything: a suspended base or mv (the
-                // apply-swallow path) OR an invalidated view (the refresh-swallow path). Re-throw the
-                // Error for the invalidation case so the driver's fired-detection sees it (the driver only
-                // watches CrashSimulationError + anyTableSuspended). In this controlled phase nothing but a
-                // fired crash invalidates the view, so this bridge is exact.
+                // Stop as a real power loss would: on a suspended base or mv (the apply path) or an invalidated view
+                // (the refresh path). Rethrow the Error for the invalidation case, since the driver only watches
+                // CrashSimulationError and anyTableSuspended. In this phase only a fired crash invalidates the view.
                 if (anyTableSuspended(baseTt, mvTt)) {
                     return;
                 }
@@ -326,10 +295,9 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
 
         @Override
         public int oracle(int k, int n) throws Exception {
-            // Model a fresh restart's mat-view rehydration: the live engine kept a STALE in-memory
-            // MatViewState across the simulated crash; a real boot re-reads the recovered on-disk _mv.s.
-            // This is the mat-view analog of the driver's scoreboard eviction — inspect the TRUE post-boot
-            // state, not the survivor artifact.
+            // Model a fresh restart's mat view rehydration: the live engine kept a stale in-memory MatViewState
+            // across the simulated crash, where a real boot re-reads the recovered on-disk _mv.s. This is the mat view
+            // analogue of the driver's scoreboard eviction.
             engine.hydrateMatViewStateStore();
 
             // (1) base: not suspended, clean identity prefix by v.
@@ -353,9 +321,8 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
             Assert.assertFalse("k=" + k + ": mat-view must NOT be suspended after recovery",
                     engine.getTableSequencerAPI().isSuspended(mvTt));
 
-            // (3) NO PHANTOM: while the view still reports VALID (would be served), every mv bucket must
-            // aggregate ONLY surviving base rows — mv contents are a subset of the aggregation recomputed
-            // from the RECOVERED base. A bucket referencing a rewound-away base row is the flagged bug.
+            // (3) No phantom: while the view reports valid (would be served), every mv bucket aggregates only
+            // surviving base rows; mv contents are a subset of the aggregation recomputed from the recovered base.
             if (!viewInvalid(mvTt)) {
                 validViewPoints++;
                 final List<String> mvNow = readAggAllowTorn("select cast(ts as long) t, cnt from mv order by 1");
@@ -373,9 +340,8 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
                 invalidViewPoints++;
             }
 
-            // (4) RECONCILE (model the post-boot refresh; a view left INVALID by a mid-refresh crash is a
-            // SAFE flagged state that a full refresh recovers — this does not mask the phantom bug above,
-            // which concerns VALID views).
+            // (4) Reconcile (the post-boot refresh). A view left invalid by a mid-refresh crash is a safe state that a
+            // full refresh recovers; this does not mask the phantom check above, which concerns valid views.
             drainWalAndMatViewQueues();
             if (viewInvalid(mvTt)) {
                 execute("refresh materialized view mv full");
@@ -395,8 +361,8 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
                         readAggAllowTorn("select cast(ts as long) t, cnt from mv order by 1").size());
             }
 
-            // (6) writability of BOTH: a follow-up base insert (fresh day, plain append) must land in base
-            // AND flow through to the mv. Do this LAST so it does not perturb the consistency assertions.
+            // (6) Both are writable: a follow-up base insert (fresh day, plain append) lands in base and flows through
+            // to the mv. Last, so it does not perturb the consistency assertions.
             execute("insert into base values ('2024-10-09T00:00:00.000000Z', 999)");
             drainWalAndMatViewQueues();
             Assert.assertEquals("k=" + k + ": follow-up insert must land on the recovered base",
@@ -418,10 +384,6 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
         }
     }
 
-    // ------------------------------------------------------------------------------------------------
-    // Negative control
-    // ------------------------------------------------------------------------------------------------
-
     private void assertMatViewRollForward(boolean recoveryEnabled) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
@@ -438,20 +400,19 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
                 final TableToken baseTt = engine.verifyTableName("base");
                 final TableToken mvTt = engine.verifyTableName("mv");
 
-                // K rows -> apply + refresh -> durable epoch at seqTxn=K.
+                // K rows, then apply and refresh: durable epoch at seqTxn=K.
                 for (int i = 0; i < LAZY_K; i++) {
                     insertBaseRow(LAZY_TS_HOUR[i], i);
                 }
                 drainWalAndMatViewQueues();
 
-                // Baseline the durable state (table-name registry + the K-row epoch cut of base/mv) as the
-                // driver does after setup: crash() must roll back ONLY the lazily-applied M rows, not the
-                // registry — otherwise the live engine's stale MemoryCARW writes past the rolled-back
-                // registry file on the cleanup drop and SIGBUSes (a harness artifact; on a real boot the
-                // registry is re-read from its durable content).
+                // Baseline the durable state (table-name registry and the K-row epoch cut of base and mv) as the driver
+                // does after setup: crash() must roll back only the lazily applied M rows, not the registry; otherwise
+                // the live engine's stale MemoryCARW writes past the rolled-back registry file on the cleanup drop and
+                // hits SIGBUS (a harness artifact; a real boot re-reads the registry from its durable content).
                 markDurableBaseline();
 
-                // Disable the epoch; apply the M rows LAZILY (columns non-durable past the epoch).
+                // Disable the epoch; apply the M rows lazily (columns non-durable past the epoch).
                 setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
                 for (int i = LAZY_K; i < LAZY_K + LAZY_M; i++) {
                     insertBaseRow(LAZY_TS_HOUR[i], i);
@@ -462,14 +423,14 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
                 Assert.assertEquals("pre-crash base must have all rows", ROWS, rowCount("base"));
                 assertMvEqualsBaseAggregation(-1, "pre-crash");
 
-                // CRASH: drop non-durable column data; keep the fsync/msync'd state + the durable WAL.
+                // Crash: drop non-durable column data; keep the fsync/msync'd state and the durable WAL.
                 engine.releaseAllReaders();
                 engine.releaseAllWriters();
                 engine.releaseAllWalWriters();
                 crashFf.crash(engine.getConfiguration().getDbRoot());
 
-                // Model a fresh restart: clear the transient apply-crash suspend, evict the pooled
-                // scoreboards, run recovery (GREEN) or skip it (the RED negative control kill-switch).
+                // Model a fresh restart: clear the transient apply-crash suspend, evict the pooled scoreboards, and run
+                // recovery or skip it, per the arm.
                 if (engine.getTableSequencerAPI().isSuspended(baseTt)) {
                     engine.getTableSequencerAPI().getTxnTracker(baseTt).setUnsuspended();
                 }
@@ -478,7 +439,7 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
                 }
                 engine.getTxnScoreboardPool().remove(baseTt);
                 engine.getTxnScoreboardPool().remove(mvTt);
-                // The base's commit pointer as the crash left it, BEFORE anything can repair it.
+                // The base's commit pointer as the crash left it, before anything can repair it.
                 final long preRecoveryBaseSeqTxn = readOnDiskTxnSeqTxn(baseTt, PartitionBy.DAY);
                 if (recoveryEnabled) {
                     new RecoveryCoordinator(engine).recover();
@@ -487,18 +448,17 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
                 engine.notifyWalTxnRepublisher(mvTt);
                 drainWalQueue();
 
-                // Model the restart's mat-view rehydration + post-boot reconciliation.
+                // Model the restart's mat view rehydration and post-boot reconciliation.
                 engine.hydrateMatViewStateStore();
                 drainWalAndMatViewQueues();
 
                 final String arm = recoveryEnabled ? "recovery-enabled" : "recovery-disabled";
 
-                // THE INVARIANT (data before pointer), asserted first so a regression reports its CAUSE.
-                // The crash left the base's _txn at or below its durable epoch cut in BOTH arms, so no
-                // reader -- and no mv refresh reading through it -- can see a row whose column data was
-                // never flushed. Reverting the TxWriter/ColumnVersionWriter gate to the old global
-                // `!= NOSYNC` branch puts this seqTxn past the cut and the mv then aggregates rows the
-                // crash dropped.
+                // The invariant (data before pointer), asserted first so a regression reports its cause. The crash
+                // left the base's _txn at or below its durable epoch cut in both arms, so no reader, and no mv refresh
+                // reading through it, can see a row whose column data was never flushed. Gating TxWriter and
+                // ColumnVersionWriter on the global `!= NOSYNC` instead of the table's effective mode puts this seqTxn
+                // past the cut, and the mv then aggregates rows the crash dropped.
                 Assert.assertTrue(
                         arm + ": the crash must not leave the base _txn claiming past the durable epoch cut: "
                                 + "the commit pointer is lazily durable like the data it exposes "
@@ -506,8 +466,8 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
                         preRecoveryBaseSeqTxn >= 0 && preRecoveryBaseSeqTxn <= LAZY_K
                 );
 
-                // And the consequence, now held identically for BOTH arms: replaying the durable WAL lands
-                // on the full, mutually-consistent result whether or not the epoch rewind ran first.
+                // The consequence, the same for both arms: replaying the durable WAL lands on the full, mutually
+                // consistent result whether or not the epoch rewind ran first.
                 if (viewInvalid(mvTt)) {
                     execute("refresh materialized view mv full");
                     drainWalAndMatViewQueues();
@@ -542,10 +502,6 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
         }
     }
 
-    // ------------------------------------------------------------------------------------------------
-    // Helpers
-    // ------------------------------------------------------------------------------------------------
-
     private void withAdaptiveLazyGap(RunnableEx body) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0"); // W = 0 (synchronous)
@@ -569,7 +525,7 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
     }
 
     /**
-     * True iff the mat-view's in-memory refresh state reports invalid (null state treated as not-invalid).
+     * True if the mat view's in-memory refresh state reports invalid (a null state counts as not invalid).
      */
     private boolean viewInvalid(TableToken mvTt) {
         final MatViewState st = engine.getMatViewStateStore().getViewState(mvTt);
@@ -577,7 +533,7 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
     }
 
     /**
-     * count(*) on base — the committed row count from metadata (reliable even if a column read would tear).
+     * count(*) on base: the committed row count from metadata, reliable even if a column read would tear.
      */
     private long rowCount(String table) {
         try (RecordCursorFactory f = select("select count() from " + table)) {
@@ -591,9 +547,9 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
     }
 
     /**
-     * Read {@code select v from base order by v}, returning the identity values gathered so far. A loud torn
-     * read (Cairo/JVM error on a truncated column) is an acceptable crash outcome — the prefix read before
-     * the tear is returned rather than rethrown.
+     * Reads {@code select v from base order by v}, returning the identity values gathered so far. A visible torn
+     * read (Cairo or JVM error on a truncated column) is an acceptable crash outcome: the prefix read before the
+     * tear is returned rather than rethrown.
      */
     private List<Long> readVOrderedByVAllowTorn() {
         final List<Long> out = new ArrayList<>();
@@ -605,7 +561,7 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
                 }
             }
         } catch (CairoException | CairoError | InternalError torn) {
-            // acceptable: corruption detected loudly; return the prefix read before the tear
+            // Acceptable: corruption detected visibly; return the prefix read before the tear.
         } catch (SqlException e) {
             throw new RuntimeException(e);
         }
@@ -622,8 +578,8 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
     }
 
     /**
-     * Read a two-column {@code (timestampAsLong, count)} aggregation into canonical {@code "ts|cnt"} rows,
-     * tolerating a loud torn read (returns the prefix read before the tear).
+     * Reads a two-column {@code (timestampAsLong, count)} aggregation into canonical {@code "ts|cnt"} rows,
+     * tolerating a visible torn read (returns the prefix read before the tear).
      */
     private List<String> readAggAllowTorn(String sql) {
         final List<String> out = new ArrayList<>();
@@ -635,7 +591,7 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
                 }
             }
         } catch (CairoException | CairoError | InternalError torn) {
-            // acceptable: corruption detected loudly; return the prefix
+            // Acceptable: corruption detected visibly; return the prefix.
         } catch (SqlException e) {
             throw new RuntimeException(e);
         }
@@ -643,9 +599,9 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
     }
 
     /**
-     * The core mutual-consistency assertion: the mv's contents EQUAL the {@code count() ... sample by 1h}
-     * aggregation recomputed from the CURRENT (recovered) base — exactly, row for row. Catches both a
-     * phantom mv bucket (referencing a base row that is gone) and a surviving base row the mv is missing.
+     * The core consistency assertion: the mv's contents equal the {@code count() ... sample by 1h} aggregation
+     * recomputed from the current (recovered) base, row for row. Catches both a phantom mv bucket (referencing a
+     * base row that is gone) and a surviving base row the mv is missing.
      */
     private void assertMvEqualsBaseAggregation(int k, String phase) {
         final List<String> mvRows = readAggAllowTorn("select cast(ts as long) t, cnt from mv order by 1");

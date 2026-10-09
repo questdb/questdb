@@ -71,38 +71,32 @@ import java.util.TreeMap;
 import java.util.stream.Stream;
 
 /**
- * The crash oracle for the adaptive durable EPOCH (Plan 3B). Under
- * {@link CommitMode#ADAPTIVE} the WAL commit is fdatasync-durable but the TABLE apply is LAZY:
- * {@code TableWriter.syncColumns()} skips the per-column flush, so after a power cut the partition
- * columns can be NON-DURABLE while {@code _txn}/{@code _cv} were only msync'd. A durable epoch
- * ({@code TableWriter.fsyncMaterializedState()}, fired by the apply worker) forces those columns
- * durable and publishes a save point so recovery can land on the cut.
+ * Crash oracle for the adaptive durable epoch. Under {@link CommitMode#ADAPTIVE} the WAL commit is
+ * fdatasync-durable but the table apply is lazy: {@code TableWriter.syncColumns()} skips the per-column flush, so
+ * after a power cut the partition columns can be non-durable while {@code _txn}/{@code _cv} were only msync'd. A
+ * durable epoch ({@code TableWriter.fsyncMaterializedState()}, fired by the apply worker) makes those columns
+ * durable and publishes a save point recovery can land on.
  *
- * <p>This isolates the TABLE materialized-state durability (Task C roll-forward of the post-epoch
- * WAL is out of scope here). After {@code drainWalQueue} the table is caught up
- * ({@code writerTxn == seqTxn}), so a post-crash read does NOT re-apply any WAL — it reads exactly
- * the durable on-disk column state.
+ * <p>The first scenarios isolate the table's materialized-state durability; roll-forward of the post-epoch WAL is
+ * out of scope. After {@code drainWalQueue} the table is caught up ({@code writerTxn == seqTxn}), so a post-crash
+ * read re-applies no WAL and reads the durable on-disk column state.
  *
  * <h3>Crash model</h3>
- * {@link CrashFaultFilesFacade} models msync(MS_SYNC)/fsync/fdatasync/syncfs as durable and mmap
- * stores as non-durable-until-journaled. A single in-order insert is applied via the LAG path, which
- * does NOT fsync the columns and (under ADAPTIVE) {@code syncColumns()} is skipped — so right after
- * the lazy apply the partition column's {@code journaledDataEnd} is 0 (verified during development).
+ * {@link CrashFaultFilesFacade} models msync(MS_SYNC)/fsync/fdatasync/syncfs as durable and mmap stores as
+ * non-durable until journaled. A single in-order insert is applied via the lag path, which does not fsync the
+ * columns, and under adaptive {@code syncColumns()} is skipped, so right after the lazy apply the partition
+ * column's {@code journaledDataEnd} is 0.
  *
  * <h3>Scenarios</h3>
  * <ol>
- *   <li>{@link #testEpochMakesLazilyAppliedRowsDurable}: ADAPTIVE, lazily apply a row, fire a durable
- *       epoch, crash, reopen → the epoch'd row reads back correct and the save point
- *       recorded exactly the cut's seqTxn (a self-consistent durable cut + anchor survives the cut).
- *       Run under per-inode journaling ({@code modelSharedJournal=false}).</li>
- *   <li>{@link #testNegativeControlWithoutEpochAnchorIsAbsent}: NEGATIVE CONTROL — the identical
- *       workload with epochs DISABLED records NO recovery anchor (no save point
- *       file), before AND after the crash. This is {@code advance()}'s
- *       reproducible contribution: the cut recovery would land on is simply not recorded. (Asserting
- *       column ROW-loss here is not reliable in this harness — see the test body + report.)</li>
- *   <li>{@link #testCrashMidEpochFsyncNoSilentCorruption}: arm a crash partway through the epoch's
- *       fsync sequence (driven explicitly via {@code fsyncMaterializedState()}) → reopening must
- *       never silently corrupt (correct prefix, a loud error, or fewer rows — never a wrong value).</li>
+ *   <li>{@link #testEpochMakesLazilyAppliedRowsDurable}: adaptive, lazily apply a row, fire a durable epoch,
+ *       crash, reopen: the row reads back correct and the save point recorded exactly the cut's seqTxn. Runs
+ *       under per-inode journaling ({@code modelSharedJournal=false}).</li>
+ *   <li>{@link #testNegativeControlWithoutEpochAnchorIsAbsent}: the same workload with epochs disabled records no
+ *       save point beyond the creation baseline, before and after the crash.</li>
+ *   <li>{@link #testCrashMidEpochFsyncNoSilentCorruption}: a crash partway through the epoch's fsync sequence
+ *       (driven via {@code fsyncMaterializedState()}); reopening yields a correct prefix, a visible error, or
+ *       fewer rows, never a wrong value.</li>
  * </ol>
  *
  * <h3>Save-point rows</h3>
@@ -134,37 +128,33 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
      */
     @Test
     public void testEpochMakesLazilyAppliedRowsDurable() throws Exception {
-        // ADAPTIVE + epoch on every batch so the prefix is epoch'd deterministically.
+        // Adaptive with an epoch on every batch, so the prefix gets its epoch deterministically.
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
             runWithCrashFacade(() -> {
-                // Model PER-INODE journaling (ext4 fast_commit): a journal commit on _cv/_txn does NOT
-                // incidentally journal the column files' extents. So the ONLY thing that can make the
-                // lazily lag-applied column durable is the epoch's own syncfs (the salvage property),
-                // which is exactly what we are proving. Under the default shared-journal model the _cv
-                // msync would journal the column for free and mask the epoch's contribution.
+                // Per-inode journaling (ext4 fast_commit): a journal commit on _cv/_txn does not journal the column
+                // files' extents, so only the epoch's own syncfs can make the lazily applied column durable. Under the
+                // default shared-journal model the _cv msync would journal the column too and hide the epoch's
+                // contribution.
                 crashFf.modelSharedJournal = false;
                 execute("create table e (ts timestamp, v varchar) timestamp(ts) partition by day wal");
 
-                // ONE small in-order insert => applied via the LAG path (no column fsync; syncColumns
-                // skipped under ADAPTIVE), so the column is dirty-unsynced — EXACTLY the negative
-                // control's setup. The only difference is that here the apply worker then fires a
-                // durable epoch (interval 0), whose fsyncMaterializedState() forces the column durable.
+                // One small in-order insert, applied via the lag path (no column fsync; syncColumns skipped under
+                // adaptive), so the column is dirty and unsynced, as in the negative control. Here the apply worker
+                // then fires a durable epoch (interval 0), whose fsyncMaterializedState() makes the column durable.
                 execute("insert into e values (" + tsOf(0) + ", '" + vOf(0) + "')");
                 drainWalQueue(); // lazy lag apply + epoch
 
                 TableToken tt = engine.verifyTableName("e");
-                // Sanity: the epoch marker exists and covers the applied row (seqTxn == 1).
+                // The save point exists and covers the applied row (seqTxn == 1).
                 assertMarkerSeqTxn(tt, 1);
 
                 crashAndReopen();
 
-                // The epoch'd cut must read back fully durable + correct after the crash: the row is
-                // present and the marker (asserted above) recorded exactly this cut's seqTxn. This
-                // proves fsyncMaterializedState() produces a self-consistent durable cut + anchor that
-                // survives a power cut under strict per-inode journaling.
+                // The epoch's cut reads back durable and correct after the crash: the row is present and the save point
+                // (asserted above) recorded this cut's seqTxn, under strict per-inode journaling.
                 List<String> actual = readVarcharColumn("e", "v");
                 Assert.assertEquals("epoch'd row count must survive crash", 1, actual.size());
                 Assert.assertEquals("epoch'd row value", vOf(0), actual.get(0));
@@ -176,9 +166,9 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * NEGATIVE CONTROL: with epochs DISABLED, the lazily-applied columns are never made durable, so
-     * a crash loses them. This is what proves scenario 1's durability comes from the epoch flush and
-     * not from some other sync on the apply path.
+     * Negative control: with epochs disabled, the lazily applied columns are never made durable, and no save point
+     * beyond the creation baseline is recorded. Scenario 1's durability therefore comes from the epoch flush, not
+     * from another sync on the apply path.
      */
     @Test
     public void testDisabledPeriodicEpochRetainsCreationBaseline() throws Exception {
@@ -189,8 +179,8 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
             runWithCrashFacade(() -> {
                 execute("create table n (ts timestamp, v varchar) timestamp(ts) partition by day wal");
 
-                // Same single-insert LAG path as scenario 1 (column dirty-unsynced after the lazy
-                // apply: journaledDataEnd of n/2023-11-14/v.d is 0 here), but NO epoch fires.
+                // The same single-insert lag path as scenario 1 (the column is dirty and unsynced after the lazy apply:
+                // journaledDataEnd of n/2023-11-14/v.d is 0 here), but no epoch fires.
                 execute("insert into n values (" + tsOf(0) + ", '" + vOf(0) + "')");
                 drainWalQueue(); // lazy lag apply, NO epoch
 
@@ -211,16 +201,16 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * Arm a crash partway through the epoch's fsync sequence: reopening must never SILENTLY corrupt.
-     * The epoch issues many durability ops (column syncfs, _cv fsync, _txn fsync, marker msync+fsync,
-     * save point file fsyncs); firing the crash on an early one leaves a partially-durable cut, which must
-     * degrade safely (correct prefix / loud error / fewer rows), never a wrong value.
+     * Arms a crash partway through the epoch's fsync sequence: reopening never silently corrupts. The epoch issues
+     * many durability ops (column syncfs, _cv fsync, _txn fsync, save point file fsyncs); a crash on an early one
+     * leaves a partially durable cut, which degrades safely (correct prefix, visible error, fewer rows), never to a
+     * wrong value.
      */
     @Test
     public void testCrashMidEpochFsyncNoSilentCorruption() throws Exception {
-        // Epochs DISABLED on the apply path so the apply drains cleanly; we then drive the epoch
-        // explicitly via fsyncMaterializedState() with a crash armed mid-way, isolating the
-        // mid-epoch-fsync crash from the apply's own (WAL) durability ops.
+        // Epochs disabled on the apply path so the apply drains cleanly; the test then drives the epoch via
+        // fsyncMaterializedState() with a crash armed mid-way, isolating the mid-epoch crash from the apply's own WAL
+        // durability ops.
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         try {
@@ -242,15 +232,15 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                         crashed = true;
                     }
                 } catch (CrashSimulationError expected) {
-                    // The crash can also fire as the writer is closed/flushed; still a mid-cut crash.
+                    // The crash can also fire as the writer is closed or flushed; still a mid-cut crash.
                     crashed = true;
                 }
                 Assert.assertTrue("the crash must have fired during the epoch's fsync sequence", crashed);
 
                 crashAndReopen();
 
-                // Whatever survives must not be silently wrong: a correct prefix, a loud error, or
-                // fewer rows are all acceptable; a wrong value is not.
+                // Whatever survives is not silently wrong: a correct prefix, a visible error, or fewer rows are
+                // acceptable; a wrong value is not.
                 assertNoSilentCorruptionVarchar("m", "v");
             });
         } finally {
@@ -372,7 +362,7 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     /**
      * A power loss after every durability operation and after every deletion of a save-point removal on a table with
      * two save points, whose WAL below the newer one was purged under its floor: the exit a non-adaptive restart
-     * performs during recovery, followed by a start in the exit's mode and one in ADAPTIVE, and the demote clear.
+     * performs during recovery, followed by a start in the exit's mode and one in adaptive, and the demote clear.
      */
     @Test
     public void testPowerLossAfterEveryDeletionOfSavePointRemoval() throws Exception {
@@ -415,8 +405,8 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                                 drainWalQueue();
                                 purgeWal();
                             } else {
-                                // No WAL purge here: crash() does not re-seed the durable content of a WAL directory
-                                // it brings back, so the second power loss of an ADAPTIVE start would empty it.
+                                // No WAL purge here: crash() does not re-seed the durable content of a WAL directory it
+                                // brings back, so the second power loss of an adaptive start would empty it.
                                 label = removal + " completed";
                             }
                             setCommitMode(secondMode);
@@ -611,7 +601,7 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * A replica keeps no save point and never rewinds, so its partition moves finish at once, as outside ADAPTIVE: a
+     * A replica keeps no save point and never rewinds, so its partition moves finish at once, as outside adaptive: a
      * DETACH applied on the replica takes its final name, an ATTACH applied there consumes its source, and a DETACH
      * left under its temporary name (by a primary whose save point did not follow) gets its final name at the
      * replica's next writer open.
@@ -749,8 +739,6 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         });
     }
 
-    // ---- helpers ----
-
     private static long nowMs() {
         return engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L;
     }
@@ -785,14 +773,14 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     private static String vOf(int i) {
-        // > 9 bytes so it takes the split (out-of-line) varchar layout (data + aux both exercised).
+        // More than 9 bytes, so it takes the split (out-of-line) varchar layout (data and aux both exercised).
         return "epoch-varchar-payload-" + String.format("%06d", i);
     }
 
     /**
-     * Varchar analogue of {@link AbstractCrashConsistencyTest#assertNoSilentCorruption}: the rows
-     * that read back must match the expected prefix, OR a loud error is thrown. Fewer rows
-     * (rollback) is acceptable; a silently WRONG value is not.
+     * Varchar analogue of {@link AbstractCrashConsistencyTest#assertNoSilentCorruption}: the rows that read back
+     * match the expected prefix, or a visible error is thrown. Fewer rows (rollback) is acceptable; a wrong value is
+     * not.
      */
     private void assertNoSilentCorruptionVarchar(String table, String column) {
         try {
@@ -802,9 +790,9 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                 Assert.assertEquals("row " + i + " silently wrong", vOf(i), actual.get(i));
             }
         } catch (io.questdb.cairo.CairoException | io.questdb.cairo.CairoError e) {
-            // acceptable: corruption detected loudly
+            // Acceptable: corruption detected visibly.
         } catch (InternalError e) {
-            // SIGBUS (mmap past truncated file) -> InternalError; acceptable loud detection
+            // SIGBUS (mmap past truncated file) -> InternalError; acceptable visible detection.
         } catch (RuntimeException e) {
             if (!(e.getCause() instanceof io.questdb.cairo.CairoException)
                     && !(e.getCause() instanceof io.questdb.cairo.CairoError)) {
@@ -1169,8 +1157,8 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         }
     }
 
-    // The writer brings its save point in line with the local durability policy: a replica swaps it for the enrolment
-    // marker, a primary publishes the baseline of a marked table.
+    // The writer brings its save point in line with the local durability policy: a replica makes the table
+    // durable and removes it, a primary publishes the baseline of a table that has none.
     private void reconcileSavePoint(Scenario s, LocalDurabilityPolicy policy) {
         engine.setLocalDurabilityPolicy(policy);
         try (TableWriter w = getWriter(s.token)) {
@@ -1256,7 +1244,7 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                     failure = "after a write that followed recovery, " + failure;
                 }
             }
-            // A NOSYNC instance promises nothing for the state it applied after recovery.
+            // A nosync instance promises nothing for the state it applied after recovery.
             if (failure == null && !"nosync".equals(commitMode)) {
                 powerLoss(s);
                 failure = recoverAndCheck(s);
@@ -1292,9 +1280,6 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         }
     }
 
-    // Switches the instance mode and checks the configuration reports it. The test harness drops a pending
-    // configuration change when a property is set again to the value it already has, so the epoch interval, set
-    // last, takes a value no earlier switch used.
     private int savedLagRows(TableToken tt) {
         try (TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade()); Path path = new Path()) {
             path.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.TXN_FILE_NAME);
@@ -1304,6 +1289,9 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         }
     }
 
+    // Switches the instance mode and checks the configuration reports it. The test harness drops a pending
+    // configuration change when a property is set again to the value it already has, so the epoch interval, set
+    // last, takes a value no earlier switch used.
     private void setCommitMode(String mode) {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
         final long epochIntervalMs = EPOCH_INTERVAL_MS + ++modeSwitches;
