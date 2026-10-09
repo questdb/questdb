@@ -351,7 +351,7 @@ with one rule and no context-dependence.
 
 ### Constant folding
 
-`FunctionParser.functionToConstant0`'s INT arm folds to an `IntConstant` holding the wrap, or to
+`FunctionResolver.functionToConstant0`'s INT arm folds to an `IntConstant` holding the wrap, or to
 `IntConstant.NULL` when `getInt()` carries the sentinel. The declared type of a constant expression
 no longer depends on its value, so:
 
@@ -532,7 +532,8 @@ Concatenation never reaches that guard. `SqlParser.rewriteConcat` converts every
 node into a `concat` `FUNCTION` node before the expression leaves the parser, and `addConcatArgs`
 folds a nested `concat` into its parent's argument list, so `(A || B) || C`, `A || (B || C)` and
 `A || B || C` all arrive at `FunctionParser` as one `concat(A, B, C)` node. `reassociateConstants`
-runs strictly after that rewrite - `FunctionParser.parseFunction` is its only production caller -
+runs strictly after that rewrite - `FunctionParser.parseFunction` and `FunctionBinder`'s expression
+binding are its only production callers -
 and it regroups only a binary `OPERATION` pair: a two-argument `concat` fails its
 `type != OPERATION` check, and a wider one takes the n-ary arm, which recurses into `args` without
 restructuring the node. A `||` pair is never a regrouping candidate in the first place. The

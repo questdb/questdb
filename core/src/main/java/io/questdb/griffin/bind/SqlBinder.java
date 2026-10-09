@@ -384,9 +384,7 @@ public final class SqlBinder implements Mutable {
     }
 
     private LogicalPlan bindFunctionSource(ExpressionNode expression, SqlExecutionContext executionContext) throws SqlException {
-        final BindScope scope = ctx.scope();
-        final LogicalPlan sourcePlan = ctx.functionSources.bind(expression, executionContext);
-        return sourcePlan;
+        return ctx.functionSources.bind(expression, executionContext);
     }
 
     private LogicalPlan bindQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -758,12 +756,10 @@ public final class SqlBinder implements Mutable {
     }
 
     private LogicalPlan bindShow(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        final BindScope scope = ctx.scope();
         if (model.getShowKind() == -1) {
             return null;
         }
-        final LogicalPlan show = ctx.functionSources.bindShow(model, executionContext, parserCallback);
-        return show;
+        return ctx.functionSources.bindShow(model, executionContext, parserCallback);
     }
 
     private LogicalPlan bindSourceWithHints(QueryModel source, SqlExecutionContext executionContext) throws SqlException {
