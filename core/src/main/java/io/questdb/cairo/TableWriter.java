@@ -694,7 +694,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             configureTimestampSetter();
             this.appendTimestampSetter = timestampSetter;
             configureAppendPosition();
-            purgeUnusedPartitionsAtOpen();
+            purgeUnusedPartitionsAtOpen(privateRootWriter);
             minSplitPartitionTimestamp = findMinSplitPartitionTimestamp();
             clearTodoLog();
             if (isLostTxnRepublishRequired) {
@@ -13306,13 +13306,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // A failed _txn flush that stopped the engine, then a restart without a power loss, leaves the page cache
     // holding a _txn the device never got, and the device's _txn may name a partition version this one does not.
     // Under SYNC the open therefore makes _txn durable before it removes any version. ADAPTIVE restores _txn from
-    // its durable epoch copy at boot, and NOSYNC and ASYNC promise nothing on a power loss.
-    private void purgeUnusedPartitionsAtOpen() {
+    // its durable epoch copy at boot, and NOSYNC and ASYNC promise nothing on a power loss. From here on the versions
+    // on disk agree with a durable state, so the partition purge job may act on the table; a writer on a private
+    // root (COPY staging) does not vouch for it.
+    private void purgeUnusedPartitionsAtOpen(boolean isPrivateRoot) {
         if (PartitionBy.isPartitioned(partitionBy)) {
             try {
                 ff.iterateDir(path.$(), removePartitionDirsNotAttached);
                 if (partitionRemoveCandidates.size() > 0 && effectiveCommitMode == CommitMode.SYNC) {
                     txWriter.rewriteAndFsync();
+                }
+                if (!isPrivateRoot && (effectiveCommitMode == CommitMode.SYNC || effectiveCommitMode == CommitMode.ADAPTIVE)) {
+                    engine.markPartitionPurgeSafe(tableToken);
                 }
                 processPartitionRemoveCandidates();
             } finally {

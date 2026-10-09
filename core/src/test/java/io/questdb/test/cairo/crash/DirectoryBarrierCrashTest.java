@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTaskJob;
+import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -333,17 +334,22 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testSyncConvertToNativeNonWalFailedTxnMsyncThenCrashReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(true, true, false);
+        assertSyncConvertTxnMsyncFailureKeepsTable(true, true, false, false);
     }
 
     @Test
     public void testSyncConvertToNativeNonWalFailedTxnMsyncThenRestartReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(true, false, false);
+        assertSyncConvertTxnMsyncFailureKeepsTable(true, false, false, false);
+    }
+
+    @Test
+    public void testSyncConvertToNativeNonWalFailedTxnMsyncThenVacuumThenCrashReadsTable() throws Exception {
+        assertSyncConvertTxnMsyncFailureKeepsTable(true, true, false, true);
     }
 
     @Test
     public void testSyncConvertToNativeNonWalFailedTxnMsyncThenWriterOpenThenCrashReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(true, true, true);
+        assertSyncConvertTxnMsyncFailureKeepsTable(true, true, true, false);
     }
 
     @Test
@@ -393,12 +399,17 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testSyncConvertToParquetNonWalFailedTxnMsyncThenCrashReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(false, true, false);
+        assertSyncConvertTxnMsyncFailureKeepsTable(false, true, false, false);
     }
 
     @Test
     public void testSyncConvertToParquetNonWalFailedTxnMsyncThenRestartReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(false, false, false);
+        assertSyncConvertTxnMsyncFailureKeepsTable(false, false, false, false);
+    }
+
+    @Test
+    public void testSyncConvertToParquetNonWalFailedTxnMsyncThenVacuumThenCrashReadsTable() throws Exception {
+        assertSyncConvertTxnMsyncFailureKeepsTable(false, true, false, true);
     }
 
     @Test
@@ -502,17 +513,22 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testSyncSwitchToParquetNonWalFailedTxnMsyncThenCrashReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, true, false);
+        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, true, false, false);
     }
 
     @Test
     public void testSyncSwitchToParquetNonWalFailedTxnMsyncThenRestartReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, false, false);
+        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, false, false, false);
+    }
+
+    @Test
+    public void testSyncSwitchToParquetNonWalFailedTxnMsyncThenVacuumThenCrashReadsTable() throws Exception {
+        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, true, false, true);
     }
 
     @Test
     public void testSyncSwitchToParquetNonWalFailedTxnMsyncThenWriterOpenThenCrashReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, true, true);
+        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, true, true, false);
     }
 
     @Test
@@ -898,15 +914,17 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
      * @param toNative            converts the first partition from parquet back to native; otherwise to parquet
      * @param isPowerLoss         the power fails after the stop; otherwise the process restarts without a power loss
      * @param isWriterOpenedFirst with a power loss: the process restarts first and a writer opens and closes the table
+     * @param isVacuumedFirst     with a power loss: the process restarts first and VACUUM TABLE runs the partition purge
      */
-    private void assertSyncConvertTxnMsyncFailureKeepsTable(boolean toNative, boolean isPowerLoss, boolean isWriterOpenedFirst) throws Exception {
+    private void assertSyncConvertTxnMsyncFailureKeepsTable(boolean toNative, boolean isPowerLoss, boolean isWriterOpenedFirst, boolean isVacuumedFirst) throws Exception {
         assertSyncConvertTxnMsyncFailureKeepsTable(
                 toNative ? this::convertFirstPartitionToParquet : null,
                 () -> execute("ALTER TABLE x CONVERT PARTITION TO " + (toNative ? "NATIVE" : "PARQUET") + " LIST '2024-01-01'"),
                 toNative ? "convertPartitionParquetToNative" : "convertPartitionNativeToParquet",
                 !toNative,
                 isPowerLoss,
-                isWriterOpenedFirst
+                isWriterOpenedFirst,
+                isVacuumedFirst
         );
     }
 
@@ -917,7 +935,9 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
      * <p>
      * A restart without a power loss, a writer open, then a power loss: the open removes the partition version
      * the page-cache {@code _txn} does not name, which the device's {@code _txn} may still name, so the open must
-     * make the page-cache {@code _txn} durable first and the table must read in the new format.
+     * make the page-cache {@code _txn} durable first and the table must read in the new format. With VACUUM TABLE in
+     * place of the writer open, the partition purge must leave both versions until a writer open has made
+     * {@code _txn} durable, and the table must read in the old format.
      *
      * @param prepare             runs once the rows are inserted, before the durable baseline; null for none
      * @param change              the change whose {@code _txn} msync fails
@@ -925,6 +945,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
      * @param isParquetAfter      whether the change leaves the partition in parquet format
      * @param isPowerLoss         the power fails after the stop; otherwise the process restarts without a power loss
      * @param isWriterOpenedFirst with a power loss: the process restarts first and a writer opens and closes the table
+     * @param isVacuumedFirst     with a power loss: the process restarts first and VACUUM TABLE runs the partition purge
      */
     private void assertSyncConvertTxnMsyncFailureKeepsTable(
             TestUtils.LeakProneCode prepare,
@@ -932,7 +953,8 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
             String operation,
             boolean isParquetAfter,
             boolean isPowerLoss,
-            boolean isWriterOpenedFirst
+            boolean isWriterOpenedFirst,
+            boolean isVacuumedFirst
     ) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         final var ff = new CrashFaultFilesFacade() {
@@ -974,10 +996,19 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
             final boolean isPoisoned = engine.isDurabilityFailed();
             engine.resetDurabilityFailure();
             if (isPowerLoss) {
-                if (isWriterOpenedFirst) {
+                if (isWriterOpenedFirst || isVacuumedFirst) {
                     releaseEngineHandles();
-                    try (TableWriter writer = getWriter("x")) {
-                        Assert.assertNotNull(writer);
+                    if (isWriterOpenedFirst) {
+                        try (TableWriter writer = getWriter("x")) {
+                            Assert.assertNotNull(writer);
+                        }
+                    } else {
+                        execute("VACUUM TABLE x");
+                        try (O3PartitionPurgeJob job = new O3PartitionPurgeJob(engine)) {
+                            //noinspection StatementWithEmptyBody
+                            while (job.run()) {
+                            }
+                        }
                     }
                     releaseEngineHandles();
                     // the filesystem journals the writer's directory changes on its own, as ext4 does within seconds

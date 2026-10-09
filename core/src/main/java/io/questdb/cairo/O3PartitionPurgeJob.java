@@ -156,6 +156,13 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             int timestampType,
             int partitionBy
     ) {
+        final int commitMode = configuration.getCommitMode();
+        if ((commitMode == CommitMode.SYNC || (commitMode == CommitMode.ADAPTIVE && tableToken.isWal()))
+                && !engine.isPartitionPurgeSafe(tableToken)) {
+            // the next writer open makes the table's state durable and removes the versions itself
+            LOG.info().$("partition purge deferred to the next writer open [table=").$(tableToken).I$();
+            return;
+        }
         LOG.info().$("processing [table=").$(tableToken).I$();
         Path path = Path.getThreadLocal(root).concat(tableToken);
         int plimit = path.size();
