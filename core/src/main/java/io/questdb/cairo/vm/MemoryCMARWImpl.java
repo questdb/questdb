@@ -51,17 +51,15 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     // so the first extend after mapping reserves from offset 0.
     private long allocatedSize = 0;
     private long appendAddress = 0;
-    // When true this memory is strictly append-only (no in-place put*(offset,..) below the
-    // high-water mark), so sync() may narrow the msync to the appended range and skip when
-    // nothing new was appended. Defaults to false: the non-appendOnly path is byte-identical
-    // to the original full-extent msync.
+    // When true, this memory is append-only (no in-place put*(offset, ..) below the cursor), so sync() may
+    // narrow the msync to the appended range and skip it when nothing was appended. When false, sync()
+    // msyncs the full extent.
     private boolean appendOnly = false;
     private boolean closeFdOnClose = true;
     private long extendSegmentMsb;
     private long fd = -1;
-    // Append offset covered by the last msync (append-only path only). Kept in lock-step with the
-    // skip decision in sync(): it can only ever be stale-LOW (a fresh/remapped/truncated memory
-    // resets it to 0), never stale-HIGH, so the worst case is one extra harmless msync.
+    // Append offset covered by the last msync (append-only path only). It can only be stale-low (a fresh,
+    // remapped or truncated memory resets it to 0), never stale-high, so the worst case is one extra msync.
     private long lastSyncedAppendOffset = 0;
     private long lastSyncedSize = 0;
     private int madviseOpts = -1;
@@ -221,18 +219,12 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     @Override
     public void jumpTo(long offset) {
         checkAndExtend(pageAddress + offset);
-        // APPEND-ONLY SKIP CORRECTNESS (must stay here). sync()'s fast path skips the msync when the
-        // append offset and size are unchanged since the last sync, on the reasoning "nothing appended =>
-        // nothing dirty". A BACKWARDS jump breaks that reasoning: WalWriter.rollback0() ->
-        // setAppendPosition() -> jumpTo(lower) rewinds the cursor, and the next commit re-appends
-        // DIFFERENT bytes over the same range. For a fixed-width column the cursor lands on exactly the
-        // old offset again, so both watermarks match at the next sync() and the rewritten bytes would
-        // never be msync'd.
-        //
-        // Lowering the watermark to the rewind point makes any subsequent re-append strictly above it,
-        // so the next sync() cannot skip. The watermark stays stale-LOW (an extra harmless msync), never
-        // stale-HIGH (a missed one). Guarded by appendOnly so non-append-only memories, whose sync()
-        // never skips, keep an unconditional plain jumpTo.
+        // sync() skips the msync when the append offset and size are unchanged since the last sync. A
+        // backwards jump breaks that: WalWriter.rollback0() -> setAppendPosition() -> jumpTo(lower) rewinds
+        // the cursor, and the next commit re-appends different bytes over the same range. For a fixed-width
+        // column the cursor ends on the old offset, both watermarks match, and the rewritten bytes would never
+        // be msynced. Lowering the watermark to the rewind point makes the next sync() flush them. Memories
+        // that are not append-only never skip, so they keep a plain jumpTo.
         if (appendOnly && offset < lastSyncedAppendOffset) {
             lastSyncedAppendOffset = offset;
         }
@@ -347,9 +339,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         this.lastSyncedSize = other.lastSyncedSize;
         other.lastSyncedSize = tLastSynced;
 
-        // The last-synced append offset describes the swapped page/append cursor, so it must travel
-        // with them (alongside lastSyncedSize) to stay consistent. appendOnly is the per-file policy
-        // and likewise belongs to the identity being swapped.
+        // The last-synced append offset describes the swapped append cursor, so it travels with it, as does
+        // lastSyncedSize. appendOnly is a per-file policy and belongs to the swapped identity too.
         long tLastSyncedAo = this.lastSyncedAppendOffset;
         this.lastSyncedAppendOffset = other.lastSyncedAppendOffset;
         other.lastSyncedAppendOffset = tLastSyncedAo;
@@ -370,35 +361,25 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     public void sync(boolean async) {
         if (pageAddress == 0) {
-            // Closed / unmapped memory has no dirty mmap pages to flush. A partition column freed by a
-            // parquet conversion can still be visited by the adaptive column-sync loop; close() nulls ff,
-            // so touching it here would NPE - and there is genuinely nothing to sync.
+            // Closed or unmapped memory has no dirty pages. The adaptive column-sync loop can still visit a
+            // partition column that a parquet conversion freed, and close() nulls ff.
             return;
         }
         if (appendOnly) {
-            // Append-only memory: the only durable-relevant dirty bytes are those between the last
-            // synced append offset and the current append offset. Narrow the msync to the written
-            // range, and skip entirely when nothing new was appended since the last sync.
+            // Append-only memory: the only dirty bytes lie between the last synced append offset and the
+            // current one. Narrow the msync to the written range, and skip it when nothing was appended.
             final long ao = getAppendOffset();
             if (ao == lastSyncedAppendOffset && size == lastSyncedSize) {
-                // C: the append cursor has not passed the last-synced watermark and there was no extend,
-                // so no byte above the watermark has been written since the last msync.
-                //
-                // This is NOT simply "the offset is unchanged": a rewind (rollback / failed truncate)
-                // followed by a re-append can return the cursor to its old value with DIFFERENT bytes in
-                // between. jumpTo() closes that hole by LOWERING lastSyncedAppendOffset on any backwards
-                // move, so a rewound-and-refilled range always leaves ao > lastSyncedAppendOffset here and
-                // falls through to the msync below. The watermark is therefore only ever stale-LOW (one
-                // extra harmless msync), never stale-HIGH (a missed one).
-                //
-                // The remaining precondition is the caller's: appendOnly must only be set on memories that
-                // never do in-place put*(offset, ..) below the cursor, since such a write dirties bytes
-                // without moving the cursor at all. See MemoryMA.setAppendOnly.
+                // The cursor has not passed the last-synced watermark and the memory has not grown, so no byte
+                // above the watermark changed since the last msync. A rewind and re-append can return the
+                // cursor to its old value with different bytes in between; jumpTo() and truncate() lower the
+                // watermark on any backwards move, so that case reaches the msync below. The caller sets
+                // appendOnly only on memories that never write in place below the cursor (MemoryMA.setAppendOnly).
                 return;
             }
             if (ao > 0) {
-                // D: flush only [0, appendOffset). Starting at the mapping base keeps the call simple
-                // and page-aligned; the tail beyond appendOffset is never written so it stays clean.
+                // Flush only [0, appendOffset): starting at the mapping base keeps the call page-aligned, and
+                // the tail past the append offset is never written.
                 ff.msync(pageAddress, ao, async);
             }
             lastSyncedAppendOffset = ao;
@@ -412,11 +393,10 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         if (pageAddress == 0) {
             return; // closed/unmapped (e.g. a parquet-converted column): nothing to flush, ff is null
         }
-        // Batched SYNC stage 1: msync(MS_ASYNC) the dirty range to push mmap-dirty pages into the page
-        // cache so the following sync_file_range can see them. Mirrors sync()'s msync-range selection
-        // (append-only narrows to [0, appendOffset); else full [0, size)) but is always ASYNC and issues
-        // NO fdatasync. CRITICAL: this NEVER touches lastSyncedAppendOffset/lastSyncedSize — advancing a
-        // watermark here would make syncFlushFinishIfExtended() wrongly skip the extend fdatasync.
+        // Batched flush, stage 1: msync(MS_ASYNC) the dirty range into the page cache, so the following
+        // sync_file_range sees it. The range selection matches sync(); no fdatasync. This never moves
+        // lastSyncedAppendOffset or lastSyncedSize: the watermarks advance only in stage 3, once the data is
+        // durable.
         if (appendOnly) {
             final long ao = getAppendOffset();
             if (ao > 0) {
@@ -432,11 +412,10 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         if (pageAddress == 0) {
             return; // closed/unmapped (e.g. a parquet-converted column): nothing to drain, fd is -1
         }
-        // Batched SYNC stage 2: sync_file_range(WRITE | WAIT_AFTER) writes the (now page-cache-dirty) range
-        // back to the device cache and WAITS. NO device flush, NO watermark mutation. The mapping is rooted
-        // at file offset 0, so the fd-relative dirty range equals the in-mapping range: append-only ->
-        // [0, appendOffset); full -> [0, size). WAIT_AFTER is mandatory: without it the writeback may not
-        // reach the device before the _cv device flush, and the content would be lost (model self-test 4/5).
+        // Batched flush, stage 2: sync_file_range(WRITE | WAIT_AFTER) writes the dirty range back to the device
+        // cache and waits; no device flush, no watermark change. The mapping starts at file offset 0, so the
+        // range is [0, appendOffset) for append-only memory and [0, size) otherwise. WAIT_AFTER is required:
+        // without it the writeback may not reach the device before the _cv device flush.
         final long dirtyLen;
         if (appendOnly) {
             dirtyLen = getAppendOffset();
@@ -450,14 +429,10 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     @Override
     public void syncFlushFinishIfExtended() {
-        // Batched SYNC stage 3: WATERMARK BOOKKEEPING ONLY — no per-file flush. By the time this runs the
-        // caller (TableWriter.syncColumnsBatchedSync) has already issued ONE syncfs(fd) over this table's
-        // filesystem, which wrote back this column's drained data AND journaled the new i_size + any ext4
-        // unwritten->written extent conversions in a single device flush. A per-file fdatasync here would be
-        // a redundant second flush, so we only advance the watermarks to the now-durable size (so a
-        // subsequent sync()/finish correctly sees no further extend). Keeping lastSyncedAppendOffset in
-        // lock-step with the (now-durable) append offset matches sync()'s post-msync bookkeeping for the
-        // append-only path.
+        // Batched flush, stage 3: watermark bookkeeping only. The caller (TableWriter.syncColumnsBatchedSync)
+        // has already issued one syncfs over the table's filesystem, which wrote back this column's data and
+        // journaled the new size and extent conversions in one device flush, so a per-file fdatasync would be
+        // a second flush. Advance the watermarks to the durable size, as sync() does after its msync.
         if (size > lastSyncedSize) {
             lastSyncedSize = size;
             if (appendOnly) {
@@ -492,10 +467,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                 );
             } catch (Throwable e) {
                 appendAddress = pageAddress;
-                // Same rewind hazard as jumpTo(): the cursor just went back to 0 while the watermark may
-                // sit above it. Drop the watermark so a reused memory cannot skip the msync of rewritten
-                // bytes. (Belt-and-braces: this path rethrows and the caller normally discards the
-                // memory, but the reset costs nothing and keeps the invariant unconditional.)
+                // As in jumpTo(), the cursor goes back to 0 while the watermark may sit above it. Drop the
+                // watermark so a reused memory cannot skip the msync of rewritten bytes.
                 lastSyncedAppendOffset = 0;
                 long truncatedToSize = Vm.bestEffortTruncate(ff, LOG, fd, 0);
                 if (truncatedToSize != 0) {
@@ -512,8 +485,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
             this.size = sz;
             lastSyncedSize = sz;
-            // truncate() resets the append cursor to the mapping base (appendOffset == 0) and zeroes
-            // the page, so the last-synced append offset must reset too -> stale-LOW, never -HIGH.
+            // truncate() resets the append cursor to the mapping base and zeroes the page, so the
+            // last-synced append offset resets too.
             lastSyncedAppendOffset = 0;
             this.lim = pageAddress + sz;
             appendAddress = pageAddress;
@@ -617,11 +590,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             this.appendAddress = pageAddress + size;
         }
         this.lastSyncedSize = this.size;
-        // Fresh mapping (open / remap via of()/switchTo()): the append cursor is back at the file's
-        // existing size, so nothing in the new mapping has been synced by THIS object yet. Resetting
-        // to 0 keeps lastSyncedAppendOffset stale-LOW (never stale-HIGH): the first sync after a
-        // remap cannot skip and will re-msync the live range. Append offset for a re-opened file is
-        // its current size; we conservatively reset to 0 so the first sync flushes [0, appendOffset).
+        // A fresh mapping (open, or remap through of() or switchTo()) has synced nothing through this object.
+        // Resetting to 0 keeps the watermark stale-low: the first sync after a remap flushes [0, appendOffset).
         this.lastSyncedAppendOffset = 0;
         if (name != null) {
             LOG.debug().$("open [file=").$(name)
