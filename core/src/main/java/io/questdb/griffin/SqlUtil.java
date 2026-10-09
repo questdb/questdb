@@ -89,6 +89,7 @@ public class SqlUtil {
     private static final FiberLocal<StringSink> IMPLICIT_CAST_VARCHAR_SINK = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<Long256ConstantFactory> LONG256_FACTORY = new FiberLocal<>(Long256ConstantFactory::new);
     private static final float INT_MAX_EXCLUSIVE_FLOAT = 2147483648.0f;
+    private static final float LONG_MAX_EXCLUSIVE_FLOAT = 9223372036854775808.0f;
 
     public static void addSelectStar(
             IQueryModel model,
