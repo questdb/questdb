@@ -44,21 +44,14 @@ import static io.questdb.cairo.TableUtils.*;
 
 public final class TxWriter extends TxReader implements Closeable, Mutable, SymbolValueCountCollector {
     private final CairoConfiguration configuration;
-    // Partition timestamps whose on-disk representation this writer has changed since the set was last
-    // drained. The adaptive durable epoch drains it to flush ONLY what changed, instead of walking every
-    // attached partition (see TableWriter.fsyncAttachedPartitionFiles) -- the epoch's cost must scale with
-    // the un-epoched write set, not with the table's history.
-    //
-    // COMPLETENESS is the whole contract: a partition whose bytes changed but which is missing here would
-    // be left non-durable behind an epoch that references its rows -> silent row loss on power cut. Every
-    // mutator of the attached-partition table therefore marks, including the ones that change only a FLAG
-    // or the name txn. The flag setters are not optional extras: markPartitionParquetReady() flips
-    // parquetGenerated after an async job wrote <partition>/data.parquet into the EXISTING partition
-    // directory, with no size update and no column-version upsert, so before they marked, the epoch skipped
-    // that partition entirely and never flushed the new parquet file while _txn.epoch already recorded
-    // parquetGenerated=true. Column-file changes that leave this table untouched -- an UPDATE rewriting a
-    // column under a new column name txn -- are caught by the sibling set in ColumnVersionWriter, which
-    // TableWriter unions with this one.
+    // Partition timestamps whose on-disk files this writer changed since the last drain. A save point drains
+    // the set to flush only those partitions (TableWriter.fsyncAttachedPartitionFiles), so its cost scales
+    // with the writes since the previous save point, not with the table's history. The set must be complete,
+    // or a power loss loses rows a save point references: every mutator of the attached-partition table
+    // marks, including the flag setters, since markPartitionParquetReady() sets parquetGenerated after an
+    // async job wrote data.parquet into the existing partition directory with no size change. Column-file
+    // changes that leave this table untouched (an UPDATE rewriting a column under a new name txn) go to the
+    // sibling set in ColumnVersionWriter, which TableWriter unions with this one.
     private final LongHashSet dirtyPartitions = new LongHashSet();
     // The partition-table part of the body checksum (TableUtils.combineTxnBodyChecksum), one entry per A/B
     // slot, hashed from the bytes that slot's area holds. The fast path rewrites only header words of the
@@ -107,22 +100,18 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     /**
      * Overrides the mode this writer flushes {@code _txn} under. TableWriter uses it to hold a table at
-     * SYNC grade until its adaptive enrolment baseline exists, then to hand it ADAPTIVE.
+     * SYNC grade until its first save point exists, then to hand it ADAPTIVE.
      */
     public void setCommitMode(int commitMode) {
         this.commitMode = commitMode;
     }
 
     /**
-     * The commit-mode gate for the per-commit {@code _txn} flush.
-     * <p>
-     * <b>ADAPTIVE is lazy, like the columns.</b> {@link CommitMode#appliesColumnSync} is true only for
-     * SYNC/ASYNC. Under ADAPTIVE the materialized table — {@code _txn} and {@code _cv} included — is a
-     * rebuildable cache of the durable WAL: {@link RecoveryCoordinator} restores both files from the
-     * epoch's immutable {@code .epoch} copies and replays {@code (epoch.seqTxn, frontier]} on top.
-     * Flushing {@code _txn} on every apply is exactly the per-commit cost the lazy-apply gate exists to
-     * avoid, and it is not what makes ADAPTIVE crash-safe. The epoch's own {@link #fsync()} forces the
-     * flush regardless of mode.
+     * The commit mode for the per-commit {@code _txn} flush. {@link CommitMode#appliesColumnSync} is true
+     * only for SYNC and ASYNC. Under ADAPTIVE, {@code _txn} is flushed lazily like the columns: the table
+     * files are a rebuildable cache of the durable WAL, and {@link RecoveryCoordinator} restores {@code _txn}
+     * and {@code _cv} from the save point ({@code _epoch.manifest.0/1}) and replays the WAL past it. A save
+     * point flushes {@code _txn} through {@link #fsync()} whatever the mode.
      */
     private int resolveCommitMode() {
         return commitMode;
@@ -209,9 +198,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     @Override
     public void clear() {
-        // Only advanceDurableEpoch() drains this, and only ADAPTIVE WAL tables ever reach it -- so without
-        // clearing here a NOSYNC/SYNC/ASYNC or non-WAL writer accumulates one entry per distinct partition
-        // touched for its entire life, and a pooled writer carries stale timestamps into its next tenancy.
+        // Only a save point drains this set, and only adaptive WAL tables take save points. Without this,
+        // other writers would grow the set for their whole life, and a pooled writer would carry stale
+        // timestamps into its next use.
         dirtyPartitions.clear();
         clearData();
         invalidatePartitionTableHashes();
@@ -258,12 +247,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             // Store symbol counts. Unfortunately we cannot skip it in here
             storeSymbolCounts(symbolCountProviders);
 
-            // Body checksum over the commit-immutable fields. The fast path reuses the previous record's
-            // structure (same symbol count + partition-table layout), so its committed size equals
-            // readRecordSize and the partition table starts at getPartitionTableSizeOffset(symbolColumnCount)
-            // - the exact range the reader re-derives. Must be written after the body and before the
-            // fence/version bump. Nothing above wrote a partition-table byte, so the slot's cached
-            // partition-table hash still describes this area and the checksum costs O(1).
+            // The fast path keeps the previous record's structure, so the committed size is readRecordSize
+            // and the partition table starts at getPartitionTableSizeOffset(symbolColumnCount), the range the
+            // reader derives. The checksum goes after the body and before the fence and version bump. Nothing
+            // above wrote a partition-table byte, so the slot's cached partition-table hash still describes
+            // this area.
             final PartitionTableHash partitionTableHash = partitionTableHashOfNextSlot();
             if (symbolCountProviders.size() > symbolColumnCount) {
                 // storeSymbolCounts() ran past the symbol region into the partition table.
@@ -298,11 +286,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     /**
-     * Make the backing {@code _txn} file hard-durable INDEPENDENT of commit mode: msync(MS_SYNC) the
-     * mapping then fsync the fd. Used by the adaptive durable-epoch cut
-     * ({@link TableWriter#fsyncMaterializedState()}) to make the visibility pointer survive a crash,
-     * strictly AFTER the column data and {@code _cv} are durable (data-before-pointer ordering).
-     * Under NOSYNC/ADAPTIVE the last {@link #commit(io.questdb.std.ObjList)} did not sync, so both calls are required.
+     * Makes the {@code _txn} file durable whatever the commit mode: msync(MS_SYNC) of the mapping, then an
+     * fsync of the fd. A save point ({@link TableWriter#fsyncMaterializedState()}) calls it after the column
+     * data and {@code _cv} are durable, so the pointer never lands before the data. Under NOSYNC and ADAPTIVE
+     * the last {@link #commit(io.questdb.std.ObjList)} did not sync, so both calls are needed.
      */
     public void fsync() {
         txMemBase.sync(false);
@@ -310,11 +297,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     /**
-     * The fd of the backing {@code _txn} file, or {@code -1} if not currently mapped. The {@code _txn} file
-     * lives in the table directory and is mapped for the whole writer lifetime, so this is a STABLE
-     * filesystem fd for the table — valid even when no partition column is open. Used by the adaptive
-     * durable-epoch cut ({@code TableWriter.fsyncMaterializedState()}) to source the epoch's fs-wide
-     * {@code syncfs}, which must never no-op just because every column fd is closed (CRIT-1).
+     * The fd of the backing {@code _txn} file, or {@code -1} if it is not mapped. The file lives in the table
+     * directory and stays mapped for the writer's lifetime, so a save point
+     * ({@code TableWriter.fsyncMaterializedState()}) uses this fd for its filesystem-wide {@code syncfs},
+     * which must not be skipped when every column fd is closed.
      */
     public long getFd() {
         return txMemBase != null ? txMemBase.getFd() : -1;
@@ -535,9 +521,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         txMemBase.putLong(readBaseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, Long.MAX_VALUE);
         txMemBase.putLong(readBaseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, Long.MIN_VALUE);
         txMemBase.putInt(readBaseOffset + TX_OFFSET_CHECKSUM_32, calculateTxnLagChecksum(txn, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0));
-        // No body-checksum refresh here: every field written above lives in [80,116) (seqTxn + lag fields +
-        // the offset-88 lag checksum), which is DELIBERATELY EXCLUDED from the body checksum. The checksum
-        // stays valid across this in-place mutation, which is exactly why it is race-free with readers.
+        // The fields above lie in [80,116), outside the body checksum, so this in-place write keeps it valid.
     }
 
     public void resetLagValuesUnsafe() {
@@ -594,7 +578,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         assert tornLiveVersion == previousVersion + 1;
         txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, previousVersion);
         fsync();
-        // Reload through the ordinary path: it must now select and verify the record we just published.
+        // Reload through the ordinary path, which must select and verify the record just published.
         if (!unsafeLoadAll() || getVersion() != previousVersion) {
             throw CairoException.critical(0)
                     .put("_txn did not load the previous transaction after rolling back to it [txn=")
@@ -618,8 +602,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     /**
-     * Drop the accumulated write set. Called by the adaptive epoch ONLY after the flush it drove has
-     * succeeded, so a failed epoch retries against the same set rather than losing it.
+     * Drops the accumulated write set. A save point calls this only after its flush succeeded, so a failed
+     * save point retries with the same set.
      */
     public void clearDirtyPartitions() {
         dirtyPartitions.clear();
@@ -826,7 +810,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             // Publishing from it discards the latest commit, potentially against newer metadata and column
             // versions, so only ofRW(path, true), whose caller checks the table's other files first, may take
             // it. The record must also be verified: an unstamped one loads without its checksum, and a rollback
-            // publishes what it loads. Durable-epoch recovery restores an adaptive table's consistent cut instead.
+            // publishes what it loads. For an adaptive table, recovery restores the save point instead.
             final long fallbackVersion = getVersion();
             if (!isTornLiveAreaTolerated || !isLoadedRecordChecksumVerified()) {
                 clearData();
@@ -995,12 +979,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         txMemBase.putInt(symbolSizeOffset, bytesSymbols);
         txMemBase.putInt(partitionsSizeOffset, bytesPartitions);
 
-        // Body checksum over the commit-immutable fields. Derive the size from the SAME helper the reader
-        // uses (calculateTxRecordSize) and the partition-table start the SAME way the reader does
-        // (TX_RECORD_HEADER_SIZE + symbolBytes == getPartitionTableSizeOffset(symbolCount)) so the covered
-        // range is identical. Must be written before the fence and version bump so a torn body never hides
-        // behind a valid version word. The body was just rewritten, so hash its partition table afresh; that
-        // also refills the slot's cached hash for the fast-path commits that republish this area.
+        // The size comes from calculateTxRecordSize and the partition-table start from TX_RECORD_HEADER_SIZE +
+        // bytesSymbols (== getPartitionTableSizeOffset(symbolCount)), as the reader derives them. The checksum
+        // goes before the fence and version bump, so a torn body never hides behind a valid version word. The
+        // body was just rewritten, so its partition table is hashed afresh; that also refills the slot's cached
+        // hash for the fast-path commits that republish this area.
         long recordSize = calculateTxRecordSize(bytesSymbols, bytesPartitions);
         final PartitionTableHash partitionTableHash = partitionTableHashOfNextSlot();
         partitionTableHash.invalidate();
@@ -1018,10 +1001,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         assert readBaseOffset + readRecordSize <= txMemBase.size();
         super.switchRecord(readBaseOffset, readRecordSize);
 
-        // appliesColumnSync (SYNC/ASYNC only), NOT `!= NOSYNC`: under ADAPTIVE the _txn pointer is lazily
-        // durable like the columns it exposes, and is made crash-safe by the durable epoch (fsync()) plus
-        // recovery roll-forward. See resolveCommitMode(). The bootstrap caller that passes NOSYNC explicitly
-        // is unaffected (both forms are false for NOSYNC).
+        // SYNC and ASYNC only: under ADAPTIVE, _txn is durable lazily like the columns it exposes, and the save
+        // point (fsync()) and recovery make it crash-safe. See resolveCommitMode().
         if (CommitMode.appliesColumnSync(commitMode)) {
             txMemBase.sync(commitMode == CommitMode.ASYNC);
         }
@@ -1148,14 +1129,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         attachedPartitions.setQuick(rawIndex, partitionSizeMasked);
     }
 
-    // Stores the commit-immutable body checksum at [baseOffset + TX_OFFSET_BODY_CHECKSUM_64]. The checksum
-    // MUST be computed (calculateBodyChecksum) after the covered fields ([0,40), [48,80) + the partition
-    // table) have been written, and stored BEFORE the storeFence()/version bump, so that a torn body under a
-    // valid version word is detectable by the reader. Its recordSize MUST equal what was actually committed
-    // (calculateTxRecordSize(...)) and its partitionTableStart MUST equal
-    // getPartitionTableSizeOffset(symbolCount) - both identical to what the reader derives, or every verify
-    // mismatches. The excluded middle (lag, symbol counts, the checksum/gap) is NOT covered, so the in-place
-    // mutations to those regions never invalidate this checksum.
+    // Stores the body checksum and its stamp. Compute the checksum after the covered fields are written and
+    // store it before the storeFence() and version bump, so a reader can detect a torn body under a valid
+    // version word. Its recordSize must be the committed size (calculateTxRecordSize) and its
+    // partitionTableStart getPartitionTableSizeOffset(symbolCount), as the reader derives them, or every
+    // verify fails.
     private void storeBodyChecksum(int baseOffset, long checksum) {
         txMemBase.putLong(baseOffset + TX_OFFSET_BODY_CHECKSUM_64, checksum);
         // Stamp the checksum with the record it belongs to. Read from the record rather than the `txn` field
@@ -1181,9 +1159,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         updateAttachedPartitionSizeByRawIndex(findAttachedPartitionRawIndexByLoTimestamp(partitionTimestampLo), partitionTimestampLo, partitionSize, partitionNameTxn);
     }
 
-    // Record a partition whose on-disk bytes this writer has changed. Marks unconditionally rather than
-    // only when a value actually differs: an over-broad set costs one extra fsync, an under-broad one
-    // leaves data non-durable behind an epoch that references it.
+    // Records a partition whose on-disk bytes this writer changed. Marks whether or not a value differs: an
+    // over-broad set costs one extra fsync, an under-broad one leaves data non-durable behind a save point
+    // that references it.
     private void markPartitionDirtyByRawIndex(int indexRaw) {
         if (indexRaw > -1) {
             dirtyPartitions.add(attachedPartitions.getQuick(indexRaw + PARTITION_TS_OFFSET));
