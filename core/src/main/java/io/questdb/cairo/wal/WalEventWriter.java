@@ -86,10 +86,9 @@ class WalEventWriter implements Closeable {
     }
 
     public void close(boolean truncate, byte truncateMode) {
-        // Close BOTH memories even if the first throws (e.g. a close-time fd-sync fault, real or crash-
-        // simulated): MemoryCMARWImpl.close unmaps before its fd sync, so a throw from eventMem would otherwise
-        // leave eventIndexMem mapped and leak its MMAP_TABLE_WAL_WRITER memory. The finally closes it too; the
-        // original fault still propagates.
+        // Close both memories even if the first throws, for example on a close-time fd sync failure.
+        // MemoryCMARWImpl.close unmaps before it syncs the fd, so a throw from eventMem would otherwise leak the
+        // mapping of eventIndexMem. The original failure still propagates.
         try {
             eventMem.close(truncate, truncateMode);
         } finally {
@@ -525,19 +524,17 @@ class WalEventWriter implements Closeable {
      */
     void sync(int commitMode) {
         if (commitMode != CommitMode.NOSYNC) {
-            // W>0 pushes the event mappings with MS_ASYNC; the caller then fdatasyncs these private files
-            // before sequencing. Only the shared sequencer barrier is deferred/batched. ADAPTIVE W=0 gets
-            // MS_SYNC plus the barrier below; ASYNC and SYNC keep their exact existing sync grade.
+            // With a group window the mappings are pushed with MS_ASYNC, and the caller fdatasyncs these
+            // private files before sequencing; only the shared sequencer flush is batched. ADAPTIVE with no
+            // window takes MS_SYNC plus the barrier below. ASYNC and SYNC keep their own grade.
             final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE
                     && configuration.getAdaptiveCommitGroupWindowUs() > 0;
             final boolean async = commitMode == CommitMode.ASYNC || deferDeviceFlush;
             eventMem.sync(async);
             eventIndexMem.sync(async);
-            // ADAPTIVE: order the events file ahead of the sequencer. msync flushes data to the page cache;
-            // the barrier ensures both the data and the inode size reach the medium before the sequencer
-            // record does (events before seq, matching data→events→seq order). Ordering, not durability, is
-            // the requirement here -- the sequencer flush at the commit point is the full device flush, and
-            // it lands everything ordered before it.
+            // The barrier puts the events data and the inode size on the medium before the sequencer record,
+            // in the order data, events, sequencer. Only ordering is needed here: the sequencer flush at the
+            // commit point is the full device flush.
             if (commitMode == CommitMode.ADAPTIVE && !deferDeviceFlush) {
                 barrierFsync();
             }
@@ -545,14 +542,13 @@ class WalEventWriter implements Closeable {
     }
 
     /**
-     * ORDERING barrier over the WAL-e event and index files. Under ADAPTIVE, WalWriter calls this before
-     * sequencing, after private column data, preserving data→events→seq ordering: at every window on the
-     * data commit path, and at W&gt;0 on the others ({@link #sync(int)} calls it at W=0).
+     * Orders the WAL event and index files ahead of the sequencer record. Under ADAPTIVE, WalWriter calls this
+     * after the private column data and before sequencing: on the data commit path at every group window, on the
+     * other paths with a window above zero ({@link #sync(int)} calls it with none).
      * <p>
-     * Ordering is all this site needs, and it is deliberately NOT a durability barrier: what must hold is
-     * that a sequencer record never reaches the medium ahead of the _event entry it names. Durability
-     * arrives with the commit point — the sequencer flush that advances localDurableSeqTxn — which is a
-     * full device-cache flush and therefore lands everything ordered before it. See
+     * It is an ordering barrier, not a durability barrier: a sequencer record must never reach the medium ahead
+     * of the _event entry it names. The sequencer flush at the commit point, which advances localDurableSeqTxn,
+     * is a full device-cache flush and makes everything ordered before it durable. See
      * {@link io.questdb.std.Files#barrierFsync(long)}.
      */
     void barrierFsync() {
@@ -617,16 +613,13 @@ class WalEventWriter implements Closeable {
                 lastRefreshBaseTxn, lastRefreshTimestamp, lastPeriodHi,
                 replaceRangeLowTs, replaceRangeHiTs, dedupMode
         );
-        // REPLACE, THEN FLUSH, THEN SEQUENCE. The record and its index entry were replaced in place, in two
-        // files the kernel writes back independently, and either may already hold the original on disk. A
-        // power loss that kept the original in one file and the replacement in the other either suspends
-        // the table on a record that disagrees with its index entry, or applies the original record without
-        // the new column's null flag. Nothing names this record until the caller sequences it, so flushing
-        // both files here, in any order, leaves a sequenced txn only the replacement to meet. SYNC and
-        // ADAPTIVE pay it once per writer per concurrent ADD COLUMN ... SYMBOL, next to the fsync that nulling
-        // the new column already costs. MS_ASYNC plus the barrier is the pair ADAPTIVE uses for every commit's
-        // private files. NOSYNC and ASYNC promise nothing across a power loss and take no barrier; ASYNC still
-        // pushes both files with MS_ASYNC, the grade of its every commit.
+        // Flush the replaced record before the caller sequences it. The record and its index entry are replaced
+        // in place in two files the kernel writes back independently. A power loss that keeps the original in
+        // one file and the replacement in the other suspends the table on a record that disagrees with its
+        // index entry, or applies the original record without the new column's null flag. Nothing names the
+        // record until it is sequenced, so flushing both files here, in any order, is enough. MS_ASYNC plus the
+        // barrier is the pair ADAPTIVE uses for every commit's private files. NOSYNC and ASYNC promise nothing
+        // across a power loss and take no barrier.
         final int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
             eventMem.sync(true);
