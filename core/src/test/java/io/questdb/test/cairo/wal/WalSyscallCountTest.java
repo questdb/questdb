@@ -61,17 +61,12 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
- * The file system calls of a 1-row WAL commit and of the WAL apply pass that applies it, outside ADAPTIVE.
- * NOSYNC, ASYNC and SYNC must make the calls the base version (the WAL without ADAPTIVE) makes: the same
- * kinds, the same number of times, on the same files, except the one extra SYNC msync noted in
- * {@code expected}. A file that rides along with every commit or every apply pass shows up here as extra
- * opens, maps and msyncs. The apply pass runs on fixed-size columns and again with STRING, VARCHAR (not
- * inlined) and ARRAY columns, whose data file length the segment-length guard checks against the last aux
- * entry: a read of that entry shows up here.
- * <p>
- * In every mode, ADAPTIVE included, a WAL table keeps only files the base version writes in its WAL segments
- * and in {@code txn_seq}. A file written through a mapping makes no system call on a NOSYNC commit, so only
- * the file set can see it there.
+ * The file system calls of a 1-row WAL commit and of the apply pass that applies it. NOSYNC, ASYNC and SYNC
+ * make the calls of the base version (the WAL without ADAPTIVE): the same kinds and counts on the same files,
+ * except the one extra SYNC msync noted in {@code expected}. The apply pass also runs with STRING, VARCHAR and
+ * ARRAY columns, so a read of the last aux entry by the segment-length guard shows up here. In every mode,
+ * ADAPTIVE included, a WAL table keeps only the files the base version writes in its WAL segments and in
+ * {@code txn_seq}: a mapped write makes no system call on a NOSYNC commit, so only the file set sees it.
  */
 @RunWith(Parameterized.class)
 public class WalSyscallCountTest extends AbstractCairoTest {
