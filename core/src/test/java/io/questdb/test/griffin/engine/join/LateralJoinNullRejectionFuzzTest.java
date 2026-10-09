@@ -131,7 +131,8 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             case 1 -> "(SELECT " + column.name + " FROM trades WHERE x = " + key + " ORDER BY ts DESC LIMIT 1)";
             case 2 -> "(SELECT max(" + column.name + ") FROM trades WHERE x = " + key + ")";
             case 3 -> "(SELECT " + column.name + " FROM trades WHERE x = " + key + " LATEST ON ts PARTITION BY x)";
-            default -> "(SELECT " + column.name + " FROM trades WHERE id = (SELECT max(id) FROM trades WHERE x = " + key + "))";
+            default ->
+                    "(SELECT " + column.name + " FROM trades WHERE id = (SELECT max(id) FROM trades WHERE x = " + key + "))";
         };
     }
 
