@@ -607,10 +607,9 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
      * state that really existed (bar 1). The add+rename profile concentrates the sweep on this path instead of
      * depending on a seed that emits a rename.
      * <p>
-     * This is coverage, not a regression pin: it also passes on this seed when the publish precedes the rename. The
-     * known reproducer is the full-library seed {@code -Dquestdb.fuzz.seed=-5599363307717330847,-4230914800796809183},
-     * which also hits a separate failure (the renamed column's contents are not durable when the pointer commits:
-     * {@code required=128, actual=0}), so it cannot serve as a control.
+     * This is coverage, not a regression pin: it also passes on this seed when the publish precedes the rename. So
+     * does the full-library seed {@code -Dquestdb.fuzz.seed=-5599363307717330847,-4230914800796809183}, which crashes
+     * on a rename's {@code _meta.swp} barrier and recovers there with either order.
      */
     @Test
     public void testRenameColumnCrashSafeW0() throws Exception {
