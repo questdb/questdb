@@ -143,8 +143,8 @@ public final class PhysicalDescriptor {
     /**
      * Whether a value read at the type's arithmetic tier
      * ({@link #getIntegerAtTier(Function, TypeDriver)}) is the type's NULL. Only a type whose NULL
-     * policy is a sentinel has a NULL value, and only its own sentinel is that value; a never-null
-     * type reads every bit pattern, its minimum included, as a value.
+     * policy is a sentinel has a NULL value, and only its own sentinel is that value; a type with no
+     * NULL (NONE) reads every bit pattern, its minimum included, as a value.
      */
     public static boolean isNullAtTier(TypeDriver driver, long value) {
         return driver.getNullPolicy() == NullPolicy.SENTINEL
@@ -154,7 +154,7 @@ public final class PhysicalDescriptor {
     /**
      * Whether a type computes and represents NULL as its accessor family's namesake does: the
      * same arithmetic tier and the same NULL policy. Every existing type is its own namesake.
-     * An unsigned or a never-null type on INT's accessor is not.
+     * An unsigned type on INT's accessor is not, nor is a full-range INT with no NULL (NONE).
      */
     public static boolean isLikeFamilyNamesake(TypeDriver driver) {
         final TypeDriver namesake = ColumnType.getTypeDriver(driver.getAccessor().opcode());

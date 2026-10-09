@@ -107,8 +107,9 @@ public interface RecordMetadata extends ColumnTypes, Plannable {
     /**
      * How column {@code columnIndex} represents NULL. Code that decides NULL for a column reads
      * this, not the type driver's {@link io.questdb.cairo.TypeDriver#getNullPolicy()}, so a
-     * per-column NULL setting would change only this method. The default returns the column type's
-     * policy. Not defined for a deleted column (negative type).
+     * per-column representation of NULL would change only this method. A NOT NULL constraint is
+     * not one: the column keeps its type's policy and refuses NULL at write. The default returns
+     * the column type's policy. Not defined for a deleted column (negative type).
      *
      * @param columnIndex numeric index of a column
      * @return the column's NULL policy

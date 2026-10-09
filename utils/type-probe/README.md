@@ -71,7 +71,7 @@ storage = "fixed"           # "fixed" or "var"
 movement = "W4"             # PhysicalDescriptor.Movement: the width, VAR for a var-size type
 arithmetic = "I32"          # PhysicalDescriptor.Arithmetic: the tier values compare and widen by
 accessor = "INT"            # PhysicalDescriptor.Accessor: the family it is read and written through
-null_policy = "SENTINEL"    # NullPolicy: how the type stores NULL
+null_policy = "SENTINEL"    # NullPolicy: how the type stores NULL; NOT NULL is not a policy (section 8)
 null_word = "Numbers.encodeLowHighInts(Numbers.INT_NULL, Numbers.INT_NULL)"   # the NULL bits, a Java long expression
 wire_kind = "INT"           # a WireKind, or "new" for a kind of the type's own
 
@@ -384,10 +384,18 @@ What the audit cannot tell:
 - whether a `test` decision's test reaches its place, or a `no-change` reason is true: the view
   shows each with its reason, for the type's author to read.
 
-A type that stores no NULL (NULL policy NONE) is not supported yet. Its column tops, the rows of a
-partition written before the column was added, must read a default value given in SQL when the
-column is added, never written into the old rows; that does not exist yet, so those rows read the
-family's NULL (INT's -2147483648 for a type on INT's accessor).
+NULL policy NONE means the type has no NULL and every bit pattern is a value, as BOOLEAN, BYTE,
+SHORT and CHAR have. It is not the policy of a NOT NULL type: NOT NULL is a constraint. A type
+that refuses NULL at write but stores and reads values like an existing type declares that type's
+policy (SENTINEL for a NOT NULL INT, whose sentinel is then refused at write and never stored), so
+the guarded sites, the JIT, the wire kind and the planner's NULL rules stay right for it. Declared
+NONE on INT's accessor, such a type is refused at every guarded site and by the JIT, needs a wire
+kind of its own, and the planner treats its NULL rows (an outer join's padding) as values.
+
+A type with NULL policy NONE on an existing family's accessor is not supported yet. Its column
+tops, the rows of a partition written before the column was added, must read a default value given
+in SQL when the column is added, never written into the old rows; that does not exist yet, so those
+rows read the family's NULL (INT's -2147483648 for a type on INT's accessor).
 
 Not yet tested, stated plainly: no committed test drives a type through the family-arm guard at the
 sites (the guard itself is tested with stub type drivers), and the factories that refuse a type at a
@@ -417,10 +425,12 @@ Places outside the worklist that a type may still meet:
 
 The function library tests NULL inline, per row, by comparing a value with its type's reserved
 NULL value (`Numbers.LONG_NULL`, NaN). A type that keeps NULL outside its values (a full-range
-type, a nullable BYTE or SHORT, with a validity bitmap) or never holds NULL (NOT NULL) cannot reuse
-that code as it is: a full-range LONG's smallest value is a real value, and a bitmap type's NULL is
-not in the value at all. The functions are unchanged here; the type PR decides how they serve the
-new kinds. One way, prototyped on four functions (`=`, `+`, `sum`, a cast to DOUBLE) and measured:
+type, a nullable BYTE or SHORT, with a validity bitmap) or stores every value of a type whose code
+reads one of them as NULL (a NOT NULL column that admits INT_MIN) cannot reuse that code as it is:
+a full-range LONG's smallest value is a real value, and a bitmap type's NULL is not in the value at
+all. A NOT NULL constraint that refuses its type's NULL at write keeps that code right. The
+functions are unchanged here; the type PR decides how they serve the new kinds. One way, prototyped
+on four functions (`=`, `+`, `sum`, a cast to DOUBLE) and measured:
 
 - **NULL kinds.** Every function reports its result's kind at setup: SENTINEL (today's types with
   a reserved NULL value), NONE (today's BOOLEAN, BYTE, SHORT, CHAR), BITMAP, NOT_NULL. A column
@@ -448,11 +458,13 @@ new kinds. One way, prototyped on four functions (`=`, `+`, `sum`, a cast to DOU
   vectorized `sum`, until frame-level kernels are written for it. Per new type, each function it
   supports takes about 20 lines (the body, the wrapper choice, the marker that admits the type),
   and each shape's shared wrappers are written once.
-- **Open.** A NOT NULL column marker reaches a function only through the query's column metadata.
-  The operators that add NULL to a column (UNION with a NULL branch, an outer join, `lag`, CASE
-  without ELSE) build new metadata and so drop the marker, which is safe. An operator that adds NULL
-  and passes the metadata through unchanged would keep NOT_NULL and read a filler as a value: each
-  such operator needs checking.
+- **Open.** A NOT NULL column marker reaches a function only through the query's column metadata,
+  and NOT_NULL here is a function's result kind, not a NULL policy of a column or a type. Not every
+  operator that adds NULL to a column drops the marker: an outer join keeps the padded column's
+  metadata, and a UNION ALL with a nullable branch can keep it, so the column claims NOT NULL while
+  it holds NULL rows. A rule that trusts the marker there reads a NULL as a value (rewriting
+  `count(x)` as `count()` counts the padding). Each operator that adds NULL must clear the marker
+  before any rule trusts it.
 
 ## 10. The tests
 

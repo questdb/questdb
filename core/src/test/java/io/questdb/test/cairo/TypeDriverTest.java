@@ -183,8 +183,8 @@ public class TypeDriverTest {
                     e.getFlyweightMessage()
             );
         }
-        // a never-null INT orders as INT does: it takes INT's arm
-        Assert.assertEquals(ColumnType.INT, PhysicalDescriptor.compareOpcode(LookAlikeTypeDriver.neverNullInt(), "ORDER BY"));
+        // a full-range INT orders as INT does: it takes INT's arm
+        Assert.assertEquals(ColumnType.INT, PhysicalDescriptor.compareOpcode(LookAlikeTypeDriver.fullRangeInt(), "ORDER BY"));
     }
 
     @Test
@@ -275,10 +275,10 @@ public class TypeDriverTest {
     }
 
     @Test
-    public void testFamilyArmRefusesNeverNullLookAlike() {
+    public void testFamilyArmRefusesFullRangeLookAlike() {
         assertNoFamilyArm(
-                LookAlikeTypeDriver.neverNullInt(),
-                "no family arm for NN_INT at SAMPLE BY FILL(value): add the arm or declare the type like its namesake"
+                LookAlikeTypeDriver.fullRangeInt(),
+                "no family arm for FULL_INT at SAMPLE BY FILL(value): add the arm or declare the type like its namesake"
         );
     }
 
@@ -752,14 +752,14 @@ public class TypeDriverTest {
 
     @Test
     public void testSentinelReadOfNonePolicyTypeIsAValue() {
-        // a never-null INT reads INT's sentinel bit pattern as the value Integer.MIN_VALUE, never
+        // a full-range INT reads INT's sentinel bit pattern as the value Integer.MIN_VALUE, never
         // as NULL or "not set", and no long, Long.MIN_VALUE included, is its NULL
-        final TypeDriver neverNull = LookAlikeTypeDriver.neverNullInt();
-        final long min = PhysicalDescriptor.getIntegerAtTier(IntConstant.newInstance(Integer.MIN_VALUE), neverNull);
+        final TypeDriver fullRange = LookAlikeTypeDriver.fullRangeInt();
+        final long min = PhysicalDescriptor.getIntegerAtTier(IntConstant.newInstance(Integer.MIN_VALUE), fullRange);
         Assert.assertEquals(Integer.MIN_VALUE, min);
-        Assert.assertFalse(PhysicalDescriptor.isNullAtTier(neverNull, min));
-        Assert.assertFalse(PhysicalDescriptor.isNullAtTier(neverNull, Long.MIN_VALUE));
-        Assert.assertFalse(PhysicalDescriptor.isNullAtTier(neverNull, 0));
+        Assert.assertFalse(PhysicalDescriptor.isNullAtTier(fullRange, min));
+        Assert.assertFalse(PhysicalDescriptor.isNullAtTier(fullRange, Long.MIN_VALUE));
+        Assert.assertFalse(PhysicalDescriptor.isNullAtTier(fullRange, 0));
     }
 
     @Test
@@ -1058,10 +1058,10 @@ public class TypeDriverTest {
 
         drivers.add(LookAlikeTypeDriver.sentinelInt());
         Assert.assertEquals("", wireKindSharingMismatches(drivers));
-        drivers.add(LookAlikeTypeDriver.neverNullInt());
+        drivers.add(LookAlikeTypeDriver.fullRangeInt());
         drivers.add(LookAlikeTypeDriver.unsignedInt());
         Assert.assertEquals("""
-                INT: NN_INT has NULL policy NONE, INT has SENTINEL
+                INT: FULL_INT has NULL policy NONE, INT has SENTINEL
                 INT: UINT32 has arithmetic U32, INT has I32
                 """, wireKindSharingMismatches(drivers));
     }

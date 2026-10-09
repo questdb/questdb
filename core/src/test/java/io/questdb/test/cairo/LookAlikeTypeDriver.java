@@ -34,7 +34,7 @@ import io.questdb.cairo.TypeFacts;
 /**
  * A type driver registered under no tag that answers INT's facts and code, except for its name,
  * its arithmetic tier and its NULL policy: the shape of a later type that reads through INT's
- * accessor, such as an unsigned or a never-null INT. Tests hand it to the static helpers a site
+ * accessor, such as an unsigned INT or a full-range INT. Tests hand it to the static helpers a site
  * calls with the type driver it found, since no tag can resolve to it.
  */
 public final class LookAlikeTypeDriver extends FixedSizeTypeDriver {
@@ -70,10 +70,11 @@ public final class LookAlikeTypeDriver extends FixedSizeTypeDriver {
     }
 
     /**
-     * A never-null INT: signed 32-bit, every bit pattern a value.
+     * A full-range INT with no NULL (NONE, as BYTE has): signed 32-bit, every bit pattern a value.
+     * Not a NOT NULL INT, which keeps INT's SENTINEL and refuses it at write.
      */
-    public static LookAlikeTypeDriver neverNullInt() {
-        return new LookAlikeTypeDriver("NN_INT", PhysicalDescriptor.Arithmetic.I32, NullPolicy.NONE);
+    public static LookAlikeTypeDriver fullRangeInt() {
+        return new LookAlikeTypeDriver("FULL_INT", PhysicalDescriptor.Arithmetic.I32, NullPolicy.NONE);
     }
 
     /**

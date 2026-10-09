@@ -29,6 +29,10 @@ package io.questdb.cairo;
  * per-column accessor such as {@link io.questdb.cairo.sql.RecordMetadata#getColumnNullPolicy(int)};
  * code that holds only a type reads {@link TypeDriver#getNullPolicy()}. Switch on it exhaustively
  * at setup, so javac lists every such site when a policy is added.
+ * <p>
+ * NOT NULL is a constraint, not a policy: a column or a type that refuses NULL at write keeps the
+ * policy of the values it stores (INT's SENTINEL for an INT that refuses its sentinel), so every
+ * reader of that policy stays right.
  */
 public enum NullPolicy {
     /**

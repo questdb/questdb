@@ -3881,7 +3881,7 @@ public final class WhereClauseParser implements Mutable {
                         }
                     } else {
                         // an integer bound reads at its type's tier, and only the type's own NULL
-                        // empties the scan: a never-null type's minimum is a value
+                        // empties the scan: the minimum of a type with no NULL is a value
                         final TypeDriver driver = ColumnType.getTypeDriver(bound.getType());
                         b = PhysicalDescriptor.getIntegerAtTier(bound, driver);
                         if (PhysicalDescriptor.isNullAtTier(driver, b)) {
