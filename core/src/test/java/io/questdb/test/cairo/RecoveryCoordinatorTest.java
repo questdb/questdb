@@ -346,7 +346,8 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
      * A clean restart has nothing to recover. The writer's close epoch copies the live {@code _meta},
      * {@code _cv} and {@code _txn} as they stand, so recovery finds the live files already at the epoch cut.
      * It must not rewrite or fsync them, and must not count the boot as a recovery, which operators read as
-     * a crash. It still pins the epoch, which protects the cut and bounds WAL purge.
+     * a crash. It still pins the epoch, which protects the cut and bounds WAL purge, and makes the selected save
+     * point headers durable: one syncfs per start where syncfs is filesystem-wide, one fsync per table elsewhere.
      */
     @Test
     public void testCleanRestartRestoresNothing() throws Exception {
@@ -2818,6 +2819,74 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A failed flush of the save point headers recovery selected stops the start and poisons the engine, as every
+     * failed sync at recovery does, whether one syncfs covers every header or each takes its own fsync. Nothing
+     * may trust a header the device may not hold. The next start rewrites and flushes them again.
+     */
+    @Test
+    public void testRecoverHeaderFlushFailurePoisonsEngineAndPropagates() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            final AtomicBoolean isFailing = new AtomicBoolean();
+            final FilesFacade failingFf = new TestFilesFacadeImpl() {
+                @Override
+                public void fsync(long fd) {
+                    if (isFailing.get()) {
+                        throw CairoException.dataSyncFailure(5, "fsync").put("injected header flush failure");
+                    }
+                    super.fsync(fd);
+                }
+
+                @Override
+                public void syncfs(long fd) {
+                    if (isFailing.get()) {
+                        throw CairoException.dataSyncFailure(5, "syncfs").put("injected header flush failure");
+                    }
+                    super.syncfs(fd);
+                }
+            };
+            final FilesFacade ffBefore = AbstractCairoTest.ff;
+            try {
+                for (String name : new String[]{"flush_a", "flush_b"}) {
+                    execute("CREATE TABLE " + name + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("INSERT INTO " + name + " VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                }
+                drainWalQueue();
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                AbstractCairoTest.ff = failingFf;
+                isFailing.set(true);
+                try {
+                    new RecoveryCoordinator(engine).recover();
+                    Assert.fail("a failed header flush must stop the start");
+                } catch (CairoError expected) {
+                    Assert.assertTrue(CairoException.isDataSyncFailure(expected));
+                }
+                Assert.assertTrue(engine.isDurabilityFailed());
+                Assert.assertEquals(failingFf.isSyncfsFileSystemWide() ? "syncfs" : "fsync", engine.getDurabilityFailure().getOperation());
+
+                isFailing.set(false);
+                engine.resetDurabilityFailure();
+                new RecoveryCoordinator(engine).recover();
+                execute("INSERT INTO flush_b VALUES ('2024-09-02T00:00:00.000000Z', 2)");
+                drainWalQueue();
+                assertQuery("SELECT * FROM flush_b")
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tv
+                                2024-09-01T00:00:00.000000Z\t1
+                                2024-09-02T00:00:00.000000Z\t2
+                                """);
+            } finally {
+                AbstractCairoTest.ff = ffBefore;
+                engine.resetDurabilityFailure();
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            }
+        });
+    }
+
     @Test
     public void testRecoverAbortsOnRestoreIoErrorBeforeServingSiblings() throws Exception {
         // The fault is injected on the openRW + copyData in-place transfer -- the POSIX branch of
@@ -3261,8 +3330,13 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         try {
             assertMemoryLeak(() -> {
-                execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                execute("INSERT INTO " + tableName + " VALUES ('2024-09-01T00:00:00.000000Z', 1), ('2024-09-02T00:00:00.000000Z', 2)");
+                // Siblings make the flush count show whether recovery flushes per table or per start.
+                final int siblingCount = 2;
+                for (int i = 0; i <= siblingCount; i++) {
+                    final String name = i == 0 ? tableName : tableName + "_sibling" + i;
+                    execute("CREATE TABLE " + name + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("INSERT INTO " + name + " VALUES ('2024-09-01T00:00:00.000000Z', 1), ('2024-09-02T00:00:00.000000Z', 2)");
+                }
                 drainWalQueue();
                 final TableToken tt = engine.verifyTableName(tableName);
                 // The graceful close folds the applied tail into a final epoch at the live cut.
@@ -3279,9 +3353,13 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                     generation = saved[0].generation;
                 }
                 engine.getTableSequencerAPI().resetForReboot(tt);
+                for (int i = 1; i <= siblingCount; i++) {
+                    engine.getTableSequencerAPI().resetForReboot(engine.verifyTableName(tableName + "_sibling" + i));
+                }
 
                 final AtomicInteger rewrites = new AtomicInteger();
                 final AtomicInteger fsyncs = new AtomicInteger();
+                final AtomicInteger syncfsCalls = new AtomicInteger();
                 final FilesFacade ffBefore = AbstractCairoTest.ff;
                 AbstractCairoTest.ff = new TestFilesFacadeImpl() {
                     @Override
@@ -3307,6 +3385,12 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                         fsyncs.incrementAndGet();
                         super.fsyncAndClose(fd);
                     }
+
+                    @Override
+                    public void syncfs(long fd) {
+                        syncfsCalls.incrementAndGet();
+                        super.syncfs(fd);
+                    }
                 };
                 final long eventsBefore = TestUtils.getMetricValue(engine, "questdb_wal_adaptive_recovery_events_total");
                 try {
@@ -3316,7 +3400,10 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 }
 
                 Assert.assertEquals("live files already at the epoch cut must not be rewritten", 0, rewrites.get());
-                Assert.assertEquals("a clean restart flushes only the selected save point's header", 1, fsyncs.get());
+                // Where syncfs is filesystem-wide, one syncfs per start makes every selected header durable.
+                final boolean isOneFlush = files.isSyncfsFileSystemWide();
+                Assert.assertEquals("a clean restart fsyncs only the selected save point headers", isOneFlush ? 0 : siblingCount + 1, fsyncs.get());
+                Assert.assertEquals("a clean restart flushes the selected save point headers with one syncfs", isOneFlush ? 1 : 0, syncfsCalls.get());
                 final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
                 Assert.assertEquals("a clean restart is not a recovery", 0L, tracker.getRecoveryIncarnation());
                 Assert.assertEquals("a clean restart is not a recovery",

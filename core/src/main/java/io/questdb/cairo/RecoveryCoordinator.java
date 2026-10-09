@@ -82,6 +82,8 @@ public class RecoveryCoordinator {
     private final FilesFacade ff;
     // Whether the last false answer of epochCopiesValid was a definite content mismatch, not a read failure.
     private boolean contentMismatch;
+    // Whether a selected save point header was rewritten without its own sync; recover() flushes them all at its end.
+    private boolean isHeaderFlushPending;
 
     public RecoveryCoordinator(CairoEngine engine) {
         this.engine = engine;
@@ -131,6 +133,18 @@ public class RecoveryCoordinator {
                     // An adaptive table may not be exposed from its possibly non-durable live state.
                     // Abort engine initialization instead of merely suspending WAL apply (readers are not
                     // fenced by sequencer suspension).
+                    throw e;
+                }
+            }
+
+            // One flush for every header rewritten above, before recover() returns: nothing trusts them before then.
+            if (isHeaderFlushPending) {
+                try {
+                    DatabaseCheckpointAgent.syncRestoredState(ff, dir.of(configuration.getDbRoot()), true);
+                } catch (CairoException | CairoError e) {
+                    if (CairoException.isDataSyncFailure(e)) {
+                        engine.handleDataSyncFailure(e);
+                    }
                     throw e;
                 }
             }
@@ -591,11 +605,13 @@ public class RecoveryCoordinator {
                     .put(DurableEpochManifest.FILE_NAME).put(".1 out of the table directory and start again;")
                     .put(" after a power loss, restore the table from a backup or a checkpoint");
         }
-        // The selected save point may be only in the page cache; the purges and the next save point trust it from
-        // here on.
+        // The selected save point may be only in the page cache; the purges and the next save point trust it once
+        // recover() returns. Where syncfs is filesystem-wide, recover() flushes every rewritten header at once.
         if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
             tablePath(dir, token);
-            DurableEpochManifest.rewriteHeader(ff, dir, dir.size(), selected.generation);
+            final boolean isFlushedByRecover = ff.isSyncfsFileSystemWide();
+            DurableEpochManifest.rewriteHeader(ff, dir, dir.size(), selected.generation, !isFlushedByRecover);
+            isHeaderFlushPending |= isFlushedByRecover;
         }
         if (rejected != null) {
             removeRejectedGeneration(token, dir, rejected);
