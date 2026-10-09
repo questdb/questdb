@@ -136,14 +136,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     // overloads below.
     private static final byte[] RESPONSE_DURABLE_ACK_PREFIX =
             "\r\nX-QWP-Durable-Ack: ".getBytes(StandardCharsets.US_ASCII);
-    // Legacy confirmation token written by the `boolean durableAckEnabled`
-    // overloads (pre-DurabilityTier callers). Concatenated after
-    // RESPONSE_DURABLE_ACK_PREFIX this reproduces the exact historical
-    // response bytes ("X-QWP-Durable-Ack: enabled"), so callers that have
-    // not migrated to a specific DurabilityTier confirm token see no change
-    // on the wire. Package-private (not private) so QwpIngressUpgradeProcessor's
-    // tier-negotiation handshake can echo the same legacy token for a DEFAULT
-    // (legacy "true") grant, keeping that response byte-identical too.
+    // Confirm token of the `boolean durableAckEnabled` overloads, which send
+    // "X-QWP-Durable-Ack: enabled".
     static final Utf8String RESPONSE_DURABLE_ACK_TOKEN_ENABLED = new Utf8String("enabled");
     // Advertises the server's hard cap on QWP message payload bytes so the
     // ingest client can size its batches without trial-and-error. Without this
@@ -441,9 +435,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
 
     /**
      * Same as {@link #responseSize(byte[], int, byte[], Utf8Sequence, byte[])}
-     * but takes the legacy {@code boolean} durable-ack flag: {@code true} maps to the
-     * historical {@code "enabled"} confirm token, reproducing the exact pre-refactor
-     * response bytes; {@code false} maps to no confirmation (null token).
+     * with the durable-ack confirmation as a flag: {@code true} sends the {@code "enabled"}
+     * confirm token, {@code false} sends none.
      */
     public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes) {
         return responseSize(acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, null);
@@ -451,9 +444,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
 
     /**
      * Same as {@link #responseSize(byte[], int, byte[], Utf8Sequence, byte[], byte[])}
-     * but takes the legacy {@code boolean} durable-ack flag: {@code true} maps to the
-     * historical {@code "enabled"} confirm token, reproducing the exact pre-refactor
-     * response bytes; {@code false} maps to no confirmation (null token).
+     * with the durable-ack confirmation as a flag: {@code true} sends the {@code "enabled"}
+     * confirm token, {@code false} sends none.
      */
     public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes) {
         return responseSize(acceptKey, qwpVersion, contentEncodingBytes,
@@ -463,9 +455,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
 
     /**
      * Same as {@link #responseSize(byte[], int, byte[], Utf8Sequence, byte[], byte[], byte[])}
-     * but takes the legacy {@code boolean} durable-ack flag: {@code true} maps to the
-     * historical {@code "enabled"} confirm token, reproducing the exact pre-refactor
-     * response bytes; {@code false} maps to no confirmation (null token).
+     * with the durable-ack confirmation as a flag: {@code true} sends the {@code "enabled"}
+     * confirm token, {@code false} sends none.
      */
     public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes) {
         return responseSize(acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, maxBatchSizeBytes, sessionCookieValueBytes, false);
@@ -473,9 +464,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
 
     /**
      * Same as {@link #responseSize(byte[], int, byte[], Utf8Sequence, byte[], byte[], byte[], boolean)}
-     * but takes the legacy {@code boolean} durable-ack flag: {@code true} maps to the
-     * historical {@code "enabled"} confirm token, reproducing the exact pre-refactor
-     * response bytes; {@code false} maps to no confirmation (null token).
+     * with the durable-ack confirmation as a flag: {@code true} sends the {@code "enabled"}
+     * confirm token, {@code false} sends none.
      */
     public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes, boolean durableAckWebSocketProtocol) {
         return responseSize(acceptKey, qwpVersion, contentEncodingBytes,
@@ -637,9 +627,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
 
     /**
      * Same as {@link #writeResponse(long, byte[], int, byte[], Utf8Sequence, byte[])}
-     * but takes the legacy {@code boolean} durable-ack flag: {@code true} maps to the
-     * historical {@code "enabled"} confirm token, reproducing the exact pre-refactor
-     * response bytes; {@code false} maps to no confirmation (null token).
+     * with the durable-ack confirmation as a flag: {@code true} sends the {@code "enabled"}
+     * confirm token, {@code false} sends none.
      */
     public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes) {
         return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, null);
@@ -647,9 +636,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
 
     /**
      * Same as {@link #writeResponse(long, byte[], int, byte[], Utf8Sequence, byte[], byte[])}
-     * but takes the legacy {@code boolean} durable-ack flag: {@code true} maps to the
-     * historical {@code "enabled"} confirm token, reproducing the exact pre-refactor
-     * response bytes; {@code false} maps to no confirmation (null token).
+     * with the durable-ack confirmation as a flag: {@code true} sends the {@code "enabled"}
+     * confirm token, {@code false} sends none.
      */
     public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes) {
         return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes,
@@ -659,9 +647,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
 
     /**
      * Same as {@link #writeResponse(long, byte[], int, byte[], Utf8Sequence, byte[], byte[], byte[])}
-     * but takes the legacy {@code boolean} durable-ack flag: {@code true} maps to the
-     * historical {@code "enabled"} confirm token, reproducing the exact pre-refactor
-     * response bytes; {@code false} maps to no confirmation (null token).
+     * with the durable-ack confirmation as a flag: {@code true} sends the {@code "enabled"}
+     * confirm token, {@code false} sends none.
      */
     public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes) {
         return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, maxBatchSizeBytes, sessionCookieValueBytes, false);
@@ -669,9 +656,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
 
     /**
      * Same as {@link #writeResponse(long, byte[], int, byte[], Utf8Sequence, byte[], byte[], byte[], boolean)}
-     * but takes the legacy {@code boolean} durable-ack flag: {@code true} maps to the
-     * historical {@code "enabled"} confirm token, reproducing the exact pre-refactor
-     * response bytes; {@code false} maps to no confirmation (null token).
+     * with the durable-ack confirmation as a flag: {@code true} sends the {@code "enabled"}
+     * confirm token, {@code false} sends none.
      */
     public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes, boolean durableAckWebSocketProtocol) {
         return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes,
@@ -737,8 +723,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         }
 
         // Optional X-QWP-Durable-Ack confirmation. Emitted only when the
-        // caller supplies a non-null confirm token -- i.e. the client opted
-        // in AND this server granted a durability tier for the connection.
+        // caller supplies a non-null confirm token, that is, the client opted
+        // in and this server granted a durability tier for the connection.
         // Absence tells an opted-in client that this connection will never
         // receive durable acks, so its store-and-forward path must not be
         // allowed to start.
