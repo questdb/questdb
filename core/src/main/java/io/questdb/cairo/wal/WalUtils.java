@@ -211,8 +211,8 @@ public class WalUtils {
                 MemoryMARW metaMem = Vm.getCMARWInstance()
         ) {
             txWriter.ofRW(dstDir.concat(TableUtils.TXN_FILE_NAME).$());
-            // Structural one-shot write, outside any table writer and outside the adaptive epoch's coverage:
-            // take the SYNC grade under ADAPTIVE rather than TxWriter's (correct, but apply-path) lazy gate.
+            // A one-shot structural write outside any table writer, which no adaptive epoch covers: it takes the
+            // SYNC grade under ADAPTIVE, not TxWriter's lazy apply-path grade.
             txWriter.setCommitMode(CommitMode.structuralCommitMode(configuration.getCommitMode()));
             txWriter.resetLagValuesUnsafe();
             TableUtils.openSmallFile(ff, dstDir.trimTo(dstLen), dstLen, metaMem, TableUtils.META_FILE_NAME, MemoryTag.MMAP_TABLE_WRITER);
@@ -235,12 +235,10 @@ public class WalUtils {
         }
         dstDir.trimTo(dstLen);
 
-        // The clone is a NEW table - its _txn/_meta were just reset - so it needs its OWN adaptive epoch
-        // anchor; the source's was excluded from the copy (see isRebaseClonedRootFile) because it binds to
-        // metadata this table no longer has. Publish generation zero HERE, in the staging dir, so the atomic
-        // rename below carries a table that is self-consistent from the first instant it is visible: a boot
-        // that finds the published dir - as the live table after the registry swap, or as a crash-orphan the
-        // root-directory scan adopts - can always validate its epoch instead of refusing to start.
+        // The clone is a new table, with _txn and _meta just reset, so it needs its own epoch anchor;
+        // isRebaseClonedRootFile leaves the source's save point out of the copy. Publish generation zero here, in
+        // the staging dir, so the rename makes visible a table that is self-consistent from the start: a boot
+        // that finds the dir, as the live table or as a crash orphan the root scan adopts, can validate its epoch.
         if (configuration.getCommitMode() == CommitMode.ADAPTIVE && localDurabilityEnabled) {
             DurableEpochManifest.publishInitialAt(
                     configuration,
@@ -263,14 +261,11 @@ public class WalUtils {
             writeRebaseNewMarker(ff, dstDir);
         }
 
-        // ADAPTIVE: durably publish the staging table. ff.copy / MemoryMARW.close's munmap / createSequencerFiles
-        // all leave the freshly built _meta/_txn/sequencer file contents in the page cache only, and the caller's
-        // atomic rename makes NEITHER those contents NOR the published dentry durable -- the dentry needs an
-        // fsync of the DESTINATION parent, which the caller issues right after the rename. Recursively MS_SYNC + fdatasync
-        // every file so a power loss cannot publish a table with a size-0 _meta (which recovery would suspend on).
-        // Sync-BEFORE-rename is required: startup adopts the new dir by its presence at the final path, so it must
-        // already be durable when the rename makes it adoptable. Gated on the same mode that decided the epoch
-        // baseline above, so the two cannot disagree.
+        // ADAPTIVE makes the staging table durable before the caller's rename publishes it. ff.copy, the munmap in
+        // MemoryMARW.close and createSequencerFiles leave the new _meta, _txn and sequencer files in the page
+        // cache, and the rename makes neither them nor the new entry durable (the caller fsyncs the destination
+        // parent after it). Startup adopts the dir by its presence at the final path, so without this sync a
+        // power loss could publish a table with a size-0 _meta, which recovery suspends on.
         if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
             dstDir.trimTo(dstLen);
             syncStagingTreeDurable(ff, dstDir, configuration.getWriterFileOpenOpts());
@@ -278,15 +273,12 @@ public class WalUtils {
         }
     }
 
-    // Recursively make every file under {@code dir} device-durable (full-range MS_SYNC msync + fdatasync of the
-    // mmap-written content), then fsync {@code dir} itself, so an ALTER TABLE ... REBASE WAL staging table is
-    // crash-durable before the caller's atomic rename publishes it (see cloneTableDirForRebase). ADAPTIVE-gated
-    // by the caller. Hard-linked partition columns are synced too: durability is tracked per path, so an
-    // unsynced new path would be lost on a crash even though it shares the source table's durable inode. The
-    // DIRECTORY fsync is required in addition to the per-file content fsync: on POSIX, fdatasync of a newly
-    // created file's CONTENT does NOT make its DIRECTORY ENTRY (dentry) durable — only fsync of the parent
-    // directory does. Children are synced before {@code dir}, so a child dir's own dentries are journaled
-    // before its dentry is journaled into this parent. {@code dir} is restored to its entry length.
+    // Recursively makes every file under {@code dir} durable (MS_SYNC msync of the full range, then fdatasync),
+    // then fsyncs {@code dir}, so a REBASE WAL staging table is durable before the caller's rename publishes it.
+    // Hard-linked partition columns are synced too: durability is tracked per path, so an unsynced new path can
+    // be lost even though it shares a durable inode. fdatasync of a new file does not make its directory entry
+    // durable, only an fsync of the parent does. Children are synced before {@code dir}, so a child directory's
+    // entries are durable before its own entry in this parent. {@code dir} is restored to its entry length.
     private static void syncStagingTreeDurable(FilesFacade ff, Path dir, int fileOpts) {
         final int len = dir.size();
         final long pFind = ff.findFirst(dir.$());
@@ -303,11 +295,9 @@ public class WalUtils {
                     }
                     dir.trimTo(len).concat(pName);
                     final int type = ff.findType(pFind);
-                    // DT_UNKNOWN counts as a file, matching TableWriter.fsyncAttachedPartitionFiles: some
-                    // filesystems report it for regular files. Recursing on one now that the enumeration is
-                    // fail-stop would findFirst() a FILE -> ENOTDIR -> -1 -> abort the whole REBASE WAL,
-                    // where before the fail-stop it fell through and was still made durable by the
-                    // directory sync below.
+                    // DT_UNKNOWN counts as a file, as in TableWriter.fsyncAttachedPartitionFiles: some file
+                    // systems report it for regular files, and recursing into a file fails the enumeration
+                    // and with it the whole REBASE WAL.
                     if (type == Files.DT_FILE || type == Files.DT_UNKNOWN) {
                         fsyncMappedFile(ff, dir, fileOpts);
                     } else {
@@ -320,19 +310,15 @@ public class WalUtils {
                 dir.trimTo(len);
             }
         }
-        // Now that every child (file content + nested dirs) is durable, fsync THIS directory so the newly
-        // created children's dentries are journaled. Without it a crash could publish (via the rename) a
-        // directory whose entries point at not-yet-durable inodes.
+        // With every child durable, fsync this directory so the children's entries are durable before the
+        // rename publishes it.
         fsyncDirDurable(ff, dir);
     }
 
-    // fsync a single staging DIRECTORY so its dentries are journaled. Windows-guarded (directory fsync is a
-    // POSIX-only operation).
-    // Fail-stop, matching TableUtils.fsyncDirDurable: this barrier is what stands between a power loss and a
-    // rename publishing a table whose dentries point at non-durable inodes, so an unopenable directory must
-    // propagate rather than return success. A silently skipped barrier is indistinguishable from one that
-    // never existed -- and openRO here can fail for transient reasons (EMFILE under load), not just for
-    // reasons that would doom the rebase anyway.
+    // fsyncs one staging directory so its entries are durable; a no-op on Windows, which has no directory fsync.
+    // Fail-stop, as TableUtils.fsyncDirDurable: this barrier stands between a power loss and a rename that
+    // publishes entries pointing at non-durable inodes. openRO can fail for transient reasons such as EMFILE,
+    // so a failure propagates instead of skipping the barrier.
     private static void fsyncDirDurable(FilesFacade ff, Path dir) {
         if (Os.isWindows()) {
             return;
@@ -638,12 +624,10 @@ public class WalUtils {
         }
     }
 
-    // Whether a top-level file should be COPIED into a rebase clone (everything except transient markers and
-    // the SOURCE table's save point files). The save point is deliberately excluded: the clone resets
-    // _txn/_meta to a brand-new table, so a copied save point would be bound to metadata this
-    // table no longer has and could never validate - leaving a published dir that recovery reads as "no
-    // trustworthy adaptive epoch generation" and refuses to start on. The clone publishes its OWN
-    // generation-zero baseline instead (see cloneTableDirForRebase).
+    // Whether a top-level file is copied into a rebase clone: every file except the source's work and rebase
+    // files and its save point files. The clone resets _txn and _meta to a new table, so a copied save point
+    // could never validate, and recovery would refuse to start on the published dir. The clone publishes its
+    // own generation-zero save point instead (cloneTableDirForRebase).
     private static boolean isRebaseClonedRootFile(CharSequence name) {
         if (Chars.equals(name, TableUtils.TODO_FILE_NAME)
                 || Chars.equals(name, CONVERT_FILE_NAME)
@@ -664,28 +648,19 @@ public class WalUtils {
     }
 
     /**
-     * A surgical alternative to invalidating a materialized view that a crash left AHEAD of its base.
-     *
-     * <p>Today a view whose {@code lastRefreshBaseTxn} exceeds the base's recovered txn is invalidated
-     * wholesale, so it serves nothing until a FULL refresh rebuilds it. That is correct but expensive:
-     * on a large view a crash that discards a handful of at-risk base txns costs a complete rebuild.
-     *
-     * <p>It is avoidable because every mat-view WAL commit records BOTH the base txn it derived from
-     * ({@link WalEventCursor.MatViewDataInfo#getLastRefreshBaseTableTxn()}) and the timestamp range it
-     * replaced. So the view's WAL is a log of (data, covering base txn) pairs, and the txns to undo are
-     * exactly those recorded above the surviving base txn.
-     *
-     * <p>INVARIANT this relies on: a view txn recorded with {@code baseTxn = N} was refreshed against a
-     * reader FIXED at applied base txn N (see MatViewRefreshJob's {@code engine.detachReader}), so it can
-     * only contain data derivable from base txns &lt;= N. Discarding exactly the txns with
-     * {@code baseTxn > cut} therefore leaves the view consistent with the base -- independently of WHAT
-     * those txns wrote, which is why this also covers O3 late data that a refresh-bound clamp cannot.
-     *
-     * <p>Walks the view's own sequencer transaction log BACKWARDS (same traversal as
-     * {@link #readMatViewState}), unioning the replaced ranges of every txn above the cut and stopping at
-     * the first txn at or below it. Returns false when the range cannot be bounded -- an unreadable event,
-     * an invalidation already in the log, or a log exhausted without reaching the cut -- and the caller
-     * must then fall back to invalidation. Never throws: a failed scan degrades to today's behaviour.
+     * Plans the repair of a materialized view that a crash left ahead of its base table, so that the caller
+     * can undo the view txns recorded above {@code baseTxnCut} instead of invalidating the view.
+     * <p>
+     * Every mat-view WAL commit records the base txn it derived from
+     * ({@link WalEventCursor.MatViewDataInfo#getLastRefreshBaseTableTxn()}) and the timestamp range it replaced.
+     * A view txn recorded with base txn N was refreshed against a reader fixed at base txn N (MatViewRefreshJob's
+     * {@code engine.detachReader}), so it holds only data derived from base txns up to N. Discarding exactly the
+     * txns above the cut leaves the view consistent with the base, whatever they wrote, O3 late data included.
+     * <p>
+     * Walks the view's transaction log backwards, as {@link #readMatViewState} does, and unions the replaced
+     * ranges of the txns above the cut. Returns false, and never throws, when the range cannot be bounded: an
+     * unreadable event, an invalidation in the log, or a log exhausted before the cut. The caller then
+     * invalidates the view.
      *
      * @param baseTxnCut the base table's recovered txn; view txns recorded above this must be undone
      * @param plan       out-parameter, populated only when this returns true
@@ -745,8 +720,8 @@ public class WalUtils {
             }
             return false;
         } catch (Throwable th) {
-            // A repair is an OPTIMISATION over invalidation; it must never turn a recoverable
-            // database into a failed boot. Any scan failure degrades to the caller's fallback.
+            // A repair is an optimisation over invalidation and must never fail a boot: any scan failure
+            // falls back to invalidation.
             return false;
         }
     }
@@ -756,9 +731,8 @@ public class WalUtils {
     private static final int REPAIR_SCAN_ABORT = 2;
 
     /**
-     * One step of {@link #findMatViewRepairPlan}'s backward walk. Deliberately does NOT close
-     * {@code walEventReader} (unlike {@link #processTransaction}, which consumes it in a
-     * try-with-resources because it only ever reads ONE transaction) -- this scan reads many.
+     * One step of the backward walk of {@link #findMatViewRepairPlan}. The walk reads many transactions with one
+     * {@code walEventReader}, so, unlike {@link #processTransaction}, this method does not close it at the end.
      */
     private static int inspectRepairTxn(
             MemoryCMR mem,
@@ -777,12 +751,8 @@ public class WalUtils {
             return REPAIR_SCAN_ABORT;
         }
         tablePath.trimTo(tablePathLen).concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
-        // MUST close between reads. WalEventReader documents itself as "re-usable AFTER close"
-        // and readMatViewState honours that with a try-with-resources per call -- it only ever
-        // reads one txn. Calling of() twice WITHOUT closing does not reposition the cursor: the
-        // second read returns the FIRST record's payload under a garbage type. Reproduced on a
-        // clean, never-crashed database: every cut reported the same "INVALIDATE ... baseTxn=8793
-        // reason=''" -- baseTxn identical to the newest txn, which is what gave it away.
+        // Close before each read: WalEventReader is reusable only after close, and of() without a close does
+        // not reposition the cursor, so the read would return the first record's payload under a garbage type.
         final WalEventCursor cursor;
         try {
             walEventReader.close();
@@ -792,17 +762,13 @@ public class WalUtils {
             return REPAIR_SCAN_ABORT;
         }
         if (cursor.getType() == MAT_VIEW_INVALIDATE) {
-            // MAT_VIEW_INVALIDATE is a DUAL-PURPOSE state record, not necessarily an invalidation:
-            // WalWriter.resetMatViewState "marks the materialized view as invalid OR RESETS its
-            // invalidation status, depending on the input values", and every refresh writes one with
-            // invalid=false to carry its refresh intervals. The view's WAL therefore alternates
-            // MAT_VIEW_DATA / MAT_VIEW_INVALIDATE, and branching on the TYPE aborted this scan one txn
-            // in, every time -- on crash states AND on a clean database that never invalidated anything.
-            // Branch on the FLAG.
+            // MAT_VIEW_INVALIDATE is a state record that may or may not invalidate: every refresh writes one
+            // with invalid=false to carry its refresh intervals (WalWriter.resetMatViewState), so the view's WAL
+            // alternates MAT_VIEW_DATA and MAT_VIEW_INVALIDATE. Branch on the invalid flag, not on the type.
             final WalEventCursor.MatViewInvalidationInfo inv = cursor.getMatViewInvalidationInfo();
             if (inv.isInvalid()) {
                 if (Chars.equals(inv.getInvalidationReason(), MatViewState.REPAIR_PENDING_REASON)) {
-                    // A deferred repair writes this marker before touching data. Its watermark is
+                    // A deferred repair writes this record before touching data. Its watermark is
                     // the repair cut, not evidence that the stranded window has been recomputed.
                     return REPAIR_SCAN_CONTINUE;
                 }
