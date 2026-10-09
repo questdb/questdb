@@ -2073,4 +2073,19 @@ public class InsertCastTest extends AbstractCairoTest {
             assertException("INSERT INTO l SELECT v FROM d", 0, "inconvertible value");
         });
     }
+    @Test
+    public void testFloatAndDoubleWithinRangeAreAccepted() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f (v FLOAT)");
+            execute("CREATE TABLE d (v DOUBLE)");
+            execute("CREATE TABLE i (v INT)");
+            execute("CREATE TABLE l (v LONG)");
+            execute("INSERT INTO f VALUES (100.5), (-100.5)");
+            execute("INSERT INTO d VALUES (100.5), (-100.5)");
+            execute("INSERT INTO i SELECT v FROM f");
+            execute("INSERT INTO l SELECT v FROM d");
+            assertQuery("v\n100\n-100\n", "SELECT v FROM i", null, true);
+            assertQuery("v\n100\n-100\n", "SELECT v FROM l", null, true);
+        });
+    }
 }
