@@ -184,13 +184,11 @@ public final class Files {
 
     /**
      * Returns the total size, in bytes, of the regular files below the given directory.
-     * The walk follows symlinks to directories, does not count symlinks to files, and
-     * returns 0 when the path does not exist or is not a directory.
+     * The walk follows symlinks to directories (and junctions on Windows), but not into a
+     * directory it is already inside of, does not count symlinks to files, and returns 0
+     * when the path does not exist or is not a directory.
      */
     public static long getDirSize(Path path) {
-        if (Os.isWindows()) {
-            return getDirSizeWindows(path);
-        }
         return getDirSize0(path.$().ptr());
     }
 
@@ -630,33 +628,6 @@ public final class Files {
     private static native int fsync(int fd);
 
     private native static long getDirSize0(long lpszPath);
-
-    // NTFS can report stale sizes in directory listings for files that are open for
-    // writing, so the Windows walk asks every file for its size.
-    private static long getDirSizeWindows(Path path) {
-        long pFind = findFirst(path.$().ptr());
-        if (pFind > 0L) {
-            int len = path.size();
-            try {
-                long totalSize = 0L;
-                do {
-                    long nameUtf8Ptr = findName(pFind);
-                    path.trimTo(len).concat(nameUtf8Ptr).$();
-                    if (findType(pFind) == Files.DT_FILE) {
-                        totalSize += length(path.$());
-                    } else if (notDots(nameUtf8Ptr)) {
-                        totalSize += getDirSizeWindows(path);
-                    }
-                }
-                while (findNext(pFind) > 0);
-                return totalSize;
-            } finally {
-                findClose(pFind);
-                path.trimTo(len);
-            }
-        }
-        return 0L;
-    }
 
     private static native long getDiskSize(long lpszPath);
 

@@ -36,7 +36,10 @@
 #include "files.h"
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <ntdef.h>
+#include <wchar.h>
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         (JNIEnv *e, jclass cls, jlong lpszFrom, jlong lpszTo) {
@@ -320,14 +323,28 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readNonNegativeLong
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified
         (JNIEnv *e, jclass cl, jlong lpszName) {
 
-    HANDLE handle = openUtf8(
-            lpszName,
-            FILE_WRITE_ATTRIBUTES,
+    int len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (LPCCH) lpszName, -1, NULL, 0);
+    if (len < 1) {
+        SaveLastError();
+        return -1;
+    }
+    wchar_t buf[len];
+    MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, buf, len);
+
+    // Reading the times needs FILE_READ_ATTRIBUTES only. FILE_FLAG_BACKUP_SEMANTICS lets
+    // CreateFileW open directories too, and symlinks resolve to their targets, like stat().
+    HANDLE handle = CreateFileW(
+            buf,
+            FILE_READ_ATTRIBUTES,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            OPEN_EXISTING
+            NULL,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            NULL
     );
 
     if (handle == INVALID_HANDLE_VALUE) {
+        SaveLastError();
         return -1;
     }
 
@@ -890,6 +907,195 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
         (JNIEnv *e, jclass cl, jlong findPtr) {
     return ((FIND *) findPtr)->find_data->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ?
            com_questdb_std_Files_DT_DIR : com_questdb_std_Files_DT_REG;
+}
+
+#ifndef FIND_FIRST_EX_LARGE_FETCH
+#define FIND_FIRST_EX_LARGE_FETCH 0x00000002
+#endif
+
+// Upper bound on the directory nesting that getDirSize0() descends into. Table directories
+// are a handful of levels deep; the bound caps the recursion.
+#define DIR_SIZE_MAX_DEPTH 64
+// Capacity of the path buffer in wide characters: the longest path Windows supports.
+#define DIR_SIZE_PATH_CAPACITY 32768
+
+typedef struct {
+    DWORD volume;
+    DWORD index_high;
+    DWORD index_low;
+    // the identity is resolved lazily, only when a directory symlink or junction shows up
+    BOOL is_resolved;
+} dir_size_dir_id_t;
+
+typedef struct {
+    // path of the entry being visited, NUL-terminated
+    wchar_t path[DIR_SIZE_PATH_CAPACITY];
+    // identity of each directory on the current descent path, so that a symlink or junction
+    // pointing back at an ancestor does not send the walk into a cycle
+    dir_size_dir_id_t ancestors[DIR_SIZE_MAX_DEPTH];
+    // length of the path of each directory on the current descent path
+    size_t ancestor_path_len[DIR_SIZE_MAX_DEPTH];
+} dir_size_ctx_t;
+
+static inline BOOL dir_size_is_dots(const wchar_t *name) {
+    return name[0] == L'.' && (name[1] == L'\0' || (name[1] == L'.' && name[2] == L'\0'));
+}
+
+// Resolves the identity of the directory at the given path, following symlinks and junctions.
+static BOOL dir_size_resolve_id(const wchar_t *path, dir_size_dir_id_t *id) {
+    HANDLE handle = CreateFileW(
+            path,
+            FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            NULL,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            NULL
+    );
+    if (handle == INVALID_HANDLE_VALUE) {
+        return FALSE;
+    }
+    BY_HANDLE_FILE_INFORMATION info;
+    const BOOL ok = GetFileInformationByHandle(handle, &info);
+    CloseHandle(handle);
+    if (!ok) {
+        return FALSE;
+    }
+    id->volume = info.dwVolumeSerialNumber;
+    id->index_high = info.nFileIndexHigh;
+    id->index_low = info.nFileIndexLow;
+    id->is_resolved = TRUE;
+    return TRUE;
+}
+
+// Decides whether the walk may descend into the directory symlink or junction whose path
+// ctx->path holds: it may not when the link resolves to a directory on the descent path,
+// or when the identities needed for that check cannot be resolved.
+static BOOL dir_size_may_follow_link(dir_size_ctx_t *ctx, int depth) {
+    dir_size_dir_id_t target;
+    if (!dir_size_resolve_id(ctx->path, &target)) {
+        return FALSE;
+    }
+    for (int i = 0; i < depth; i++) {
+        dir_size_dir_id_t *ancestor = &ctx->ancestors[i];
+        if (!ancestor->is_resolved) {
+            // the ancestor path is a prefix of ctx->path, terminate it there for the lookup
+            const size_t len = ctx->ancestor_path_len[i];
+            const wchar_t saved = ctx->path[len];
+            ctx->path[len] = L'\0';
+            const BOOL ok = dir_size_resolve_id(ctx->path, ancestor);
+            ctx->path[len] = saved;
+            if (!ok) {
+                return FALSE;
+            }
+        }
+        if (ancestor->volume == target.volume
+            && ancestor->index_high == target.index_high
+            && ancestor->index_low == target.index_low) {
+            return FALSE;
+        }
+    }
+    ctx->ancestors[depth] = target;
+    return TRUE;
+}
+
+// Sums the sizes of all regular files below the directory whose path, len characters long,
+// ctx->path holds. FindFirstFileExW() lists the entries, but the sizes it reports come from
+// the directory index, which NTFS updates lazily for files open for writing, so the walk
+// asks every file for its size with GetFileAttributesExW(). That call does not follow
+// symlinks, so symlinks to files do not contribute, matching the POSIX walk.
+static jlong dir_size_windows(dir_size_ctx_t *ctx, size_t len, int depth) {
+    if (len + 2 >= DIR_SIZE_PATH_CAPACITY) {
+        return 0;
+    }
+    ctx->ancestor_path_len[depth] = len;
+    ctx->path[len] = L'\\';
+    ctx->path[len + 1] = L'*';
+    ctx->path[len + 2] = L'\0';
+
+    WIN32_FIND_DATAW entry;
+    HANDLE find = FindFirstFileExW(
+            ctx->path,
+            FindExInfoBasic,
+            &entry,
+            FindExSearchNameMatch,
+            NULL,
+            FIND_FIRST_EX_LARGE_FETCH
+    );
+    if (find == INVALID_HANDLE_VALUE) {
+        ctx->path[len] = L'\0';
+        return 0;
+    }
+
+    jlong total = 0;
+    do {
+        const wchar_t *name = entry.cFileName;
+        if (dir_size_is_dots(name)) {
+            continue;
+        }
+        const size_t name_len = wcslen(name);
+        const size_t child_len = len + 1 + name_len;
+        if (child_len + 2 >= DIR_SIZE_PATH_CAPACITY) {
+            continue;
+        }
+        ctx->path[len] = L'\\';
+        memcpy(ctx->path + len + 1, name, (name_len + 1) * sizeof(wchar_t));
+
+        if ((entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+            WIN32_FILE_ATTRIBUTE_DATA data;
+            if (GetFileAttributesExW(ctx->path, GetFileExInfoStandard, &data)) {
+                total += (jlong) (((uint64_t) data.nFileSizeHigh << 32) | data.nFileSizeLow);
+            }
+            continue;
+        }
+
+        if (depth + 1 >= DIR_SIZE_MAX_DEPTH) {
+            continue;
+        }
+        if (entry.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+            if (!dir_size_may_follow_link(ctx, depth + 1)) {
+                continue;
+            }
+        } else {
+            // a plain directory cannot close a cycle, resolve its identity only if needed
+            ctx->ancestors[depth + 1].is_resolved = FALSE;
+        }
+        total += dir_size_windows(ctx, child_len, depth + 1);
+    } while (FindNextFileW(find, &entry));
+
+    FindClose(find);
+    ctx->path[len] = L'\0';
+    return total;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getDirSize0
+        (JNIEnv *e, jclass cl, jlong lpszPath) {
+    dir_size_ctx_t *ctx = malloc(sizeof(dir_size_ctx_t));
+    if (ctx == NULL) {
+        return 0;
+    }
+
+    jlong total = 0;
+    const int len = MultiByteToWideChar(
+            CP_UTF8,
+            MB_ERR_INVALID_CHARS,
+            (LPCCH) lpszPath,
+            -1,
+            ctx->path,
+            DIR_SIZE_PATH_CAPACITY
+    );
+    if (len > 1) {
+        // len counts the terminating NUL; drop trailing separators, but keep the one of "C:\"
+        size_t path_len = (size_t) len - 1;
+        while (path_len > 3 && (ctx->path[path_len - 1] == L'\\' || ctx->path[path_len - 1] == L'/')) {
+            path_len--;
+        }
+        ctx->path[path_len] = L'\0';
+        ctx->ancestors[0].is_resolved = FALSE;
+        total = dir_size_windows(ctx, path_len, 0);
+    }
+    free(ctx);
+    return total;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock

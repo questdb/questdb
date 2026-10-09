@@ -53,7 +53,6 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
 
     @Test
     public void testCachesSealedPartitions() throws Exception {
-        assumeDirectoryMtimeSupported();
         final WalkRecordingFilesFacade ff = new WalkRecordingFilesFacade();
         assertMemoryLeak(ff, () -> {
             createDailyTable("x", false);
@@ -191,8 +190,9 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
             setClockPastRacyWindow();
             assertDiskSize("x");
 
-            // keep the directory modification time of the change apart from the cached one
-            Os.sleep(10);
+            // keep the directory modification time of the change apart from the cached one:
+            // file systems take timestamps from a clock that ticks every few milliseconds
+            Os.sleep(50);
             // the index files land next to the column files of every partition: the directories
             // keep their names and row counts, only their modification times change
             execute("ALTER TABLE x ALTER COLUMN sym ADD INDEX");
@@ -258,7 +258,6 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
 
     @Test
     public void testDoesNotCacheRecentlyModifiedPartitions() throws Exception {
-        assumeDirectoryMtimeSupported();
         final WalkRecordingFilesFacade ff = new WalkRecordingFilesFacade();
         assertMemoryLeak(ff, () -> {
             createDailyTable("x", false);
@@ -335,7 +334,10 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
 
     @Test
     public void testExpiredEntriesPickUpInPlaceChanges() throws Exception {
-        assumeDirectoryMtimeSupported();
+        // The test needs a file to grow without changing the modification time of its
+        // directory. POSIX file systems guarantee that; NTFS updates the copy of the file
+        // size kept in the directory index on close, which may touch the directory.
+        Assume.assumeFalse(Os.isWindows());
         setProperty(PropertyKey.CAIRO_TABLE_STORAGE_CACHE_TTL, 60_000);
         assertMemoryLeak(() -> {
             createDailyTable("x", false);
@@ -408,11 +410,6 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
         }
         Assert.assertEquals(expected, measureDiskSize(tableName));
         return expected;
-    }
-
-    private static void assumeDirectoryMtimeSupported() {
-        // Files.getLastModified() cannot read directories on Windows, which leaves the cache cold
-        Assume.assumeFalse(Os.isWindows());
     }
 
     private static void createDailyTable(String tableName, boolean isWal) throws SqlException {

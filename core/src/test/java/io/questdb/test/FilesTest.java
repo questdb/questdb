@@ -715,6 +715,23 @@ public class FilesTest {
     }
 
     @Test
+    public void testLastModifiedOfDirectory() throws Exception {
+        assertMemoryLeak(() -> {
+            final String dir = temporaryFolder.newFolder("mtime").getAbsolutePath();
+            try (Path path = new Path()) {
+                final long before = Files.getLastModified(path.of(dir).$());
+                Assert.assertTrue(before > 0);
+                // file systems take timestamps from a clock that ticks every few milliseconds
+                Os.sleep(50);
+                // creating an entry changes the modification time of the directory, which
+                // TableDiskSizeCache relies on
+                createTempFile(path.of(dir), "f.d", "data");
+                Assert.assertTrue(Files.getLastModified(path.of(dir).$()) > before);
+            }
+        });
+    }
+
+    @Test
     public void testListDir() throws Exception {
         assertMemoryLeak(() -> {
             String temp = temporaryFolder.getRoot().getAbsolutePath();
