@@ -35,16 +35,12 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * A helper handed someone else's {@link Path} must give it back at the length it received it.
- * <p>
- * {@code DurableEpochManifest.write} and {@code DurableEpochManifest.fsyncDirectory} receive the table path.
- * If either leaves a suffix such as {@code _epoch.manifest.<generation>} on it, the next consumer of the path
- * concatenates onto the suffix, and every structural DDL on an adaptive table fails to open its swap file. A
- * platform guard must not wrap a side effect that is not platform-specific: on Windows the directory fsync is
- * skipped, but the path must still be restored. The tests assert the contract directly, so it is observable on
- * every platform.
- * <p>
- * The class also covers the rejection branches of {@code DurableEpochManifest.validate()}.
+ * {@code DurableEpochManifest.write} and {@code DurableEpochManifest.fsyncDirectory} must give back the table
+ * {@link Path} they receive at its original length. A leftover suffix such as {@code _epoch.manifest.<generation>}
+ * makes the next consumer concatenate onto it, and every structural DDL on an adaptive table then fails to open its
+ * swap file. On Windows the directory fsync is skipped but the path must still be restored, so the tests assert the
+ * contract directly on every platform. The class also covers the rejection branches of
+ * {@code DurableEpochManifest.validate()}.
  */
 public class DurableEpochPathRestoreTest extends AbstractCairoTest {
 
