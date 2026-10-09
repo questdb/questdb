@@ -51,7 +51,7 @@ import static io.questdb.cairo.arr.ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES;
  * <p>
  * Focuses on the monotonicity-based torn-write guard:
  * <ol>
- *   <li>Healthy null-prefix: [NULL, NULL, real, real] must NOT throw — the real entries
+ *   <li>Healthy null-prefix: [NULL, NULL, real, real] must not throw: the real entries
  *       have offset=0 because the two NULLs wrote no data bytes, so data-end(row-1)=0
  *       and 0 &lt; 0 is false.</li>
  *   <li>Torn tail: zeroing the last entry's offset bytes must throw with a message
@@ -69,8 +69,8 @@ public class ArrayFdAccessorTest extends AbstractTest {
                 // --- Build a 1D double[] aux+data file with [NULL, NULL, ARRAY[1,2,3], ARRAY[4,5,6]] ---
                 //
                 // Null entries: offset=dataMem.getAppendOffset()=0, size=0. The two nulls both
-                // produce offset=0,size=0 → data-end=0. The first real entry (row 2) gets offset=0
-                // because no data bytes were written for the nulls; that is VALID and must not throw.
+                // produce offset=0,size=0 -> data-end=0. The first real entry (row 2) gets offset=0
+                // because no data bytes were written for the nulls; that is valid and must not throw.
                 //
                 // ARRAY[1.0,2.0,3.0] data layout written by writeDataEntry:
                 //   writeShape:       4 bytes  (dim count=3 as int, 1D so 1 int)
@@ -82,10 +82,10 @@ public class ArrayFdAccessorTest extends AbstractTest {
                 // ARRAY[4.0,5.0,6.0] - identical layout, size = 32
                 //
                 // So:
-                //   row 0 (NULL):  offset=0, size=0  → end=0
-                //   row 1 (NULL):  offset=0, size=0  → end=0
-                //   row 2 (real):  offset=0, size=32 → end=32
-                //   row 3 (real):  offset=32, size=32 → end=64
+                //   row 0 (NULL):  offset=0, size=0  -> end=0
+                //   row 1 (NULL):  offset=0, size=0  -> end=0
+                //   row 2 (real):  offset=0, size=32 -> end=32
+                //   row 3 (real):  offset=32, size=32 -> end=64
 
                 final int arraySize;  // bytes per non-null entry (computed after building)
 
@@ -122,14 +122,14 @@ public class ArrayFdAccessorTest extends AbstractTest {
                     arraySize = (int) (dataEndAfter - dataEndBefore);  // should be 32
                 }
 
-                // --- Healthy read: rows 2 and 3 must NOT throw ---
+                // --- Healthy read: rows 2 and 3 must not throw ---
                 long auxFdClean = ff.openRO(auxPath.$());
                 try {
-                    // Row 2 (first real after null prefix): offset=0, prevEnd=0, 0<0 is false → no throw
+                    // Row 2 (first real after null prefix): offset=0, prevEnd=0, 0<0 is false -> no throw
                     long sz2 = ArrayTypeDriver.INSTANCE.getDataVectorSizeAtFromFd(ff, auxFdClean, 2);
                     Assert.assertEquals("row 2 data end", arraySize, sz2);
 
-                    // Row 3 (second real): offset=arraySize, prevEnd=arraySize, arraySize<arraySize is false → no throw
+                    // Row 3 (second real): offset=arraySize, prevEnd=arraySize, arraySize<arraySize is false -> no throw
                     long sz3 = ArrayTypeDriver.INSTANCE.getDataVectorSizeAtFromFd(ff, auxFdClean, 3);
                     Assert.assertEquals("row 3 data end", (long) 2 * arraySize, sz3);
                 } finally {
@@ -137,8 +137,8 @@ public class ArrayFdAccessorTest extends AbstractTest {
                 }
 
                 // --- Torn tail: zero the offset bytes of row 3 (bytes [0,8) of aux entry 3) ---
-                // After zeroing: row 3 has offset=0, prevEnd=arraySize → 0 < arraySize → THROW.
-                // Use RandomAccessFile so we do an in-place partial overwrite without truncating.
+                // After zeroing: row 3 has offset=0, prevEnd=arraySize -> 0 < arraySize -> throw.
+                // RandomAccessFile overwrites in place, without truncating.
                 long row3AuxOffset = (long) 3 * ARRAY_AUX_WIDTH_BYTES;
                 try (RandomAccessFile raf = new RandomAccessFile(auxPath.toString(), "rw")) {
                     raf.seek(row3AuxOffset);
