@@ -44,6 +44,8 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolCountProvider;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -52,6 +54,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewDefinition;
@@ -64,6 +67,8 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
@@ -2186,6 +2191,67 @@ public class CheckpointTest extends AbstractCairoTest {
         });
     }
 
+    // Restore resets a saved lag, and the apply job re-applies the lag's transactions from the copied WAL.
+    private void assertCheckpointRestoreReappliesSavedLag(boolean negativeLagChecksum) throws Exception {
+        execute("create table t (x long, ts timestamp) timestamp(ts) partition by DAY WAL");
+        drainWalQueue();
+        final TableToken token = engine.verifyTableName("t");
+        if (negativeLagChecksum) {
+            // A table with many commits: every txn from 73,046 to 145,130 has a negative empty-lag checksum.
+            engine.releaseInactive();
+            try (TxWriter txWriter = new TxWriter(configuration.getFilesFacade(), configuration)) {
+                txWriter.ofRW(Path.getThreadLocal(configuration.getDbRoot()).concat(token).concat(TableUtils.TXN_FILE_NAME).$());
+                final ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+                while (txWriter.getTxn() < 73_100) {
+                    txWriter.commit(symbolCounts);
+                }
+            }
+        }
+        execute("insert into t values (1, '2022-02-24T00:00:00.000000Z')");
+        execute("insert into t values (2, '2022-02-24T01:00:00.000000Z')");
+        execute("insert into t values (3, '2022-02-24T02:00:00.000000Z')");
+        execute("insert into t values (4, '2022-02-24T03:00:00.000000Z')");
+        // Out of order: the transaction before it stays in the lag.
+        execute("insert into t values (5, '2022-02-24T02:30:00.000000Z')");
+
+        // One transaction per pass, until a pass ends with a lag saved in _txn, as the apply job leaves it when
+        // its time quota runs out.
+        setProperty(CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+        try (ApplyWal2TableJob applyJob = createWalApplyJob()) {
+            for (int i = 0; i < 20 && readSavedLagTxnCount(token, negativeLagChecksum) == 0; i++) {
+                engine.getTableSequencerAPI().getTxnTracker(token).getMemPressureControl().setMaxBlockRowCount(1);
+                applyJob.run();
+            }
+        }
+        engine.releaseInactive();
+        Assert.assertTrue("the checkpoint must hold a saved lag", readSavedLagTxnCount(token, negativeLagChecksum) > 0);
+
+        execute("checkpoint create");
+        engine.clear();
+        createTriggerFile();
+        engine.checkpointRecover();
+
+        setProperty(CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, -1);
+        drainWalQueueBounded();
+        assertQuery("t")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        x\tts
+                        1\t2022-02-24T00:00:00.000000Z
+                        2\t2022-02-24T01:00:00.000000Z
+                        3\t2022-02-24T02:00:00.000000Z
+                        5\t2022-02-24T02:30:00.000000Z
+                        4\t2022-02-24T03:00:00.000000Z
+                        """);
+        assertQuery("select suspended, writerTxn = sequencerTxn caught_up from wal_tables() where name = 't'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("suspended\tcaught_up\nfalse\ttrue\n");
+        engine.checkpointRelease();
+    }
+
     private void fabricateStaleEpochTrio(TableToken token) {
         try (Path src = new Path(); Path dst = new Path()) {
             final String dbRoot = configuration.getDbRoot();
@@ -2207,11 +2273,31 @@ public class CheckpointTest extends AbstractCairoTest {
         }
     }
 
+    private int readSavedLagTxnCount(TableToken token, boolean negativeLagChecksum) {
+        try (TxReader txReader = new TxReader(configuration.getFilesFacade())) {
+            txReader.ofRO(Path.getThreadLocal(configuration.getDbRoot()).concat(token).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+            Assert.assertTrue(txReader.unsafeLoadAll());
+            final int emptyLagChecksum = TableUtils.calculateTxnLagChecksum(txReader.getTxn(), 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
+            Assert.assertEquals("txn=" + txReader.getTxn(), negativeLagChecksum, emptyLagChecksum < 0);
+            return txReader.getLagTxnCount();
+        }
+    }
+
     // The fresh baseline that checkpoint recovery publishes is generation zero; generation one is the stale one.
     private boolean staleSavePointExists(TableToken token) {
         try (Path p = new Path()) {
             return ff.exists(p.of(configuration.getDbRoot()).concat(token).concat(DurableEpochManifest.FILE_NAME).put(".1").$());
         }
+    }
+
+    @Test
+    public void testCheckpointRestoreReappliesSavedLag() throws Exception {
+        assertMemoryLeak(() -> assertCheckpointRestoreReappliesSavedLag(false));
+    }
+
+    @Test
+    public void testCheckpointRestoreReappliesSavedLagNegativeLagChecksum() throws Exception {
+        assertMemoryLeak(() -> assertCheckpointRestoreReappliesSavedLag(true));
     }
 
     @Test
@@ -5231,6 +5317,20 @@ public class CheckpointTest extends AbstractCairoTest {
 
     private static void createTriggerFile() {
         Files.touch(triggerFilePath.$());
+    }
+
+    // drainWalQueue() with a bound: a writer that never reaches the sequencer txn re-queues its table on every
+    // apply pass, so an unbounded drain would never return.
+    private static void drainWalQueueBounded() {
+        final CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
+        try (ApplyWal2TableJob applyJob = createWalApplyJob()) {
+            for (int i = 0; i < 20; i++) {
+                if (!applyJob.run() && !checkJob.run()) {
+                    return;
+                }
+            }
+        }
+        Assert.fail("WAL apply did not go idle in 20 passes");
     }
 
     private static File findNativePartitionDir(File tableDir, String partitionPrefix, String requiredFile) {

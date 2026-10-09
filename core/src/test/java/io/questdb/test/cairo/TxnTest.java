@@ -1358,6 +1358,17 @@ public class TxnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testResetLagLeavesEmptyLag() throws Exception {
+        // Checkpoint restore resets a saved lag with resetLagAppliedRows(); conversion to WAL and REBASE WAL with
+        // resetLagValuesUnsafe(). The four-byte lag checksum sits right before the lag transaction count, and the
+        // empty-lag checksum turns negative at txn 73,046, so the txn range covers both signs.
+        TestUtils.assertMemoryLeak(() -> {
+            assertResetLagLeavesEmptyLag("resetLagAppliedRows", false);
+            assertResetLagLeavesEmptyLag("resetLagValuesUnsafe", true);
+        });
+    }
+
+    @Test
     public void testRowCountUpdatePreservesFlagsAndOffset3() throws Exception {
         // A row-count write (updatePartitionSizeByTimestamp on an existing partition) must not be
         // mistaken for a data-version write: it rewrites only the offset-1 size bits, preserving the
@@ -1807,6 +1818,66 @@ public class TxnTest extends AbstractCairoTest {
             Assert.assertTrue(reloadCount.get() > 10);
             LOG.infoW().$("total reload count ").$(reloadCount.get()).$();
         });
+    }
+
+    private void assertResetLagLeavesEmptyLag(String tableName, boolean unsafe) {
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR);
+        model.timestamp();
+        AbstractCairoTest.create(model);
+        final int timestampType = TableUtils.getTimestampType(model);
+        final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+        final ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+        final long savedSeqTxn = 5;
+        final long expectedSeqTxn = unsafe ? 0 : savedSeqTxn;
+        int negativeChecksums = 0;
+        try (Path path = new Path(); TxWriter txWriter = new TxWriter(ff, configuration); TxReader txReader = new TxReader(ff)) {
+            path.of(configuration.getDbRoot()).concat(engine.verifyTableName(tableName)).concat(TXN_FILE_NAME).$();
+            txWriter.ofRW(path.$(), timestampType, PartitionBy.HOUR);
+            txWriter.updatePartitionSizeByTimestamp(0, 42);
+            txWriter.setMaxTimestamp(Micros.HOUR_MICROS / 2);
+            while (txWriter.getTxn() < 73_040) {
+                txWriter.commit(symbolCounts);
+            }
+            for (int i = 0; i < 10; i++) {
+                // A committed record with a saved lag, as the apply job leaves one.
+                txWriter.setSeqTxn(savedSeqTxn);
+                txWriter.setLagTxnCount(3);
+                txWriter.setLagRowCount(10);
+                txWriter.setLagOrdered(true);
+                txWriter.setLagMinTimestamp(1);
+                txWriter.setLagMaxTimestamp(2);
+                txWriter.commit(symbolCounts);
+                final long txn = txWriter.getTxn();
+                // A fresh writer, as the callers open the file.
+                try (TxWriter resetWriter = new TxWriter(ff, configuration)) {
+                    resetWriter.ofRW(path.$(), timestampType, PartitionBy.HOUR);
+                    if (unsafe) {
+                        resetWriter.resetLagValuesUnsafe();
+                    } else {
+                        resetWriter.resetLagAppliedRows();
+                    }
+                }
+                final int emptyLagChecksum = TableUtils.calculateTxnLagChecksum(txn, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
+                if (emptyLagChecksum < 0) {
+                    negativeChecksums++;
+                }
+                final String where = "txn=" + txn + ", emptyLagChecksum=" + emptyLagChecksum;
+                txReader.ofRO(path.$(), timestampType, PartitionBy.HOUR);
+                Assert.assertTrue(where, txReader.unsafeLoadAll());
+                final long baseOffset = txReader.getBaseOffset();
+                Assert.assertEquals(where, 0, peekInt(ff, path.$(), baseOffset + TableUtils.TX_OFFSET_LAG_TXN_COUNT_32));
+                Assert.assertEquals(where, 0, txReader.getLagTxnCount());
+                Assert.assertTrue(where, txReader.isLagOrdered());
+                Assert.assertEquals(where, 0, txReader.getLagRowCount());
+                Assert.assertEquals(where, Long.MAX_VALUE, txReader.getLagMinTimestamp());
+                Assert.assertEquals(where, Long.MIN_VALUE, txReader.getLagMaxTimestamp());
+                Assert.assertEquals(where, expectedSeqTxn, txReader.getSeqTxn());
+                // The writer resumes the apply after seqTxn + lagTxnCount.
+                Assert.assertEquals(where, expectedSeqTxn, txReader.getSeqTxn() + txReader.getLagTxnCount());
+                txReader.clear();
+            }
+        }
+        Assert.assertTrue("the txn range must cover both checksum signs", negativeChecksums > 0 && negativeChecksums < 10);
     }
 
     private static long bodyChecksum(long addr) {

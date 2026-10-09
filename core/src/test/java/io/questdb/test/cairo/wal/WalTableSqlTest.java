@@ -28,6 +28,8 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolCountProvider;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -438,58 +440,12 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
     @Test
     public void testConvertToFromWalWithLagSet() throws Exception {
-        String tableName = testName.getMethodName();
-        execute("create table " + tableName + " as (" +
-                "select x, " +
-                " timestamp_sequence('2022-02-24', 1000000L) ts " +
-                " from long_sequence(1)" +
-                ") timestamp(ts) partition by DAY WAL"
-        );
-        drainWalQueue();
+        testConvertToFromWalWithLagSet0(false);
+    }
 
-        TableToken tt = engine.verifyTableName(tableName);
-        try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
-            Path p = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tt).concat(TXN_FILE_NAME);
-            tw.ofRW(p.$());
-            tw.setLagTxnCount(1);
-            tw.setLagRowCount(1000);
-            tw.setLagMinTimestamp(1_000_000L);
-            tw.setLagMaxTimestamp(100_000_000L);
-            tw.commit(new ObjList<>());
-        }
-
-        execute("alter table " + tableName + " set type bypass wal");
-        engine.releaseInactive();
-        engine.load();
-
-        try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
-            Path p = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tt).concat(TXN_FILE_NAME);
-            tw.ofRW(p.$());
-            Assert.assertEquals(0, tw.getLagRowCount());
-            Assert.assertEquals(0, tw.getLagTxnCount());
-            Assert.assertEquals(Long.MAX_VALUE, tw.getLagMinTimestamp());
-            Assert.assertEquals(Long.MIN_VALUE, tw.getLagMaxTimestamp());
-            // Mess again
-
-            tw.setLagTxnCount(1);
-            tw.setLagRowCount(1000);
-            tw.setLagMinTimestamp(1_000_000L);
-            tw.setLagMaxTimestamp(100_000_000L);
-            tw.commit(new ObjList<>());
-        }
-
-        execute("alter table " + tableName + " set type wal", sqlExecutionContext);
-        engine.releaseInactive();
-        engine.load();
-
-        try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
-            Path p = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tt).concat(TXN_FILE_NAME);
-            tw.ofRW(p.$());
-            Assert.assertEquals(0, tw.getLagRowCount());
-            Assert.assertEquals(0, tw.getLagTxnCount());
-            Assert.assertEquals(Long.MAX_VALUE, tw.getLagMinTimestamp());
-            Assert.assertEquals(Long.MIN_VALUE, tw.getLagMaxTimestamp());
-        }
+    @Test
+    public void testConvertToFromWalWithLagSetNegativeLagChecksum() throws Exception {
+        testConvertToFromWalWithLagSet0(true);
     }
 
     @Test
@@ -1534,6 +1490,56 @@ public class WalTableSqlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRebaseWalNegativeLagChecksum() throws Exception {
+        // REBASE WAL requires suspension to block writes.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " (x long, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            drainWalQueue();
+            engine.releaseInactive();
+            // The clone keeps the source's txn and resets its lag at it.
+            try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
+                Path p = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(engine.verifyTableName(tableName)).concat(TXN_FILE_NAME);
+                tw.ofRW(p.$());
+                commitUntilNegativeEmptyLagChecksum(tw);
+            }
+
+            execute("alter table " + tableName + " suspend wal");
+            execute("alter table " + tableName + " rebase wal");
+            // Before any apply, the clone's _txn holds seqTxn 0 and an empty lag. A lag transaction count of 1
+            // would make the writer skip the first of the two empty seed transactions the rebase commits.
+            try (TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade())) {
+                Path p = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(engine.verifyTableName(tableName)).concat(TXN_FILE_NAME);
+                txReader.ofRO(p.$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+                Assert.assertTrue(txReader.unsafeLoadAll());
+                Assert.assertEquals(0, txReader.getSeqTxn());
+                Assert.assertEquals(0, txReader.getLagTxnCount());
+                Assert.assertTrue(txReader.isLagOrdered());
+                Assert.assertEquals(0, txReader.getLagRowCount());
+            }
+            drainWalQueueBounded();
+            execute("insert into " + tableName + " values (2, '2022-02-24T01:00:00.000000Z')");
+            drainWalQueueBounded();
+
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            x\tts
+                            1\t2022-02-24T00:00:00.000000Z
+                            2\t2022-02-24T01:00:00.000000Z
+                            """);
+            assertQuery("select suspended, writerTxn = sequencerTxn caught_up from wal_tables() where name = '" + tableName + "'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("suspended\tcaught_up\nfalse\ttrue\n");
+        });
+    }
+
+    @Test
     public void testRemoveColumnWalRollsWalSegment() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -2131,6 +2137,28 @@ public class WalTableSqlTest extends AbstractCairoTest {
         Assert.assertFalse(Utf8s.toString(sysPath), Files.exists(sysPath.$()));
     }
 
+    // The empty-lag checksum of every txn below 73,046 is positive; 73,046 is the first negative one.
+    private static void commitUntilNegativeEmptyLagChecksum(TxWriter txWriter) {
+        final ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+        do {
+            txWriter.commit(symbolCounts);
+        } while (TableUtils.calculateTxnLagChecksum(txWriter.getTxn(), 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0) >= 0);
+    }
+
+    // drainWalQueue() with a bound: a writer that never reaches the sequencer txn re-queues its table on every
+    // apply pass, so an unbounded drain would never return.
+    private static void drainWalQueueBounded() {
+        final CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
+        try (ApplyWal2TableJob applyJob = createWalApplyJob()) {
+            for (int i = 0; i < 20; i++) {
+                if (!applyJob.run() && !checkJob.run()) {
+                    return;
+                }
+            }
+        }
+        Assert.fail("WAL apply did not go idle in 20 passes");
+    }
+
     private void runApplyOnce(TableToken token) {
         var control = engine.getTableSequencerAPI().getTxnTracker(token).getMemPressureControl();
         control.setMaxBlockRowCount(1);
@@ -2138,6 +2166,88 @@ public class WalTableSqlTest extends AbstractCairoTest {
         try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
             walApplyJob.run();
         }
+    }
+
+    private void testConvertToFromWalWithLagSet0(boolean negativeLagChecksum) throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+            drainWalQueue();
+
+            TableToken tt = engine.verifyTableName(tableName);
+            try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
+                Path p = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tt).concat(TXN_FILE_NAME);
+                tw.ofRW(p.$());
+                tw.setLagTxnCount(1);
+                tw.setLagRowCount(1000);
+                tw.setLagMinTimestamp(1_000_000L);
+                tw.setLagMaxTimestamp(100_000_000L);
+                tw.commit(new ObjList<>());
+            }
+
+            execute("alter table " + tableName + " set type bypass wal");
+            engine.releaseInactive();
+            engine.load();
+
+            try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
+                Path p = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tt).concat(TXN_FILE_NAME);
+                tw.ofRW(p.$());
+                Assert.assertEquals(0, tw.getLagRowCount());
+                Assert.assertEquals(0, tw.getLagTxnCount());
+                Assert.assertEquals(Long.MAX_VALUE, tw.getLagMinTimestamp());
+                Assert.assertEquals(Long.MIN_VALUE, tw.getLagMaxTimestamp());
+                // Mess again
+
+                tw.setLagTxnCount(1);
+                tw.setLagRowCount(1000);
+                tw.setLagMinTimestamp(1_000_000L);
+                tw.setLagMaxTimestamp(100_000_000L);
+                if (negativeLagChecksum) {
+                    // A table with many commits: the conversion resets the lag at a negative empty-lag checksum.
+                    commitUntilNegativeEmptyLagChecksum(tw);
+                } else {
+                    tw.commit(new ObjList<>());
+                }
+            }
+
+            execute("alter table " + tableName + " set type wal", sqlExecutionContext);
+            engine.releaseInactive();
+            // The conversion runs at startup, where no transaction tracker is left from the table's first WAL life.
+            engine.getTableSequencerAPI().purgeTxnTracker(tt.getDirName());
+            engine.load();
+
+            try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
+                Path p = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tt).concat(TXN_FILE_NAME);
+                tw.ofRW(p.$());
+                Assert.assertEquals(0, tw.getLagRowCount());
+                Assert.assertEquals(0, tw.getLagTxnCount());
+                Assert.assertEquals(Long.MAX_VALUE, tw.getLagMinTimestamp());
+                Assert.assertEquals(Long.MIN_VALUE, tw.getLagMaxTimestamp());
+                Assert.assertEquals(0, tw.getSeqTxn());
+            }
+
+            // The first WAL transaction after the conversion is applied, and the apply job goes idle.
+            execute("insert into " + tableName + " values (2, '2022-02-24T01:00:00.000000Z')");
+            drainWalQueueBounded();
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            x\tts
+                            1\t2022-02-24T00:00:00.000000Z
+                            2\t2022-02-24T01:00:00.000000Z
+                            """);
+            assertQuery("select suspended, writerTxn = sequencerTxn caught_up from wal_tables() where name = '" + tableName + "'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("suspended\tcaught_up\nfalse\ttrue\n");
+        });
     }
 
     private void testCreateDropRestartRestart0() throws Exception {
