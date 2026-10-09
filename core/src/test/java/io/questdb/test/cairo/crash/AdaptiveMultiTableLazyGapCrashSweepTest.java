@@ -205,14 +205,13 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
     }
 
     /**
-     * A representative rewinding crash point within the interleaved LAZY_M-per-table batch, chosen from
-     * this class's own sweep staircase (see the logged {@code t1RecoveredByK}/{@code t2RecoveredByK} in
-     * {@link #testMultiTableLazyGapSweepRecoversCleanlyAtEveryCrashPoint}: at N=110, k=50 lands BOTH
-     * tables on a genuine, non-degenerate PARTIAL result — t1=6, t2=6, each strictly more than LAZY_K and
-     * fewer than ROWS) — chosen the same way the sibling lazy-gap sweeps chose theirs ({@code
-     * AdaptiveIndexedSymbolLazyGapCrashSweepTest.REPRESENTATIVE_REWIND_CRASH_K}).
+     * The rewinding crash point, pinned by phase rather than by an op count: this many lazy rows are applied
+     * to each table, interleaved t1 then t2, and the crash fires on the first durability op of t1's next lazy
+     * row commit, before that row's WAL is durable. Recovery rewinds both tables to their LAZY_K
+     * durable-epoch cut and replays the applied rows, so both land on a partial result ({@code LAZY_K} plus
+     * this many rows each) whatever the number of ops per commit.
      */
-    private static final int REPRESENTATIVE_REWIND_CRASH_K = 50;
+    private static final int REWIND_APPLIED_LAZY_ROWS = 2;
 
     /**
      * DATA BEFORE POINTER, for two tables crashing in the same lazy gap.
@@ -233,10 +232,10 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
      */
     @Test
     public void testCommitPointerNeverPublishedAheadOfDataInEitherTable() throws Exception {
-        final TwoTableRows withRecovery = runLazyGapCrashScenario(REPRESENTATIVE_REWIND_CRASH_K, true);
-        final TwoTableRows withoutRecovery = runLazyGapCrashScenario(REPRESENTATIVE_REWIND_CRASH_K, false);
+        final TwoTableRows withRecovery = runLazyGapCrashScenario(REWIND_APPLIED_LAZY_ROWS, true);
+        final TwoTableRows withoutRecovery = runLazyGapCrashScenario(REWIND_APPLIED_LAZY_ROWS, false);
 
-        LOG.info().$("[multi-table lazy-gap negative control] k=").$(REPRESENTATIVE_REWIND_CRASH_K)
+        LOG.info().$("[multi-table lazy-gap negative control] appliedLazyRows=").$(REWIND_APPLIED_LAZY_ROWS)
                 .$(" withRecovery: ").$(withRecovery.toString())
                 .$(" withoutRecovery: ").$(withoutRecovery.toString()).$();
 
@@ -246,11 +245,21 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
         assertValidIdentityPrefix("t1 withRecovery", withRecovery.t1);
         assertValidIdentityPrefix("t2 withRecovery", withRecovery.t2);
         Assert.assertTrue(
-                "k=" + REPRESENTATIVE_REWIND_CRASH_K + " (recovery enabled) should land on a non-degenerate "
+                "the crash (recovery enabled) should land on a non-degenerate "
                         + "PARTIAL result in at least one table for this comparison to be meaningful (t1="
                         + withRecovery.t1.size() + ", t2=" + withRecovery.t2.size() + ")",
                 (withRecovery.t1.size() > LAZY_K && withRecovery.t1.size() < ROWS)
                         || (withRecovery.t2.size() > LAZY_K && withRecovery.t2.size() < ROWS)
+        );
+        Assert.assertEquals(
+                "t1: the crash must land after " + REWIND_APPLIED_LAZY_ROWS + " lazy applies and before t1's "
+                        + "next lazy row's WAL is durable (withRecovery.t1=" + withRecovery.t1 + ")",
+                LAZY_K + REWIND_APPLIED_LAZY_ROWS, withRecovery.t1.size()
+        );
+        Assert.assertEquals(
+                "t2: the crash must land after " + REWIND_APPLIED_LAZY_ROWS + " lazy applies to t2 "
+                        + "(withRecovery.t2=" + withRecovery.t2 + ")",
+                LAZY_K + REWIND_APPLIED_LAZY_ROWS, withRecovery.t2.size()
         );
 
         // WITHOUT recovery: disabled-recovery must not show MORE surviving rows in either table than
@@ -343,13 +352,14 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
     /**
      * Runs the LAZY_K/LAZY_M multi-table lazy-gap scenario once, standalone (not through the sweep
      * driver): each table gets its own LAZY_K-row durable-epoch prefix, both epochs are then disabled,
-     * LAZY_M more rows are applied to EACH table round-robin-interleaved, a crash is armed at durability
-     * op {@code k}, and the recovery triple runs with {@code RecoveryCoordinator.recover()} included or
+     * LAZY_M more rows are applied to EACH table round-robin-interleaved, a crash fires on the first
+     * durability op of t1's commit of lazy row {@code appliedLazyRows} (counted from 0), after that many
+     * lazy applies to each table, and the recovery triple runs with {@code RecoveryCoordinator.recover()} included or
      * skipped per {@code recoveryOn}. Returns the recovered {@code v} lists for both tables, ordered by
      * {@code v} (tolerant of a loud torn read). Leak-safe: drops both tables + reclaims per-cycle fds
      * before returning, mirroring the sweep driver.
      */
-    private TwoTableRows runLazyGapCrashScenario(int k, boolean recoveryOn) throws Exception {
+    private TwoTableRows runLazyGapCrashScenario(int appliedLazyRows, boolean recoveryOn) throws Exception {
         final TwoTableRows[] resultBox = new TwoTableRows[1];
         final long[] preRecoverySeqTxn = {-1, -1};
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
@@ -383,9 +393,14 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
                 final Set<Long> fdBaseline = new HashSet<>(crashFf.noCacheOpenFdsSnapshot());
                 markDurableBaseline();
                 final int base = crashFf.durabilityOpCount();
-                crashFf.armCrashAt(base + k);
+                int crashOp = -1;
                 try {
                     for (int i = LAZY_K; i < LAZY_K + LAZY_M; i++) {
+                        if (i == LAZY_K + appliedLazyRows) {
+                            // the first durability op of t1's commit of this row
+                            crashOp = crashFf.durabilityOpCount() + 1;
+                            crashFf.armCrashAt(crashOp);
+                        }
                         insertRow(t1, i);
                         drainWalQueue();
                         if (anyTableSuspended(tt1, tt2)) {
@@ -400,6 +415,14 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
                 } catch (CrashSimulationError propagated) {
                     // expected: the armed crash fired during the WAL-commit fsync path
                 }
+                Assert.assertTrue(
+                        "the lazy batch must reach row " + (LAZY_K + appliedLazyRows) + " to arm the crash",
+                        crashOp > 0
+                );
+                Assert.assertFalse("the armed crash must fire", crashFf.isCrashArmed());
+                final String crashedOp = crashFf.durabilityOpLog().get(crashOp - 1);
+                LOG.info().$("[multi-table lazy-gap negative control] recovery=").$(recoveryOn)
+                        .$(" crash at k=").$(crashOp - base).$(" of the lazy batch: ").$(crashedOp).$();
 
                 // Driver-faithful recovery EXCEPT the recovery-enabled flag is the toggled variable.
                 engine.releaseAllReaders();

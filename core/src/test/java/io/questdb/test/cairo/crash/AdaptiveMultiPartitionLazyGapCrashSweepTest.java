@@ -249,15 +249,13 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
     }
 
     /**
-     * A representative REWINDING crash point within the lazily-applied M-batch, picked from this class's
-     * own sweep staircase (see the logged {@code recoveredByK} in
-     * {@link #testMultiPartitionLazyGapSweepRecoversCleanlyAtEveryCrashPoint}) so the recovery-enabled arm
-     * lands on a genuine, non-degenerate PARTIAL result (strictly more than {@link #LAZY_K}, strictly
-     * fewer than {@link #ROWS}) — chosen the same way the sibling lazy-gap sweeps chose theirs ({@code
-     * AdaptiveIndexedSymbolLazyGapCrashSweepTest.REPRESENTATIVE_REWIND_CRASH_K}, {@code
-     * AdaptiveMultiTableLazyGapCrashSweepTest.REPRESENTATIVE_REWIND_CRASH_K}).
+     * The rewinding crash point, pinned by phase rather than by an op count: this many lazy rows are applied,
+     * each as its own txn on a new partition, and the crash fires on the first durability op of the next
+     * lazy row's commit, before that row's WAL is durable. Recovery rewinds to the {@link #LAZY_K}
+     * durable-epoch cut and replays the applied rows, re-creating their partitions: a partial result
+     * ({@code [0..6]}, days 1 to 5) whatever the number of ops per commit.
      */
-    private static final int REPRESENTATIVE_REWIND_CRASH_K = 40;
+    private static final int REWIND_APPLIED_LAZY_ROWS = 3;
 
     /**
      * DATA BEFORE POINTER, across a partition rollover.
@@ -278,10 +276,10 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
      */
     @Test
     public void testCommitPointerNeverPublishedAheadOfDataAcrossPartitionRollover() throws Exception {
-        final PartitionRows withRecovery = runLazyGapCrashScenario(REPRESENTATIVE_REWIND_CRASH_K, true);
-        final PartitionRows withoutRecovery = runLazyGapCrashScenario(REPRESENTATIVE_REWIND_CRASH_K, false);
+        final PartitionRows withRecovery = runLazyGapCrashScenario(REWIND_APPLIED_LAZY_ROWS, true);
+        final PartitionRows withoutRecovery = runLazyGapCrashScenario(REWIND_APPLIED_LAZY_ROWS, false);
 
-        LOG.info().$("[multi-partition lazy-gap negative control] k=").$(REPRESENTATIVE_REWIND_CRASH_K)
+        LOG.info().$("[multi-partition lazy-gap negative control] appliedLazyRows=").$(REWIND_APPLIED_LAZY_ROWS)
                 .$(" withRecovery=").$(withRecovery.toString())
                 .$(" withoutRecovery=").$(withoutRecovery.toString()).$();
 
@@ -290,9 +288,14 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
         // negative-control finding.
         assertValidIdentityPrefix("withRecovery", withRecovery.rows);
         Assert.assertTrue(
-                "k=" + REPRESENTATIVE_REWIND_CRASH_K + " (recovery enabled) must land on a non-degenerate "
+                "the crash (recovery enabled) must land on a non-degenerate "
                         + "PARTIAL result for this comparison to be meaningful (withRecovery=" + withRecovery.rows + ")",
                 withRecovery.rows.size() > LAZY_K && withRecovery.rows.size() < ROWS
+        );
+        Assert.assertEquals(
+                "the crash must land after " + REWIND_APPLIED_LAZY_ROWS + " lazy applies and before the next "
+                        + "lazy row's WAL is durable (withRecovery=" + withRecovery.rows + ")",
+                LAZY_K + REWIND_APPLIED_LAZY_ROWS, withRecovery.rows.size()
         );
 
         // WITHOUT recovery: disabled-recovery must not show MORE surviving rows than recovery-enabled at
@@ -361,13 +364,14 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
     /**
      * Runs the LAZY_K/LAZY_M multi-partition lazy-gap scenario once, standalone (not through the sweep
      * driver): LAZY_K rows spanning 2 partitions -&gt; durable epoch -&gt; epoch disabled -&gt; LAZY_M more
-     * rows, each on its own brand-new partition, applied LAZILY -&gt; a crash armed at durability op
-     * {@code k} -&gt; the recovery triple with {@code RecoveryCoordinator.recover()} included or skipped
+     * rows, each on its own brand-new partition, applied LAZILY -&gt; a crash on the first durability op of
+     * the commit of lazy row {@code appliedLazyRows} (counted from 0), after that many lazy applies -&gt; the
+     * recovery triple with {@code RecoveryCoordinator.recover()} included or skipped
      * per {@code recoveryOn}. Returns the recovered {@code v} list (tolerant of a loud torn read) paired
      * with the physically-present partition day set. Leak-safe: drops the table + reclaims per-cycle fds
      * before returning, mirroring the sweep driver.
      */
-    private PartitionRows runLazyGapCrashScenario(int k, boolean recoveryOn) throws Exception {
+    private PartitionRows runLazyGapCrashScenario(int appliedLazyRows, boolean recoveryOn) throws Exception {
         final PartitionRows[] resultBox = new PartitionRows[1];
         final long[] preRecoverySeqTxn = {-1};
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
@@ -392,9 +396,14 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
                 final Set<Long> fdBaseline = new HashSet<>(crashFf.noCacheOpenFdsSnapshot());
                 markDurableBaseline();
                 final int base = crashFf.durabilityOpCount();
-                crashFf.armCrashAt(base + k);
+                int crashOp = -1;
                 try {
                     for (int i = LAZY_K; i < ROWS; i++) {
+                        if (i == LAZY_K + appliedLazyRows) {
+                            // the first durability op of this row's commit
+                            crashOp = crashFf.durabilityOpCount() + 1;
+                            crashFf.armCrashAt(crashOp);
+                        }
                         insertRow(table, i);
                         drainWalQueue();
                         if (anyTableSuspended(tt)) {
@@ -404,6 +413,14 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
                 } catch (CrashSimulationError propagated) {
                     // expected: the armed crash fired during the WAL-commit fsync path
                 }
+                Assert.assertTrue(
+                        "the lazy batch must reach row " + (LAZY_K + appliedLazyRows) + " to arm the crash",
+                        crashOp > 0
+                );
+                Assert.assertFalse("the armed crash must fire", crashFf.isCrashArmed());
+                final String crashedOp = crashFf.durabilityOpLog().get(crashOp - 1);
+                LOG.info().$("[multi-partition lazy-gap negative control] recovery=").$(recoveryOn)
+                        .$(" crash at k=").$(crashOp - base).$(" of the lazy batch: ").$(crashedOp).$();
 
                 // Driver-faithful recovery EXCEPT the recovery-enabled flag is the toggled variable.
                 engine.releaseAllReaders();

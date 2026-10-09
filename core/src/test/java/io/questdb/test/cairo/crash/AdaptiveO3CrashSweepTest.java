@@ -109,16 +109,12 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
     // non-monotonic order (independent scenario from TS_HOUR, same O3-forcing technique).
     private static final int[] LAZY_TS_HOUR = {23, 9, 14, 4, 11, 2, 17, 7, 20};
     /**
-     * Representative mid-operation crash point within the LAZY_M batch's durability-op range (see the
-     * negative-control test's javadoc). Empirically chosen (during test development, via a ~20-point
-     * scan across the whole lazy-batch op range) to land on a clean, non-suspended, non-degenerate
-     * partial result ({@code [0,1,2,3,4]}: the LAZY_K durable rows plus exactly one lazily-applied row
-     * that had already reached the durable WAL) so the comparison below is non-trivial in both arms.
+     * The crash point of the lazy-gap comparison, pinned by phase rather than by an op count: this many lazy
+     * rows are applied, each as its own txn, and the crash fires on the first durability op of the next lazy
+     * row's commit, before that row's WAL is durable. Recovery restores the {@code LAZY_K} epoch rows plus
+     * the applied rows, {@code [0, 1, 2, 3, 4]}, a partial result whatever the number of ops per commit.
      */
-    // A pinned crash point is a tripwire: the test asserts that k lands on a genuine partial, so a barrier
-    // that moves the LAZY_M batch fails it instead of making the comparison vacuous. Re-measure by sweeping
-    // every k rather than bumping it by guess.
-    private static final int LAZY_GAP_CRASH_K = 14;
+    private static final int LAZY_GAP_APPLIED_ROWS = 1;
 
     /**
      * The headline O3 sweep: every commit-phase durability op is crashed at least once; recovery must
@@ -180,8 +176,8 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
      * {@code _txn.epoch->_txn} / {@code _cv.epoch->_cv} rewind never changed the outcome for O3 in any
      * sampled scenario — see the SP-D1 W1 report for the full scan data.
      *
-     * <p>This test captures that finding directly, at {@link #LAZY_GAP_CRASH_K} (chosen because it
-     * lands on a clean, non-degenerate PARTIAL result, so the comparison is non-trivial): it runs the
+     * <p>This test captures that finding directly, at {@link #LAZY_GAP_APPLIED_ROWS} (a clean,
+     * non-degenerate PARTIAL result, so the comparison is non-trivial): it runs the
      * SAME crash point with recovery enabled and disabled and asserts the two recovered row-sets are
      * IDENTICAL — rather than asserting "recovery-disabled is wrong" as the mirrored template would,
      * because forcing that assertion would misrepresent what was actually measured and is exactly the
@@ -194,10 +190,10 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
      */
     @Test
     public void testRecoveryVsNoRecoveryIdenticalForO3LazyGapCrash() throws Exception {
-        final List<Long> withRecovery = runLazyGapCrashScenario(LAZY_GAP_CRASH_K, true);
-        final List<Long> withoutRecovery = runLazyGapCrashScenario(LAZY_GAP_CRASH_K, false);
+        final List<Long> withRecovery = runLazyGapCrashScenario(LAZY_GAP_APPLIED_ROWS, true);
+        final List<Long> withoutRecovery = runLazyGapCrashScenario(LAZY_GAP_APPLIED_ROWS, false);
 
-        LOG.info().$("[O3 lazy-gap finding] k=").$(LAZY_GAP_CRASH_K)
+        LOG.info().$("[O3 lazy-gap finding] appliedLazyRows=").$(LAZY_GAP_APPLIED_ROWS)
                 .$(" withRecovery=").$(withRecovery.toString())
                 .$(" withoutRecovery=").$(withoutRecovery.toString()).$();
 
@@ -209,9 +205,14 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
         // Non-degenerate: a genuine partial result (not 0, not the full LAZY_K+LAZY_M), so the
         // comparison below is meaningful rather than vacuously true regardless of recovery.
         Assert.assertTrue(
-                "k=" + LAZY_GAP_CRASH_K + " must land on a non-degenerate PARTIAL result for this "
+                "the crash must land on a non-degenerate PARTIAL result for this "
                         + "comparison to be meaningful (withRecovery=" + withRecovery + ")",
                 withRecovery.size() > LAZY_K && withRecovery.size() < (LAZY_K + LAZY_M)
+        );
+        Assert.assertEquals(
+                "the crash must land after " + LAZY_GAP_APPLIED_ROWS + " lazy applies and before the next "
+                        + "lazy row's WAL is durable (withRecovery=" + withRecovery + ")",
+                LAZY_K + LAZY_GAP_APPLIED_ROWS, withRecovery.size()
         );
 
         // THE FINDING: recovery does NOT change the outcome here (see class javadoc). This asserts what
@@ -220,8 +221,8 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
         // disabled-recovery result is WRONG/short (that would be GOOD news for O3 safety, not a
         // regression -- update the javadoc accordingly rather than "fixing" the assertion back).
         Assert.assertEquals(
-                "recovery-enabled and recovery-disabled currently produce IDENTICAL results at k="
-                        + LAZY_GAP_CRASH_K + " for this O3 lazy-gap scenario (the SP-D1 W1 finding)",
+                "recovery-enabled and recovery-disabled currently produce IDENTICAL results after "
+                        + LAZY_GAP_APPLIED_ROWS + " lazy applies for this O3 lazy-gap scenario (the SP-D1 W1 finding)",
                 withRecovery, withoutRecovery
         );
     }
@@ -295,11 +296,12 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
 
     /**
      * Runs the LAZY_K/LAZY_M lazy-gap scenario once: LAZY_K O3 rows -> durable epoch -> LAZY_M more O3
-     * rows applied lazily (epoch disabled) -> crash at durability op {@code k} of the LAZY_M batch ->
+     * rows applied lazily (epoch disabled) -> crash on the first durability op of the commit of lazy row
+     * {@code appliedLazyRows} (counted from 0), after that many lazy applies ->
      * the recovery triple with {@code RecoveryCoordinator.recover()} included or skipped per
      * {@code recoveryOn} -> returns the recovered rows ordered by v (tolerant of a loud torn read).
      */
-    private List<Long> runLazyGapCrashScenario(int k, boolean recoveryOn) throws Exception {
+    private List<Long> runLazyGapCrashScenario(int appliedLazyRows, boolean recoveryOn) throws Exception {
         final List<Long>[] resultBox = new List[1];
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
@@ -330,9 +332,14 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
 
                 markDurableBaseline();
                 final int base = crashFf.durabilityOpCount();
-                crashFf.armCrashAt(base + k);
+                int crashOp = -1;
                 try {
                     for (int i = LAZY_K; i < LAZY_K + LAZY_M; i++) {
+                        if (i == LAZY_K + appliedLazyRows) {
+                            // the first durability op of this row's commit
+                            crashOp = crashFf.durabilityOpCount() + 1;
+                            crashFf.armCrashAt(crashOp);
+                        }
                         insertO3Row(table, LAZY_TS_HOUR[i], i);
                         drainWalQueue();
                         if (anyTableSuspended(tt)) {
@@ -342,6 +349,14 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
                 } catch (CrashSimulationError propagated) {
                     // expected: the armed crash fired during the WAL-commit fsync path
                 }
+                Assert.assertTrue(
+                        "the lazy batch must reach row " + (LAZY_K + appliedLazyRows) + " to arm the crash",
+                        crashOp > 0
+                );
+                Assert.assertFalse("the armed crash must fire", crashFf.isCrashArmed());
+                final String crashedOp = crashFf.durabilityOpLog().get(crashOp - 1);
+                LOG.info().$("[O3 lazy-gap finding] recovery=").$(recoveryOn)
+                        .$(" crash at k=").$(crashOp - base).$(" of the lazy batch: ").$(crashedOp).$();
 
                 engine.releaseAllReaders();
                 engine.releaseAllWriters();
