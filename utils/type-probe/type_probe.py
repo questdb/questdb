@@ -475,6 +475,26 @@ def load_facts(path):
             raise UsageError([f'facts: {path}: not TOML: {e}'])
 
 
+# Where free signature characters are looked for: the Latin letters (all but one taken), then
+# Latin-1, Greek and Cyrillic lower-case letters, each a lower case whose upper case is 32 below.
+SIGNATURE_CHAR_RANGES = ((0x61, 0x7a), (0xe0, 0xfe), (0x3b1, 0x3bf), (0x430, 0x43f))
+
+
+def is_signature_char(c):
+    """Whether `c` can name a type in a function signature: FunctionFactoryDescriptor folds a
+    character with `c | 32` and reads bit 5 as the constant flag, so `c` must be a lower case with
+    bit 5 set whose upper case differs in bit 5 only (`ψ` is not: it is 32 above `Ψ`, but the
+    addition carries and leaves bit 5 clear, so the fold misses it)."""
+    return len(c) == 1 and ord(c) & 32 != 0 and c.upper() != c and ord(c.upper()) == ord(c) - 32
+
+
+def free_signature_chars(tree, exclude=None):
+    """The signature characters no type driver or pseudo type takes, in SIGNATURE_CHAR_RANGES order."""
+    taken = {c.lower() for c in tree.signature_chars(exclude=exclude)}
+    return [chr(o) for lo, hi in SIGNATURE_CHAR_RANGES for o in range(lo, hi + 1)
+            if is_signature_char(chr(o)) and chr(o) not in taken]
+
+
 def registered(tree, facts):
     """Whether the tree holds the registration of the facts' type: its name, under its tag."""
     t = facts.get('type', {})
@@ -570,6 +590,10 @@ def validate_facts(facts, tree, guards):
         taken = {c.lower() for c in tree.signature_chars(exclude=name if is_registered else None)}
         if sig.lower() in taken:
             problems.append(f'facts: functions.signature_char: {sig!r} is taken by a type driver')
+        elif not is_signature_char(sig):
+            problems.append(f'facts: functions.signature_char: {sig!r} is not a lower case whose upper case'
+                            f' differs in bit 5 only, which the signature parser needs; free ones:'
+                            f' {"".join(free_signature_chars(tree)[:8])}')
     paths = kit['paths']
     if not isinstance(paths, list) or not all(isinstance(p, str) and p and ' ' not in p and '|' not in p for p in paths):
         problems.append('facts: kit.paths: not a list of kit path patterns ("-" for none)')
@@ -631,7 +655,7 @@ def init_facts(tree, name, like, tag):
         f'pg_array_oid = "{pg_arr}"',
         '',
         '[functions]',
-        'signature_char = "CHANGE-ME"',
+        f'signature_char = "CHANGE-ME"    # free: {" ".join(free_signature_chars(tree)[:6])}',
         '',
         '[kit]',
         'paths = [' + ', '.join(f'"{p}"' for p in KIT_PATHS) + ']',

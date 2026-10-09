@@ -62,7 +62,7 @@ def real_sites():
 def valid_facts(tree, name='PROBE_INT', like='INT'):
     """A valid facts file for a new type registered next, as init writes it with its choices made."""
     text = tp.init_facts(tree, name, like, tree.null_code())
-    free = next(c for c in 'pqrvwxyzgcmoy' if c not in {s.lower() for s in tree.signature_chars()})
+    free = tp.free_signature_chars(tree)[0]
     text = text.replace('wire_kind = "CHANGE-ME"', 'wire_kind = "new"').replace('signature_char = "CHANGE-ME"', f'signature_char = "{free}"')
     return tomllib.loads(text)
 
@@ -228,6 +228,19 @@ class FactsTest(unittest.TestCase):
     def test_valid_facts(self):
         self.assertEqual([], self.problems(valid_facts(self.tree)))
 
+    def test_free_signature_chars(self):
+        free = tp.free_signature_chars(self.tree)
+        taken = {c.lower() for c in self.tree.signature_chars()}
+        # the Latin letters run out early; the search goes on into Latin-1, Greek and Cyrillic
+        self.assertGreater(len(free), 40)
+        self.assertTrue(all(tp.is_signature_char(c) and c not in taken for c in free), free)
+        self.assertNotIn('÷', free)
+        for c in ('ø', 'δ', 'ξ'):
+            self.assertIn(c, taken)
+            self.assertTrue(tp.is_signature_char(c))
+        self.assertFalse(tp.is_signature_char('ψ'))
+        self.assertFalse(tp.is_signature_char(free[0].upper()))
+
     def test_every_error(self):
         f = valid_facts(self.tree)
         del f['physical']['accessor']
@@ -256,6 +269,10 @@ class FactsTest(unittest.TestCase):
         # a pseudo type's signature character is taken too
         f['functions']['signature_char'] = 'c'
         self.assertProblem(f, 'functions.signature_char', 'is taken')
+        # the parser folds with `c | 32`: an upper case, and a lower case whose bit 5 is clear, fail
+        for sig in (tp.free_signature_chars(self.tree)[0].upper(), 'ψ'):
+            f['functions']['signature_char'] = sig
+            self.assertProblem(f, 'functions.signature_char', 'differs in bit 5 only')
         f = valid_facts(self.tree)
         f['type']['storage'] = 'var'
         self.assertProblem(f, 'physical.movement', 'disagrees with type.storage')

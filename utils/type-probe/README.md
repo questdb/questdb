@@ -87,6 +87,7 @@ pg_array_oid = "0"          # a PgTypeOids constant, or "0"
 
 [functions]
 signature_char = "i"        # the function signature character, unused by every other type; "-" for none
+                            # (the Latin letters but y are taken; init lists free ones)
 
 [kit]
 paths = ["storage.*", "sql.*", "ingest.*", "http.*", "pg.*", "lv.*"]   # the kit paths the type runs; "-" for none

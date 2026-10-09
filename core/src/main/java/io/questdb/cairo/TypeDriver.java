@@ -158,9 +158,10 @@ public interface TypeDriver {
 
     /**
      * The lower-case character that names this type in a function factory signature
-     * ({@link io.questdb.griffin.FunctionFactory#getSignature()}); the upper-case form of the same
-     * character is the constant-argument variant, so the character must differ from its upper-case
-     * form in bit 5 only. {@link io.questdb.griffin.FunctionFactoryDescriptor#NO_SIGNATURE_CHAR} for
+     * ({@link io.questdb.griffin.FunctionFactory#getSignature()}). In a signature the lower-case
+     * form takes only a constant argument and the upper-case form any argument, and the parser folds
+     * the two with {@code c | 32}, so the character must have bit 5 set and differ from its
+     * upper-case form in bit 5 only. {@link io.questdb.griffin.FunctionFactoryDescriptor#NO_SIGNATURE_CHAR} for
      * a type no signature names by its own character: a signature names a type of several widths by
      * its pseudo tag, and an array by its element character followed by {@code []}.
      */
