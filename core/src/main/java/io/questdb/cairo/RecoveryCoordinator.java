@@ -46,40 +46,31 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 /**
- * Adaptive durable-EPOCH recovery roll-forward (Plan 3 Task C).
+ * Restores each WAL table that has a save point to it, once at engine startup, after the table registry loads
+ * and before any WAL apply ({@code CheckWalTransactionsJob} -> {@code ApplyWal2TableJob}). A save point is a file
+ * {@code _epoch.manifest.N} holding copies of {@code _meta}, {@code _txn} and {@code _cv}. Of the valid
+ * generations, recovery selects the one with the higher cut and writes each copy over its live file where the
+ * two differ, syncing the files and the table directory, so the table opens at the save point's {@code seqTxn}
+ * and {@code txn}. WAL apply then replays {@code (seqTxn, frontier]} from the durable WAL. A table whose live
+ * files equal the copies, which a clean shutdown leaves, has nothing to restore: recovery only pins its save
+ * point and does not count a recovery.
  * <p>
- * Runs ONCE at engine startup, AFTER the table-name registry is loaded but BEFORE normal WAL apply
- * ({@code CheckWalTransactionsJob} -> {@code ApplyWal2TableJob}) runs for any table. For each
- * ADAPTIVE WAL table that recorded a durable epoch (a save point file {@code _epoch.manifest.N} holding
- * copies of {@code _meta}, {@code _txn} and {@code _cv}, the valid one with the higher cut selected), it
- * RESTORES the durable cut: writes each saved copy over its live file where they differ,
- * fsyncing them (and the table dir) BEFORE proceeding, so the table
- * opens at exactly {@code epoch.{seqTxn,txn}}. The existing boot path then idempotently re-applies
- * {@code (epoch.seqTxn, frontier]} from the durable WAL. A table whose live files are already byte-for-byte
- * the epoch copies, which is what a clean shutdown leaves, has nothing to restore: recovery only pins its
- * epoch, and does not count it as a recovery.
- * <p>
- * This is the keystone that makes ADAPTIVE crash-safe end to end: under ADAPTIVE the table apply is
- * LAZY (partition columns are non-durable between epochs — see {@link CommitMode#appliesColumnSync}),
- * so after a power cut the materialized state can be torn ahead of the last durable epoch. Rewinding
- * {@code _txn}/{@code _cv} to the durable cut and re-deriving the rest from the durable WAL rebuilds
- * exactly the lost rows.
+ * Adaptive applies lazily: it does not sync partition columns between save points (see
+ * {@link CommitMode#appliesColumnSync}), so after a power loss the live state can be torn past the last save
+ * point. Rewinding {@code _txn} and {@code _cv} to the save point and replaying the WAL rebuilds the lost rows.
  *
  * <h2>Why this is safe and idempotent</h2>
  * <ul>
- *   <li><b>Restore-before-rely (audit #5):</b> the copied {@code _txn}/{@code _cv} are fsync'd, and
- *       the table dir is fsync'd, BEFORE recovery returns — so a crash immediately after recovery
- *       sees the restored cut, not a half-copied file.</li>
- *   <li><b>Idempotent:</b> the {@code .epoch} copies are IMMUTABLE until the next epoch overwrites
- *       them ({@link TableWriter#fsyncMaterializedState()} rewrites them only when a new, later cut
- *       is taken). Re-running recovery (e.g. a crash mid-recovery) re-copies the same bytes and lands
- *       on the same cut. Apply itself is idempotent through {@code _txn} (the contiguity assert
- *       {@code seqTxn == appliedSeqTxn + 1} is satisfied because {@code _txn} now says
- *       {@code epoch.seqTxn}).</li>
+ *   <li><b>Restore before rely:</b> the restored files and the table directory are synced before recovery
+ *       returns, so a crash right after it sees the restored cut, not a half-copied file.</li>
+ *   <li><b>Idempotent:</b> the writer writes a new save point into the other generation, so the selected one
+ *       does not change before the next save point. Recovery run again after a crash copies the same bytes and
+ *       lands on the same cut, and WAL apply continues from the {@code seqTxn} the restored {@code _txn}
+ *       names.</li>
  *   <li><b>A save point decides:</b> a table is enrolled exactly when it has a save point file. Its writer
  *       publishes one before it applies anything lazily, and every path that resets its lineage removes it.
  *       Any other table, including every table a non-adaptive instance or an older build wrote, costs two
- *       existence checks and is left UNTOUCHED (normal open / WAL apply). Non-WAL tables are never touched.</li>
+ *       existence checks and is left to the normal open and WAL apply. Non-WAL tables are never touched.</li>
  *   <li><b>The exit:</b> a start outside adaptive makes every enrolled table durable, removes its save point
  *       (the older generation first) and releases its pin, so no save point outlives adaptive.</li>
  * </ul>
@@ -176,8 +167,8 @@ public class RecoveryCoordinator {
 
     private void failIfRecoveryDisabled(TableToken token) {
         if (!configuration.isAdaptiveRecoveryRollForwardEnabled()) {
-            // Skipping recovery can expose a lazily materialized, torn table. Keep the configuration seam for
-            // negative-control tests, but never let a production startup turn it into a fail-open read path.
+            // Skipping recovery can expose a lazily materialized, torn table, so turning recovery off refuses
+            // the start instead of reading the live files.
             throw CairoException.critical(0)
                     .put("adaptive recovery is disabled; refusing unsafe startup [table=")
                     .put(token.getTableName()).put(']');
@@ -351,7 +342,7 @@ public class RecoveryCoordinator {
      * In every partition of the save point, removes the value and cover files of each POSTING column whose
      * generation the column's chain does not name at or below the save point's txn. A reseal after the save point
      * in a partition that no writer reopens with its chain walk (an older partition taking rows in place) leaves
-     * such files, and a power loss can revert their chain record while the file stays. No reader or writer exists
+     * such files, and a power loss can lose their chain record while the file stays. No reader or writer exists
      * yet, and no reader at or above the save point's txn picks an entry sealed above it. The partitions, column
      * versions and txn come from the live files, which equal the save point's sections when this runs.
      */
@@ -408,7 +399,8 @@ public class RecoveryCoordinator {
                 }
                 if (removedInPartition > 0) {
                     removed += removedInPartition;
-                    // Unlinks that a power loss reverts come back unnamed: a leak, never a removed live file.
+                    // An unlink that a power loss undoes brings back an unnamed file: a leak, never a removed
+                    // live file.
                     if (!Os.isWindows()) {
                         final long dirFd = TableUtils.openRONoCache(ff, path.trimTo(partitionLen).$(), LOG);
                         if (dirFd > -1) {
@@ -431,19 +423,16 @@ public class RecoveryCoordinator {
     }
 
     /**
-     * Finishes the {@code _todo_} repair of a {@code _meta} swap that a crash interrupted, so that this pass
-     * reads the metadata the table will actually open with.
+     * Finishes the {@code _todo_} repair of a {@code _meta} swap that a crash interrupted, so that this pass reads
+     * the metadata the table opens with. {@link TableWriter} renames {@code _meta} to {@code _meta.prev}, arms
+     * {@code _todo_} with {@link TableUtils#TODO_RESTORE_META}, then renames {@code _meta.swp} to {@code _meta}.
+     * A crash between the renames leaves no {@code _meta}; a crash after the second, before {@code _txn}
+     * commits, leaves an uncommitted {@code _meta}. The writer repairs both on open by renaming {@code _meta.prev}
+     * back, but it opens after this pass, which would otherwise refuse to start on the missing file.
      * <p>
-     * {@link TableWriter} swaps metadata by renaming {@code _meta} to {@code _meta.prev}, arming {@code _todo_}
-     * with {@link TableUtils#TODO_RESTORE_META}, then renaming {@code _meta.swp} to {@code _meta}. A crash
-     * between the two renames leaves no {@code _meta} at all; a crash after the second, before {@code _txn}
-     * commits, leaves the uncommitted new {@code _meta} in place. The writer repairs both on open by renaming
-     * {@code _meta.prev} back over {@code _meta}, but it opens only after this pass, which would otherwise refuse
-     * to start on the missing file in every commit mode.
-     * <p>
-     * Applies the writer's own rule: the {@code _todo_} txn pair must agree and match the live {@code _txn}.
-     * Anything else is a stale entry, which the writer ignores, and which must never roll {@code _meta} back.
-     * {@code _todo_} stays armed: the writer then finds no {@code _meta.prev} and only clears it.
+     * Applies the writer's rule: the {@code _todo_} txn pair must agree and match the live {@code _txn}; any other
+     * entry is stale and never rolls {@code _meta} back. {@code _todo_} stays armed: the writer then finds no
+     * {@code _meta.prev} and only clears it.
      */
     private void repairInterruptedMetaSwap(TableToken token, Path prevPath, Path metaPath) {
         tablePath(prevPath, token).concat(TableUtils.TODO_FILE_NAME);
@@ -499,7 +488,7 @@ public class RecoveryCoordinator {
         try {
             return engine.getTableSequencerAPI().lastTxn(token);
         } catch (CairoException | CairoError e) {
-            // Unknown frontier. Do NOT guess: the caller falls through to the fail-closed refusal.
+            // Unknown frontier: rather than guess, the caller falls through to the fail-closed refusal.
             LOG.error().$("could not read sequencer frontier while classifying an adaptive epoch [table=").$(token)
                     .$(", error=").$((Throwable) e).I$();
             return -1;
@@ -550,7 +539,7 @@ public class RecoveryCoordinator {
                 break;
             }
             restored |= DurableEpochManifest.restoreLiveFiles(configuration, token, src, rootLen, candidate.generation);
-            // The content checks read files, so they run on the live files, which now equal the sections.
+            // The content checks read files, so they run on the live files once they equal the sections.
             // A generation that fails them is a write-side bug; the other generation is restored over it.
             if (epochCopiesValid(token, src, candidate)) {
                 selected = candidate;
@@ -561,28 +550,19 @@ public class RecoveryCoordinator {
             }
         }
 
-        // C2 (restore / checkpoint / PITR coexistence): a durable epoch is a PAST cut, so in one lineage the
-        // live _txn is always at or ahead of it (lazy apply only advances _txn after an epoch is taken). If
-        // the live _txn loads cleanly at a seqTxn BELOW this epoch, the table was rewound BENEATH a stale,
-        // higher-lineage epoch by a backup / checkpoint-recover / PITR restore that left the save point
-        // behind (nothing on the restore path clears them). Rolling _txn forward to that epoch would
-        // resurrect the discarded lineage and leave _txn ahead of the restored sequencer. REFUSE: the epoch
-        // cannot be adopted, and the live state below it may be the result of writes the storage lost, so
-        // this fails the startup closed rather than serving a table nobody can vouch for. A TORN/unreadable
-        // live _txn (the genuine post-crash state this mechanism exists to repair) does NOT trip the guard —
-        // see epochIsAheadOfLiveTxn.
+        // A save point is a past cut, so within one lineage the live _txn is at or ahead of it. A live _txn
+        // that loads cleanly below it means a backup, checkpoint or PITR restore rewound the table under a save
+        // point it left behind. Rolling forward to it would resurrect the discarded lineage, and the live state
+        // below it may come from writes the storage lost, so the start fails closed. A torn live _txn, the
+        // post-crash state recovery repairs, does not trip the guard (see epochIsAheadOfLiveTxn).
         if (ahead != null) {
             final long epochSeqTxn = ahead.epochSeqTxn;
-            // Classify before refusing. An epoch is always taken at a cut that is ALREADY in the durable
-            // sequencer log, so epochSeqTxn <= sequencer lastTxn holds for every SAME-lineage epoch. An epoch
-            // BEYOND the sequencer frontier therefore cannot belong to this lineage at all: the sequencer was
-            // re-seeded wholesale (ALTER TABLE ... SET TYPE WAL re-registers it from txn 0, REBASE WAL builds
-            // a new one, an out-of-process restore may drop a fresh txn_seq in place), which makes the anchor
-            // unreachable rather than evidence of lost writes — no replay can ever produce the cut it names.
-            // Discard it instead of refusing to start; the table's next writer enrols it at the live cut. This is
-            // not a relaxation of the refusal above: the live _txn here loaded CLEAN (epochIsAheadOfLiveTxn returns
-            // true only then), so the table has a self-consistent cut, and WAL replay from the sequencer frontier
-            // is exactly what the new lineage needs.
+            // Classify before refusing. A save point is taken at a cut already in the durable sequencer log, so
+            // one of this lineage is at or below the sequencer frontier. One beyond it belongs to a re-seeded
+            // sequencer (SET TYPE WAL re-registers it from txn 0, REBASE WAL builds a new one, an out-of-process
+            // restore may put a fresh txn_seq in place): no replay reaches its cut, and it is no evidence of lost
+            // writes. Discard it; the table's next writer enrols it at the live cut. The live _txn loaded cleanly
+            // here, so the table has a self-consistent cut to replay the new lineage from.
             final long frontier = sequencerFrontierOrUnknown(token);
             if (frontier >= 0 && epochSeqTxn > frontier) {
                 LOG.critical().$("adaptive epoch belongs to a superseded WAL lineage, discarding anchor [table=").$(token)
@@ -629,21 +609,17 @@ public class RecoveryCoordinator {
             }
         }
 
-        // SYMMETRIC C2 (review Finding C2, second half). The guard above rejects an epoch AHEAD of the live
-        // _txn. The reverse — a stale epoch BELOW a divergently-restored live _txn — is NOT (and cannot cheaply
-        // be) rejected here: seqTxn carries no lineage tag, so a below-_txn epoch is indistinguishable from the
-        // NORMAL same-lineage past cut that recover() is meant to adopt (rewind _txn/_cv to the epoch, then
-        // WAL-replay forward). Its safety rests entirely on the INVARIANT that every path which rewinds or
-        // diverges the live _txn (a backup / checkpoint / PITR restore; a primary->replica demote) clears
-        // the save point via TableSnapshotRestore -> RecoveryCoordinator.removeAdaptiveEpochArtifacts. So any
-        // epoch that SURVIVES to this adoption point is necessarily the SAME lineage as the live _txn (a
-        // legitimate fast-boot anchor), never a stale wrong-lineage one.
+        // The lineage guard rejects a save point ahead of the live _txn, not one below a live _txn that a
+        // restore made diverge: seqTxn carries no lineage tag, so that save point looks like the past cut of
+        // the same lineage that recovery adopts. This relies on every path that rewinds or diverges the live
+        // _txn (a backup, checkpoint or PITR restore, a primary-to-replica demote) removing the save point
+        // through removeAdaptiveEpochArtifacts, so a save point that reaches this point is of the live lineage.
 
         // A clean shutdown leaves nothing to restore: the writer's close epoch saves the live files as they
         // stand, and nothing writes them after it. The comparison is exact, so any difference, a torn live file
         // included, took the restore above, and only that counts as a recovery.
         if (!restored) {
-            // A power loss usually reverts _txn and _cv to the save point, so nothing is restored, but the passes
+            // A power loss usually rolls _txn and _cv back to the save point, so nothing is restored, but the passes
             // applied after it can have left index generations behind. Those passes are in the WAL, after the save
             // point; after a clean stop with everything applied the WAL holds nothing past it.
             if (sequencerFrontierOrUnknown(token) > epochSeqTxn) {
@@ -655,19 +631,18 @@ public class RecoveryCoordinator {
             return true;
         }
 
-        // Reads the live files, which now equal the save point. A crash before it is covered by the branch above
-        // on the next start: index generations left behind come from passes after the save point.
+        // Reads the live files, which equal the save point from here on. A crash before it is covered by the
+        // branch above on the next start: index generations left behind come from passes after the save point.
         removeUnnamedPostingGenerations(token, src);
-        // The pooled/catalogue metadata may hold the pre-recovery schema. A real startup has no such tenant;
-        // evict it before WAL replay.
+        // When recovery runs in a live engine (a checkpoint recovery), pooled metadata may hold the schema from
+        // before the restore; evict it before WAL replay.
         engine.resetTableMetadataForRecovery(token);
 
         LOG.info().$("adaptive epoch roll-forward restored durable cut [table=").$(token)
                 .$(", epochSeqTxn=").$(epochSeqTxn).I$();
 
-        // Bump the in-memory recovery incarnation counter ONLY on a successful validated restore
-        // (not on no-op/skip/absent-marker/torn-copy paths). The tracker is initialised lazily on
-        // first WAL apply, but the object itself always exists (getSeqTxnTracker creates it).
+        // Only a validated restore bumps the in-memory recovery incarnation counter; every other path returns
+        // above. The tracker initialises lazily on the first WAL apply, but getTxnTracker always returns one.
         final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
         pinRecoveredEpoch(token, selected.epochTxn, epochSeqTxn, otherEpochTxn);
         tracker.bumpRecoveryIncarnation();
@@ -730,19 +705,17 @@ public class RecoveryCoordinator {
     }
 
     /**
-     * C1 guard: the content checks of a restored save point, run on the live files once they equal the
-     * generation's sections ({@link TxReader} and {@link ColumnVersionReader} read only from a file). Returns
-     * {@code true} only if {@code _meta} loads with this table's id, {@code _txn} and {@code _cv} fully load
-     * via the same A/B-checksummed readers the engine uses ({@link TxReader#unsafeLoadAll()} /
-     * {@link ColumnVersionReader#readSafe()}), {@code _txn} names the marker's cut, its symbol count matches
-     * {@code _meta}, {@code _cv} is at the column version {@code _txn} names, and the save point still
-     * validates against those versions.
+     * The content checks of a restored save point, run on the live files once they equal the generation's
+     * sections ({@link TxReader} and {@link ColumnVersionReader} read only from a file). Returns {@code true} only
+     * if {@code _meta} loads with this table's id, {@code _txn} and {@code _cv} fully load through the engine's
+     * A/B-checksummed readers ({@link TxReader#unsafeLoadAll()}, {@link ColumnVersionReader#readSafe()}),
+     * {@code _txn} names the header's cut, its symbol count matches {@code _meta}, {@code _cv} is at the column
+     * version {@code _txn} names, and the save point still validates against those versions.
      * <p>
-     * Any failure to decode is treated as invalid and returns {@code false}: a short file, a corrupt body, a
-     * SIGBUS reading past a truncated mmap, or a cut other than the marker's. Recovery then restores the
-     * previous marker generation; if no generation validates, startup fails closed. A definite mismatch (table id,
-     * cut, symbol count, versions) also sets {@link #contentMismatch}, and recovery removes this generation once
-     * the previous one is restored.
+     * Any failure to decode returns {@code false}: a short file, a corrupt body, a read past a truncated mapping.
+     * Recovery then restores the other generation; if none validates, the start fails closed. A definite mismatch
+     * (table id, cut, symbol count, versions) also sets {@link #contentMismatch}, and recovery removes this
+     * generation once the other one is restored.
      */
     private boolean epochCopiesValid(TableToken token, Path scratch, DurableEpochManifest.Candidate candidate) {
         contentMismatch = false;
@@ -773,7 +746,7 @@ public class RecoveryCoordinator {
             return false;
         }
 
-        // Validate _txn: a clean A/B-checksummed load whose seqTxn equals the marker's epoch cut.
+        // Validate _txn: a clean A/B-checksummed load at the cut the header names.
         TxReader txReader = null;
         ColumnVersionReader cvReader = null;
         try {
@@ -794,22 +767,14 @@ public class RecoveryCoordinator {
                 return false;
             }
 
-            // Cross-check the two copies against EACH OTHER. Integrity is already covered -- the A/B
-            // checksums prove each payload is intact, and DurableEpochManifest.validate() proves each is the
-            // byte-for-byte file this generation published. Neither says the payloads describe the same table
-            // SHAPE, because a checksum cannot tell a faithfully-recorded skew from a faithfully-recorded
-            // consistent cut. Only a semantic comparison can.
-            //
-            // _txn's symbol area is written from denseSymbolMapWriters and _meta carries the live symbol
-            // columns, so these two counts agreeing is exactly that comparison. Equal metadataVersions do not
-            // imply it: TableWriter.changeColumnType moves the symbol count on a commit that does not bump the
-            // version, so a cut taken inside its structural window records both copies at the SAME version
-            // while they disagree by one. (That write-side window is closed in advanceDurableEpoch; this is
-            // the read-side backstop, and it is what stands between any future variant and an unopenable
-            // table.) Restoring a mismatched pair rewinds the table into a state nothing can open -- symbol
-            // rollback indexes past the writer list, then WAL apply rejects the table outright and it stays
-            // suspended while the sequencer runs ahead. Reject, exactly as for a torn payload: the marker's
-            // other generation is restored over it, and failing that recovery aborts startup.
+            // Cross-check _txn against _meta. The checksums prove each section intact and the file this
+            // generation saved, not that the two describe the same table shape. _txn's symbol area is written
+            // from denseSymbolMapWriters and _meta carries the live symbol columns, so the two counts must agree.
+            // Equal metadata versions do not imply it: TableWriter.changeColumnType moves the symbol count on a
+            // commit that keeps the version. The writer takes no save point in that window (advanceDurableEpoch);
+            // this is the read-side backstop. A mismatched pair leaves a table neither the writer nor WAL apply
+            // can open, so it is rejected like a torn one: the other generation is restored over it, and failing
+            // that recovery stops the start.
             if (epochMetadata != null) {
                 int metaSymbolColumns = 0;
                 for (int c = 0, n = epochMetadata.getColumnCount(); c < n; c++) {
@@ -860,16 +825,11 @@ public class RecoveryCoordinator {
             contentMismatch = !DurableEpochManifest.recordsVersions(configuration, scratch, rootLen, epochGeneration, txReader.getColumnVersion(), metadataVersion);
             return false;
         } catch (Throwable e) {
-            // FAIL SAFE: ANY failure while decoding a torn copy means "invalid -> skip restore", never
-            // "fall through and blindly copy it over the live file". Concrete failure modes seen on a torn
-            // copy: CairoException (fileNotFound on a 0-byte _txn.epoch; both-A/B checksum mismatch), an
-            // mmap bounds AssertionError or SIGBUS-as-InternalError from a garbage base header steering an
-            // out-of-bounds read, CairoError. We deliberately catch broadly here because the cost of a
-            // false "invalid" is a fall-back to the older generation, restored over the live files, and a
-            // longer WAL replay, whereas the cost of letting it through would be the brick this guard exists
-            // to prevent. Such a failure is never a content mismatch, so the generation's file stays. The
-            // exception is confined to one table's .epoch decode and never escapes to abort recovery for
-            // the rest of the tables.
+            // Fail safe: any failure to decode the restored files means invalid. A torn file can throw a
+            // CairoException (a short file, both A/B checksums wrong), a CairoError, a mapping bounds
+            // AssertionError or a SIGBUS surfaced as an InternalError. The catch is broad because a false invalid
+            // costs a fallback to the other generation and a longer WAL replay, while a false valid opens a table
+            // nothing can read. Such a failure is never a content mismatch, so the generation's file stays.
             LOG.error().$("adaptive epoch durable copy failed validation, skipping roll-forward [table=").$(token)
                     .$(", error=").$safe(String.valueOf(e.getMessage())).I$();
             return false;
@@ -881,21 +841,16 @@ public class RecoveryCoordinator {
     }
 
     /**
-     * Restore/PITR freshness guard. Returns {@code true} when the durable epoch is ahead of the live
-     * {@code _txn}: the live {@code _txn} loads cleanly from its latest A/B slot, and its {@code seqTxn} is
-     * below {@code epochSeqTxn}. On a single lineage that cannot happen, because an epoch is a past cut and
-     * lazy apply only advances {@code _txn} after it. It means a backup, checkpoint-recover or PITR restore
-     * rewound the table beneath a stale, higher-lineage epoch and did not clear its save point.
+     * The lineage guard. Returns {@code true} when the save point is ahead of the live {@code _txn}: the live
+     * {@code _txn} loads cleanly from its latest A/B slot and its {@code seqTxn} is below the save point's. Within
+     * one lineage that cannot happen, because a save point is a past cut and lazy apply only advances {@code _txn}
+     * after it; it means a restore rewound the table under a save point it left behind.
      * <p>
-     * The guard fails open. It returns {@code false} for any live {@code _txn} that does not load cleanly
-     * from its latest slot, which lets recovery roll forward to the epoch. A torn, short or garbage
-     * {@code _txn} is the post-crash state recovery exists to repair. That includes a {@code _txn} whose
-     * latest slot is torn and which {@code unsafeLoadAll()} serves from the predecessor slot. On a single
-     * lineage the predecessor slot can predate the epoch, so its {@code seqTxn} is no evidence of a restore.
-     * <p>
-     * The caller decides what a {@code true} answer means, by comparing the epoch with the sequencer
-     * frontier: an epoch beyond it belongs to a re-seeded lineage and is discarded, and anything else fails
-     * the startup closed. This method itself makes no such distinction.
+     * The guard fails open: a live {@code _txn} that does not load cleanly from its latest slot returns
+     * {@code false} and lets recovery roll forward. A torn, short or garbage {@code _txn} is the post-crash state
+     * recovery repairs, and a predecessor slot can predate the save point within one lineage, so its
+     * {@code seqTxn} is no evidence of a restore. The caller compares the save point with the sequencer frontier:
+     * one beyond it belongs to a re-seeded lineage and is discarded, anything else fails the start closed.
      */
     private boolean epochIsAheadOfLiveTxn(TableToken token, Path scratch, DurableEpochManifest.Candidate candidate) {
         final long epochSeqTxn = candidate.epochSeqTxn;
@@ -907,17 +862,16 @@ public class RecoveryCoordinator {
             // this needs no metadata, as in readLiveTxn.
             liveTxn.ofRO(scratch.$(), ColumnType.TIMESTAMP, PartitionBy.NONE);
             if (!liveTxn.unsafeLoadAll()) {
-                // Torn / short / garbage live _txn = the genuine post-crash case this mechanism exists to
-                // repair -> NOT "ahead" -> allow the roll-forward.
+                // A torn, short or garbage live _txn is the post-crash state recovery repairs: not ahead.
                 return false;
             }
 
-            // Invariant pin (review Finding C2). unsafeLoadAll() returns the record in the latest A/B slot, which
-            // the version word selects. Only when that slot is torn does it fall back to the predecessor slot
-            // (version - 1), and it never returns an older slot. So versionWord - getVersion() is 0 for the
-            // latest slot and 1 for the predecessor slot. The assert pins this, so an A/B refactor cannot
-            // silently change which record the guard judges. The property holds on any lineage. Recovery runs
-            // with no concurrent writer, so the version word on disk cannot change during this check.
+            // unsafeLoadAll() returns the record in the latest A/B slot, which the version word selects. Only
+            // when that slot is torn does it fall back to the predecessor slot (version - 1), and it never
+            // returns an older slot. So versionWord - getVersion() is 0 for the latest slot and 1 for the
+            // predecessor slot. The assert pins this, so an A/B refactor cannot silently change which record the
+            // guard judges. The property holds on any lineage. Recovery runs with no concurrent writer, so the
+            // version word on disk cannot change during this check.
             final long loadedVersion = liveTxn.getVersion();
             final long versionWord = liveTxn.unsafeReadVersion();
             assert versionWord - loadedVersion >= 0 && versionWord - loadedVersion <= 1
@@ -945,12 +899,11 @@ public class RecoveryCoordinator {
             // leftover, higher-lineage epoch. The caller decides what to do about it.
             return liveTxn.getSeqTxn() < epochSeqTxn;
         } catch (AssertionError ae) {
-            // The invariant pin above must stay LOUD — never fail-open. A slot-selection regression is a real
-            // bug, not the torn-_txn condition the broad catch below deliberately tolerates, so re-throw it
-            // (otherwise the catch (Throwable) would swallow it into a silent "not ahead").
+            // A slot-selection regression is a bug, not the torn _txn the broad catch below tolerates: rethrow
+            // it rather than let the catch turn it into "not ahead".
             throw ae;
         } catch (Throwable e) {
-            // Torn / unreadable live _txn = the genuine post-crash case -> NOT "ahead" -> allow recovery.
+            // A torn or unreadable live _txn is the post-crash state recovery repairs: not ahead.
             return false;
         } finally {
             Misc.free(liveTxn);
@@ -962,22 +915,14 @@ public class RecoveryCoordinator {
     }
 
     /**
-     * Fail-closed removal of the adaptive durable-epoch anchor for ONE table — the save point files
-     * {@code _epoch.manifest.0} and {@code _epoch.manifest.1}, the older one first — given
-     * {@code path} positioned at the table root and {@code tableRootLen} = the length of that table-root prefix.
+     * Removes the table's save point files, {@code _epoch.manifest.0} and {@code _epoch.manifest.1}, the older
+     * first, and fails if one stays. {@code path} is at the table root, {@code tableRootLen} long, and is left
+     * there. Absent files are accepted; the live {@code _txn} and {@code _cv} are not touched.
      * <p>
-     * Call this when the local materialized state has been SUPERSEDED by an external event and the on-disk
-     * epoch would otherwise be a stale, wrong-lineage anchor for {@link #recover()}:
-     * <ul>
-     *   <li>a backup / checkpoint / PITR <b>restore</b> (the restore rewinds {@code _txn}/{@code _cv} but
-     *       does not re-copy the epoch, so a leftover epoch could roll the restored state forward again);</li>
-     *   <li>a primary-&gt;replica <b>demote</b> (a replica never advances the epoch and recovers by
-     *       re-download, so any local epoch is a stale primary-tenure artifact).</li>
-     * </ul>
-     * Removing the anchor prevents recovery from selecting a stale lineage. Absent files are accepted so
-     * this remains idempotent for non-adaptive / never-epoch'd tables, but any artifact that still exists
-     * after deletion is a hard restore failure. Only the save point files are removed; the LIVE
-     * {@code _txn}/{@code _cv} are never touched. Leaves {@code path} trimmed back to the table root.
+     * Call it when an external event supersedes the table's live state, so that a leftover save point would be a
+     * wrong-lineage cut for {@link #recover()}: a backup, checkpoint or PITR restore, which rewinds {@code _txn}
+     * and {@code _cv} without a new save point, and a primary-to-replica demote, since a replica never takes a
+     * save point and recovers by download.
      */
     public static void removeAdaptiveEpochArtifacts(FilesFacade ff, Path path, int tableRootLen) {
         final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(ff, path, tableRootLen, -1);
