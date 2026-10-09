@@ -52,30 +52,29 @@ public class MemoryPMARImplTest {
     public static TemporaryFolder temp = new TemporaryFolder();
 
     /**
-     * {@link MemoryPMARImpl#release(long)} must msync completed/flipped pages according to the commit mode
-     * threaded in via {@code setCommitMode()}, NOT the instance-global mode. TableWriter threads its own
-     * grade because a table that is not yet enrolled in adaptive runs at SYNC while the instance runs
-     * ADAPTIVE, and its completed pages must still be msync'd on release. {@code release()} consults the
-     * global configuration only as the {@link CommitMode#UNSET} ("never threaded") fallback, so a
-     * {@code null} configuration (equivalent to a NOSYNC global) lets the threaded mode be proven in
-     * isolation: with SYNC threaded in, the completed pages must be msync'd even though the "global"
-     * resolves to NOSYNC.
+     * {@link MemoryPMARImpl#release(long)} msyncs completed pages according to the commit mode threaded in
+     * via {@code setCommitMode()}, not the instance-global mode. TableWriter threads its own grade because a
+     * table not yet enrolled in adaptive runs at SYNC while the instance runs ADAPTIVE, and its completed
+     * pages must still be msync'd on release. {@code release()} consults the global configuration only as
+     * the {@link CommitMode#UNSET} ("never threaded") fallback, so a {@code null} configuration (a NOSYNC
+     * global) isolates the threaded mode: with SYNC threaded in, the completed pages are msync'd although
+     * the global mode resolves to NOSYNC.
      *
-     * <p>Negative controls pin: UNSET/explicit-NOSYNC skip, ASYNC uses {@code msync(async=true)}, and an
-     * adaptive {@code applyLazy} column still skips even with SYNC threaded in (its durability is the
-     * epoch + WAL roll-forward, not the release msync).
+     * <p>UNSET and explicit NOSYNC skip the msync, ASYNC uses {@code msync(async=true)}, and an adaptive
+     * {@code applyLazy} column skips even with SYNC threaded in: the epoch and WAL replay make it durable,
+     * not the release msync.
      */
     @Test
     public void testReleaseHonorsThreadedCommitModeOverGlobalNosync() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final long pageSize = Files.PAGE_SIZE;
-            // (a) SYNC threaded in, "global" == NOSYNC (null config): completed pages MUST msync.
+            // (a) SYNC threaded in, global NOSYNC (null config): completed pages msync.
             assertReleaseMsync(pageSize, CommitMode.SYNC, false, true, false);
-            // (b) negative control — never threaded (UNSET) defers to the (null==NOSYNC) global => NO msync.
+            // (b) never threaded (UNSET) defers to the global mode, NOSYNC with a null config: no msync.
             assertReleaseMsync(pageSize, CommitMode.UNSET, false, false, false);
-            // (c) NOSYNC threaded in => NO msync.
+            // (c) NOSYNC threaded in: no msync.
             assertReleaseMsync(pageSize, CommitMode.NOSYNC, false, false, false);
-            // (d) ASYNC threaded in => msync(async=true).
+            // (d) ASYNC threaded in: msync(async=true).
             assertReleaseMsync(pageSize, CommitMode.ASYNC, false, true, true);
             // (e) adaptive lazy-apply column still skips even with SYNC threaded in.
             assertReleaseMsync(pageSize, CommitMode.SYNC, true, false, false);
