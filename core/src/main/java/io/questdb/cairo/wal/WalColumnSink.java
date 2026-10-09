@@ -33,7 +33,7 @@ import io.questdb.cairo.vm.api.MemoryMA;
  * append whole column blocks rather than rows.
  * <p>
  * A client brackets each block with {@link #beginColumnarWrite()} and then either
- * {@link #finishColumnarWrite(int, long, long, boolean)} or {@link #cancelColumnarWrite(long)}.
+ * {@link #finishColumnarWrite(int, long, long, boolean)} or {@link #cancelColumnarWrite()}.
  * Between the two it appends the block's values to the memories {@link #getDataColumn(int)}
  * and {@link #getAuxColumn(int)} return, and after writing a column it calls
  * {@link #setRowValueNotNullColumnar(int, long)} with the block's last row. The client keeps
@@ -51,6 +51,21 @@ import io.questdb.cairo.vm.api.MemoryMA;
  * </ul>
  * {@link #finishColumnarWrite(int, long, long, boolean)} NULL-fills every column the client
  * did not write and refuses a block that lacks the designated timestamp column.
+ * <p>
+ * A writer holds at most one open block. While it is open, the writer refuses a second
+ * {@link #beginColumnarWrite()}, and also {@code commit()}, {@code rollback()} and
+ * {@code newRow()}. Closing the writer or returning it to the pool discards an open block.
+ * A refused {@link #finishColumnarWrite(int, long, long, boolean)} leaves the block open, and
+ * the client must cancel it. Without an open block, the writer refuses
+ * {@link #finishColumnarWrite(int, long, long, boolean)}, and {@link #cancelColumnarWrite()}
+ * does nothing.
+ * <p>
+ * {@link #resolveSymbol(int, CharSequence, SymbolMapReader)} must receive this sink's own
+ * {@link #getSymbolMapReader(int)} for the column; another reader yields wrong keys. The
+ * memories {@link #getDataColumn(int)} and {@link #getAuxColumn(int)} return stay valid only
+ * until the block finishes or is cancelled. The writer does not guard structure changes or
+ * {@link WalWriter#rollSegment()} during a block, so a client must not trigger them while a
+ * block is open.
  */
 public interface WalColumnSink {
 
@@ -61,11 +76,10 @@ public interface WalColumnSink {
     void beginColumnarWrite();
 
     /**
-     * Discards the open block by moving every column's append position back to the given row.
-     *
-     * @param startRowId the {@link #getSegmentRowCount()} value read after {@link #beginColumnarWrite()}
+     * Discards the open block by moving every column's append position back to the
+     * segment's row count. Does nothing when no block is open.
      */
-    void cancelColumnarWrite(long startRowId);
+    void cancelColumnarWrite();
 
     /**
      * Throws a critical {@link io.questdb.cairo.CairoException} when the writer is distressed.
@@ -74,20 +88,39 @@ public interface WalColumnSink {
 
     /**
      * Closes the open block: NULL-fills the columns the client did not write, then adds the
-     * block's rows to the segment and its timestamps to the transaction.
+     * block's rows to the segment and its timestamps to the transaction. Refuses the call
+     * when no block is open.
      */
     void finishColumnarWrite(int rowCount, long minTimestamp, long maxTimestamp, boolean outOfOrder);
 
+    /**
+     * Returns the aux memory of a column in the current segment; a fixed-size column has none.
+     */
     MemoryMA getAuxColumn(int columnIndex);
 
+    /**
+     * Returns the data memory of a column in the current segment.
+     */
     MemoryMA getDataColumn(int columnIndex);
 
+    /**
+     * Returns the writer's table metadata, whose column indexes every method of this sink takes.
+     */
     TableRecordMetadata getMetadata();
 
+    /**
+     * Returns the current segment's row count; read after a begin, it is the block's first row.
+     */
     long getSegmentRowCount();
 
+    /**
+     * Returns the table's symbol dictionary for a SYMBOL column, the reader resolveSymbol takes.
+     */
     SymbolMapReader getSymbolMapReader(int columnIndex);
 
+    /**
+     * Marks a SYMBOL column as holding a NULL value, so the WAL event carries its null flag.
+     */
     void markSymbolMapNull(int columnIndex);
 
     /**
@@ -97,6 +130,9 @@ public interface WalColumnSink {
      */
     int resolveSymbol(int columnIndex, CharSequence symbolValue, SymbolMapReader symbolMapReader);
 
+    /**
+     * Records the last row the client wrote in a column; finishing the block NULL-fills the rest.
+     */
     void setRowValueNotNullColumnar(int columnIndex, long lastWrittenRow);
 
     /**

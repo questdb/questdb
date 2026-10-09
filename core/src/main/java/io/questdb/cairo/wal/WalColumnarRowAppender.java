@@ -115,7 +115,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         }
 
         // Reset append positions to before the write started
-        sink.cancelColumnarWrite(startRowId);
+        sink.cancelColumnarWrite();
 
         inColumnarWrite = false;
         pendingRowCount = 0;
