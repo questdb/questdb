@@ -89,6 +89,18 @@ public final class TypeConformanceTypes {
     }
 
     /**
+     * Throws with the problem of {@link #LATER_TYPES_RESOURCE} when one of its declaration lines did
+     * not parse: every kit class reaches it through {@link #parameters()}, so a bad line fails
+     * them with the line's own message, and the later types it would declare are missing from
+     * {@link #ALL} until it is fixed.
+     */
+    public static void checkLaterTypes() {
+        if (LATER_TYPES_PROBLEM != null) {
+            throw new IllegalStateException(LATER_TYPES_PROBLEM);
+        }
+    }
+
+    /**
      * Whether a tag is one of the existing types, which the kit holds recordings for; false for
      * a pseudo tag and for a type registered later.
      */
@@ -110,6 +122,7 @@ public final class TypeConformanceTypes {
      * type alone in about a minute before running the whole kit.
      */
     public static Collection<Object[]> parameters() {
+        checkLaterTypes();
         final String names = System.getProperty(TYPES_PROPERTY, "").trim();
         final Collection<Object[]> data = new ArrayList<>();
         if (names.isEmpty()) {
@@ -333,6 +346,8 @@ public final class TypeConformanceTypes {
 
     // the real tags the recordings cover
     private static final Set<ColumnTypeTag> EXISTING_TAGS;
+    // the problem of the first declaration line of LATER_TYPES_RESOURCE that did not parse, or null
+    private static final String LATER_TYPES_PROBLEM;
 
     static {
         final EnumMap<ColumnTypeTag, Entry> byTag = new EnumMap<>(ColumnTypeTag.class);
@@ -379,6 +394,14 @@ public final class TypeConformanceTypes {
         addExisting(byTag, null, "INTERVAL(us)", ColumnType.INTERVAL_TIMESTAMP_MICRO, "INTERVAL");
         addExisting(byTag, null, "INTERVAL(ns)", ColumnType.INTERVAL_TIMESTAMP_NANO, "INTERVAL");
         EXISTING_TAGS = EnumSet.copyOf(byTag.keySet());
-        addLaterTypes(byTag);
+        // a bad declaration line must not fail the class's initialization: every class that reads
+        // ALL would then fail with "Could not initialize class" and hide the line's own message
+        String problem = null;
+        try {
+            addLaterTypes(byTag);
+        } catch (IllegalStateException e) {
+            problem = e.getMessage();
+        }
+        LATER_TYPES_PROBLEM = problem;
     }
 }

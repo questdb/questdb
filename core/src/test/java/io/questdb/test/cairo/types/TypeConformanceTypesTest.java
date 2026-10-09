@@ -30,7 +30,8 @@ import org.junit.Test;
 import java.util.Set;
 
 /**
- * The guarded sites a type registered later can be declared refused at, and their refusals.
+ * The guarded sites a type registered later can be declared refused at, their refusals, and the
+ * declarations of the later types.
  */
 public class TypeConformanceTypesTest {
     @Test
@@ -43,5 +44,18 @@ public class TypeConformanceTypesTest {
         final TypeConformanceTypes.Entry type = TypeConformanceTypes.byLabel("INT");
         Assert.assertEquals("no family arm for INT at SAMPLE BY FILL(value)", TypeConformanceInvariants.refusalOf(type, "SAMPLE BY FILL(value)"));
         Assert.assertEquals("cast error from protocol type", TypeConformanceInvariants.refusalOf(type, "ILP column kind"));
+    }
+
+    @Test
+    public void testLaterTypesDeclarationsParse() {
+        // a bad line of the later types' declarations fails here and in every kit class with its
+        // own message, not with a kit class that cannot be initialized
+        TypeConformanceTypes.checkLaterTypes();
+        try {
+            TypeConformanceTypes.parseLaterTypeLine("FULL_LONG | FULL_LONG | BITMAP | -", Set.of());
+            Assert.fail("a NULL policy the kit does not know must be refused");
+        } catch (IllegalStateException e) {
+            Assert.assertTrue(e.getMessage(), e.getMessage().contains("the kit knows the NULL policies SENTINEL and NONE, not BITMAP"));
+        }
     }
 }
