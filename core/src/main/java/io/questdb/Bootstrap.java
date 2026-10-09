@@ -678,9 +678,8 @@ public class Bootstrap {
     }
 
     /**
-     * Report environments where SYNC/ADAPTIVE cannot deliver the power-loss durability they promise. Purely
-     * advisory: nothing here changes behaviour, because in two of the three cases there is nothing the
-     * operator can change.
+     * Reports environments where SYNC and ADAPTIVE cannot deliver the power-loss durability they promise.
+     * Advisory only: it changes no behaviour.
      */
     private void verifyDurabilityEnvironment(Path path, CairoConfiguration cairoConfig) {
         final CharSequence dbRoot = cairoConfig.getDbRoot();
@@ -691,10 +690,9 @@ public class Bootstrap {
     }
 
     private void verifyWriteBarriers(CairoConfiguration cairoConfig) {
-        // ADAPTIVE as well as SYNC: a nobarrier mount means fsync does not flush the device cache, which
-        // breaks the adaptive WAL commit point and the durable epoch for exactly the same reason it breaks
-        // SYNC, so gating on SYNC alone would leave an adaptive install unwarned. NOSYNC/ASYNC make no
-        // power-loss promise, so they stay silent -- including under the shipped default, which is NOSYNC.
+        // ADAPTIVE as well as SYNC: on a nobarrier mount fsync does not flush the device cache, which breaks
+        // the adaptive WAL commit and the durable epoch just as it breaks SYNC. NOSYNC and ASYNC make no
+        // power-loss promise, so they stay silent.
         final int commitMode = cairoConfig.getCommitMode();
         if (commitMode != CommitMode.SYNC && commitMode != CommitMode.ADAPTIVE) {
             return;
