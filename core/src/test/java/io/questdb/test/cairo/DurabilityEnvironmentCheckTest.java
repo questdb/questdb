@@ -38,9 +38,8 @@ import org.junit.Assume;
 import org.junit.Test;
 
 /**
- * Decision table for {@link DurabilityEnvironmentCheck#classify}. Pure, so every case runs on every
- * platform — which is the point: the live probe is platform-gated, and that is exactly how the
- * {@code FastCommitCheck} / {@code WriteBarrierCheck} reader bug stayed hidden.
+ * Decision table for {@link DurabilityEnvironmentCheck#classify}. The method is pure, so every case runs on
+ * every platform, while the live probe is platform-gated.
  */
 public class DurabilityEnvironmentCheckTest {
 
@@ -71,7 +70,7 @@ public class DurabilityEnvironmentCheckTest {
 
     @Test
     public void testGuestOnAppleHypervisor() {
-        // The signal is the HOST platform, not the filesystem: this is what Virtualization.framework
+        // The signal is the host platform, not the filesystem: this is what Virtualization.framework
         // presents to a Linux guest.
         Assert.assertEquals(
                 DurabilityEnvironmentCheck.HOST_DOWNGRADES_FLUSH,
@@ -81,8 +80,8 @@ public class DurabilityEnvironmentCheckTest {
 
     @Test
     public void testGuestOnNonAppleHypervisorIsClean() {
-        // virtiofs/virtio-blk on a LINUX host is durable, because a host fsync() there IS a device barrier.
-        // Warning on the transport rather than the host would have false-positived every one of these.
+        // virtiofs/virtio-blk on a Linux host is durable, because a host fsync() there is a device barrier.
+        // A warning keyed on the transport rather than the host would flag every one of these.
         Assert.assertEquals(DurabilityEnvironmentCheck.OK,
                 DurabilityEnvironmentCheck.classify(false, null, "QEMU\n", "write back\n"));
         Assert.assertEquals(DurabilityEnvironmentCheck.OK,
@@ -99,7 +98,7 @@ public class DurabilityEnvironmentCheckTest {
 
     @Test
     public void testWriteCacheWriteThrough() {
-        // The guest kernel then issues NO flushes at all, so nothing downstream can be durable.
+        // The guest kernel then issues no flushes at all, so nothing downstream can be durable.
         Assert.assertEquals(
                 DurabilityEnvironmentCheck.GUEST_DISCARDS_FLUSH,
                 DurabilityEnvironmentCheck.classify(false, null, "QEMU\n", "write through\n")
@@ -123,12 +122,6 @@ public class DurabilityEnvironmentCheckTest {
     private static int classifyDarwin(String fsName) {
         return DurabilityEnvironmentCheck.classify(true, fsName, null, null);
     }
-
-    // ---------------------------------------------------------------------
-    // The advisories themselves. classify() being right is worthless if the
-    // message never fires, fires at the wrong level, or fires for a mode that
-    // made no durability promise.
-    // ---------------------------------------------------------------------
 
     @Test
     public void testAdvisoryNotLoggedForModesThatPromiseNothing() {
@@ -190,15 +183,9 @@ public class DurabilityEnvironmentCheckTest {
         Assert.assertTrue(log.levels.isEmpty());
     }
 
-    // ---------------------------------------------------------------------
-    // The live guest probe: /sys reads plus the virtio device scan. Driven
-    // through an injected FilesFacade so it runs off Linux too -- the whole
-    // point, since a platform-gated probe is what hid the reader bug.
-    // ---------------------------------------------------------------------
-
     @Test
     public void testCheckAndReportDoesNotProbeForModesThatPromiseNothing() {
-        // The gate is asserted by COUNTING probe reads, not by reading the log: a gate applied after the
+        // The gate is asserted by counting probe reads, not by reading the log: a gate applied after the
         // probe would still log nothing and would still look correct from the log alone, while having paid
         // for the /sys scan (and, on macOS, for a statfs of the db root).
         for (int mode : new int[]{CommitMode.NOSYNC, CommitMode.ASYNC}) {
@@ -329,8 +316,8 @@ public class DurabilityEnvironmentCheckTest {
         @Override
         public long openRONoCache(io.questdb.std.str.LPSZ name) {
             openCount++;
-            // NOT name.toString(): an LPSZ renders as its identity hash, so string comparison silently
-            // never matches and the whole fake goes quiet.
+            // Not name.toString(): an LPSZ renders as its identity hash, so a string comparison never
+            // matches and the fake goes quiet.
             final String path = unixPath(name);
             if ("/sys/class/dmi/id/sys_vendor".equals(path)) {
                 pending = bytesOrNull(dmiSysVendor);
@@ -349,8 +336,7 @@ public class DurabilityEnvironmentCheckTest {
          * Decode the LPSZ bytes with {@code '\'} normalized to {@code '/'}. The probe assembles literal
          * Linux sysfs paths, but they reach the facade through {@code Path}, which renders {@code '\'} on
          * Windows -- so an exact ASCII compare goes quiet there and the probe reads nothing. The fake
-         * sysfs accepts either separator, keeping the probe testable on every platform, which is the
-         * whole point of driving it through an injected facade.
+         * sysfs accepts either separator, keeping the probe testable on every platform.
          */
         private static String unixPath(io.questdb.std.str.LPSZ name) {
             final int n = name.size();
@@ -417,12 +403,11 @@ public class DurabilityEnvironmentCheckTest {
     }
 
     /**
-     * Deterministic in-memory {@link Log} recording both the rendered text and WHICH LEVEL was used.
+     * Deterministic in-memory {@link Log} recording both the rendered text and the level used.
      * <p>
-     * Not {@code LogCapture}: that intercepts the console writer and needs the async log worker running, so
-     * in a plain JUnit class every assertion either times out or passes vacuously because the queue was
-     * never drained. Level matters as much as text here -- only the operator-fixable condition may be an
-     * error, and asserting that is the point.
+     * Not {@code LogCapture}: that intercepts the console writer and needs the async log worker, which a
+     * plain JUnit class does not run. Level matters as much as text here: only the operator-fixable condition
+     * may be an error.
      */
     static final class RecordingLog implements Log {
         final java.util.List<String> levels = new java.util.ArrayList<>();
