@@ -258,6 +258,9 @@ public class SqlOptimiser implements Mutable {
     private final Path path;
     private final LowerCaseCharSequenceHashSet pivotAliasMap = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceIntHashMap pivotAliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
+    // the PIVOT IN subqueries of the statement being compiled, until code generation wraps its plan
+    // in a PivotInListCheckFactory that takes them over
+    private final ObjList<PivotInListCheck> pivotInListChecks = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap pivotFuseAliasMap = new LowerCaseCharSequenceIntHashMap();
     private final IntList pivotFuseRefCounts = new IntList();
     private final IntHashSet postFilterRemoved = new IntHashSet();
@@ -502,6 +505,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     public void clear() {
+        freePivotInListChecks();
         clearConstNameMaps();
         contextPool.clear();
         intHashSetPool.clear();
@@ -973,7 +977,7 @@ public class SqlOptimiser implements Mutable {
         return 0;
     }
 
-    private static boolean printRecordColumnOrNull(Record record, RecordMetadata metadata, StringSink sink, int position) throws SqlException {
+    static boolean printRecordColumnOrNull(Record record, RecordMetadata metadata, StringSink sink, int position) throws SqlException {
         final int columnType = metadata.getColumnType(0);
         sink.clear();
         switch (ColumnType.tagOf(columnType)) {
@@ -8187,7 +8191,10 @@ public class SqlOptimiser implements Mutable {
                     ExpressionNode subQueryNode = pivotForColumn.getSelectSubqueryExpr();
                     assert subQueryNode != null;
                     assert compiler != null;
-                    try (RecordCursorFactory inListFactory = compiler.generateSelectWithRetries(subQueryNode.queryModel, null, sqlExecutionContext, true)) {
+                    final RecordCursorFactory inListFactory = compiler.generateSelectWithRetries(subQueryNode.queryModel, null, sqlExecutionContext, true);
+                    // the values are the plan's: a cached plan re-runs the subquery to check them
+                    final PivotInListCheck check = new PivotInListCheck(inListFactory, subQueryNode.position);
+                    try {
                         final RecordMetadata inListMetadata = inListFactory.getMetadata();
                         final int columnCount = inListMetadata.getColumnCount();
                         if (columnCount != 1) {
@@ -8214,6 +8221,7 @@ public class SqlOptimiser implements Mutable {
                                 if (!tempCharSequenceHashSet.add(tmpStringSink)) {
                                     continue;
                                 }
+                                check.addExpected(tmpStringSink);
                                 CharacterStoreEntry quotedCse = characterStore.newEntry();
                                 if (quote && !isNull) {
                                     quotedCse.put('\'');
@@ -8247,10 +8255,13 @@ public class SqlOptimiser implements Mutable {
                         if (valueCount == 0) {
                             throw SqlException.$(subQueryNode.position, "PIVOT IN subquery returned empty result set");
                         }
+                        pivotInListChecks.add(check);
+                    } catch (Throwable th) {
+                        check.close();
+                        throw th;
                     }
                     pivotForColumn.setSelectSubqueryExpr(null);
                     pivotForColumn.setIsValueList(true);
-                    outerModel.setCacheable(false);
                 }
                 forValueCombinations *= pivotForColumn.getValueList().size();
                 if (forValueCombinations > maxPivotProducedColumns) {
@@ -16153,9 +16164,23 @@ public class SqlOptimiser implements Mutable {
      * and it detaches the model field it took the factory from, so a call made after a generation
      * attempt would free a factory its new owner still uses.
      */
+    void freePivotInListChecks() {
+        Misc.freeObjListAndClear(pivotInListChecks);
+    }
+
     void freeTableFactoriesInFlight(@NotNull Throwable failure) {
         Misc.freeObjList(tableFactoriesInFlight, failure);
         tableFactoriesInFlight.clear();
+        Misc.freeObjList(pivotInListChecks, failure);
+        pivotInListChecks.clear();
+    }
+
+    /**
+     * The PIVOT IN subqueries the statement's plan depends on, see {@link PivotInListCheck}. The
+     * caller takes them over and empties the list.
+     */
+    ObjList<PivotInListCheck> getPivotInListChecks() {
+        return pivotInListChecks;
     }
 
     IQueryModel optimise(

@@ -77,6 +77,7 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
+import io.questdb.griffin.engine.PivotInListCheckFactory;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.StaleViewCheckFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
@@ -395,6 +396,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw new IllegalStateException("close was already called");
         }
         closed = true;
+        // null when the constructor failed before creating it
+        if (optimiser != null) {
+            optimiser.freePivotInListChecks();
+        }
         Misc.free(vacuumColumnVersions);
         Misc.free(path);
         Misc.free(renamePath);
@@ -413,7 +418,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         lexer.of(sqlText);
         isSingleQueryMode = true;
 
-        compileInner(executionContext, sqlText, true);
+        try {
+            compileInner(executionContext, sqlText, true);
+        } finally {
+            // the PIVOT IN subqueries of a statement whose plan was not generated: nothing took them over
+            optimiser.freePivotInListChecks();
+        }
 
         // Verify all input was consumed — reject trailing content.
         // Skip in validation-only mode: handlers may return early without consuming all tokens.
@@ -6123,6 +6133,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         ObjList<ViewDefinition> views = selectQueryModel.getReferencedViews();
         if (views.size() > 0) {
             factory = new StaleViewCheckFactory(factory, views, engine);
+        }
+        final ObjList<PivotInListCheck> pivotInListChecks = optimiser.getPivotInListChecks();
+        if (pivotInListChecks.size() > 0) {
+            // takes the checks over
+            factory = new PivotInListCheckFactory(factory, pivotInListChecks);
         }
         if (generateProgressLogger) {
             return new QueryProgress(queryRegistry, sqlText, factory);
