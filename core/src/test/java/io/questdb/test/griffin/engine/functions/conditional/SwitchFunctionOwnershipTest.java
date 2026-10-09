@@ -46,28 +46,6 @@ import org.junit.Test;
 
 public class SwitchFunctionOwnershipTest extends AbstractCairoTest {
     @Test
-    public void testUnusedBooleanElseAndOverwrittenNullBranchesCloseExactlyOnce() throws Exception {
-        assertMemoryLeak(() -> {
-            final SwitchFunctionFactory factory = new SwitchFunctionFactory();
-            for (int branch = 0; branch < 3; branch++) {
-                final CountingBoolean discarded = new CountingBoolean(false);
-                final ObjList<Function> args = args(branch, discarded);
-                final Function key = args.getQuick(0);
-                try (Function result = factory.newInstance(0, args, positions(args.size()), configuration, sqlExecutionContext)) {
-                    Assert.assertEquals(1, discarded.closeCount);
-                    if (branch < 2) {
-                        Assert.assertTrue(result.getBool(null));
-                    }
-                }
-                Assert.assertEquals(1, discarded.closeCount);
-                if (key instanceof CountingSymbol symbol) {
-                    Assert.assertEquals(1, symbol.closeCount);
-                }
-            }
-        });
-    }
-
-    @Test
     public void testDiscardCloseFailureDoesNotDoubleCloseThroughParserCleanup() throws Exception {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
@@ -76,7 +54,7 @@ public class SwitchFunctionOwnershipTest extends AbstractCairoTest {
                 final CountingBoolean discarded = new CountingBoolean(true);
                 final ObjList<Function> args = args(branch, discarded);
                 final Function key = args.getQuick(0);
-                try (Function ignored = parser.createFunction(descriptor, 0, "switch", args, positions(args.size()), sqlExecutionContext)) {
+                try (Function ignored = parser.getFunctionResolver().createFunction(descriptor, 0, "switch", args, positions(args.size()), sqlExecutionContext)) {
                     Assert.fail();
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "discarded CASE branch");
@@ -114,6 +92,28 @@ public class SwitchFunctionOwnershipTest extends AbstractCairoTest {
                 Assert.assertTrue(left.isEquivalentTo(left));
                 Assert.assertFalse(left.isEquivalentTo(right));
                 Assert.assertFalse(right.isEquivalentTo(left));
+            }
+        });
+    }
+
+    @Test
+    public void testUnusedBooleanElseAndOverwrittenNullBranchesCloseExactlyOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            final SwitchFunctionFactory factory = new SwitchFunctionFactory();
+            for (int branch = 0; branch < 3; branch++) {
+                final CountingBoolean discarded = new CountingBoolean(false);
+                final ObjList<Function> args = args(branch, discarded);
+                final Function key = args.getQuick(0);
+                try (Function result = factory.newInstance(0, args, positions(args.size()), configuration, sqlExecutionContext)) {
+                    Assert.assertEquals(1, discarded.closeCount);
+                    if (branch < 2) {
+                        Assert.assertTrue(result.getBool(null));
+                    }
+                }
+                Assert.assertEquals(1, discarded.closeCount);
+                if (key instanceof CountingSymbol symbol) {
+                    Assert.assertEquals(1, symbol.closeCount);
+                }
             }
         });
     }

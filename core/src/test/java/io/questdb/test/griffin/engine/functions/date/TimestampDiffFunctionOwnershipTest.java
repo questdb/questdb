@@ -68,6 +68,28 @@ public class TimestampDiffFunctionOwnershipTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelectedConstructionFailureDoesNotCloseDiscardedArgumentTwice() throws Exception {
+        assertMemoryLeak(() -> {
+            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
+            final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(new TimestampDiffFunctionFactory());
+            for (boolean isFirstFailure : new boolean[]{true, false}) {
+                final CountingTimestampFunction start = new CountingTimestampFunction(ColumnType.TIMESTAMP_MICRO, isFirstFailure);
+                final CountingTimestampFunction end = new CountingTimestampFunction(ColumnType.TIMESTAMP_NANO, !isFirstFailure);
+                try (Function ignored = parser.getFunctionResolver().createFunction(descriptor, 0, "datediff",
+                        new ObjList<>(CharConstant.newInstance('?'), start, end), new IntList(), sqlExecutionContext)) {
+                    Assert.fail("close failure must propagate");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "datediff argument close");
+                }
+                Assert.assertEquals(1, start.closeCount);
+                Assert.assertEquals(1, end.closeCount);
+                Assert.assertEquals(0, start.readCount);
+                Assert.assertEquals(0, end.readCount);
+            }
+        });
+    }
+
+    @Test
     public void testValidConstantPeriodRetainsBothValuesUntilResultCloses() throws Exception {
         assertMemoryLeak(() -> {
             final CountingTimestampFunction start = new CountingTimestampFunction(ColumnType.TIMESTAMP_MICRO, false);
@@ -83,28 +105,6 @@ public class TimestampDiffFunctionOwnershipTest extends AbstractCairoTest {
             }
             Assert.assertEquals(1, start.closeCount);
             Assert.assertEquals(1, end.closeCount);
-        });
-    }
-
-    @Test
-    public void testSelectedConstructionFailureDoesNotCloseDiscardedArgumentTwice() throws Exception {
-        assertMemoryLeak(() -> {
-            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-            final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(new TimestampDiffFunctionFactory());
-            for (boolean isFirstFailure : new boolean[]{true, false}) {
-                final CountingTimestampFunction start = new CountingTimestampFunction(ColumnType.TIMESTAMP_MICRO, isFirstFailure);
-                final CountingTimestampFunction end = new CountingTimestampFunction(ColumnType.TIMESTAMP_NANO, !isFirstFailure);
-                try (Function ignored = parser.createFunction(descriptor, 0, "datediff",
-                        new ObjList<>(CharConstant.newInstance('?'), start, end), new IntList(), sqlExecutionContext)) {
-                    Assert.fail("close failure must propagate");
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "datediff argument close");
-                }
-                Assert.assertEquals(1, start.closeCount);
-                Assert.assertEquals(1, end.closeCount);
-                Assert.assertEquals(0, start.readCount);
-                Assert.assertEquals(0, end.readCount);
-            }
         });
     }
 

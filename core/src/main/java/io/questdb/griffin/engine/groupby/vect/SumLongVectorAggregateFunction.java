@@ -35,8 +35,8 @@ import io.questdb.std.Vect;
 
 import java.util.concurrent.atomic.LongAdder;
 
-import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
-import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
+import static io.questdb.griffin.codegen.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
+import static io.questdb.griffin.codegen.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 
 public class SumLongVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
     private final int columnIndex;

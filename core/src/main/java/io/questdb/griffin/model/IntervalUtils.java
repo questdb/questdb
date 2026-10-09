@@ -30,7 +30,7 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TickCalendarService;
 import io.questdb.cairo.TimestampDriver;
-import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.FiberLocal;
@@ -503,6 +503,143 @@ public final class IntervalUtils {
     }
 
     /**
+     * Parses a TICK (Temporal Interval Calendar Kit) interval string with bracket expansion,
+     * timezone support, and duration suffixes. This method is the main entry point for parsing
+     * complex interval expressions that can expand to multiple disjoint time intervals.
+     *
+     * <h4>Supported Features</h4>
+     * <ul>
+     *   <li><b>Bracket Expansion:</b> {@code [a,b,c]} for comma-separated values,
+     *       {@code [a..b]} for inclusive ranges</li>
+     *   <li><b>Date Lists:</b> {@code [date1,date2,...]} for non-contiguous dates</li>
+     *   <li><b>Time Lists:</b> {@code T[09:00,14:30]} for multiple complete times</li>
+     *   <li><b>Timezone Support:</b> {@code @timezone} for DST-aware conversion</li>
+     *   <li><b>Duration Suffix:</b> {@code ;6h}, {@code ;30m}, {@code ;1h30m} for interval duration</li>
+     *   <li><b>Cartesian Product:</b> Multiple bracket groups combine all possibilities</li>
+     * </ul>
+     *
+     * <h4>Bracket Expansion Examples</h4>
+     * <pre>{@code
+     * // Comma-separated values - expands to days 10, 15, 20 of January 2024
+     * "2024-01-[10,15,20]"
+     *
+     * // Inclusive range - expands to days 10, 11, 12
+     * "2024-01-[10..12]"
+     *
+     * // Mixed values and ranges - expands to days 5, 10, 11, 12, 20
+     * "2024-01-[5,10..12,20]"
+     *
+     * // Multiple bracket groups (Cartesian product) - 4 intervals
+     * "2024-[01,06]-[10,15]"  // Jan 10, Jan 15, Jun 10, Jun 15
+     *
+     * // With duration suffix - two 1-hour intervals
+     * "2024-01-[10,15]T10:30;1h"
+     * }</pre>
+     *
+     * <h4>Date List Examples</h4>
+     * <pre>{@code
+     * // Non-contiguous dates
+     * "[2024-01-15,2024-03-20,2024-06-01]"
+     *
+     * // Date list with nested field expansion
+     * "[2024-12-31,2025-01-[03..05]]"  // Dec 31, Jan 3, Jan 4, Jan 5
+     *
+     * // Date list with time suffix
+     * "[2024-01-15,2024-01-20]T09:30;6h30m"
+     * }</pre>
+     *
+     * <h4>Time List Examples</h4>
+     * <pre>{@code
+     * // Multiple times on same day (note: colon inside bracket = time list)
+     * "2024-01-15T[09:00,14:30,18:00];1h"  // Three 1-hour intervals
+     *
+     * // Contrast with numeric expansion (no colon inside bracket)
+     * "2024-01-15T[09,14]:30"  // Expands hour field only -> 09:30 and 14:30
+     *
+     * // Per-element timezone in time list
+     * "2024-01-15T[09:00@UTC,14:30@Europe/London];1h"
+     * }</pre>
+     *
+     * <h4>Timezone Examples</h4>
+     * <pre>{@code
+     * // Numeric offset: 08:00 in UTC+3 = 05:00 UTC
+     * "2024-01-15T08:00@+03:00"
+     *
+     * // Named timezone with DST awareness
+     * "2024-07-15T08:00@Europe/London"  // Summer: 08:00 BST = 07:00 UTC
+     * "2024-01-15T08:00@Europe/London"  // Winter: 08:00 GMT = 08:00 UTC
+     *
+     * // Timezone with bracket expansion and duration
+     * "2024-01-[15..19]T09:30@America/New_York;6h30m"
+     * }</pre>
+     *
+     * <h4>Multi-Unit Duration Examples</h4>
+     * <pre>{@code
+     * // Single unit (traditional)
+     * "2024-01-15T09:00;1h"
+     *
+     * // Multi-unit duration
+     * "2024-01-15T09:00;1h30m"      // 1 hour 30 minutes
+     * "2024-01-15T09:00;2h15m30s"   // 2 hours 15 minutes 30 seconds
+     * "2024-01-15T09:00;500T250u"   // 500 milliseconds + 250 microseconds
+     *
+     * // Supported units: y(years), M(months), w(weeks), d(days), h(hours),
+     * //                  m(minutes), s(seconds), T(milliseconds), u(microseconds), n(nanoseconds)
+     * }</pre>
+     *
+     * <h4>Output Format</h4>
+     * <p>Intervals are appended to the {@code out} list. In static mode ({@code applyEncoded=true}),
+     * each interval is stored as 2 longs: {@code [lo, hi]}. In dynamic mode ({@code applyEncoded=false}),
+     * each interval is stored as 4 longs: {@code [lo, hi, operation|periodType|adjustment, period|count]}.
+     * When multiple intervals are generated, they are automatically unioned (merged if overlapping).</p>
+     *
+     * @param timestampDriver the timestamp driver determining precision (microseconds or nanoseconds)
+     * @param seq             the interval string to parse (e.g., {@code "2024-01-[10,15]T09:00;1h"})
+     * @param lo              start index (inclusive) within {@code seq} to parse from
+     * @param lim             end index (exclusive) within {@code seq} to parse to
+     * @param position        source position for error reporting (typically the token position in SQL)
+     * @param out             output list where parsed intervals will be appended as lo/hi pairs
+     * @param operation       the interval operation type (e.g., {@link IntervalOperation#INTERSECT})
+     * @param sink            a reusable string sink for internal string manipulation; contents may be modified
+     * @param applyEncoded    if {@code true}, intervals are fully resolved (static mode);
+     *                        if {@code false}, interval metadata is preserved for runtime evaluation (dynamic mode)
+     * @throws SqlException if the interval string is malformed (e.g., unclosed bracket, invalid range,
+     *                      empty bracket, invalid timezone, invalid duration format)
+     * @see IntervalOperation
+     * @see TimestampDriver
+     */
+    /**
+     * Whether a tick expression spells a fraction finer than the driver's precision. Static parsing
+     * resolves such an expression at nanosecond precision and keeps only the values of the driver's
+     * precision inside its intervals.
+     */
+    public static boolean hasSubPrecisionDigits(TimestampDriver timestampDriver, CharSequence seq, int lo, int lim) {
+        if (!ColumnType.isTimestampMicro(timestampDriver.getTimestampType())) {
+            return false;
+        }
+        boolean hasFinerDigit = false;
+        int fractionDigits = -1;
+        int integerDigits = 0;
+        for (int i = lo; i < lim; i++) {
+            final char c = seq.charAt(i);
+            if (c >= '0' && c <= '9') {
+                if (fractionDigits < 0) {
+                    integerDigits++;
+                } else if (++fractionDigits > 6 && c != '0') {
+                    hasFinerDigit = true;
+                }
+            } else {
+                if (c == '-' && integerDigits >= 4 && isBeyondNanoRange(seq, i - integerDigits, i)) {
+                    return false;
+                }
+                fractionDigits = c == '.' ? 0 : -1;
+                integerDigits = 0;
+            }
+        }
+        return hasFinerDigit;
+    }
+
+    /**
      * Intersects two lists of intervals compacted in one list in place.
      * Intervals to be chronologically ordered and result list will be ordered as well.
      * <p>
@@ -645,143 +782,6 @@ public final class IntervalUtils {
     }
 
     /**
-     * Parses a TICK (Temporal Interval Calendar Kit) interval string with bracket expansion,
-     * timezone support, and duration suffixes. This method is the main entry point for parsing
-     * complex interval expressions that can expand to multiple disjoint time intervals.
-     *
-     * <h4>Supported Features</h4>
-     * <ul>
-     *   <li><b>Bracket Expansion:</b> {@code [a,b,c]} for comma-separated values,
-     *       {@code [a..b]} for inclusive ranges</li>
-     *   <li><b>Date Lists:</b> {@code [date1,date2,...]} for non-contiguous dates</li>
-     *   <li><b>Time Lists:</b> {@code T[09:00,14:30]} for multiple complete times</li>
-     *   <li><b>Timezone Support:</b> {@code @timezone} for DST-aware conversion</li>
-     *   <li><b>Duration Suffix:</b> {@code ;6h}, {@code ;30m}, {@code ;1h30m} for interval duration</li>
-     *   <li><b>Cartesian Product:</b> Multiple bracket groups combine all possibilities</li>
-     * </ul>
-     *
-     * <h4>Bracket Expansion Examples</h4>
-     * <pre>{@code
-     * // Comma-separated values - expands to days 10, 15, 20 of January 2024
-     * "2024-01-[10,15,20]"
-     *
-     * // Inclusive range - expands to days 10, 11, 12
-     * "2024-01-[10..12]"
-     *
-     * // Mixed values and ranges - expands to days 5, 10, 11, 12, 20
-     * "2024-01-[5,10..12,20]"
-     *
-     * // Multiple bracket groups (Cartesian product) - 4 intervals
-     * "2024-[01,06]-[10,15]"  // Jan 10, Jan 15, Jun 10, Jun 15
-     *
-     * // With duration suffix - two 1-hour intervals
-     * "2024-01-[10,15]T10:30;1h"
-     * }</pre>
-     *
-     * <h4>Date List Examples</h4>
-     * <pre>{@code
-     * // Non-contiguous dates
-     * "[2024-01-15,2024-03-20,2024-06-01]"
-     *
-     * // Date list with nested field expansion
-     * "[2024-12-31,2025-01-[03..05]]"  // Dec 31, Jan 3, Jan 4, Jan 5
-     *
-     * // Date list with time suffix
-     * "[2024-01-15,2024-01-20]T09:30;6h30m"
-     * }</pre>
-     *
-     * <h4>Time List Examples</h4>
-     * <pre>{@code
-     * // Multiple times on same day (note: colon inside bracket = time list)
-     * "2024-01-15T[09:00,14:30,18:00];1h"  // Three 1-hour intervals
-     *
-     * // Contrast with numeric expansion (no colon inside bracket)
-     * "2024-01-15T[09,14]:30"  // Expands hour field only -> 09:30 and 14:30
-     *
-     * // Per-element timezone in time list
-     * "2024-01-15T[09:00@UTC,14:30@Europe/London];1h"
-     * }</pre>
-     *
-     * <h4>Timezone Examples</h4>
-     * <pre>{@code
-     * // Numeric offset: 08:00 in UTC+3 = 05:00 UTC
-     * "2024-01-15T08:00@+03:00"
-     *
-     * // Named timezone with DST awareness
-     * "2024-07-15T08:00@Europe/London"  // Summer: 08:00 BST = 07:00 UTC
-     * "2024-01-15T08:00@Europe/London"  // Winter: 08:00 GMT = 08:00 UTC
-     *
-     * // Timezone with bracket expansion and duration
-     * "2024-01-[15..19]T09:30@America/New_York;6h30m"
-     * }</pre>
-     *
-     * <h4>Multi-Unit Duration Examples</h4>
-     * <pre>{@code
-     * // Single unit (traditional)
-     * "2024-01-15T09:00;1h"
-     *
-     * // Multi-unit duration
-     * "2024-01-15T09:00;1h30m"      // 1 hour 30 minutes
-     * "2024-01-15T09:00;2h15m30s"   // 2 hours 15 minutes 30 seconds
-     * "2024-01-15T09:00;500T250u"   // 500 milliseconds + 250 microseconds
-     *
-     * // Supported units: y(years), M(months), w(weeks), d(days), h(hours),
-     * //                  m(minutes), s(seconds), T(milliseconds), u(microseconds), n(nanoseconds)
-     * }</pre>
-     *
-     * <h4>Output Format</h4>
-     * <p>Intervals are appended to the {@code out} list. In static mode ({@code applyEncoded=true}),
-     * each interval is stored as 2 longs: {@code [lo, hi]}. In dynamic mode ({@code applyEncoded=false}),
-     * each interval is stored as 4 longs: {@code [lo, hi, operation|periodType|adjustment, period|count]}.
-     * When multiple intervals are generated, they are automatically unioned (merged if overlapping).</p>
-     *
-     * @param timestampDriver the timestamp driver determining precision (microseconds or nanoseconds)
-     * @param seq             the interval string to parse (e.g., {@code "2024-01-[10,15]T09:00;1h"})
-     * @param lo              start index (inclusive) within {@code seq} to parse from
-     * @param lim             end index (exclusive) within {@code seq} to parse to
-     * @param position        source position for error reporting (typically the token position in SQL)
-     * @param out             output list where parsed intervals will be appended as lo/hi pairs
-     * @param operation       the interval operation type (e.g., {@link IntervalOperation#INTERSECT})
-     * @param sink            a reusable string sink for internal string manipulation; contents may be modified
-     * @param applyEncoded    if {@code true}, intervals are fully resolved (static mode);
-     *                        if {@code false}, interval metadata is preserved for runtime evaluation (dynamic mode)
-     * @throws SqlException if the interval string is malformed (e.g., unclosed bracket, invalid range,
-     *                      empty bracket, invalid timezone, invalid duration format)
-     * @see IntervalOperation
-     * @see TimestampDriver
-     */
-    /**
-     * Whether a tick expression spells a fraction finer than the driver's precision. Static parsing
-     * resolves such an expression at nanosecond precision and keeps only the values of the driver's
-     * precision inside its intervals.
-     */
-    public static boolean hasSubPrecisionDigits(TimestampDriver timestampDriver, CharSequence seq, int lo, int lim) {
-        if (!ColumnType.isTimestampMicro(timestampDriver.getTimestampType())) {
-            return false;
-        }
-        boolean hasFinerDigit = false;
-        int fractionDigits = -1;
-        int integerDigits = 0;
-        for (int i = lo; i < lim; i++) {
-            final char c = seq.charAt(i);
-            if (c >= '0' && c <= '9') {
-                if (fractionDigits < 0) {
-                    integerDigits++;
-                } else if (++fractionDigits > 6 && c != '0') {
-                    hasFinerDigit = true;
-                }
-            } else {
-                if (c == '-' && integerDigits >= 4 && isBeyondNanoRange(seq, i - integerDigits, i)) {
-                    return false;
-                }
-                fractionDigits = c == '.' ? 0 : -1;
-                integerDigits = 0;
-            }
-        }
-        return hasFinerDigit;
-    }
-
-    /**
      * The precision a timestamp literal compared with values of the driver's precision is exact at:
      * the driver's for nanoseconds, otherwise microseconds or, when the literal spells a finer
      * fraction, nanoseconds.
@@ -789,7 +789,7 @@ public final class IntervalUtils {
     public static int literalTimestampType(TimestampDriver timestampDriver, CharSequence literal) {
         return ColumnType.isTimestampNano(timestampDriver.getTimestampType())
                 ? timestampDriver.getTimestampType()
-                : FunctionParser.getAdaptiveTimestampType(literal, ColumnType.TIMESTAMP_MICRO);
+                : FunctionResolver.getAdaptiveTimestampType(literal, ColumnType.TIMESTAMP_MICRO);
     }
 
     /**
@@ -4171,7 +4171,7 @@ public final class IntervalUtils {
 
     private static boolean isBeyondNanoRange(CharSequence seq, int yearLo, int yearHi) {
         try {
-            return FunctionParser.isBeyondNanoRange(Numbers.parseInt(seq, yearLo, yearHi));
+            return FunctionResolver.isBeyondNanoRange(Numbers.parseInt(seq, yearLo, yearHi));
         } catch (NumericException e) {
             return true;
         }

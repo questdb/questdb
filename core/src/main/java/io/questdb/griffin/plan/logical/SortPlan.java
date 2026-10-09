@@ -33,6 +33,7 @@ public final class SortPlan extends ForwardingPlan {
     public static final ObjectFactory<SortPlan> FACTORY = SortPlan::new;
     private final IntList columnIds = new IntList();
     private final ObjList<SortDirection> directions = new ObjList<>();
+    private Algorithm algorithm;
     private boolean hasAliasedKey;
     private boolean isLimited = true;
     private boolean isMarkoutHorizon;
@@ -43,6 +44,7 @@ public final class SortPlan extends ForwardingPlan {
         super.clear();
         columnIds.clear();
         directions.clear();
+        algorithm = null;
         hasAliasedKey = false;
         isLimited = true;
         isMarkoutHorizon = false;
@@ -59,6 +61,13 @@ public final class SortPlan extends ForwardingPlan {
         final OutputSchema input = getInput().getOutput();
         final int firstIndex = columnIds.size() > 0 ? input.getColumnIndexById(columnIds.getQuick(0)) : -1;
         return firstIndex >= 0 && ColumnType.isTimestamp(input.getColumnType(firstIndex)) ? firstIndex : -1;
+    }
+
+    /**
+     * How the sort is implemented, or null before order planning decided it.
+     */
+    public Algorithm getAlgorithm() {
+        return algorithm;
     }
 
     public IntList getColumnIds() {
@@ -116,5 +125,59 @@ public final class SortPlan extends ForwardingPlan {
     public SortPlan of(LogicalPlan input, int position) {
         configure(input, position);
         return this;
+    }
+
+    public void setAlgorithm(Algorithm algorithm) {
+        this.algorithm = algorithm;
+    }
+
+    @Override
+    public void visitReads(PlanExpressionVisitor visitor) {
+        PlanReads.columnIds(columnIds, null, visitor);
+    }
+
+    /**
+     * How the generator implements a sort.
+     */
+    public enum Algorithm {
+        /**
+         * No sort: the input delivers the order.
+         */
+        INPUT_ORDER,
+        /**
+         * No sort: the input of a markout horizon delivers the order, and the generator declares the sort's
+         * designated timestamp over it.
+         */
+        TIMESTAMP_DECLARATION,
+        /**
+         * Sorts the row ids of a random-access input.
+         */
+        LIGHT,
+        /**
+         * Sorts copies of the rows of an input without random access.
+         */
+        MATERIALIZED,
+        /**
+         * Keeps the rows the LIMIT over the sort selects, by row id of a random-access input.
+         */
+        LIMITED,
+        /**
+         * Keeps the rows the LIMIT over the sort selects, by row id of a random-access input that delivers them in
+         * the order of the first key, its designated timestamp.
+         */
+        PRESORTED_LIMITED,
+        /**
+         * Keeps the top rows of the LIMIT by a single LONG or TIMESTAMP key.
+         */
+        LONG_TOP_K,
+        /**
+         * Keeps the top rows of the LIMIT across workers that read the page frames under the filter of the input and
+         * apply its predicate themselves.
+         */
+        PARALLEL_FILTERED_TOP_K,
+        /**
+         * Keeps the top rows of the LIMIT across workers that read the page frames of the input.
+         */
+        PARALLEL_TOP_K
     }
 }

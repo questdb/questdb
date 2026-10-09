@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -153,6 +154,19 @@ public interface FunctionFactory {
      * a query such that its result does not depend on any {@link Record} in the result set, i.e. now().
      */
     default boolean isRuntimeConstant() {
+        return false;
+    }
+
+    /**
+     * Whether {@link #newInstance} builds a {@link io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider} for
+     * a call over these bound arguments, known without building it; only the values of constant arguments are read.
+     * The answer holds for arguments {@link #newInstance} accepts. The default answers false.
+     *
+     * @param args                the bound arguments of the call, never modified
+     * @param isSymbolTableStatic whether the first argument reads a static symbol table
+     * @return true when the built function provides the matched symbol keys
+     */
+    default boolean isSymbolKeySetProvider(@Transient ObjList<BoundExpression> args, boolean isSymbolTableStatic) {
         return false;
     }
 

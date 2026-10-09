@@ -159,13 +159,13 @@ public class InLongFunctionFactory implements FunctionFactory {
      * closes the elements: {@link io.questdb.griffin.FunctionParser} frees args on the error path
      * only, and on the success path the returned function owns what it retains. The elements used to
      * be leaf constants, but a constant IN element is now an unfolded overflowing arithmetic subtree
-     * (see FunctionParser#functionToConstant0), i.e. a whole function tree to close. The runtime-const
+     * (see FunctionResolver#functionToConstant0), i.e. a whole function tree to close. The runtime-const
      * and var forms retain the full arg list and close it themselves.
      */
     private static void freeElements(ObjList<Function> args) {
         for (int i = 1, n = args.size(); i < n; i++) {
             // Null each slot after closing it: a constant IN element can now be a whole arithmetic
-            // function tree (see FunctionParser#functionToConstant0) holding native memory, so
+            // function tree (see FunctionResolver#functionToConstant0) holding native memory, so
             // nulling keeps any later pass over args from double-freeing it. The all-constant forms
             // keep only the key (args[0]), so the elements are dead here.
             args.setQuick(i, Misc.free(args.getQuick(i)));

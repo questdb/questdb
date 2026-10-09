@@ -28,14 +28,23 @@ import io.questdb.std.ObjectFactory;
 
 public final class LimitPlan extends ForwardingPlan {
     public static final ObjectFactory<LimitPlan> FACTORY = LimitPlan::new;
+    private Application application;
     private BoundExpression hi;
     private BoundExpression lo;
 
     @Override
     public void clear() {
         super.clear();
+        application = null;
         hi = null;
         lo = null;
+    }
+
+    /**
+     * Which operator applies the LIMIT, or null before order planning decided it.
+     */
+    public Application getApplication() {
+        return application;
     }
 
     public BoundExpression getHi() {
@@ -51,5 +60,33 @@ public final class LimitPlan extends ForwardingPlan {
         this.lo = lo;
         this.hi = hi;
         return this;
+    }
+
+    public void setApplication(Application application) {
+        this.application = application;
+    }
+
+    @Override
+    public void visitReads(PlanExpressionVisitor visitor) {
+        lo = PlanReads.expression(lo, visitor);
+        hi = PlanReads.expression(hi, visitor);
+    }
+
+    /**
+     * The operator that applies a LIMIT.
+     */
+    public enum Application {
+        /**
+         * A LIMIT operator over the input.
+         */
+        OPERATOR,
+        /**
+         * The parallel filter of the input, which stops at the LIMIT.
+         */
+        INPUT,
+        /**
+         * The sort under the LIMIT, which keeps only the rows it selects.
+         */
+        SORT
     }
 }

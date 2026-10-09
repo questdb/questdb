@@ -89,4 +89,8 @@ public final class UnnestSpec implements Mutable {
         this.hasOrdinality = hasOrdinality;
         return this;
     }
+
+    void visitReads(PlanExpressionVisitor visitor) {
+        PlanReads.expressions(expressions, visitor);
+    }
 }

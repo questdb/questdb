@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -187,47 +188,30 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTextMinMaxCopyMutableValuesAndPreserveNulls() throws Exception {
+    public void testScalarAndNestedAggregatesRemainRejected() throws Exception {
         assertMemoryLeak(() -> {
-            for (boolean isMin : new boolean[]{true, false}) {
-                final String name = isMin ? "min" : "max";
-                for (int type : new int[]{ColumnType.STRING, ColumnType.VARCHAR}) {
-                    final FunctionParser parser = parser(new ObjList<>());
-                    final OutputSchema full = schema(type, true);
-                    final OutputSchema pruned = schema(type, false);
-                    try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
-                        final FunctionExpression expression = binder.bindAggregate(call(name), full, null, sqlExecutionContext);
-                        Assert.assertFalse(expression.getOverload().isOrderSensitiveAggregate());
-                        try (Function owner = binder.instantiateAggregate(expression, pruned, metadata(type, false), sqlExecutionContext);
-                             Function worker = binder.instantiateAggregate(expression, full, metadata(type, true), sqlExecutionContext);
-                             FastGroupByAllocator ownerAllocator = new FastGroupByAllocator(1024, 4096);
-                             FastGroupByAllocator workerAllocator = new FastGroupByAllocator(1024, 4096);
-                             SimpleMapValue ownerValue = new SimpleMapValue(1);
-                             SimpleMapValue workerValue = new SimpleMapValue(1)) {
-                            Assert.assertFalse(owner.isThreadSafe());
-                            Assert.assertNotSame(owner, worker);
-                            final GroupByFunction first = prepare(owner, ownerAllocator);
-                            final GroupByFunction second = prepare(worker, workerAllocator);
-                            binder.clear();
-                            parser.clear();
-                            final ValueRecord a = new ValueRecord(0);
-                            final ValueRecord b = new ValueRecord(1);
-                            first.computeFirst(ownerValue, a.of(Numbers.LONG_NULL), 0);
-                            first.computeNext(ownerValue, a.of(3), 1);
-                            first.computeNext(ownerValue, a.of(1), 2);
-                            first.computeNext(ownerValue, a.of(2), 3);
-                            first.computeNext(ownerValue, a.of(Numbers.LONG_NULL), 4);
-                            a.of(99);
-                            second.computeFirst(workerValue, b.of(8), 0);
-                            b.of(99);
-                            assertValue(owner, ownerValue, name.equals("min") ? 1 : 3);
-                            assertValue(worker, workerValue, 8);
-                            first.setNull(ownerValue);
-                            assertValue(owner, ownerValue, Numbers.LONG_NULL);
-                        }
-                    }
+            final OutputSchema input = schema(ColumnType.INT, false);
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser(new ObjList<>()))) {
+                try {
+                    binder.bind(call("first"), input, null, sqlExecutionContext);
+                    Assert.fail("aggregate accepted as scalar");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "aggregate functions are not allowed in this context");
                 }
+                final ExpressionNode nested = call("last");
+                nested.rhs = call("first");
+                try {
+                    binder.bindAggregate(nested, input, null, sqlExecutionContext);
+                    Assert.fail("nested aggregate accepted");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Aggregate function cannot be passed as an argument");
+                }
+                Assert.assertTrue(binder.bindAggregate(call("first_not_null"), input, null, sqlExecutionContext)
+                        .getOverload().isOrderSensitiveAggregate());
             }
+            final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(new FirstIntGroupByFunctionFactory() {
+            });
+            Assert.assertTrue(descriptor.isOrderSensitiveAggregate());
         });
     }
 
@@ -279,30 +263,47 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testScalarAndNestedAggregatesRemainRejected() throws Exception {
+    public void testTextMinMaxCopyMutableValuesAndPreserveNulls() throws Exception {
         assertMemoryLeak(() -> {
-            final OutputSchema input = schema(ColumnType.INT, false);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser(new ObjList<>()))) {
-                try {
-                    binder.bind(call("first"), input, null, sqlExecutionContext);
-                    Assert.fail("aggregate accepted as scalar");
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "aggregate functions are not allowed in this context");
+            for (boolean isMin : new boolean[]{true, false}) {
+                final String name = isMin ? "min" : "max";
+                for (int type : new int[]{ColumnType.STRING, ColumnType.VARCHAR}) {
+                    final FunctionParser parser = parser(new ObjList<>());
+                    final OutputSchema full = schema(type, true);
+                    final OutputSchema pruned = schema(type, false);
+                    try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
+                        final FunctionExpression expression = binder.bindAggregate(call(name), full, null, sqlExecutionContext);
+                        Assert.assertFalse(expression.getOverload().isOrderSensitiveAggregate());
+                        try (Function owner = binder.instantiateAggregate(expression, pruned, metadata(type, false), sqlExecutionContext);
+                             Function worker = binder.instantiateAggregate(expression, full, metadata(type, true), sqlExecutionContext);
+                             FastGroupByAllocator ownerAllocator = new FastGroupByAllocator(1024, 4096);
+                             FastGroupByAllocator workerAllocator = new FastGroupByAllocator(1024, 4096);
+                             SimpleMapValue ownerValue = new SimpleMapValue(1);
+                             SimpleMapValue workerValue = new SimpleMapValue(1)) {
+                            Assert.assertFalse(owner.isThreadSafe());
+                            Assert.assertNotSame(owner, worker);
+                            final GroupByFunction first = prepare(owner, ownerAllocator);
+                            final GroupByFunction second = prepare(worker, workerAllocator);
+                            binder.clear();
+                            parser.clear();
+                            final ValueRecord a = new ValueRecord(0);
+                            final ValueRecord b = new ValueRecord(1);
+                            first.computeFirst(ownerValue, a.of(Numbers.LONG_NULL), 0);
+                            first.computeNext(ownerValue, a.of(3), 1);
+                            first.computeNext(ownerValue, a.of(1), 2);
+                            first.computeNext(ownerValue, a.of(2), 3);
+                            first.computeNext(ownerValue, a.of(Numbers.LONG_NULL), 4);
+                            a.of(99);
+                            second.computeFirst(workerValue, b.of(8), 0);
+                            b.of(99);
+                            assertValue(owner, ownerValue, name.equals("min") ? 1 : 3);
+                            assertValue(worker, workerValue, 8);
+                            first.setNull(ownerValue);
+                            assertValue(owner, ownerValue, Numbers.LONG_NULL);
+                        }
+                    }
                 }
-                final ExpressionNode nested = call("last");
-                nested.rhs = call("first");
-                try {
-                    binder.bindAggregate(nested, input, null, sqlExecutionContext);
-                    Assert.fail("nested aggregate accepted");
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "Aggregate function cannot be passed as an argument");
-                }
-                Assert.assertTrue(binder.bindAggregate(call("first_not_null"), input, null, sqlExecutionContext)
-                        .getOverload().isOrderSensitiveAggregate());
             }
-            final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(new FirstIntGroupByFunctionFactory() {
-            });
-            Assert.assertTrue(descriptor.isOrderSensitiveAggregate());
         });
     }
 
@@ -348,6 +349,30 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
         return node;
     }
 
+    private static GenericRecordMetadata metadata(int type, boolean isFull) {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        if (isFull) {
+            metadata.add(new TableColumnMetadata("unused", ColumnType.INT));
+        }
+        metadata.add(new TableColumnMetadata("physical", type, IndexType.NONE, 0, false, null));
+        return metadata;
+    }
+
+    private static GroupByFunction prepare(Function function, FastGroupByAllocator allocator) {
+        final GroupByFunction aggregate = (GroupByFunction) function;
+        aggregate.initValueTypes(new ArrayColumnTypes());
+        aggregate.setAllocator(allocator);
+        return aggregate;
+    }
+
+    private static OutputSchema schema(int type, boolean isFull) {
+        final OutputSchema schema = new OutputSchema();
+        if (isFull) {
+            schema.add(10, "unused", ColumnType.INT, true);
+        }
+        return schema.add(27, "v", type, true);
+    }
+
     private void computeSymbols(Function function, GroupByFunction aggregate, SimpleMapValue value, RecordCursorFactory source, String expected) throws SqlException {
         function.toTop();
         try (RecordCursor cursor = source.getCursor(sqlExecutionContext)) {
@@ -365,17 +390,8 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
         }
     }
 
-    private static GenericRecordMetadata metadata(int type, boolean isFull) {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        if (isFull) {
-            metadata.add(new TableColumnMetadata("unused", ColumnType.INT));
-        }
-        metadata.add(new TableColumnMetadata("physical", type, IndexType.NONE, 0, false, null));
-        return metadata;
-    }
-
     private FunctionParser parser(ObjList<Function> constructions) {
-        return new FunctionParser(configuration, engine.getFunctionFactoryCache()) {
+        return new FunctionParser(configuration, new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
             @Override
             public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
                                            ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
@@ -383,22 +399,7 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
                 constructions.add(function);
                 return function;
             }
-        };
-    }
-
-    private static GroupByFunction prepare(Function function, FastGroupByAllocator allocator) {
-        final GroupByFunction aggregate = (GroupByFunction) function;
-        aggregate.initValueTypes(new ArrayColumnTypes());
-        aggregate.setAllocator(allocator);
-        return aggregate;
-    }
-
-    private static OutputSchema schema(int type, boolean isFull) {
-        final OutputSchema schema = new OutputSchema();
-        if (isFull) {
-            schema.add(10, "unused", ColumnType.INT, true);
-        }
-        return schema.add(27, "v", type, true);
+        });
     }
 
     private static class ValueRecord implements Record {

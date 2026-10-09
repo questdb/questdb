@@ -61,4 +61,10 @@ public final class JoinDependency implements Mutable {
         this.slave = slave;
         return this;
     }
+
+    void visitReads(PlanExpressionVisitor visitor) {
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            keys.getQuick(i).visitReads(visitor);
+        }
+    }
 }

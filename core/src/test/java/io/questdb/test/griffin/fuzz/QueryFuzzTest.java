@@ -510,7 +510,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
         // Bug from fault-injection fuzzing: SELECT max(ts) FROM t WHERE test_fault()
         // swallowed the injected fault under parallel execution and was reported as a
         // swallowed-error failure. The optimiser
-        // (TimestampEndpointPass.limitEndpointInputs) rewrites a lone
+        // (TimestampEndpointLimit.limitEndpointInputs) rewrites a lone
         // min/max/first/last over the designated timestamp into an
         // ORDER BY ts [DESC] LIMIT 1 scan, so a fault that fires on a frame past the
         // single-row cutoff is legitimately discarded -- the same early termination

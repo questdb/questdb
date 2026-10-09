@@ -39,6 +39,13 @@ public enum JoinKind {
     UNNEST;
 
     /**
+     * True when the step does not commute with the steps around it: every kind but INNER and CROSS.
+     */
+    public boolean isBarrier() {
+        return this != INNER && this != CROSS;
+    }
+
+    /**
      * True when the step can emit rows whose master columns are NULL-extended.
      */
     public boolean isMasterNulling() {

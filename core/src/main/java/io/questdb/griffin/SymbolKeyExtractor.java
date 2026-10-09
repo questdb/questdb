@@ -25,9 +25,9 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableAccessInfo;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -39,6 +39,7 @@ import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -48,7 +49,7 @@ import io.questdb.std.str.SingleCharCharSequence;
  * Symbol key intrinsics of one native scan occurrence: the included and excluded key sets of a
  * single column, combined across conjuncts.
  */
-final class SymbolKeyExtractor implements Mutable {
+public final class SymbolKeyExtractor implements Mutable {
     private final KeySet excluded = new KeySet();
     private final ObjList<BoundExpression> excludedConjuncts = new ObjList<>();
     private final KeySet included = new KeySet();
@@ -60,6 +61,29 @@ final class SymbolKeyExtractor implements Mutable {
     private boolean hasKey;
     private boolean isFalse;
     private CursorExpression subquery;
+
+    /**
+     * The caller owns the returned key function; bind values remain deferred until cursor open.
+     */
+    public static Function instantiateValue(BoundExpression value, OutputSchema input, RecordMetadata metadata,
+                                            FunctionInstantiator instantiator, SqlExecutionContext executionContext) throws SqlException {
+        if (value instanceof ConstantExpression constant) {
+            return switch (ColumnType.tagOf(constant.getDataType())) {
+                case ColumnType.CHAR -> constant.getLongValue() == 0 ? StrConstant.NULL
+                        : StrConstant.fromValue(SingleCharCharSequence.get((char) constant.getLongValue()));
+                case ColumnType.NULL -> StrConstant.NULL;
+                default -> StrConstant.fromValue(constant.getStrValue());
+            };
+        }
+        final Function function = instantiator.instantiate(value, input, metadata, executionContext);
+        try {
+            function.init(null, executionContext);
+            return function;
+        } catch (Throwable th) {
+            Misc.free(function, th);
+            throw th;
+        }
+    }
 
     @Override
     public void clear() {
@@ -74,6 +98,47 @@ final class SymbolKeyExtractor implements Mutable {
         includedConjuncts.clear();
         excludedConjuncts.clear();
         intrinsics.clear();
+    }
+
+    public BoundExpression extract(BoundExpression predicate, int candidateColumnId, BoundExpressionRewriter rewriter) {
+        clear();
+        columnId = candidateColumnId;
+        return extractKeys(predicate, rewriter);
+    }
+
+    public BoundExpression extractIndexed(BoundExpression predicate, OutputSchema input, IntList indexes,
+                                          TableAccessInfo table, BoundExpressionRewriter rewriter) {
+        clear();
+        selectColumn(predicate, input, indexes, table);
+        return extractKeys(predicate, rewriter);
+    }
+
+    public int getColumnId() {
+        return hasKey ? columnId : -1;
+    }
+
+    public ObjList<BoundExpression> getExcludedConjuncts() {
+        return excludedConjuncts;
+    }
+
+    public ObjList<BoundExpression> getExcludedValues() {
+        return excluded.values;
+    }
+
+    public CursorExpression getSubquery() {
+        return isFalse ? null : subquery;
+    }
+
+    public ObjList<BoundExpression> getValues() {
+        return included.values;
+    }
+
+    public boolean hasKey() {
+        return hasKey && !isFalse && (included.values.size() > 0 || excluded.values.size() > 0);
+    }
+
+    public boolean isFalse() {
+        return isFalse;
     }
 
     /**
@@ -483,30 +548,28 @@ final class SymbolKeyExtractor implements Mutable {
         conjuncts.clear();
     }
 
-    private void selectColumn(BoundExpression expression, OutputSchema input, RecordMetadata metadata, TableReader reader) {
+    private void selectColumn(BoundExpression expression, OutputSchema input, IntList indexes, TableAccessInfo table) {
         if (expression instanceof FunctionExpression call) {
             if (call.isAnd()) {
                 if (call.argumentAt(1) instanceof FunctionExpression nested && nested.isAnd()) {
-                    selectColumn(call.argumentAt(0), input, metadata, reader);
-                    selectColumn(call.argumentAt(1), input, metadata, reader);
+                    selectColumn(call.argumentAt(0), input, indexes, table);
+                    selectColumn(call.argumentAt(1), input, indexes, table);
                 } else {
-                    selectColumn(call.argumentAt(1), input, metadata, reader);
-                    selectColumn(call.argumentAt(0), input, metadata, reader);
+                    selectColumn(call.argumentAt(1), input, indexes, table);
+                    selectColumn(call.argumentAt(0), input, indexes, table);
                 }
                 return;
             }
             final ColumnExpression column = selectorColumn(call);
-            if (column != null && metadata.isColumnIndexed(input.getColumnIndexById(column.getColumnId()))) {
+            if (column != null && table.isIndexed(indexes.getQuick(input.getColumnIndexById(column.getColumnId())))) {
                 if (columnId < 0) {
                     columnId = column.getColumnId();
                 } else if (column.getColumnId() != columnId) {
-                    final var candidate = reader.getSymbolMapReader(reader.getMetadata().getColumnIndex(
-                            input.getColumnName(input.getColumnIndexById(column.getColumnId()))));
-                    final var selected = reader.getSymbolMapReader(reader.getMetadata().getColumnIndex(
-                            input.getColumnName(input.getColumnIndexById(columnId))));
-                    final int count = candidate.getSymbolCount();
-                    final int selectedCount = selected.getSymbolCount();
-                    if (count > selectedCount || count == selectedCount && candidate.getSymbolCapacity() > selected.getSymbolCapacity()) {
+                    final int candidate = indexes.getQuick(input.getColumnIndexById(column.getColumnId()));
+                    final int selected = indexes.getQuick(input.getColumnIndexById(columnId));
+                    final int count = table.getSymbolCount(candidate);
+                    final int selectedCount = table.getSymbolCount(selected);
+                    if (count > selectedCount || count == selectedCount && table.getSymbolCapacity(candidate) > table.getSymbolCapacity(selected)) {
                         columnId = column.getColumnId();
                     }
                 }
@@ -520,70 +583,6 @@ final class SymbolKeyExtractor implements Mutable {
         excluded.clear();
         revert(includedConjuncts);
         revert(excludedConjuncts);
-    }
-
-    /**
-     * The caller owns the returned key function; bind values remain deferred until cursor open.
-     */
-    static Function instantiateValue(BoundExpression value, OutputSchema input, RecordMetadata metadata,
-                                     FunctionInstantiator instantiator, SqlExecutionContext executionContext) throws SqlException {
-        if (value instanceof ConstantExpression constant) {
-            return switch (ColumnType.tagOf(constant.getDataType())) {
-                case ColumnType.CHAR -> constant.getLongValue() == 0 ? StrConstant.NULL
-                        : StrConstant.fromValue(SingleCharCharSequence.get((char) constant.getLongValue()));
-                case ColumnType.NULL -> StrConstant.NULL;
-                default -> StrConstant.fromValue(constant.getStrValue());
-            };
-        }
-        final Function function = instantiator.instantiate(value, input, metadata, executionContext);
-        try {
-            function.init(null, executionContext);
-            return function;
-        } catch (Throwable th) {
-            Misc.free(function, th);
-            throw th;
-        }
-    }
-
-    BoundExpression extract(BoundExpression predicate, int candidateColumnId, BoundExpressionRewriter rewriter) {
-        clear();
-        columnId = candidateColumnId;
-        return extractKeys(predicate, rewriter);
-    }
-
-    BoundExpression extractIndexed(BoundExpression predicate, OutputSchema input, RecordMetadata metadata,
-                                   TableReader reader, BoundExpressionRewriter rewriter) {
-        clear();
-        selectColumn(predicate, input, metadata, reader);
-        return extractKeys(predicate, rewriter);
-    }
-
-    int getColumnId() {
-        return hasKey ? columnId : -1;
-    }
-
-    ObjList<BoundExpression> getExcludedConjuncts() {
-        return excludedConjuncts;
-    }
-
-    ObjList<BoundExpression> getExcludedValues() {
-        return excluded.values;
-    }
-
-    CursorExpression getSubquery() {
-        return isFalse ? null : subquery;
-    }
-
-    ObjList<BoundExpression> getValues() {
-        return included.values;
-    }
-
-    boolean hasKey() {
-        return hasKey && !isFalse && (included.values.size() > 0 || excluded.values.size() > 0);
-    }
-
-    boolean isFalse() {
-        return isFalse;
     }
 
     private static final class KeySet {

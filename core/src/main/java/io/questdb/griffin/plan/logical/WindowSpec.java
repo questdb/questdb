@@ -45,6 +45,7 @@ public final class WindowSpec implements Mutable {
     private int exclusionKindPos;
     private int framingMode;
     private boolean isIgnoreNulls;
+    private boolean isOrderDelivered;
     private boolean isSubsampleKeepFlag;
     private LiveViewWindowDescription liveViewDescription;
     private int nullsDescPos;
@@ -68,6 +69,7 @@ public final class WindowSpec implements Mutable {
         exclusionKindPos = 0;
         framingMode = 0;
         isIgnoreNulls = false;
+        isOrderDelivered = false;
         isSubsampleKeepFlag = false;
         liveViewDescription = null;
         nullsDescPos = 0;
@@ -161,6 +163,31 @@ public final class WindowSpec implements Mutable {
         return isIgnoreNulls;
     }
 
+    /**
+     * True when the window ORDER BY is a prefix of the query order.
+     */
+    /**
+     * True when the input of the window delivers the rows in this window's ORDER BY, so the window need not order
+     * them; order planning decides it.
+     */
+    public boolean isOrderDelivered() {
+        return isOrderDelivered;
+    }
+
+    public boolean isQueryOrderPrefix(SortKeys queryOrder) {
+        final int count = orderByColumnIds.size();
+        if (count == 0 || count > queryOrder.size()) {
+            return false;
+        }
+        for (int i = 0; i < count; i++) {
+            if (orderByColumnIds.getQuick(i) != queryOrder.getColumnIds().getQuick(i)
+                    || orderByDirections.getQuick(i) != queryOrder.getDirections().getQuick(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public boolean isSubsampleKeepFlag() {
         return isSubsampleKeepFlag;
     }
@@ -207,5 +234,14 @@ public final class WindowSpec implements Mutable {
 
     public void setLiveViewDescription(LiveViewWindowDescription liveViewDescription) {
         this.liveViewDescription = liveViewDescription;
+    }
+
+    public void setOrderDelivered(boolean isOrderDelivered) {
+        this.isOrderDelivered = isOrderDelivered;
+    }
+
+    void visitReads(PlanExpressionVisitor visitor) {
+        PlanReads.expressions(partitionBy, visitor);
+        PlanReads.columnIds(orderByColumnIds, orderByPositions, visitor);
     }
 }

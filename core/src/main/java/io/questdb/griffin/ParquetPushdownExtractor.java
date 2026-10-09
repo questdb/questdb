@@ -27,14 +27,16 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor.PushdownFilterCondition;
+import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
+import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -42,10 +44,61 @@ import io.questdb.std.ObjList;
 /**
  * Derives Parquet row-group pushdown conditions from a bound residual predicate.
  */
-final class ParquetPushdownExtractor {
+public final class ParquetPushdownExtractor {
+    private static final ExpressionVisitor CURSORS = expression -> expression instanceof CursorExpression ? TreeWalk.STOP : TreeWalk.CONTINUE;
     private final ObjList<BoundExpression> conditionValues = new ObjList<>();
     private final ObjList<PushdownFilterCondition> conditions = new ObjList<>();
     private final IntList valueCounts = new IntList();
+
+    /**
+     * Returns the conditions the caller owns, or null when none survive compilation.
+     *
+     * @param sourceIndexes maps input positions to {@code source} positions; null when they coincide
+     */
+    public ObjList<PushdownFilterCondition> extract(
+            BoundExpression predicate,
+            OutputSchema input,
+            RecordMetadata metadata,
+            IntList sourceIndexes,
+            RecordMetadata source,
+            FunctionInstantiator instantiator,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        conditions.clear();
+        conditionValues.clear();
+        valueCounts.clear();
+        ObjList<PushdownFilterCondition> result = null;
+        try {
+            collect(predicate, input, sourceIndexes, source);
+            for (int i = 0, v = 0, n = conditions.size(); i < n; i++) {
+                final PushdownFilterCondition condition = conditions.getQuick(i);
+                final int count = valueCounts.getQuick(i);
+                boolean isConstant = true;
+                for (int k = 0; k < count && isConstant; k++) {
+                    isConstant = addValue(condition, conditionValues.getQuick(v + k), input, metadata, instantiator, executionContext);
+                }
+                v += count;
+                conditions.setQuick(i, null);
+                if (isConstant) {
+                    if (result == null) {
+                        result = new ObjList<>();
+                    }
+                    result.add(condition);
+                } else {
+                    Misc.free(condition);
+                }
+            }
+            return result;
+        } catch (Throwable th) {
+            Misc.freeObjList(conditions, th);
+            Misc.freeObjList(result, th);
+            throw th;
+        } finally {
+            conditions.clear();
+            conditionValues.clear();
+            valueCounts.clear();
+        }
+    }
 
     private static boolean addValue(
             PushdownFilterCondition condition,
@@ -91,17 +144,7 @@ final class ParquetPushdownExtractor {
     }
 
     private static boolean hasCursor(BoundExpression expression) {
-        if (expression instanceof CursorExpression) {
-            return true;
-        }
-        if (expression instanceof FunctionExpression call) {
-            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                if (hasCursor(call.argumentAt(i))) {
-                    return true;
-                }
-            }
-        }
-        return false;
+        return !expression.walk(CURSORS);
     }
 
     private static boolean isNull(BoundExpression expression) {
@@ -238,55 +281,5 @@ final class ParquetPushdownExtractor {
         }
         conditionValues.add(value);
         return column;
-    }
-
-    /**
-     * Returns the conditions the caller owns, or null when none survive compilation.
-     *
-     * @param sourceIndexes maps input positions to {@code source} positions; null when they coincide
-     */
-    ObjList<PushdownFilterCondition> extract(
-            BoundExpression predicate,
-            OutputSchema input,
-            RecordMetadata metadata,
-            IntList sourceIndexes,
-            RecordMetadata source,
-            FunctionInstantiator instantiator,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        conditions.clear();
-        conditionValues.clear();
-        valueCounts.clear();
-        ObjList<PushdownFilterCondition> result = null;
-        try {
-            collect(predicate, input, sourceIndexes, source);
-            for (int i = 0, v = 0, n = conditions.size(); i < n; i++) {
-                final PushdownFilterCondition condition = conditions.getQuick(i);
-                final int count = valueCounts.getQuick(i);
-                boolean isConstant = true;
-                for (int k = 0; k < count && isConstant; k++) {
-                    isConstant = addValue(condition, conditionValues.getQuick(v + k), input, metadata, instantiator, executionContext);
-                }
-                v += count;
-                conditions.setQuick(i, null);
-                if (isConstant) {
-                    if (result == null) {
-                        result = new ObjList<>();
-                    }
-                    result.add(condition);
-                } else {
-                    Misc.free(condition);
-                }
-            }
-            return result;
-        } catch (Throwable th) {
-            Misc.freeObjList(conditions, th);
-            Misc.freeObjList(result, th);
-            throw th;
-        } finally {
-            conditions.clear();
-            conditionValues.clear();
-            valueCounts.clear();
-        }
     }
 }

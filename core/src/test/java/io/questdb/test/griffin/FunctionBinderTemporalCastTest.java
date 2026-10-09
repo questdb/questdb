@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExpressionNode;
@@ -52,32 +53,90 @@ import org.junit.Test;
 
 public class FunctionBinderTemporalCastTest extends AbstractCairoTest {
     @Test
-    public void testTimestampSubtractionRebuildsWithFullPrecisionAndNullSentinel() throws Exception {
+    public void testDateToTimestampRetainsTargetPrecisionAcrossLayouts() throws Exception {
         assertMemoryLeak(() -> {
             for (int type : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
-                final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-                final OutputSchema original = wideSchema(type);
-                final OutputSchema pruned = new OutputSchema().add(70, "value", type, true);
+                final ObjList<Function> constructed = new ObjList<>();
+                final FunctionParser parser = parser(constructed);
+                final OutputSchema original = wideSchema(ColumnType.DATE);
+                final OutputSchema firstLayout = new OutputSchema().add(70, "value", ColumnType.DATE, true);
+                final OutputSchema workerLayout = new OutputSchema().add(80, "unused", ColumnType.INT, true)
+                        .add(70, "value", ColumnType.DATE, true);
                 try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
-                    final BoundExpression expression = binder.bind(binary("-", literal("value"), constant("1L")),
-                            original, null, sqlExecutionContext);
-                    try (Function owner = binder.instantiate(expression, pruned, sqlExecutionContext);
-                         Function worker = binder.instantiate(expression, original, sqlExecutionContext)) {
+                    final ExpressionNode node = cast(literal("value"), type == ColumnType.TIMESTAMP_MICRO ? "timestamp" : "timestamp_ns");
+                    final FunctionExpression expression = (FunctionExpression) binder.bind(node, original, null, sqlExecutionContext);
+                    Assert.assertEquals(type, expression.getDataType());
+                    Assert.assertEquals(type, expression.argumentAt(1).getDataType());
+                    TestUtils.assertEquals("cast(Mn)", expression.getSignature());
+                    Assert.assertEquals(0, constructed.size());
+                    node.clear();
+                    try (Function owner = binder.instantiate(expression, firstLayout, sqlExecutionContext);
+                         Function worker = binder.instantiate(expression, workerLayout, sqlExecutionContext)) {
+                        Assert.assertSame(constructed.getQuick(0), owner);
                         Assert.assertNotSame(owner, worker);
+                        Assert.assertEquals(2, constructed.size());
+                        Assert.assertEquals(type, worker.getType());
                         binder.clear();
                         parser.clear();
                         original.clear();
-                        pruned.clear();
-                        Assert.assertEquals(type, owner.getType());
-                        Assert.assertEquals(type, worker.getType());
-                        for (long value : new long[]{0, -1, Numbers.LONG_NULL, Long.MIN_VALUE + 1, Long.MAX_VALUE}) {
-                            final long expected = value == Numbers.LONG_NULL ? Numbers.LONG_NULL : value - 1;
-                            Assert.assertEquals(expected, owner.getTimestamp(record(0, type, value)));
-                            Assert.assertEquals(expected, worker.getTimestamp(record(48, type, value)));
-                        }
+                        firstLayout.clear();
+                        workerLayout.clear();
+                        final long scale = type == ColumnType.TIMESTAMP_MICRO ? 1_000 : 1_000_000;
+                        Assert.assertEquals(123 * scale, owner.getTimestamp(record(0, ColumnType.DATE, 123)));
+                        Assert.assertEquals(-123 * scale, worker.getTimestamp(record(1, ColumnType.DATE, -123)));
+                        Assert.assertEquals(Numbers.LONG_NULL, owner.getTimestamp(record(0, ColumnType.DATE, Numbers.LONG_NULL)));
+                        Assert.assertEquals(Numbers.LONG_NULL, worker.getTimestamp(record(1, ColumnType.DATE, Numbers.LONG_NULL)));
                     }
                 }
             }
+        });
+    }
+
+    @Test
+    public void testFailedIPv4ConstantClosesEarlierNativeArgument() throws Exception {
+        assertMemoryLeak(() -> {
+            final long memoryBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
+            final boolean[] hasNativeChild = {false};
+            final FunctionParser parser = new FunctionParser(configuration, new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
+                @Override
+                public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
+                                               ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
+                    final Function function = super.createFunction(overload, position, name, args, positions, context);
+                    if (Chars.equals(name, "in")) {
+                        hasNativeChild[0] = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS) > memoryBefore;
+                    }
+                    return function;
+                }
+            });
+            final OutputSchema input = new OutputSchema().add(70, "value", ColumnType.LONG, true);
+            final ExpressionNode membership = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, "in", 0, 5);
+            membership.args.add(constant("4"));
+            membership.args.add(constant("3"));
+            membership.args.add(constant("2"));
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 1);
+            membership.args.add(parameter("$1"));
+            membership.paramCount = 4;
+            final ExpressionNode bad = cast(constant("'not-an-ip'"), "ipv4");
+            final ExpressionNode root = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, "concat", 0, 0);
+            root.lhs = bad;
+            root.rhs = cast(membership, "timestamp_ns");
+            root.paramCount = 2;
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
+                try {
+                    binder.bind(root, input, null, sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid IPv4 constant");
+                }
+                Assert.assertTrue(hasNativeChild[0]);
+                Assert.assertEquals(memoryBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
+                final BoundExpression recovered = binder.bind(cast(literal("value"), "date"), input, null, sqlExecutionContext);
+                try (Function function = binder.instantiate(recovered, input, sqlExecutionContext)) {
+                    Assert.assertEquals(123, function.getDate(record(0, ColumnType.LONG, 123)));
+                }
+            }
+            Assert.assertEquals(memoryBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
         });
     }
 
@@ -124,39 +183,42 @@ public class FunctionBinderTemporalCastTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDateToTimestampRetainsTargetPrecisionAcrossLayouts() throws Exception {
+    public void testTimestampAndIPv4FormattingRebuildsPrivateWorkerBuffers() throws Exception {
         assertMemoryLeak(() -> {
-            for (int type : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final int[] types = {ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO, ColumnType.IPv4};
+            final ObjList<String> firstValues = new ObjList<>("1970-01-01T00:00:00.123456Z", "1970-01-01T00:00:00.000123456Z", "0.1.226.64");
+            final ObjList<String> workerValues = new ObjList<>("1970-01-01T00:00:00.654321Z", "1970-01-01T00:00:00.000654321Z", "0.9.251.241");
+            for (int i = 0; i < types.length; i++) {
+                final int type = types[i];
                 final ObjList<Function> constructed = new ObjList<>();
                 final FunctionParser parser = parser(constructed);
-                final OutputSchema original = wideSchema(ColumnType.DATE);
-                final OutputSchema firstLayout = new OutputSchema().add(70, "value", ColumnType.DATE, true);
+                final OutputSchema original = wideSchema(type);
+                final OutputSchema firstLayout = new OutputSchema().add(70, "value", type, true);
                 final OutputSchema workerLayout = new OutputSchema().add(80, "unused", ColumnType.INT, true)
-                        .add(70, "value", ColumnType.DATE, true);
+                        .add(70, "value", type, true);
                 try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
-                    final ExpressionNode node = cast(literal("value"), type == ColumnType.TIMESTAMP_MICRO ? "timestamp" : "timestamp_ns");
-                    final FunctionExpression expression = (FunctionExpression) binder.bind(node, original, null, sqlExecutionContext);
-                    Assert.assertEquals(type, expression.getDataType());
-                    Assert.assertEquals(type, expression.argumentAt(1).getDataType());
-                    TestUtils.assertEquals("cast(Mn)", expression.getSignature());
-                    Assert.assertEquals(0, constructed.size());
-                    node.clear();
+                    final FunctionExpression expression = (FunctionExpression) binder.bind(cast(literal("value"), "varchar"), original, null, sqlExecutionContext);
+                    Assert.assertEquals(type, expression.argumentAt(0).getDataType());
                     try (Function owner = binder.instantiate(expression, firstLayout, sqlExecutionContext);
                          Function worker = binder.instantiate(expression, workerLayout, sqlExecutionContext)) {
                         Assert.assertSame(constructed.getQuick(0), owner);
                         Assert.assertNotSame(owner, worker);
                         Assert.assertEquals(2, constructed.size());
-                        Assert.assertEquals(type, worker.getType());
+                        Assert.assertFalse(owner.isThreadSafe());
+                        Assert.assertFalse(worker.isThreadSafe());
                         binder.clear();
                         parser.clear();
                         original.clear();
                         firstLayout.clear();
                         workerLayout.clear();
-                        final long scale = type == ColumnType.TIMESTAMP_MICRO ? 1_000 : 1_000_000;
-                        Assert.assertEquals(123 * scale, owner.getTimestamp(record(0, ColumnType.DATE, 123)));
-                        Assert.assertEquals(-123 * scale, worker.getTimestamp(record(1, ColumnType.DATE, -123)));
-                        Assert.assertEquals(Numbers.LONG_NULL, owner.getTimestamp(record(0, ColumnType.DATE, Numbers.LONG_NULL)));
-                        Assert.assertEquals(Numbers.LONG_NULL, worker.getTimestamp(record(1, ColumnType.DATE, Numbers.LONG_NULL)));
+                        final Utf8Sequence first = owner.getVarcharA(record(0, type, 123456));
+                        final Utf8Sequence other = worker.getVarcharA(record(1, type, 654321));
+                        owner.getVarcharB(record(0, type, 1));
+                        TestUtils.assertEquals(firstValues.getQuick(i), Utf8s.toString(first));
+                        TestUtils.assertEquals(workerValues.getQuick(i), Utf8s.toString(other));
+                        final long nullValue = type == ColumnType.IPv4 ? Numbers.IPv4_NULL : Numbers.LONG_NULL;
+                        Assert.assertNull(owner.getVarcharA(record(0, type, nullValue)));
+                        TestUtils.assertEquals(workerValues.getQuick(i), Utf8s.toString(other));
                     }
                 }
             }
@@ -195,90 +257,29 @@ public class FunctionBinderTemporalCastTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFailedIPv4ConstantClosesEarlierNativeArgument() throws Exception {
+    public void testTimestampSubtractionRebuildsWithFullPrecisionAndNullSentinel() throws Exception {
         assertMemoryLeak(() -> {
-            final long memoryBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
-            final boolean[] hasNativeChild = {false};
-            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache()) {
-                @Override
-                public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
-                                               ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
-                    final Function function = super.createFunction(overload, position, name, args, positions, context);
-                    if (Chars.equals(name, "in")) {
-                        hasNativeChild[0] = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS) > memoryBefore;
-                    }
-                    return function;
-                }
-            };
-            final OutputSchema input = new OutputSchema().add(70, "value", ColumnType.LONG, true);
-            final ExpressionNode membership = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, "in", 0, 5);
-            membership.args.add(constant("4"));
-            membership.args.add(constant("3"));
-            membership.args.add(constant("2"));
-            bindVariableService.clear();
-            bindVariableService.setLong(0, 1);
-            membership.args.add(parameter("$1"));
-            membership.paramCount = 4;
-            final ExpressionNode bad = cast(constant("'not-an-ip'"), "ipv4");
-            final ExpressionNode root = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, "concat", 0, 0);
-            root.lhs = bad;
-            root.rhs = cast(membership, "timestamp_ns");
-            root.paramCount = 2;
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
-                try {
-                    binder.bind(root, input, null, sqlExecutionContext);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid IPv4 constant");
-                }
-                Assert.assertTrue(hasNativeChild[0]);
-                Assert.assertEquals(memoryBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
-                final BoundExpression recovered = binder.bind(cast(literal("value"), "date"), input, null, sqlExecutionContext);
-                try (Function function = binder.instantiate(recovered, input, sqlExecutionContext)) {
-                    Assert.assertEquals(123, function.getDate(record(0, ColumnType.LONG, 123)));
-                }
-            }
-            Assert.assertEquals(memoryBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
-        });
-    }
-
-    @Test
-    public void testTimestampAndIPv4FormattingRebuildsPrivateWorkerBuffers() throws Exception {
-        assertMemoryLeak(() -> {
-            final int[] types = {ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO, ColumnType.IPv4};
-            final ObjList<String> firstValues = new ObjList<>("1970-01-01T00:00:00.123456Z", "1970-01-01T00:00:00.000123456Z", "0.1.226.64");
-            final ObjList<String> workerValues = new ObjList<>("1970-01-01T00:00:00.654321Z", "1970-01-01T00:00:00.000654321Z", "0.9.251.241");
-            for (int i = 0; i < types.length; i++) {
-                final int type = types[i];
-                final ObjList<Function> constructed = new ObjList<>();
-                final FunctionParser parser = parser(constructed);
+            for (int type : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+                final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
                 final OutputSchema original = wideSchema(type);
-                final OutputSchema firstLayout = new OutputSchema().add(70, "value", type, true);
-                final OutputSchema workerLayout = new OutputSchema().add(80, "unused", ColumnType.INT, true)
-                        .add(70, "value", type, true);
+                final OutputSchema pruned = new OutputSchema().add(70, "value", type, true);
                 try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
-                    final FunctionExpression expression = (FunctionExpression) binder.bind(cast(literal("value"), "varchar"), original, null, sqlExecutionContext);
-                    Assert.assertEquals(type, expression.argumentAt(0).getDataType());
-                    try (Function owner = binder.instantiate(expression, firstLayout, sqlExecutionContext);
-                         Function worker = binder.instantiate(expression, workerLayout, sqlExecutionContext)) {
-                        Assert.assertSame(constructed.getQuick(0), owner);
+                    final BoundExpression expression = binder.bind(binary("-", literal("value"), constant("1L")),
+                            original, null, sqlExecutionContext);
+                    try (Function owner = binder.instantiate(expression, pruned, sqlExecutionContext);
+                         Function worker = binder.instantiate(expression, original, sqlExecutionContext)) {
                         Assert.assertNotSame(owner, worker);
-                        Assert.assertEquals(2, constructed.size());
-                        Assert.assertFalse(owner.isThreadSafe());
-                        Assert.assertFalse(worker.isThreadSafe());
                         binder.clear();
                         parser.clear();
                         original.clear();
-                        firstLayout.clear();
-                        workerLayout.clear();
-                        final Utf8Sequence first = owner.getVarcharA(record(0, type, 123456));
-                        final Utf8Sequence other = worker.getVarcharA(record(1, type, 654321));
-                        owner.getVarcharB(record(0, type, 1));
-                        TestUtils.assertEquals(firstValues.getQuick(i), Utf8s.toString(first));
-                        TestUtils.assertEquals(workerValues.getQuick(i), Utf8s.toString(other));
-                        final long nullValue = type == ColumnType.IPv4 ? Numbers.IPv4_NULL : Numbers.LONG_NULL;
-                        Assert.assertNull(owner.getVarcharA(record(0, type, nullValue)));
-                        TestUtils.assertEquals(workerValues.getQuick(i), Utf8s.toString(other));
+                        pruned.clear();
+                        Assert.assertEquals(type, owner.getType());
+                        Assert.assertEquals(type, worker.getType());
+                        for (long value : new long[]{0, -1, Numbers.LONG_NULL, Long.MIN_VALUE + 1, Long.MAX_VALUE}) {
+                            final long expected = value == Numbers.LONG_NULL ? Numbers.LONG_NULL : value - 1;
+                            Assert.assertEquals(expected, owner.getTimestamp(record(0, type, value)));
+                            Assert.assertEquals(expected, worker.getTimestamp(record(48, type, value)));
+                        }
                     }
                 }
             }
@@ -350,7 +351,7 @@ public class FunctionBinderTemporalCastTest extends AbstractCairoTest {
     }
 
     private FunctionParser parser(ObjList<Function> constructed) {
-        return new FunctionParser(configuration, engine.getFunctionFactoryCache()) {
+        return new FunctionParser(configuration, new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
             @Override
             public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
                                            ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
@@ -358,6 +359,6 @@ public class FunctionBinderTemporalCastTest extends AbstractCairoTest {
                 constructed.add(function);
                 return function;
             }
-        };
+        });
     }
 }

@@ -62,7 +62,7 @@ public class DistinctTest extends AbstractCairoTest {
     @Test
     public void testDistinctConstAliasOrderByLimitWithDuplicateCol() throws Exception {
         // Duplicate column refs put a projection over the group-by, and a LIMIT used to move
-        // past the projection carrying the constant alias (ProjectionMergePass.limitBelowProjection
+        // past the projection carrying the constant alias (ProjectionMerge.limitBelowProjection
         // owns that move now); ORDER BY e0 then resolved at the limited group-by and crashed
         // with AIOOBE.
         assertQuery("SELECT DISTINCT -1 AS e0, t0.x AS e1, t0.x AS e4 FROM long_sequence(3) t0 ORDER BY e0 DESC LIMIT 2")

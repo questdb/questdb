@@ -42,10 +42,14 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.eq.EqSymStrFunctionFactory;
+import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -70,6 +74,23 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
     @Override
     public int getResultType(IntList argTypes) {
         return ColumnType.BOOLEAN;
+    }
+
+    @Override
+    public boolean isSymbolKeySetProvider(ObjList<BoundExpression> args, boolean isSymbolTableStatic) {
+        if (!isSymbolTableStatic) {
+            return false;
+        }
+        final BoundExpression pattern = args.getQuick(1);
+        if (pattern instanceof ConstantExpression constant) {
+            return switch (ColumnType.tagOf(constant.getDataType())) {
+                case ColumnType.STRING, ColumnType.SYMBOL -> isKeySetPattern(constant.getStrValue());
+                case ColumnType.VARCHAR -> isKeySetPattern(constant.getVarcharValue());
+                case ColumnType.CHAR -> constant.getLongValue() != 0 && constant.getLongValue() != '%';
+                default -> false;
+            };
+        }
+        return (pattern.getFunctionFlags() & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) == BoundExpression.RUNTIME_CONSTANT;
     }
 
     @Override
@@ -169,6 +190,14 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                 }
             }
         }
+    }
+
+    private static boolean isKeySetPattern(CharSequence pattern) {
+        return pattern != null && !pattern.isEmpty() && !Chars.equals(pattern, '%') && !Chars.equals(pattern, "%%");
+    }
+
+    private static boolean isKeySetPattern(Utf8Sequence pattern) {
+        return pattern != null && pattern.size() > 0 && !Utf8s.equalsAscii("%", pattern) && !Utf8s.equalsAscii("%%", pattern);
     }
 
     protected abstract boolean isCaseInsensitive();

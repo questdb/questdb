@@ -37,9 +37,12 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
@@ -69,7 +72,7 @@ import org.jetbrains.annotations.Nullable;
  * Subclasses provide {@link #getName()} and {@link #isReturnUtc()} to
  * control these two aspects.
  */
-abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements FunctionFactory {
+abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements FunctionFactory, MonotonicTimestampFunctionFactory {
     private static final long MIN_GAP_MINUTES = 15;
     private static final long MIN_GAP_SECONDS = MIN_GAP_MINUTES * 60;
     private static final long MIN_GAP_MILLIS = MIN_GAP_SECONDS * 1000;
@@ -79,6 +82,32 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
     @Override
     public int getResultType(IntList argTypes) {
         return ResultTypes.timestampAtLeastMicros(argTypes.getQuick(1));
+    }
+
+    @Override
+    public int getTimestampArgumentIndex(FunctionExpression call, ConstantArguments arguments) {
+        return call.argumentAt(3) instanceof ConstantExpression && call.argumentAt(4) instanceof ConstantExpression ? 1 : -1;
+    }
+
+    @Override
+    public int invertTimestampInterval(FunctionExpression call, Interval io, boolean isTimestampArgMonotonic, ConstantArguments arguments) throws SqlException {
+        final CharSequence unitStr = arguments.constant(call.argumentAt(0)).getStrA(null);
+        final int unitPos = call.argumentAt(0).getPosition();
+        final int stride = CommonUtils.getStrideMultiple(unitStr, unitPos);
+        final char unit = CommonUtils.getStrideUnit(unitStr, unitPos);
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(call.getDataType());
+        final long effectiveOffset = TimestampFloorFromFunctionFactory.floorOrigin(timestampDriver, arguments.constant(call.argumentAt(2)).getTimestamp(null), call.argumentAt(2).getDataType())
+                + constantOffset(arguments.constant(call.argumentAt(3)).getStrA(null), call.argumentAt(3).getPosition(), timestampDriver);
+        final CharSequence tz = arguments.constant(call.argumentAt(4)).getStrA(null);
+        final TimeZoneRules tzRules = constantZoneRules(tz, call.argumentAt(4).getPosition(), timestampDriver);
+        final long tzOffset = constantZoneOffset(tz, tzRules, timestampDriver);
+        if (tzRules != null && !tzRules.hasFixedOffset()) {
+            return invertFloorNamedTz(io, timestampDriver, tzRules, timestampDriver.getTimestampFloorWithOffsetMethod(unit), unit, stride, effectiveOffset, isReturnUtc());
+        }
+        if (tzOffset == 0) {
+            return TimestampFloorOffsetFunction.invert(io, timestampDriver, unit, stride, effectiveOffset);
+        }
+        return invertFloorFixedTz(io, timestampDriver, timestampDriver.getTimestampFloorWithOffsetMethod(unit), unit, stride, effectiveOffset, tzOffset, isReturnUtc());
     }
 
     @Override
@@ -117,12 +146,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         final Function timestampFunc = args.getQuick(1);
         int timestampType = ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(timestampFunc.getType()), ColumnType.TIMESTAMP_MICRO);
         TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
-        long from = args.getQuick(2).getTimestamp(null);
-        if (from == Numbers.LONG_NULL) {
-            from = 0;
-        } else {
-            from = timestampDriver.from(from, ColumnType.getTimestampType(args.getQuick(2).getType()));
-        }
+        final long from = TimestampFloorFromFunctionFactory.floorOrigin(timestampDriver, args.getQuick(2).getTimestamp(null), args.getQuick(2).getType());
         final Function offsetFunc = args.getQuick(3);
         final int offsetPos = argPositions.getQuick(3);
         final Function timezoneFunc = args.getQuick(4);
@@ -140,13 +164,8 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
 
         if (timezoneFunc.isConstant()) {
             final CharSequence tz = timezoneFunc.getStrA(null);
-            long tzOffset = 0;
-            if (tzRules == null) {
-                if (tz != null) {
-                    tzOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(Dates.parseOffset(tz, 0, tz.length())));
-                }
-            } else if (tzRules.hasFixedOffset()) {
-                tzOffset = tzRules.getOffset(0);
+            final long tzOffset = constantZoneOffset(tz, tzRules, timestampDriver);
+            if (tzRules != null && tzRules.hasFixedOffset()) {
                 tzRules = null;
             }
 
@@ -191,6 +210,24 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
             return next - b0;
         }
         return 0;
+    }
+
+    static int invertFloorFixedTz(
+            Interval io,
+            TimestampDriver timestampDriver,
+            TimestampDriver.TimestampFloorWithOffsetMethod floorFunc,
+            char unit,
+            int stride,
+            long effectiveOffset,
+            long tzOffset,
+            boolean returnUtc
+    ) {
+        if (!returnUtc
+                && isFloorExactlyInvertible(timestampDriver, floorFunc, unit, stride, effectiveOffset)
+                && floorPreimageShifted(io, timestampDriver, floorFunc, unit == 'U' ? 'u' : unit, stride, effectiveOffset, tzOffset)) {
+            return MonotonicTimestampFunction.EXACT;
+        }
+        return invertFloorSuperset(io, timestampDriver, unit, stride, effectiveOffset);
     }
 
     // A named zone is a constant shift where no transition falls in the bound's window, so the
@@ -291,6 +328,30 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
             throw SqlException.$(offsetPos, "invalid offset: ").put(o);
         }
         return timestampDriver.fromMinutes(Numbers.decodeLowInt(val));
+    }
+
+    private static long constantZoneOffset(@Nullable CharSequence tz, @Nullable TimeZoneRules tzRules, TimestampDriver timestampDriver) {
+        if (tzRules == null) {
+            return tz == null ? 0 : timestampDriver.fromMinutes(Numbers.decodeLowInt(Dates.parseOffset(tz, 0, tz.length())));
+        }
+        return tzRules.hasFixedOffset() ? tzRules.getOffset(0) : 0;
+    }
+
+    private static @Nullable TimeZoneRules constantZoneRules(@Nullable CharSequence tz, int timezonePos, TimestampDriver timestampDriver) throws SqlException {
+        if (tz == null) {
+            return null;
+        }
+        final int hi = tz.length();
+        if (Dates.parseOffset(tz, 0, hi) != Long.MIN_VALUE) {
+            return null;
+        }
+        try {
+            return DateLocaleFactory.EN_LOCALE.getZoneRules(
+                    Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), timestampDriver.getTZRuleResolution()
+            );
+        } catch (NumericException e) {
+            throw SqlException.$(timezonePos, "invalid timezone: ").put(tz);
+        }
     }
 
     private static @NotNull Function createAllConstFunc(
@@ -563,21 +624,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
      */
     private static @Nullable TimeZoneRules zoneRules(Function timezoneFunc, int timezonePos, TimestampDriver timestampDriver) throws SqlException {
         if (timezoneFunc.isConstant()) {
-            final CharSequence tz = timezoneFunc.getStrA(null);
-            if (tz == null) {
-                return null;
-            }
-            final int hi = tz.length();
-            if (Dates.parseOffset(tz, 0, hi) != Long.MIN_VALUE) {
-                return null;
-            }
-            try {
-                return DateLocaleFactory.EN_LOCALE.getZoneRules(
-                        Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), timestampDriver.getTZRuleResolution()
-                );
-            } catch (NumericException e) {
-                throw SqlException.$(timezonePos, "invalid timezone: ").put(tz);
-            }
+            return constantZoneRules(timezoneFunc.getStrA(null), timezonePos, timestampDriver);
         }
         if (timezoneFunc.isRuntimeConstant()) {
             return null;
@@ -744,12 +791,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
 
         @Override
         public int invertTimestampInterval(Interval io) {
-            if (!returnUtc
-                    && isFloorExactlyInvertible(timestampDriver, floorFunc, unit, stride, effectiveOffset)
-                    && floorPreimageShifted(io, timestampDriver, floorFunc, unit == 'U' ? 'u' : unit, stride, effectiveOffset, tzOffset)) {
-                return MonotonicTimestampFunction.EXACT;
-            }
-            return invertFloorSuperset(io, timestampDriver, unit, stride, effectiveOffset);
+            return invertFloorFixedTz(io, timestampDriver, floorFunc, unit, stride, effectiveOffset, tzOffset, returnUtc);
         }
 
         @Override

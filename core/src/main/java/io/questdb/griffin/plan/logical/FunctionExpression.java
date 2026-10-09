@@ -99,7 +99,7 @@ public final class FunctionExpression extends BoundExpression {
     }
 
     /**
-     * A call parsed as a set operation, such as an IN without parentheses.
+     * An IN parsed without parentheses, whose right operand is a single value or interval rather than a list.
      */
     public boolean isSetOperation() {
         return isSetOperation;

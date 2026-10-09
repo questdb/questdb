@@ -284,7 +284,7 @@ public class ExpressionParser {
             return tok;
         }
         tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || !Chars.isOnlyDecimals(tok)) { // ranges are checked later by FunctionParser.createConstant
+        if (tok == null || !Chars.isOnlyDecimals(tok)) { // ranges are checked later by FunctionResolver.createConstant
             throw SqlException.$(lexer.lastTokenPosition(), "missing bits size for GEOHASH constant");
         }
         opStack.push(expressionNodePool.next().of(

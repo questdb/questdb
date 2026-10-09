@@ -60,6 +60,11 @@ public class WithinBoxFunctionFactory implements FunctionFactory {
     private static final long INF_BITS = 0x7FF0000000000000L;
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public Function newInstance(
             int position,
             ObjList<Function> args,
@@ -91,11 +96,6 @@ public class WithinBoxFunctionFactory implements FunctionFactory {
         }
 
         return new GeoWithinBoxFunction(xFunc, yFunc, minXFunc, minYFunc, maxXFunc, maxYFunc);
-    }
-
-    @Override
-    public int getResultType(IntList argTypes) {
-        return ColumnType.BOOLEAN;
     }
 
     @Override

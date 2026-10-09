@@ -25,7 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.griffin.SqlCodeGenerator;
+import io.questdb.griffin.codegen.SqlCodeGenerator;
 import io.questdb.std.Misc;
 import io.questdb.test.griffin.engine.groupby.SampleByTest;
 import org.junit.Before;
@@ -5265,7 +5265,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery(query)
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .returns("""
                             id\tts\tid0\tid1\tc
@@ -5323,7 +5322,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery(query)
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .returns("""
                             id\tts\tid0\tid1\tid2\tc

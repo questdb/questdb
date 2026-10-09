@@ -32,13 +32,14 @@ public final class FillPlan extends ForwardingPlan {
     public static final ObjectFactory<FillPlan> FACTORY = FillPlan::new;
     public static final int FILL_NULL = 0;
     public static final int FILL_PREV = 1;
-    public static final int FILL_VALUE = 2;
     public static final int FILL_PREV_COLUMN = 3;
+    public static final int FILL_VALUE = 2;
     private final IntList modes = new IntList();
     private final IntList sourceColumnIds = new IntList();
     private final IntList targetColumnIds = new IntList();
     private final ObjList<CharSequence> tokens = new ObjList<>();
     private final ObjList<BoundExpression> values = new ObjList<>();
+    private Algorithm algorithm;
     private BoundExpression from;
     private BoundExpression offset;
     private int periodPosition;
@@ -55,6 +56,7 @@ public final class FillPlan extends ForwardingPlan {
         targetColumnIds.clear();
         tokens.clear();
         values.clear();
+        algorithm = null;
         from = null;
         offset = null;
         periodPosition = 0;
@@ -72,12 +74,15 @@ public final class FillPlan extends ForwardingPlan {
         return getInput().getOutput().getColumnIndexById(timestampColumnId);
     }
 
-    public BoundExpression getFrom() {
-        return from;
+    /**
+     * The order the fill reads its input buckets in, which order planning records; null before planning.
+     */
+    public Algorithm getAlgorithm() {
+        return algorithm;
     }
 
-    public int getFromPosition() {
-        return from == null ? 0 : from.getPosition();
+    public BoundExpression getFrom() {
+        return from;
     }
 
     public IntList getModes() {
@@ -124,12 +129,12 @@ public final class FillPlan extends ForwardingPlan {
         return to;
     }
 
-    public int getToPosition() {
-        return to == null ? 0 : to.getPosition();
-    }
-
     public ObjList<CharSequence> getTokens() {
         return tokens;
+    }
+
+    public int getToPosition() {
+        return to == null ? 0 : to.getPosition();
     }
 
     public ObjList<BoundExpression> getValues() {
@@ -141,12 +146,21 @@ public final class FillPlan extends ForwardingPlan {
         return this;
     }
 
+    public void setAlgorithm(Algorithm algorithm) {
+        this.algorithm = algorithm;
+    }
+
     public void setFrom(BoundExpression from) {
         this.from = from;
     }
 
     public void setOffset(BoundExpression offset) {
         this.offset = offset;
+    }
+
+    public void setPeriod(CharSequence token, int position) {
+        periodToken = token;
+        periodPosition = position;
     }
 
     public void setTimestampColumnId(int timestampColumnId) {
@@ -161,8 +175,23 @@ public final class FillPlan extends ForwardingPlan {
         this.to = to;
     }
 
-    public void setPeriod(CharSequence token, int position) {
-        periodToken = token;
-        periodPosition = position;
+    @Override
+    public void visitReads(PlanExpressionVisitor visitor) {
+        PlanReads.expressions(values, visitor);
+        from = PlanReads.expression(from, visitor);
+        to = PlanReads.expression(to, visitor);
+        offset = PlanReads.expression(offset, visitor);
+        timezone = PlanReads.expression(timezone, visitor);
+        PlanReads.columnIds(sourceColumnIds, null, visitor);
+        PlanReads.columnIds(targetColumnIds, null, visitor);
+        timestampColumnId = PlanReads.columnId(timestampColumnId, -1, visitor);
+    }
+
+    /**
+     * How the fill reads the buckets of its input: from the rows of a SAMPLE BY cursor without a fill, which keeps its
+     * latest rows readable; in the timestamp order the input designates; or after sorting them by timestamp.
+     */
+    public enum Algorithm {
+        INPUT_ORDER, SAMPLE_BY_ROWS, SORTED
     }
 }

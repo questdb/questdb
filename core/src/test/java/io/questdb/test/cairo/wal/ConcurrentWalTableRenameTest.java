@@ -156,20 +156,19 @@ public class ConcurrentWalTableRenameTest extends AbstractCairoTest {
                         SELECT x + 10 x, timestamp_sequence('2022-02-24T04', 100_000_000) ts FROM long_sequence(2)
                     ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
             drainWalQueue();
-            final int[] joinInputs = {0};
+            final int[] generations = {0};
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
                     GenerationStepContext context = new GenerationStepContext(engine)
             ) {
                 // Every generation, retries included, runs after a rename that binding did not see:
-                // the step swaps once per attempt, on the first of the two join inputs.
+                // the step swaps once per attempt, as the compiler turns from binding to generation.
                 context.setStep(() -> {
-                    if (joinInputs[0]++ % 2 == 0) {
-                        try {
-                            swapTableNames();
-                        } catch (SqlException e) {
-                            throw new RuntimeException(e);
-                        }
+                    generations[0]++;
+                    try {
+                        swapTableNames();
+                    } catch (SqlException e) {
+                        throw new RuntimeException(e);
                     }
                 });
                 try (RecordCursorFactory factory = compiler.compile(
@@ -177,7 +176,7 @@ public class ConcurrentWalTableRenameTest extends AbstractCairoTest {
                         context
                 ).getRecordCursorFactory()) {
                     context.setStep(null);
-                    Assert.assertTrue(joinInputs[0] > 0);
+                    Assert.assertTrue(generations[0] > 0);
                     try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
                         Assert.fail("cursor must reject names that moved to other tables");
                     } catch (TableReferenceOutOfDateException expected) {

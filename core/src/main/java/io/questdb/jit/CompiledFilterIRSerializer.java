@@ -39,7 +39,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
-import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.GeoHashUtil;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -425,6 +425,201 @@ public class CompiledFilterIRSerializer implements Mutable {
         narrowKeptConstants.clear();
     }
 
+    public CompiledFilterIRSerializer of(
+            MemoryCARW memory,
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            OutputSchema input,
+            PageFrameCursor pageFrameCursor,
+            ObjList<Function> bindVarFunctions
+    ) {
+        this.memory = memory;
+        this.executionContext = executionContext;
+        this.metadata = metadata;
+        this.input = input;
+        this.pageFrameCursor = pageFrameCursor;
+        this.bindVarFunctions = bindVarFunctions;
+        return this;
+    }
+
+    private static BoundExpression argAt(BoundExpression node, int index) {
+        final FunctionExpression call = (FunctionExpression) node;
+        return resolve(call.argumentAt(index < call.getArgumentCount() - 1 ? index + 1 : 0));
+    }
+
+    private static int argCount(BoundExpression node) {
+        return node instanceof FunctionExpression call && call.getArgumentCount() > 2 ? call.getArgumentCount() : 0;
+    }
+
+    private static byte bindVariableTypeCode(int columnTypeTag) {
+        return switch (columnTypeTag) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE -> I1_TYPE;
+            case ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.CHAR -> I2_TYPE;
+            case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT,
+                 ColumnType.STRING -> // symbol variables are represented with the string type
+                    I4_TYPE;
+            case ColumnType.FLOAT -> F4_TYPE;
+            case ColumnType.LONG, ColumnType.GEOLONG, ColumnType.DATE, ColumnType.TIMESTAMP -> I8_TYPE;
+            case ColumnType.DOUBLE -> F8_TYPE;
+            case ColumnType.LONG128, ColumnType.UUID -> I16_TYPE;
+            default -> UNDEFINED_CODE;
+        };
+    }
+
+    /**
+     * A timestamp constant is serialized at the precision of the operand it meets; text the binder
+     * could not convert to that operand's type stays with the Java comparison.
+     */
+    private static boolean hasJitCompatibleTimestampConstants(FunctionExpression call) {
+        int timestampType = ColumnType.UNDEFINED;
+        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+            final BoundExpression argument = call.argumentAt(i);
+            if (!(argument instanceof ConstantExpression) && ColumnType.isTimestamp(argument.getDataType())) {
+                timestampType = argument.getDataType();
+                break;
+            }
+        }
+        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+            if (call.argumentAt(i) instanceof ConstantExpression constant) {
+                if (timestampType == ColumnType.UNDEFINED) {
+                    if (ColumnType.isTimestamp(constant.getDataType())) {
+                        return false;
+                    }
+                    continue;
+                }
+                final int type = constant.getDataType();
+                if (ColumnType.isVarcharOrString(type) && (!"in".equals(call.getName()) || call.getArgumentCount() == 1
+                        || call.getArgumentCount() > 2 && !isJitTimestampText(constant, timestampType))) {
+                    return false;
+                }
+                if (ColumnType.isTimestamp(type) && type != timestampType && (constant.getTimestampText() == null
+                        || FunctionResolver.getAdaptiveTimestampType(constant.getTimestampText(), timestampType) != timestampType
+                        || !isTimestampConvertible(constant.getLongValue(), type, timestampType))) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static BoundExpression inKey(BoundExpression node) {
+        return argAt(node, argCount(node) - 1);
+    }
+
+    /**
+     * {@code ts IN '<interval>'}: the right operand is the interval text itself, never re-read
+     * through a folded source.
+     */
+    private static boolean isIntervalIn(FunctionExpression call) {
+        return call.getArgumentCount() == 2 && SqlKeywords.isInKeyword(call.getName())
+                && !(call.argumentAt(0) instanceof ConstantExpression)
+                && ColumnType.isTimestamp(call.argumentAt(0).getDataType())
+                && call.argumentAt(1) instanceof ConstantExpression interval && interval.isLiteral()
+                && ColumnType.isVarcharOrString(interval.getDataType());
+    }
+
+    private static boolean isJitOperator(String name) {
+        return switch (name) {
+            case "=", "!=", "<>", "<", "<=", ">", ">=", "+", "-", "*", "/", "%", "and", "or" -> true;
+            default -> false;
+        };
+    }
+
+    private static boolean isJitTimestampText(ConstantExpression constant, int timestampType) {
+        final CharSequence text = constant.getDataType() == ColumnType.VARCHAR
+                ? constant.getVarcharValue() == null ? null : constant.getVarcharValue().asAsciiCharSequence()
+                : constant.getStrValue();
+        if (text == null || FunctionResolver.getAdaptiveTimestampType(text, timestampType) != timestampType) {
+            return false;
+        }
+        try {
+            ColumnType.getTimestampDriver(timestampType).parseFloorLiteral(text);
+            return true;
+        } catch (NumericException e) {
+            return false;
+        }
+    }
+
+    private static boolean isTimestampConvertible(long value, int fromType, int toType) {
+        try {
+            ColumnType.getTimestampDriver(toType).from(value, fromType);
+            return true;
+        } catch (ImplicitCastException e) {
+            return false;
+        }
+    }
+
+    private static int kind(BoundExpression node) {
+        if (node instanceof FunctionExpression call) {
+            if (!SqlKeywords.isInKeyword(call.getName())) {
+                return OPERATION;
+            }
+            return call.isSetOperation() || isIntervalIn(call) ? SET_OPERATION : FUNCTION;
+        }
+        if (node instanceof ColumnExpression) {
+            return LITERAL;
+        }
+        return node instanceof BindVariableExpression ? BIND_VARIABLE : CONSTANT;
+    }
+
+    private static BoundExpression lhs(BoundExpression node) {
+        return node instanceof FunctionExpression call && call.getArgumentCount() == 2 ? resolve(call.argumentAt(0)) : null;
+    }
+
+    /**
+     * The operator a call node applies, or an empty name for any other node, so a column whose
+     * name spells an operator never reads as one.
+     */
+    private static CharSequence operator(BoundExpression node) {
+        if (node instanceof FunctionExpression call) {
+            return "<>".equals(call.getName()) ? "!=" : call.getName();
+        }
+        return "";
+    }
+
+    private static int paramCount(BoundExpression node) {
+        return node instanceof FunctionExpression call ? call.getArgumentCount() : 0;
+    }
+
+    private static BoundExpression resolve(BoundExpression node) {
+        return node instanceof ConstantExpression constant && constant.getSource() != null ? constant.getSource() : node;
+    }
+
+    private static BoundExpression rhs(BoundExpression node) {
+        if (!(node instanceof FunctionExpression call)) {
+            return null;
+        }
+        return switch (call.getArgumentCount()) {
+            case 1 -> resolve(call.argumentAt(0));
+            case 2 -> isIntervalIn(call) ? call.argumentAt(1) : resolve(call.argumentAt(1));
+            default -> null;
+        };
+    }
+
+    /**
+     * Post-order walk that visits the right operand before the left one, the order the IR
+     * operands take on the backend's value stack.
+     */
+    private static void traverse(BoundExpression node, Visitor visitor) throws SqlException {
+        if (node == null || !visitor.descend(node)) {
+            return;
+        }
+        traverse(rhs(node), visitor);
+        final int paramCount = paramCount(node);
+        if (paramCount < 3) {
+            traverse(lhs(node), visitor);
+        } else {
+            for (int i = 0; i < paramCount; i++) {
+                traverse(argAt(node, i), visitor);
+            }
+        }
+        visitor.visit(node);
+    }
+
+    private int columnIndex(BoundExpression node) {
+        return node instanceof ColumnExpression column ? input.getColumnIndexById(column.getColumnId()) : -1;
+    }
+
     private boolean descend(BoundExpression node) throws SqlException {
         if (predicateContext.inOperationNode != null && !predicateContext.currentInSerialization) {
             return false;
@@ -467,7 +662,7 @@ public class CompiledFilterIRSerializer implements Mutable {
         }
 
         // Constant integer arithmetic subtree whose long-width fold does not fit INT. Its width
-        // follows its DECLARED type, exactly as FunctionParser#functionToConstant0 folds it: a
+        // follows its DECLARED type, exactly as FunctionResolver#functionToConstant0 folds it: a
         // pure-INT subtree is an IntConstant holding the wrap, and only a genuine LONG operand
         // (arithExprType == I8) makes the subtree LONG and keeps the full value.
         if (predicateContext.isActive() && kind(node) == OPERATION) {
@@ -566,27 +761,6 @@ public class CompiledFilterIRSerializer implements Mutable {
         }
 
         return true;
-    }
-
-    public CompiledFilterIRSerializer of(
-            MemoryCARW memory,
-            SqlExecutionContext executionContext,
-            RecordMetadata metadata,
-            OutputSchema input,
-            PageFrameCursor pageFrameCursor,
-            ObjList<Function> bindVarFunctions
-    ) {
-        this.memory = memory;
-        this.executionContext = executionContext;
-        this.metadata = metadata;
-        this.input = input;
-        this.pageFrameCursor = pageFrameCursor;
-        this.bindVarFunctions = bindVarFunctions;
-        return this;
-    }
-
-    private int columnIndex(BoundExpression node) {
-        return node instanceof ColumnExpression column ? input.getColumnIndexById(column.getColumnId()) : -1;
     }
 
     private @Nullable CharSequence constantToken(ConstantExpression constant) {
@@ -705,6 +879,39 @@ public class CompiledFilterIRSerializer implements Mutable {
         return true;
     }
 
+    private boolean isWideLaneEligible(BoundExpression node) {
+        if (node == null) {
+            return false;
+        }
+        if (kind(node) == OPERATION
+                && (SqlKeywords.isAndKeyword(operator(node)) || SqlKeywords.isOrKeyword(operator(node)))) {
+            return isWideLaneEligible(lhs(node)) && isWideLaneEligible(rhs(node));
+        }
+        if (kind(node) == OPERATION && SqlKeywords.isNotKeyword(operator(node))) {
+            return isWideLaneEligible(rhs(node));
+        }
+        if (kind(node) == FUNCTION && SqlKeywords.isInKeyword(operator(node))) {
+            return isWideLaneInEligible(node);
+        }
+        if (kind(node) == OPERATION && paramCount(node) == 2 && isComparisonToken(token(node))) {
+            if (isWideLaneIntegerExpression(lhs(node)) && isWideLaneIntegerExpression(rhs(node))) {
+                return true;
+            }
+            if (isWideLaneIntCmpFloatConstPair(lhs(node), rhs(node))
+                    || isWideLaneIntCmpFloatConstPair(rhs(node), lhs(node))) {
+                return true;
+            }
+            if (isWideLaneIntCmpFloatLeafPair(lhs(node), rhs(node))
+                    || isWideLaneIntCmpFloatLeafPair(rhs(node), lhs(node))) {
+                return true;
+            }
+            return isWideLaneFloatComparisonOperand(lhs(node))
+                    && isWideLaneFloatComparisonOperand(rhs(node))
+                    && (containsFloatExpression(lhs(node)) || containsFloatExpression(rhs(node)));
+        }
+        return false;
+    }
+
     private CharSequence numberToken(long value, char suffix) {
         final CharacterStoreEntry token = characterStore.newEntry();
         token.put(value);
@@ -745,39 +952,6 @@ public class CompiledFilterIRSerializer implements Mutable {
         sink.clear();
         Utf8s.utf8ToUtf16(value, sink);
         return sink;
-    }
-
-    private boolean isWideLaneEligible(BoundExpression node) {
-        if (node == null) {
-            return false;
-        }
-        if (kind(node) == OPERATION
-                && (SqlKeywords.isAndKeyword(operator(node)) || SqlKeywords.isOrKeyword(operator(node)))) {
-            return isWideLaneEligible(lhs(node)) && isWideLaneEligible(rhs(node));
-        }
-        if (kind(node) == OPERATION && SqlKeywords.isNotKeyword(operator(node))) {
-            return isWideLaneEligible(rhs(node));
-        }
-        if (kind(node) == FUNCTION && SqlKeywords.isInKeyword(operator(node))) {
-            return isWideLaneInEligible(node);
-        }
-        if (kind(node) == OPERATION && paramCount(node) == 2 && isComparisonToken(token(node))) {
-            if (isWideLaneIntegerExpression(lhs(node)) && isWideLaneIntegerExpression(rhs(node))) {
-                return true;
-            }
-            if (isWideLaneIntCmpFloatConstPair(lhs(node), rhs(node))
-                    || isWideLaneIntCmpFloatConstPair(rhs(node), lhs(node))) {
-                return true;
-            }
-            if (isWideLaneIntCmpFloatLeafPair(lhs(node), rhs(node))
-                    || isWideLaneIntCmpFloatLeafPair(rhs(node), lhs(node))) {
-                return true;
-            }
-            return isWideLaneFloatComparisonOperand(lhs(node))
-                    && isWideLaneFloatComparisonOperand(rhs(node))
-                    && (containsFloatExpression(lhs(node)) || containsFloatExpression(rhs(node)));
-        }
-        return false;
     }
 
     /**
@@ -1456,180 +1630,6 @@ public class CompiledFilterIRSerializer implements Mutable {
         }
     }
 
-    private static BoundExpression argAt(BoundExpression node, int index) {
-        final FunctionExpression call = (FunctionExpression) node;
-        return resolve(call.argumentAt(index < call.getArgumentCount() - 1 ? index + 1 : 0));
-    }
-
-    private static int argCount(BoundExpression node) {
-        return node instanceof FunctionExpression call && call.getArgumentCount() > 2 ? call.getArgumentCount() : 0;
-    }
-
-    /**
-     * A timestamp constant is serialized at the precision of the operand it meets; text the binder
-     * could not convert to that operand's type stays with the Java comparison.
-     */
-    private static boolean hasJitCompatibleTimestampConstants(FunctionExpression call) {
-        int timestampType = ColumnType.UNDEFINED;
-        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-            final BoundExpression argument = call.argumentAt(i);
-            if (!(argument instanceof ConstantExpression) && ColumnType.isTimestamp(argument.getDataType())) {
-                timestampType = argument.getDataType();
-                break;
-            }
-        }
-        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-            if (call.argumentAt(i) instanceof ConstantExpression constant) {
-                if (timestampType == ColumnType.UNDEFINED) {
-                    if (ColumnType.isTimestamp(constant.getDataType())) {
-                        return false;
-                    }
-                    continue;
-                }
-                final int type = constant.getDataType();
-                if (ColumnType.isVarcharOrString(type) && (!"in".equals(call.getName()) || call.getArgumentCount() == 1
-                        || call.getArgumentCount() > 2 && !isJitTimestampText(constant, timestampType))) {
-                    return false;
-                }
-                if (ColumnType.isTimestamp(type) && type != timestampType && (constant.getTimestampText() == null
-                        || FunctionParser.getAdaptiveTimestampType(constant.getTimestampText(), timestampType) != timestampType
-                        || !isTimestampConvertible(constant.getLongValue(), type, timestampType))) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-
-    private static BoundExpression inKey(BoundExpression node) {
-        return argAt(node, argCount(node) - 1);
-    }
-
-    /**
-     * {@code ts IN '<interval>'}: the right operand is the interval text itself, never re-read
-     * through a folded source.
-     */
-    private static boolean isIntervalIn(FunctionExpression call) {
-        return call.getArgumentCount() == 2 && SqlKeywords.isInKeyword(call.getName())
-                && !(call.argumentAt(0) instanceof ConstantExpression)
-                && ColumnType.isTimestamp(call.argumentAt(0).getDataType())
-                && call.argumentAt(1) instanceof ConstantExpression interval && interval.isLiteral()
-                && ColumnType.isVarcharOrString(interval.getDataType());
-    }
-
-    private static boolean isJitOperator(String name) {
-        return switch (name) {
-            case "=", "!=", "<>", "<", "<=", ">", ">=", "+", "-", "*", "/", "%", "and", "or" -> true;
-            default -> false;
-        };
-    }
-
-    private static boolean isJitTimestampText(ConstantExpression constant, int timestampType) {
-        final CharSequence text = constant.getDataType() == ColumnType.VARCHAR
-                ? constant.getVarcharValue() == null ? null : constant.getVarcharValue().asAsciiCharSequence()
-                : constant.getStrValue();
-        if (text == null || FunctionParser.getAdaptiveTimestampType(text, timestampType) != timestampType) {
-            return false;
-        }
-        try {
-            ColumnType.getTimestampDriver(timestampType).parseFloorLiteral(text);
-            return true;
-        } catch (NumericException e) {
-            return false;
-        }
-    }
-
-    private static boolean isTimestampConvertible(long value, int fromType, int toType) {
-        try {
-            ColumnType.getTimestampDriver(toType).from(value, fromType);
-            return true;
-        } catch (ImplicitCastException e) {
-            return false;
-        }
-    }
-
-    private static int kind(BoundExpression node) {
-        if (node instanceof FunctionExpression call) {
-            if (!SqlKeywords.isInKeyword(call.getName())) {
-                return OPERATION;
-            }
-            return call.isSetOperation() || isIntervalIn(call) ? SET_OPERATION : FUNCTION;
-        }
-        if (node instanceof ColumnExpression) {
-            return LITERAL;
-        }
-        return node instanceof BindVariableExpression ? BIND_VARIABLE : CONSTANT;
-    }
-
-    private static BoundExpression lhs(BoundExpression node) {
-        return node instanceof FunctionExpression call && call.getArgumentCount() == 2 ? resolve(call.argumentAt(0)) : null;
-    }
-
-    private static int paramCount(BoundExpression node) {
-        return node instanceof FunctionExpression call ? call.getArgumentCount() : 0;
-    }
-
-    /**
-     * The operator a call node applies, or an empty name for any other node, so a column whose
-     * name spells an operator never reads as one.
-     */
-    private static CharSequence operator(BoundExpression node) {
-        if (node instanceof FunctionExpression call) {
-            return "<>".equals(call.getName()) ? "!=" : call.getName();
-        }
-        return "";
-    }
-
-    private static BoundExpression resolve(BoundExpression node) {
-        return node instanceof ConstantExpression constant && constant.getSource() != null ? constant.getSource() : node;
-    }
-
-    private static BoundExpression rhs(BoundExpression node) {
-        if (!(node instanceof FunctionExpression call)) {
-            return null;
-        }
-        return switch (call.getArgumentCount()) {
-            case 1 -> resolve(call.argumentAt(0));
-            case 2 -> isIntervalIn(call) ? call.argumentAt(1) : resolve(call.argumentAt(1));
-            default -> null;
-        };
-    }
-
-    /**
-     * Post-order walk that visits the right operand before the left one, the order the IR
-     * operands take on the backend's value stack.
-     */
-    private static void traverse(BoundExpression node, Visitor visitor) throws SqlException {
-        if (node == null || !visitor.descend(node)) {
-            return;
-        }
-        traverse(rhs(node), visitor);
-        final int paramCount = paramCount(node);
-        if (paramCount < 3) {
-            traverse(lhs(node), visitor);
-        } else {
-            for (int i = 0; i < paramCount; i++) {
-                traverse(argAt(node, i), visitor);
-            }
-        }
-        visitor.visit(node);
-    }
-
-    private static byte bindVariableTypeCode(int columnTypeTag) {
-        return switch (columnTypeTag) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE -> I1_TYPE;
-            case ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.CHAR -> I2_TYPE;
-            case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT,
-                 ColumnType.STRING -> // symbol variables are represented with the string type
-                    I4_TYPE;
-            case ColumnType.FLOAT -> F4_TYPE;
-            case ColumnType.LONG, ColumnType.GEOLONG, ColumnType.DATE, ColumnType.TIMESTAMP -> I8_TYPE;
-            case ColumnType.DOUBLE -> F8_TYPE;
-            case ColumnType.LONG128, ColumnType.UUID -> I16_TYPE;
-            default -> UNDEFINED_CODE;
-        };
-    }
-
     private static int columnTypeCode(int columnTypeTag) {
         return switch (columnTypeTag) {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE -> I1_TYPE;
@@ -1807,7 +1807,7 @@ public class CompiledFilterIRSerializer implements Mutable {
 
     /**
      * Reads a constant leaf of a folded arithmetic subtree as a double, mirroring the ladder
-     * {@code FunctionParser#createConstant} walks: {@code null}/{@code nan} give the NULL
+     * {@code FunctionResolver#createConstant} walks: {@code null}/{@code nan} give the NULL
      * constant, then {@code parseInt}, {@code parseLong}, {@code parseDouble}, {@code parseFloat}
      * in that order. Going through the same ladder rather than {@code parseDouble} alone is what
      * lets the fold read the shapes the type classifiers admit but a single parser does not -
@@ -4053,7 +4053,7 @@ public class CompiledFilterIRSerializer implements Mutable {
      * Records a NARROW integer arithmetic subtree with no column and no bind variable in it as a
      * fold root {@link #descend} emits as one I8 IMM, and reports whether it did.
      * <p>
-     * The Java filter never runs such a subtree: {@code FunctionParser#functionToConstant0} folds
+     * The Java filter never runs such a subtree: {@code FunctionResolver#functionToConstant0} folds
      * it bottom-up into a single {@code IntConstant}, and a 64-bit comparison reads that constant
      * through {@code IntConstant#getLong()}. {@link #foldConstantArithWidthAware} reproduces both
      * halves exactly - it evaluates a narrow node as
@@ -4142,7 +4142,7 @@ public class CompiledFilterIRSerializer implements Mutable {
                     && isNarrowIntTypeCode(arithExprType(child))) {
                 // A narrow integer CONSTANT operand of the same node reaches the backend the same
                 // way, and needs the same promotion for a different reason: the Java filter folds
-                // the node through FunctionParser#functionToConstant0, whose (LL) factory reads
+                // the node through FunctionResolver#functionToConstant0, whose (LL) factory reads
                 // this operand at LONG width, while the predicate-wide type observer types the
                 // immediate at the widest COLUMN or BIND VARIABLE it saw - PredicateContext's
                 // handleColumn() and handleBindVariable() both feed it. An all-INT-column
@@ -5848,7 +5848,7 @@ public class CompiledFilterIRSerializer implements Mutable {
      * precision and returns the result; throws {@link NumericException} if
      * any descendant is non-constant, not an integer literal, or the subtree
      * uses an operator other than {@code + - * /}. Mirrors the int-vs-long
-     * check that {@code FunctionParser.functionToConstant0} uses to decide
+     * check that {@code FunctionResolver.functionToConstant0} uses to decide
      * whether to fold an INT-typed function to a LongConstant; callers that
      * want the Java filter's fold behavior compare {@code (int) longVal}
      * against {@code longVal} and treat a mismatch as a fold root.

@@ -4552,7 +4552,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testEvaluateNullArithmeticColumnExpression() throws Exception {
         // Regression: AddIntFunc.isConstant() used to claim true when one operand was a null
         // constant, even if the other operand was a column reference. This made
-        // FunctionParser.functionToConstant() try to evaluate the expression at compile time
+        // FunctionResolver.functionToConstant() try to evaluate the expression at compile time
         // with a null record, which NPEd on the column's getInt(null). The fuzzer surfaced
         // this via filter and projection expressions like `WHERE c6 >= ((null + c6) + ...)`.
         //
@@ -5182,6 +5182,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration) {
+                @Override
+                public TableReader getReader(TableToken tableToken, ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
+                    fiddler.run(this);
+                    return super.getReader(tableToken, readerPoolSupervisor);
+                }
+
                 @Override
                 public TableReader getReader(TableToken tableToken, long metadataVersion, ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
                     fiddler.run(this);
@@ -8612,6 +8618,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         engine.releaseAllWriters();
 
         try (CairoEngine engine = new CairoEngine(configuration) {
+            @Override
+            public TableReader getReader(TableToken tableToken, ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
+                fiddler.run(this);
+                return super.getReader(tableToken, readerPoolSupervisor);
+            }
+
             @Override
             public TableReader getReader(TableToken tableToken, long metadataVersion, ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
                 fiddler.run(this);

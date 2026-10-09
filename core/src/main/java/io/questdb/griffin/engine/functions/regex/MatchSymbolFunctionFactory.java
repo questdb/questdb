@@ -36,6 +36,8 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -72,6 +74,23 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "~(KS)";
+    }
+
+    @Override
+    public boolean isSymbolKeySetProvider(ObjList<BoundExpression> args, boolean isSymbolTableStatic) {
+        if (!isSymbolTableStatic) {
+            return false;
+        }
+        final BoundExpression pattern = args.getQuick(1);
+        if (pattern instanceof ConstantExpression constant) {
+            return switch (ColumnType.tagOf(constant.getDataType())) {
+                case ColumnType.STRING, ColumnType.SYMBOL -> constant.getStrValue() != null;
+                case ColumnType.VARCHAR -> constant.getVarcharValue() != null;
+                case ColumnType.CHAR -> constant.getLongValue() != 0;
+                default -> false;
+            };
+        }
+        return (pattern.getFunctionFlags() & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) == BoundExpression.RUNTIME_CONSTANT;
     }
 
     @Override

@@ -970,6 +970,16 @@ public class SqlParser {
         return createTableOperationBuilder.getColumnModel(columnName);
     }
 
+    private boolean hasAggregateOrder(QueryModel model) {
+        final FunctionFactoryCache functionFactoryCache = cairoEngine.getFunctionFactoryCache();
+        for (int i = 0, n = model.getOrderBy().size(); i < n; i++) {
+            if (hasGroupByFunc(sqlNodeStack, functionFactoryCache, model.getOrderBy().getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean isCurrentRow(GenericLexer lexer, CharSequence tok) throws SqlException {
         if (isCurrentKeyword(tok)) {
             tok = tok(lexer, "'row'");
@@ -3832,16 +3842,6 @@ public class SqlParser {
         last.setLimitPosition(0);
         select.copyDeclsFrom(model, false);
         return select;
-    }
-
-    private boolean hasAggregateOrder(QueryModel model) {
-        final FunctionFactoryCache functionFactoryCache = cairoEngine.getFunctionFactoryCache();
-        for (int i = 0, n = model.getOrderBy().size(); i < n; i++) {
-            if (hasGroupByFunc(sqlNodeStack, functionFactoryCache, model.getOrderBy().getQuick(i))) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private QueryModel parseDml0(

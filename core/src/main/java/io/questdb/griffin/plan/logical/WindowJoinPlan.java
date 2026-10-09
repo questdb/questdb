@@ -55,10 +55,6 @@ public final class WindowJoinPlan extends LogicalPlan {
         return steps;
     }
 
-    public boolean isEmpty() {
-        return isEmpty;
-    }
-
     @Override
     public LogicalPlan inputAt(int index) {
         if (index == 0) {
@@ -72,14 +68,14 @@ public final class WindowJoinPlan extends LogicalPlan {
         return steps.size() + 1;
     }
 
+    public boolean isEmpty() {
+        return isEmpty;
+    }
+
     public WindowJoinPlan of(LogicalPlan master, int position) {
         this.master = Objects.requireNonNull(master);
         setPosition(position);
         return this;
-    }
-
-    public void setEmpty(boolean isEmpty) {
-        this.isEmpty = isEmpty;
     }
 
     @Override
@@ -88,6 +84,17 @@ public final class WindowJoinPlan extends LogicalPlan {
             master = Objects.requireNonNull(input);
         } else {
             steps.getQuick(index - 1).setSlave(input);
+        }
+    }
+
+    public void setEmpty(boolean isEmpty) {
+        this.isEmpty = isEmpty;
+    }
+
+    @Override
+    public void visitReads(PlanExpressionVisitor visitor) {
+        for (int i = 0, n = steps.size(); i < n; i++) {
+            steps.getQuick(i).visitReads(visitor);
         }
     }
 }

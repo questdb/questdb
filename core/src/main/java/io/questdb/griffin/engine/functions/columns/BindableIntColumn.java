@@ -59,12 +59,6 @@ final class BindableIntColumn extends IntFunction implements BindableColumn {
     }
 
     @Override
-    public boolean isThreadSafe() {
-        // Column positions are assigned once before the graph reaches execution.
-        return true;
-    }
-
-    @Override
     public void setColumnId(int columnId) {
         assert columnIndex == -1 && isOpen;
         this.columnId = columnId;

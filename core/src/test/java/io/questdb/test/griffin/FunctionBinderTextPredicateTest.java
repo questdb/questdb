@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExpressionNode;
@@ -49,7 +50,7 @@ public class FunctionBinderTextPredicateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             bindVariableService.setStr(0, "a_c");
             final ObjList<Function> constructed = new ObjList<>();
-            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache()) {
+            final FunctionParser parser = new FunctionParser(configuration, new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
                 @Override
                 public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
                                                ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
@@ -57,7 +58,7 @@ public class FunctionBinderTextPredicateTest extends AbstractCairoTest {
                     constructed.add(result);
                     return result;
                 }
-            };
+            });
             final OutputSchema original = new OutputSchema().add(5, "unused", ColumnType.LONG, true)
                     .add(70, "v", ColumnType.VARCHAR, true);
             final OutputSchema pruned = new OutputSchema().add(70, "v", ColumnType.VARCHAR, true);
@@ -136,12 +137,12 @@ public class FunctionBinderTextPredicateTest extends AbstractCairoTest {
         return node;
     }
 
-    private static ExpressionNode parameter(String name) {
-        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.BIND_VARIABLE, name, 0, 0);
-    }
-
     private static ExpressionNode literal(String token) {
         return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, token, 0, 0);
+    }
+
+    private static ExpressionNode parameter(String name) {
+        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.BIND_VARIABLE, name, 0, 0);
     }
 
     private static Record record(int expectedIndex, String value) {

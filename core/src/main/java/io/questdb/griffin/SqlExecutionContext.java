@@ -88,7 +88,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
             boolean isOrdered,
             int scanDirection,
             int orderByDirection,
-            boolean baseSupportsRandomAccess,
             int framingMode,
             long rowsLo,
             char rowsLoUnit,

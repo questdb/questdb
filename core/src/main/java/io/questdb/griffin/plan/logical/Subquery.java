@@ -44,24 +44,18 @@ public final class Subquery implements Mutable {
     private final OutputMetadataFactory outputMetadata = new OutputMetadataFactory();
     private int depth;
     private boolean isStable;
-    private int nextColumnId;
     private LogicalPlan root;
 
     @Override
     public void clear() {
         depth = 0;
         isStable = false;
-        nextColumnId = 0;
         root = null;
         outputMetadata.metadata.clear();
     }
 
     public int getDepth() {
         return depth;
-    }
-
-    public int getNextColumnId() {
-        return nextColumnId;
     }
 
     /**
@@ -79,9 +73,8 @@ public final class Subquery implements Mutable {
         return isStable;
     }
 
-    public Subquery of(LogicalPlan root, int nextColumnId, int depth, boolean isStable) {
+    public Subquery of(LogicalPlan root, int depth, boolean isStable) {
         this.root = root;
-        this.nextColumnId = nextColumnId;
         this.depth = depth;
         this.isStable = isStable;
         outputMetadata.of(root.getOutput());

@@ -26,7 +26,6 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.async.PageFrameSequence;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
@@ -34,7 +33,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -73,26 +71,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     int SCAN_DIRECTION_BACKWARD = 2;
     int SCAN_DIRECTION_FORWARD = 1;
     int SCAN_DIRECTION_OTHER = 0;
-
-    /**
-     * Returns true if this factory may be peeled by the parallel top-K gate, so the
-     * page-frame leaf below it can be wrapped by {@code AsyncTopKRecordCursorFactory}
-     * and this factory rebuilt over that top-K.
-     * <p>
-     * Implementations that return {@code true} must also override
-     * {@link #translateOrderByColumnToBase(int)} to map ORDER BY indices into the
-     * base metadata, and {@link #rewrapOverTopK(RecordCursorFactory, RecordMetadata)}
-     * to reconstruct the wrapper over the new top-K factory. The default returns
-     * {@code false}, which keeps non-projecting factories and projecting factories
-     * that cannot safely splice a top-K below themselves (e.g.
-     * {@code ExtraNullColumnCursorFactory}, whose null-column splice has no base
-     * counterpart) on the generic Sort light path.
-     *
-     * @return true if the factory participates in parallel top-K peeling
-     */
-    default boolean canPeelForTopK() {
-        return false;
-    }
 
     /**
      * Changes the page frame sizes for this factory.
@@ -171,24 +149,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return null;
     }
 
-    // to be used in combination with compiled filter
-    @Nullable
-    default ObjList<Function> getBindVarFunctions() {
-        return null;
-    }
-
-    // to be used in combination with compiled filter
-    @Nullable
-    default MemoryCARW getBindVarMemory() {
-        return null;
-    }
-
     default IntList getColumnCrossIndex() {
-        return null;
-    }
-
-    @Nullable
-    default CompiledFilter getCompiledFilter() {
         return null;
     }
 
@@ -270,12 +231,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      */
     default TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         return null;
-    }
-
-    /**
-     * Closes everything but base factory and filter.
-     */
-    default void halfClose() {
     }
 
     /**
@@ -398,23 +353,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     default void revertFromSampleByIndexPageFrameCursorFactory() {
     }
 
-    /**
-     * Re-wraps a freshly-built top-K factory so this factory's output shape is preserved.
-     * Default is a pass-through — factories that do not project simply return the top-K.
-     * Projection wrappers override to re-create themselves over the new base.
-     * <p>
-     * Ownership: after this call the caller must not close the original wrapper; its
-     * state has either transferred to the returned factory or been dropped on the floor,
-     * matching the AsOf/LatestBy peel precedent.
-     *
-     * @param topK            newly-built top-K factory over the page-frame leaf
-     * @param orderedMetadata projected output metadata for the re-wrapped factory
-     * @return re-wrapped factory, or {@code topK} unchanged for non-projecting factories
-     */
-    default RecordCursorFactory rewrapOverTopK(RecordCursorFactory topK, RecordMetadata orderedMetadata) {
-        return topK;
-    }
-
     default void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
     }
 
@@ -490,22 +428,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
 
     default void toSink(@NotNull CharSink<?> sink) {
         throw new UnsupportedOperationException("Unsupported for: " + getClass());
-    }
-
-    /**
-     * Translates an ORDER BY column index expressed in this factory's output metadata
-     * to the corresponding column index in the base (page-frame) metadata.
-     * <p>
-     * Returns the input unchanged for factories that do not re-arrange or hide base
-     * columns. Returns a negative value if the projected column cannot be resolved
-     * to a base column (for example, a computed {@code VirtualRecord} column); the
-     * caller must fall back to the generic sort path in that case.
-     *
-     * @param projectedIndex column index in this factory's output metadata
-     * @return column index in the base metadata, or a negative value if unresolvable
-     */
-    default int translateOrderByColumnToBase(int projectedIndex) {
-        return projectedIndex;
     }
 
     /**

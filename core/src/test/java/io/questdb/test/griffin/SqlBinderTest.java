@@ -108,18 +108,21 @@ public class SqlBinderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBoundIntComparisonsAndGeneratedAliases() throws Exception {
+    public void testBoundBitwiseAndNullIfFamilies() throws Exception {
         assertMemoryLeak(() -> {
-            createRows();
-            assertRows("SELECT id FROM lp_rows WHERE id = 2", "id\n2\n");
-            assertRows("SELECT id FROM lp_rows WHERE id <> 2 ORDER BY id", "id\n1\n3\n4\n");
-            assertRows("SELECT id FROM lp_rows WHERE id != 2 ORDER BY id", "id\n1\n3\n4\n");
-            assertRows("SELECT id FROM lp_rows WHERE id < 2", "id\n1\n");
-            assertRows("SELECT id FROM lp_rows WHERE id <= 2 ORDER BY id", "id\n1\n2\n");
-            assertRows("SELECT id FROM lp_rows WHERE id > 2 ORDER BY id", "id\n3\n4\n");
-            assertRows("SELECT id FROM lp_rows WHERE id >= 2 ORDER BY id", "id\n2\n3\n4\n");
-            assertRows("SELECT id FROM lp_rows WHERE id + 1 = 4", "id\n3\n");
-            assertRows("SELECT id FROM lp_rows WHERE 1 + 1 = 2 ORDER BY id", "id\n1\n2\n3\n4\n");
+            execute("CREATE TABLE lp_bitwise (unused STRING, id INT, i INT, l LONG, d DOUBLE)");
+            execute("INSERT INTO lp_bitwise VALUES ('a',1,2,2,2),('b',2,3,3,3),('c',3,null,null,null)");
+            for (String column : new String[]{"i", "l"}) {
+                assertRows("SELECT id FROM lp_bitwise WHERE (" + column + " & 1)=1", "id\n2\n");
+                assertRows("SELECT id FROM lp_bitwise WHERE (" + column + " | 1)=3 ORDER BY id", "id\n1\n2\n");
+                assertRows("SELECT id FROM lp_bitwise WHERE (" + column + " ^ 1)=2", "id\n2\n");
+                assertRows("SELECT id FROM lp_bitwise WHERE (~" + column + ")=-3", "id\n1\n");
+                assertRows("SELECT id FROM lp_bitwise WHERE (~" + column + ")=null", "id\n3\n");
+            }
+            for (String column : new String[]{"i", "l", "d"}) {
+                assertRows("SELECT id FROM lp_bitwise WHERE nullif(" + column + ",2)=null ORDER BY id", "id\n1\n3\n");
+                assertRows("SELECT id FROM lp_bitwise WHERE nullif(" + column + ",2)=3", "id\n2\n");
+            }
         });
     }
 
@@ -137,6 +140,22 @@ public class SqlBinderTest extends AbstractCairoTest {
             assertRows("SELECT id FROM lp_rows WHERE FALSE OR (id > 2) ORDER BY id", "id\n3\n4\n");
             assertRows("SELECT label FROM lp_rows WHERE FALSE AND id > 2", "label\n");
             assertRows("SELECT id FROM lp_rows WHERE TRUE OR id > 2 ORDER BY id", "id\n1\n2\n3\n4\n");
+        });
+    }
+
+    @Test
+    public void testBoundIntComparisonsAndGeneratedAliases() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertRows("SELECT id FROM lp_rows WHERE id = 2", "id\n2\n");
+            assertRows("SELECT id FROM lp_rows WHERE id <> 2 ORDER BY id", "id\n1\n3\n4\n");
+            assertRows("SELECT id FROM lp_rows WHERE id != 2 ORDER BY id", "id\n1\n3\n4\n");
+            assertRows("SELECT id FROM lp_rows WHERE id < 2", "id\n1\n");
+            assertRows("SELECT id FROM lp_rows WHERE id <= 2 ORDER BY id", "id\n1\n2\n");
+            assertRows("SELECT id FROM lp_rows WHERE id > 2 ORDER BY id", "id\n3\n4\n");
+            assertRows("SELECT id FROM lp_rows WHERE id >= 2 ORDER BY id", "id\n2\n3\n4\n");
+            assertRows("SELECT id FROM lp_rows WHERE id + 1 = 4", "id\n3\n");
+            assertRows("SELECT id FROM lp_rows WHERE 1 + 1 = 2 ORDER BY id", "id\n1\n2\n3\n4\n");
         });
     }
 
@@ -161,35 +180,6 @@ public class SqlBinderTest extends AbstractCairoTest {
                     assertResult(factory, "id\n1\n");
                 }
             }
-        });
-    }
-
-    @Test
-    public void testBoundPrimitiveNumericFamiliesAndNulls() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE lp_numeric (unused STRING, id INT, l LONG, f FLOAT, d DOUBLE)");
-            execute("INSERT INTO lp_numeric VALUES ('a',1,2,2,2),('b',2,4,4,4),('c',3,null,null,null),('d',4,0,0,0)");
-            for (String column : new String[]{"l", "f", "d"}) {
-                final String prefix = "SELECT id FROM lp_numeric WHERE ";
-                assertRows(prefix + column + "+" + column + "=8", "id\n2\n");
-                assertRows(prefix + column + "-" + column + "=0 ORDER BY id", "id\n1\n2\n4\n");
-                assertRows(prefix + column + "*" + column + "=16", "id\n2\n");
-                assertRows(prefix + column + "/" + column + "=1 ORDER BY id", "id\n1\n2\n");
-                assertRows(prefix + "-" + column + "<0 ORDER BY id", "id\n1\n2\n");
-                assertRows(prefix + column + "=null", "id\n3\n");
-                assertRows(prefix + "null=" + column, "id\n3\n");
-                assertRows(prefix + column + "<>null ORDER BY id", "id\n1\n2\n4\n");
-                assertRows(prefix + column + "+null=null ORDER BY id", "id\n1\n2\n3\n4\n");
-                assertRows(prefix + column + "/0=null ORDER BY id", "id\n1\n2\n3\n4\n");
-                assertRows(prefix + column + "<=2 ORDER BY id", "id\n1\n4\n");
-                assertRows(prefix + column + ">=2 ORDER BY id", "id\n1\n2\n");
-                assertRows(prefix + column + ">2", "id\n2\n");
-            }
-            assertRows("SELECT id FROM lp_numeric WHERE l+f+d+id=7", "id\n1\n");
-            assertRows("SELECT id FROM lp_numeric WHERE l+2147483648=2147483650", "id\n1\n");
-            assertRows("SELECT id FROM lp_numeric WHERE f+0.5=2.5", "id\n1\n");
-            assertRows("SELECT id FROM lp_numeric WHERE d+0.5=4.5", "id\n2\n");
-            assertRows("SELECT id FROM lp_numeric WHERE 1.25+2.25=3.5 ORDER BY id", "id\n1\n2\n3\n4\n");
         });
     }
 
@@ -219,45 +209,6 @@ public class SqlBinderTest extends AbstractCairoTest {
                     Assert.assertEquals(3.75, cursor.getRecord().getDouble(4), 0.0);
                     Assert.assertFalse(cursor.hasNext());
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testNumericCastsIncludingIdentityNullAndNarrowing() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE lp_casts (unused STRING, id INT, i INT, l LONG, f FLOAT, d DOUBLE)");
-            execute("INSERT INTO lp_casts VALUES ('a',1,2,2,2,2),('b',2,-3,-3,-3,-3),('c',3,null,null,null,null)");
-            for (String column : new String[]{"i", "l", "f", "d"}) {
-                for (String type : new String[]{"int", "long", "float", "double"}) {
-                    assertRows("SELECT id FROM lp_casts WHERE cast(" + column + " AS " + type + ") = -3", "id\n2\n");
-                    assertRows("SELECT id FROM lp_casts WHERE cast(" + column + " AS " + type + ") = null", "id\n3\n");
-                }
-            }
-            for (String type : new String[]{"int", "long", "float", "double"}) {
-                assertRows("SELECT id FROM lp_casts WHERE cast(null AS " + type + ") = null ORDER BY id", "id\n1\n2\n3\n");
-            }
-            assertRows("SELECT cast(4294967297 AS int) AS wrapped FROM lp_casts WHERE id=1", "wrapped\n1\n");
-            assertRows("SELECT id FROM lp_casts WHERE cast(2147483648.0 AS int) = null ORDER BY id", "id\n1\n2\n3\n");
-            assertRows("SELECT id FROM lp_casts WHERE cast(i+2147483647 AS long) < 0 ORDER BY id", "id\n1\n");
-        });
-    }
-
-    @Test
-    public void testBoundBitwiseAndNullIfFamilies() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE lp_bitwise (unused STRING, id INT, i INT, l LONG, d DOUBLE)");
-            execute("INSERT INTO lp_bitwise VALUES ('a',1,2,2,2),('b',2,3,3,3),('c',3,null,null,null)");
-            for (String column : new String[]{"i", "l"}) {
-                assertRows("SELECT id FROM lp_bitwise WHERE (" + column + " & 1)=1", "id\n2\n");
-                assertRows("SELECT id FROM lp_bitwise WHERE (" + column + " | 1)=3 ORDER BY id", "id\n1\n2\n");
-                assertRows("SELECT id FROM lp_bitwise WHERE (" + column + " ^ 1)=2", "id\n2\n");
-                assertRows("SELECT id FROM lp_bitwise WHERE (~" + column + ")=-3", "id\n1\n");
-                assertRows("SELECT id FROM lp_bitwise WHERE (~" + column + ")=null", "id\n3\n");
-            }
-            for (String column : new String[]{"i", "l", "d"}) {
-                assertRows("SELECT id FROM lp_bitwise WHERE nullif(" + column + ",2)=null ORDER BY id", "id\n1\n3\n");
-                assertRows("SELECT id FROM lp_bitwise WHERE nullif(" + column + ",2)=3", "id\n2\n");
             }
         });
     }
@@ -316,6 +267,118 @@ public class SqlBinderTest extends AbstractCairoTest {
                     assertResult(factory, "id\n");
                 }
             }
+        });
+    }
+
+    @Test
+    public void testBoundParametersInferTypesInArgumentOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                bindVariableService.clear();
+                try (RecordCursorFactory factory = compiler.compile(
+                        "SELECT cast($1 AS varchar) || $2 AS v, ts BETWEEN $3 AND '2020-01-01T00:00:01' AS b FROM lp_rows WHERE id = $4 + 1",
+                        sqlExecutionContext
+                ).getRecordCursorFactory()) {
+                    Assert.assertEquals(ColumnType.STRING, bindVariableService.getFunction(0).getType());
+                    Assert.assertEquals(ColumnType.STRING, bindVariableService.getFunction(1).getType());
+                    Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, bindVariableService.getFunction(2).getType());
+                    Assert.assertEquals(ColumnType.INT, bindVariableService.getFunction(3).getType());
+                    bindVariableService.setStr(0, "x");
+                    bindVariableService.setStr(1, "y");
+                    bindVariableService.setTimestamp(2, 0);
+                    bindVariableService.setInt(3, 2);
+                    assertResult(factory, "v\tb\nxy\ttrue\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testBoundPrimitiveNumericFamiliesAndNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_numeric (unused STRING, id INT, l LONG, f FLOAT, d DOUBLE)");
+            execute("INSERT INTO lp_numeric VALUES ('a',1,2,2,2),('b',2,4,4,4),('c',3,null,null,null),('d',4,0,0,0)");
+            for (String column : new String[]{"l", "f", "d"}) {
+                final String prefix = "SELECT id FROM lp_numeric WHERE ";
+                assertRows(prefix + column + "+" + column + "=8", "id\n2\n");
+                assertRows(prefix + column + "-" + column + "=0 ORDER BY id", "id\n1\n2\n4\n");
+                assertRows(prefix + column + "*" + column + "=16", "id\n2\n");
+                assertRows(prefix + column + "/" + column + "=1 ORDER BY id", "id\n1\n2\n");
+                assertRows(prefix + "-" + column + "<0 ORDER BY id", "id\n1\n2\n");
+                assertRows(prefix + column + "=null", "id\n3\n");
+                assertRows(prefix + "null=" + column, "id\n3\n");
+                assertRows(prefix + column + "<>null ORDER BY id", "id\n1\n2\n4\n");
+                assertRows(prefix + column + "+null=null ORDER BY id", "id\n1\n2\n3\n4\n");
+                assertRows(prefix + column + "/0=null ORDER BY id", "id\n1\n2\n3\n4\n");
+                assertRows(prefix + column + "<=2 ORDER BY id", "id\n1\n4\n");
+                assertRows(prefix + column + ">=2 ORDER BY id", "id\n1\n2\n");
+                assertRows(prefix + column + ">2", "id\n2\n");
+            }
+            assertRows("SELECT id FROM lp_numeric WHERE l+f+d+id=7", "id\n1\n");
+            assertRows("SELECT id FROM lp_numeric WHERE l+2147483648=2147483650", "id\n1\n");
+            assertRows("SELECT id FROM lp_numeric WHERE f+0.5=2.5", "id\n1\n");
+            assertRows("SELECT id FROM lp_numeric WHERE d+0.5=4.5", "id\n2\n");
+            assertRows("SELECT id FROM lp_numeric WHERE 1.25+2.25=3.5 ORDER BY id", "id\n1\n2\n3\n4\n");
+        });
+    }
+
+    @Test
+    public void testBoundStringPredicatesAndEscapedConstants() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_string (unused INT, id INT, s STRING, t STRING)");
+            execute("INSERT INTO lp_string VALUES (0,1,'aa','ab'),(0,2,'ab','ab'),(0,3,null,null)," +
+                    "(0,4,'a','a'),(0,5,'''quoted''','''quoted'''),(0,6,'',''),(0,7,'中文','中文')");
+            assertRows("SELECT id FROM lp_string WHERE s=t ORDER BY id", "id\n2\n3\n4\n5\n6\n7\n");
+            assertRows("SELECT id FROM lp_string WHERE s<>t", "id\n1\n");
+            assertRows("SELECT id FROM lp_string WHERE s<t", "id\n1\n");
+            assertRows("SELECT id FROM lp_string WHERE s='a'", "id\n4\n");
+            assertRows("SELECT id FROM lp_string WHERE 'a'=s", "id\n4\n");
+            assertRows("SELECT id FROM lp_string WHERE s='ab'", "id\n2\n");
+            assertRows("SELECT id FROM lp_string WHERE s='中文'", "id\n7\n");
+            assertRows("SELECT id FROM lp_string WHERE s=null", "id\n3\n");
+            assertRows("SELECT id FROM lp_string WHERE s<'ab' ORDER BY id", "id\n1\n4\n5\n6\n");
+            assertRows("SELECT id FROM lp_string WHERE s>='ab' ORDER BY id", "id\n2\n7\n");
+            assertRows("SELECT id FROM lp_string WHERE s='''quoted'''", "id\n5\n");
+            assertRows("SELECT '''quoted''' AS value FROM lp_string WHERE id=5", "value\n'quoted'\n");
+            assertRows("SELECT id FROM (SELECT id, s AS renamed FROM lp_string) WHERE renamed='''quoted'''", "id\n5\n");
+        });
+    }
+
+    @Test
+    public void testBoundTimestampPredicatesAndMixedPrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_time (unused STRING, id INT, ts TIMESTAMP, ns TIMESTAMP_NS)");
+            execute("INSERT INTO lp_time VALUES ('a',1,1,1000),('b',2,1,1001),('c',3,2,2000),('d',4,null,null)");
+            assertRows("SELECT id FROM lp_time WHERE ts=ns AND id<4 ORDER BY id", "id\n1\n3\n");
+            assertRows("SELECT id FROM lp_time WHERE ts<ns ORDER BY id", "id\n2\n");
+            assertRows("SELECT id FROM lp_time WHERE ns>ts ORDER BY id", "id\n2\n");
+            for (String column : new String[]{"ts", "ns"}) {
+                assertRows("SELECT id FROM lp_time WHERE " + column + "=null", "id\n4\n");
+                assertRows("SELECT id FROM lp_time WHERE null=" + column, "id\n4\n");
+                assertRows("SELECT id FROM lp_time WHERE " + column + "<>null ORDER BY id", "id\n1\n2\n3\n");
+            }
+            assertRows("SELECT id FROM lp_time WHERE ns='1970-01-01T00:00:00.000001001Z'", "id\n2\n");
+            assertRows("SELECT id FROM lp_time WHERE ts<'1970-01-01T00:00:00.000001001Z' ORDER BY id", "id\n1\n2\n");
+            assertRows("SELECT id FROM lp_time WHERE ns>='1970-01-01T00:00:00.000001001Z' ORDER BY id", "id\n2\n3\n");
+            assertRows("SELECT id FROM lp_time WHERE ns<='1970-01-01T00:00:00.000001001Z' ORDER BY id", "id\n1\n2\n");
+            assertRows("SELECT id FROM lp_time WHERE ns=null::timestamp_ns", "id\n4\n");
+            assertRows("SELECT ns::timestamp_ns AS stamp FROM lp_time WHERE id=2", "stamp\n1970-01-01T00:00:00.000001001Z\n");
+        });
+    }
+
+    @Test
+    public void testCharComparedToMultiCharTextFolds() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_char (id INT, c CHAR)");
+            execute("INSERT INTO lp_char VALUES (1,'a'),(2,'b'),(3,null)");
+            assertRows("SELECT id FROM lp_char WHERE c='ab'", "id\n");
+            assertRows("SELECT id FROM lp_char WHERE 'ab'=c", "id\n");
+            assertRows("SELECT id FROM lp_char WHERE c=''", "id\n");
+            assertRows("SELECT id FROM lp_char WHERE c!='ab' ORDER BY id", "id\n1\n2\n3\n");
+            assertRows("SELECT id FROM lp_char WHERE NOT (c='ab') ORDER BY id", "id\n1\n2\n3\n");
+            assertRows("SELECT id FROM lp_char WHERE c='ab' OR id=2", "id\n2\n");
+            assertRows("SELECT id, c='ab' eq, c<>'ab' ne FROM lp_char ORDER BY id", "id\teq\tne\n1\tfalse\ttrue\n2\tfalse\ttrue\n3\tfalse\ttrue\n");
         });
     }
 
@@ -452,6 +515,26 @@ public class SqlBinderTest extends AbstractCairoTest {
                 assertResult(retained, "name\tsym\nb\tB\nc\tC\n\t\n");
             } finally {
                 Misc.free(retained);
+            }
+        });
+    }
+
+    @Test
+    public void testFailedShapesReportAndCompilerRecovers() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                assertFailure(compiler, "SELECT lp_missing_fn(id) FROM lp_rows", "unknown function name", -1);
+                assertFailure(compiler, "SELECT id FROM lp_rows WHERE lp_missing_fn(id) > 1", "unknown function name", -1);
+                assertFailure(compiler, "SELECT id AS missing FROM lp_rows ORDER BY lp_missing_fn(id)", "unknown function name", -1);
+                assertFailure(compiler, "SELECT lp_missing_agg(id) FROM lp_rows", "unknown function name", -1);
+                assertFailure(compiler, "SELECT id FROM lp_rows GROUP BY lp_missing_fn(id)", "unknown function name", -1);
+                assertFailure(compiler, "SELECT DISTINCT lp_missing_fn(id) FROM lp_rows", "unknown function name", -1);
+                try (RecordCursorFactory factory = compiler.compile(
+                        "SELECT id FROM lp_rows WHERE active ORDER BY id", sqlExecutionContext
+                ).getRecordCursorFactory()) {
+                    assertResult(factory, "id\n2\n3\n4\n");
+                }
             }
         });
     }
@@ -617,6 +700,26 @@ public class SqlBinderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNumericCastsIncludingIdentityNullAndNarrowing() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_casts (unused STRING, id INT, i INT, l LONG, f FLOAT, d DOUBLE)");
+            execute("INSERT INTO lp_casts VALUES ('a',1,2,2,2,2),('b',2,-3,-3,-3,-3),('c',3,null,null,null,null)");
+            for (String column : new String[]{"i", "l", "f", "d"}) {
+                for (String type : new String[]{"int", "long", "float", "double"}) {
+                    assertRows("SELECT id FROM lp_casts WHERE cast(" + column + " AS " + type + ") = -3", "id\n2\n");
+                    assertRows("SELECT id FROM lp_casts WHERE cast(" + column + " AS " + type + ") = null", "id\n3\n");
+                }
+            }
+            for (String type : new String[]{"int", "long", "float", "double"}) {
+                assertRows("SELECT id FROM lp_casts WHERE cast(null AS " + type + ") = null ORDER BY id", "id\n1\n2\n3\n");
+            }
+            assertRows("SELECT cast(4294967297 AS int) AS wrapped FROM lp_casts WHERE id=1", "wrapped\n1\n");
+            assertRows("SELECT id FROM lp_casts WHERE cast(2147483648.0 AS int) = null ORDER BY id", "id\n1\n2\n3\n");
+            assertRows("SELECT id FROM lp_casts WHERE cast(i+2147483647 AS long) < 0 ORDER BY id", "id\n1\n");
+        });
+    }
+
+    @Test
     public void testQualifiedQuotedAliasesAndOrderOrdinal() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
@@ -631,6 +734,21 @@ public class SqlBinderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRecordAndSliceArgumentsReachTheirFactories() throws Exception {
+        assertMemoryLeak(() -> {
+            assertRows("SELECT typeof(1:2) v FROM long_sequence(1)", "v\nINTERVAL\n");
+            final String record = " FROM (SELECT information_schema._pg_expandarray(ARRAY[1.0]) k FROM long_sequence(1)) i";
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                for (int path = 0; path < 2; path++) {
+                    assertExecutionFailure(compiler, "SELECT concat((i.k)) v" + record, "unsupported type: RECORD", 15);
+                    assertExecutionFailure(compiler, "SELECT coalesce(k, k) v" + record, "inconvertible types: RECORD -> RECORD", 19);
+                    assertExecutionFailure(compiler, "SELECT concat(1:2) v FROM long_sequence(1)", "unsupported type: INTERVAL", 15);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSignedAndTwoBoundLimits() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
@@ -638,6 +756,15 @@ public class SqlBinderTest extends AbstractCairoTest {
             assertRows("SELECT id FROM lp_rows ORDER BY id LIMIT 1,3", "id\n2\n3\n");
             assertRows("SELECT id FROM lp_rows ORDER BY id LIMIT -3,-1", "id\n2\n3\n");
             assertRows("SELECT id FROM lp_rows ORDER BY id LIMIT ,2", "id\n1\n2\n");
+        });
+    }
+
+    @Test
+    public void testSpliceThenInnerJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertRows("SELECT a.id FROM lp_rows a SPLICE JOIN lp_rows b ON a.id=b.id "
+                    + "JOIN lp_rows c ON a.id=c.id ORDER BY a.id", "id\n1\n2\n3\n4\n");
         });
     }
 
@@ -666,166 +793,6 @@ public class SqlBinderTest extends AbstractCairoTest {
                 assertDesignatedTimestamp(compiler, "SELECT lp_rows.ts AS ts1, lp_rows.ts AS ts2 FROM lp_rows ORDER BY lp_rows.ts", 1, RecordCursorFactory.SCAN_DIRECTION_FORWARD);
                 assertDesignatedTimestamp(compiler, "SELECT id, id AS duplicate, ts AS time FROM lp_rows ORDER BY lp_rows.ts", -1, RecordCursorFactory.SCAN_DIRECTION_FORWARD);
                 assertDesignatedTimestamp(compiler, "SELECT ts AS ts1, ts AS ts2 FROM lp_rows WHERE active ORDER BY 2 DESC LIMIT 2", 1, RecordCursorFactory.SCAN_DIRECTION_BACKWARD);
-            }
-        });
-    }
-
-    @Test
-    public void testSpliceThenInnerJoin() throws Exception {
-        assertMemoryLeak(() -> {
-            createRows();
-            assertRows("SELECT a.id FROM lp_rows a SPLICE JOIN lp_rows b ON a.id=b.id "
-                    + "JOIN lp_rows c ON a.id=c.id ORDER BY a.id", "id\n1\n2\n3\n4\n");
-        });
-    }
-
-    @Test
-    public void testFailedShapesReportAndCompilerRecovers() throws Exception {
-        assertMemoryLeak(() -> {
-            createRows();
-            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                assertFailure(compiler, "SELECT lp_missing_fn(id) FROM lp_rows", "unknown function name", -1);
-                assertFailure(compiler, "SELECT id FROM lp_rows WHERE lp_missing_fn(id) > 1", "unknown function name", -1);
-                assertFailure(compiler, "SELECT id AS missing FROM lp_rows ORDER BY lp_missing_fn(id)", "unknown function name", -1);
-                assertFailure(compiler, "SELECT lp_missing_agg(id) FROM lp_rows", "unknown function name", -1);
-                assertFailure(compiler, "SELECT id FROM lp_rows GROUP BY lp_missing_fn(id)", "unknown function name", -1);
-                assertFailure(compiler, "SELECT DISTINCT lp_missing_fn(id) FROM lp_rows", "unknown function name", -1);
-                try (RecordCursorFactory factory = compiler.compile(
-                        "SELECT id FROM lp_rows WHERE active ORDER BY id", sqlExecutionContext
-                ).getRecordCursorFactory()) {
-                    assertResult(factory, "id\n2\n3\n4\n");
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testUpdateBindsSourceQueryAndValidatesTargets() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE lp_update (id INT, copied INT, active BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("INSERT INTO lp_update VALUES (1,0,true,'2020-01-01T00:00:00.000000Z'),(2,0,false,'2020-01-01T00:00:01.000000Z')");
-            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                execute(compiler, "UPDATE lp_update AS u SET COPIED = u.id WHERE u.active");
-                Assert.assertNotNull(compiler.getPlanForTesting());
-                assertFailure(compiler, "UPDATE lp_update SET ts = ts", "Designated timestamp column cannot be updated", -1);
-                assertFailure(compiler, "UPDATE lp_update SET missing = id", "Invalid column", -1);
-                try (RecordCursorFactory factory = compiler.compile(
-                        "SELECT id,copied FROM lp_update ORDER BY id", sqlExecutionContext
-                ).getRecordCursorFactory()) {
-                    assertResult(factory, "id\tcopied\n1\t1\n2\t0\n");
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testValidationFailureThenCompilerReuse() throws Exception {
-        assertMemoryLeak(() -> {
-            createRows();
-            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                final String missing = "SELECT missing FROM lp_rows";
-                assertFailure(compiler, missing, "Invalid column", missing.indexOf("missing"));
-                final String predicate = "SELECT id FROM lp_rows WHERE id";
-                assertFailure(compiler, predicate, "boolean expression expected", predicate.lastIndexOf("id"));
-                assertFailure(compiler, "SELECT id FROM lp_rows ORDER BY 0", "order column position is out of range [max=1]", -1);
-                try (RecordCursorFactory factory = compiler.compile(
-                        "SELECT label, id FROM lp_rows ORDER BY id LIMIT 1", sqlExecutionContext
-                ).getRecordCursorFactory()) {
-                    assertResult(factory, "label\tid\na\t1\n");
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testWildcardPreservesTypesAndNullValues() throws Exception {
-        assertMemoryLeak(() -> {
-            createRows();
-            assertRows("SELECT * FROM lp_rows ORDER BY id", """
-                    id\tactive\tlabel\tsym\tts
-                    1\tfalse\ta\tA\t2020-01-01T00:00:01.000000Z
-                    2\ttrue\tb\tB\t2020-01-01T00:00:03.000000Z
-                    3\ttrue\tc\tC\t2020-01-01T00:00:00.000000Z
-                    4\ttrue\t\t\t2020-01-01T00:00:02.000000Z
-                    """);
-            assertRows("SELECT ts AS event_time, id FROM lp_rows LIMIT 2", """
-                    event_time\tid
-                    2020-01-01T00:00:00.000000Z\t3
-                    2020-01-01T00:00:01.000000Z\t1
-                    """);
-        });
-    }
-
-    @Test
-    public void testBoundTimestampPredicatesAndMixedPrecision() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE lp_time (unused STRING, id INT, ts TIMESTAMP, ns TIMESTAMP_NS)");
-            execute("INSERT INTO lp_time VALUES ('a',1,1,1000),('b',2,1,1001),('c',3,2,2000),('d',4,null,null)");
-            assertRows("SELECT id FROM lp_time WHERE ts=ns AND id<4 ORDER BY id", "id\n1\n3\n");
-            assertRows("SELECT id FROM lp_time WHERE ts<ns ORDER BY id", "id\n2\n");
-            assertRows("SELECT id FROM lp_time WHERE ns>ts ORDER BY id", "id\n2\n");
-            for (String column : new String[]{"ts", "ns"}) {
-                assertRows("SELECT id FROM lp_time WHERE " + column + "=null", "id\n4\n");
-                assertRows("SELECT id FROM lp_time WHERE null=" + column, "id\n4\n");
-                assertRows("SELECT id FROM lp_time WHERE " + column + "<>null ORDER BY id", "id\n1\n2\n3\n");
-            }
-            assertRows("SELECT id FROM lp_time WHERE ns='1970-01-01T00:00:00.000001001Z'", "id\n2\n");
-            assertRows("SELECT id FROM lp_time WHERE ts<'1970-01-01T00:00:00.000001001Z' ORDER BY id", "id\n1\n2\n");
-            assertRows("SELECT id FROM lp_time WHERE ns>='1970-01-01T00:00:00.000001001Z' ORDER BY id", "id\n2\n3\n");
-            assertRows("SELECT id FROM lp_time WHERE ns<='1970-01-01T00:00:00.000001001Z' ORDER BY id", "id\n1\n2\n");
-            assertRows("SELECT id FROM lp_time WHERE ns=null::timestamp_ns", "id\n4\n");
-            assertRows("SELECT ns::timestamp_ns AS stamp FROM lp_time WHERE id=2", "stamp\n1970-01-01T00:00:00.000001001Z\n");
-        });
-    }
-
-    @Test
-    public void testBoundStringPredicatesAndEscapedConstants() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE lp_string (unused INT, id INT, s STRING, t STRING)");
-            execute("INSERT INTO lp_string VALUES (0,1,'aa','ab'),(0,2,'ab','ab'),(0,3,null,null)," +
-                    "(0,4,'a','a'),(0,5,'''quoted''','''quoted'''),(0,6,'',''),(0,7,'中文','中文')");
-            assertRows("SELECT id FROM lp_string WHERE s=t ORDER BY id", "id\n2\n3\n4\n5\n6\n7\n");
-            assertRows("SELECT id FROM lp_string WHERE s<>t", "id\n1\n");
-            assertRows("SELECT id FROM lp_string WHERE s<t", "id\n1\n");
-            assertRows("SELECT id FROM lp_string WHERE s='a'", "id\n4\n");
-            assertRows("SELECT id FROM lp_string WHERE 'a'=s", "id\n4\n");
-            assertRows("SELECT id FROM lp_string WHERE s='ab'", "id\n2\n");
-            assertRows("SELECT id FROM lp_string WHERE s='中文'", "id\n7\n");
-            assertRows("SELECT id FROM lp_string WHERE s=null", "id\n3\n");
-            assertRows("SELECT id FROM lp_string WHERE s<'ab' ORDER BY id", "id\n1\n4\n5\n6\n");
-            assertRows("SELECT id FROM lp_string WHERE s>='ab' ORDER BY id", "id\n2\n7\n");
-            assertRows("SELECT id FROM lp_string WHERE s='''quoted'''", "id\n5\n");
-            assertRows("SELECT '''quoted''' AS value FROM lp_string WHERE id=5", "value\n'quoted'\n");
-            assertRows("SELECT id FROM (SELECT id, s AS renamed FROM lp_string) WHERE renamed='''quoted'''", "id\n5\n");
-        });
-    }
-
-    @Test
-    public void testCharComparedToMultiCharTextFolds() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE lp_char (id INT, c CHAR)");
-            execute("INSERT INTO lp_char VALUES (1,'a'),(2,'b'),(3,null)");
-            assertRows("SELECT id FROM lp_char WHERE c='ab'", "id\n");
-            assertRows("SELECT id FROM lp_char WHERE 'ab'=c", "id\n");
-            assertRows("SELECT id FROM lp_char WHERE c=''", "id\n");
-            assertRows("SELECT id FROM lp_char WHERE c!='ab' ORDER BY id", "id\n1\n2\n3\n");
-            assertRows("SELECT id FROM lp_char WHERE NOT (c='ab') ORDER BY id", "id\n1\n2\n3\n");
-            assertRows("SELECT id FROM lp_char WHERE c='ab' OR id=2", "id\n2\n");
-            assertRows("SELECT id, c='ab' eq, c<>'ab' ne FROM lp_char ORDER BY id", "id\teq\tne\n1\tfalse\ttrue\n2\tfalse\ttrue\n3\tfalse\ttrue\n");
-        });
-    }
-
-    @Test
-    public void testRecordAndSliceArgumentsReachTheirFactories() throws Exception {
-        assertMemoryLeak(() -> {
-            assertRows("SELECT typeof(1:2) v FROM long_sequence(1)", "v\nINTERVAL\n");
-            final String record = " FROM (SELECT information_schema._pg_expandarray(ARRAY[1.0]) k FROM long_sequence(1)) i";
-            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                for (int path = 0; path < 2; path++) {
-                    assertExecutionFailure(compiler, "SELECT concat((i.k)) v" + record, "unsupported type: RECORD", 15);
-                    assertExecutionFailure(compiler, "SELECT coalesce(k, k) v" + record, "inconvertible types: RECORD -> RECORD", 19);
-                    assertExecutionFailure(compiler, "SELECT concat(1:2) v FROM long_sequence(1)", "unsupported type: INTERVAL", 15);
-                }
             }
         });
     }
@@ -888,6 +855,63 @@ public class SqlBinderTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testUpdateBindsSourceQueryAndValidatesTargets() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_update (id INT, copied INT, active BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO lp_update VALUES (1,0,true,'2020-01-01T00:00:00.000000Z'),(2,0,false,'2020-01-01T00:00:01.000000Z')");
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                execute(compiler, "UPDATE lp_update AS u SET COPIED = u.id WHERE u.active");
+                Assert.assertNotNull(compiler.getPlanForTesting());
+                assertFailure(compiler, "UPDATE lp_update SET ts = ts", "Designated timestamp column cannot be updated", -1);
+                assertFailure(compiler, "UPDATE lp_update SET missing = id", "Invalid column", -1);
+                try (RecordCursorFactory factory = compiler.compile(
+                        "SELECT id,copied FROM lp_update ORDER BY id", sqlExecutionContext
+                ).getRecordCursorFactory()) {
+                    assertResult(factory, "id\tcopied\n1\t1\n2\t0\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testValidationFailureThenCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                final String missing = "SELECT missing FROM lp_rows";
+                assertFailure(compiler, missing, "Invalid column", missing.indexOf("missing"));
+                final String predicate = "SELECT id FROM lp_rows WHERE id";
+                assertFailure(compiler, predicate, "boolean expression expected", predicate.lastIndexOf("id"));
+                assertFailure(compiler, "SELECT id FROM lp_rows ORDER BY 0", "order column position is out of range [max=1]", -1);
+                try (RecordCursorFactory factory = compiler.compile(
+                        "SELECT label, id FROM lp_rows ORDER BY id LIMIT 1", sqlExecutionContext
+                ).getRecordCursorFactory()) {
+                    assertResult(factory, "label\tid\na\t1\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWildcardPreservesTypesAndNullValues() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertRows("SELECT * FROM lp_rows ORDER BY id", """
+                    id\tactive\tlabel\tsym\tts
+                    1\tfalse\ta\tA\t2020-01-01T00:00:01.000000Z
+                    2\ttrue\tb\tB\t2020-01-01T00:00:03.000000Z
+                    3\ttrue\tc\tC\t2020-01-01T00:00:00.000000Z
+                    4\ttrue\t\t\t2020-01-01T00:00:02.000000Z
+                    """);
+            assertRows("SELECT ts AS event_time, id FROM lp_rows LIMIT 2", """
+                    event_time\tid
+                    2020-01-01T00:00:00.000000Z\t3
+                    2020-01-01T00:00:01.000000Z\t1
+                    """);
+        });
+    }
+
     private static String describePlan(LogicalPlan plan) {
         final StringSink sink = new StringSink();
         describePlan(plan, sink);
@@ -932,17 +956,6 @@ public class SqlBinderTest extends AbstractCairoTest {
         }
     }
 
-    private void assertFailure(SqlCompilerImpl compiler, String sql, String message, int position) {
-        try (RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-            Assert.fail("expected compilation failure: " + sql);
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), message);
-            if (position >= 0) {
-                Assert.assertEquals(position, e.getPosition());
-            }
-        }
-    }
-
     private void assertExplainContains(SqlCompilerImpl compiler, String sql, String expected) throws Exception {
         try (
                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
@@ -955,6 +968,17 @@ public class SqlBinderTest extends AbstractCairoTest {
             }
             TestUtils.assertContains(plan, expected);
             TestUtils.assertContains(plan, "Frame forward scan on: lp_rows");
+        }
+    }
+
+    private void assertFailure(SqlCompilerImpl compiler, String sql, String message, int position) {
+        try (RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            Assert.fail("expected compilation failure: " + sql);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), message);
+            if (position >= 0) {
+                Assert.assertEquals(position, e.getPosition());
+            }
         }
     }
 

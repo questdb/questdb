@@ -307,6 +307,13 @@ public interface GroupByFunction extends Function, Mutable {
     }
 
     /**
+     * Returns true when the function requires its input in ascending designated timestamp order.
+     */
+    default boolean isAscendingTimestampRequired() {
+        return false;
+    }
+
+    /**
      * Returns true if {@link #earlyExit(MapValue)} method can be used.
      * Only makes sense for non-keyed, single-threaded group by.
      *
@@ -322,6 +329,13 @@ public interface GroupByFunction extends Function, Mutable {
 
     default boolean isScalar() {
         return true;
+    }
+
+    /**
+     * Returns true when the function requires the designated timestamp of its input as its second argument.
+     */
+    default boolean isTimestampArgumentRequired() {
+        return false;
     }
 
     /**

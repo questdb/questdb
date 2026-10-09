@@ -119,6 +119,17 @@ public final class JoinPlan extends LogicalPlan {
         this.graph = graph;
     }
 
+    @Override
+    public void visitReads(PlanExpressionVisitor visitor) {
+        PlanReads.expressions(filterConjuncts, visitor);
+        for (int i = 0, n = inputs.size(); i < n; i++) {
+            inputs.getQuick(i).visitReads(visitor);
+        }
+        if (graph != null) {
+            graph.visitReads(visitor);
+        }
+    }
+
     private JoinInput inputOccurrenceAt(int index) {
         for (int i = 0, n = inputs.size(); i < n && index >= 0; i++) {
             final JoinInput occurrence = inputs.getQuick(i);

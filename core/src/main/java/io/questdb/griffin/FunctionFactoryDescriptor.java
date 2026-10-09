@@ -291,10 +291,6 @@ public class FunctionFactoryDescriptor {
         return openParenIndex;
     }
 
-    void setCommutedEquality(FunctionFactoryDescriptor descriptor) {
-        commutedEquality = descriptor;
-    }
-
     public int getArgTypeWithFlags(int index) {
         int arrayIndex = index / 2;
         long mask = argTypes[arrayIndex];
@@ -303,6 +299,14 @@ public class FunctionFactoryDescriptor {
 
     public FunctionFactoryDescriptor getCommutedEquality() {
         return commutedEquality;
+    }
+
+    public boolean isOrderSensitiveAggregate() {
+        return isOrderSensitiveAggregate;
+    }
+
+    void setCommutedEquality(FunctionFactoryDescriptor descriptor) {
+        commutedEquality = descriptor;
     }
 
     public FunctionFactory getFactory() {
@@ -348,10 +352,6 @@ public class FunctionFactoryDescriptor {
      */
     public boolean isRelocatableScalar() {
         return isRelocatableScalar;
-    }
-
-    public boolean isOrderSensitiveAggregate() {
-        return isOrderSensitiveAggregate;
     }
 
     public boolean isRowCount() {

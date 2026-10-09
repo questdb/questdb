@@ -31,11 +31,13 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
 
-public class CastTimestampToLongFunctionFactory implements FunctionFactory {
+public class CastTimestampToLongFunctionFactory implements FunctionFactory, MonotonicTimestampFunctionFactory {
     @Override
     public int getResultType(IntList argTypes) {
         return ColumnType.LONG;
@@ -44,6 +46,16 @@ public class CastTimestampToLongFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Nl)";
+    }
+
+    @Override
+    public int getTimestampArgumentIndex(FunctionExpression call, ConstantArguments arguments) {
+        return 0;
+    }
+
+    @Override
+    public int invertTimestampInterval(FunctionExpression call, Interval io, boolean isTimestampArgMonotonic, ConstantArguments arguments) {
+        return MonotonicTimestampFunction.EXACT;
     }
 
     @Override

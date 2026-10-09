@@ -90,6 +90,29 @@ public class FunctionBinderTimezoneTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantFoldingPreservesTimestampPrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            final OutputSchema input = new OutputSchema();
+            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
+                for (int type : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+                    final long hour = type == ColumnType.TIMESTAMP_MICRO ? 3_600_000_000L : 3_600_000_000_000L;
+                    for (String name : new String[]{"to_utc", "to_timezone"}) {
+                        final ExpressionNode timestamp = call("cast", constant("123456789L"),
+                                constant(type == ColumnType.TIMESTAMP_MICRO ? "timestamp" : "timestamp_ns"));
+                        final BoundExpression expression = binder.bind(call(name, timestamp, constant("'+01:00'")), input, null, sqlExecutionContext);
+                        try (Function result = binder.instantiate(expression, input, sqlExecutionContext)) {
+                            Assert.assertTrue(result.isConstant());
+                            Assert.assertEquals(type, result.getType());
+                            Assert.assertEquals(123_456_789L + (name.equals("to_utc") ? -hour : hour), result.getTimestamp(null));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRuntimeTimezoneRebindsAfterCompilerClose() throws Exception {
         assertMemoryLeak(() -> {
             for (int type : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
@@ -128,29 +151,6 @@ public class FunctionBinderTimezoneTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConstantFoldingPreservesTimestampPrecision() throws Exception {
-        assertMemoryLeak(() -> {
-            final OutputSchema input = new OutputSchema();
-            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
-                for (int type : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
-                    final long hour = type == ColumnType.TIMESTAMP_MICRO ? 3_600_000_000L : 3_600_000_000_000L;
-                    for (String name : new String[]{"to_utc", "to_timezone"}) {
-                        final ExpressionNode timestamp = call("cast", constant("123456789L"),
-                                constant(type == ColumnType.TIMESTAMP_MICRO ? "timestamp" : "timestamp_ns"));
-                        final BoundExpression expression = binder.bind(call(name, timestamp, constant("'+01:00'")), input, null, sqlExecutionContext);
-                        try (Function result = binder.instantiate(expression, input, sqlExecutionContext)) {
-                            Assert.assertTrue(result.isConstant());
-                            Assert.assertEquals(type, result.getType());
-                            Assert.assertEquals(123_456_789L + (name.equals("to_utc") ? -hour : hour), result.getTimestamp(null));
-                        }
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
     public void testSelectedConstructionOwnsDiscardedTimezoneAndPreservesErrors() throws Exception {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
@@ -165,7 +165,7 @@ public class FunctionBinderTimezoneTest extends AbstractCairoTest {
                         positions.add(1);
                         positions.add(17);
                         final boolean valid = zone != null && !zone.equals("Invalid/Zone");
-                        try (Function ignored = parser.createFunction(descriptor, 0, descriptor.getName(),
+                        try (Function ignored = parser.getFunctionResolver().createFunction(descriptor, 0, descriptor.getName(),
                                 new ObjList<>(timestamp, timezone), positions, sqlExecutionContext)) {
                             Assert.assertTrue(valid && !failClose);
                             Assert.assertEquals(0, timestamp.closeCount);

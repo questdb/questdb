@@ -97,6 +97,26 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testActiveReaderReloadMovesPartitionUsage() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tbl as (select x, cast('1970-01-10T10' as " + timestampType.getTypeName() + ") ts from long_sequence(1)) timestamp(ts) partition by DAY");
+            execute("insert into tbl select 4, '1970-01-10T09'");
+
+            try (TableReader rdr = getReader("tbl")) {
+                execute("insert into tbl select 5, '1970-01-10T08'");
+                Assert.assertTrue(rdr.reload());
+                runPartitionPurgeJobs();
+                execute("insert into tbl select 6, '1970-01-10T07'");
+                runPartitionPurgeJobs();
+                rdr.openPartition(0);
+                Assert.assertEquals(3, rdr.size());
+            }
+            runPartitionPurgeJobs();
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
+        });
+    }
+
+    @Test
     public void test2ReadersUsePartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl as (select x, cast('1970-01-10T10' as " + timestampType.getTypeName() + ") ts from long_sequence(1)) timestamp(ts) partition by DAY");

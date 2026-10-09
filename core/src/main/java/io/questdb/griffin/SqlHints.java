@@ -44,7 +44,7 @@ public final class SqlHints {
     public static final String NO_INDEX_HINT = "no_index";
     public static final String NO_SYMBOL_PATTERN_INDEX_HINT = "no_symbol_pattern_index";
 
-    static boolean hasHintWithParams(
+    public static boolean hasHintWithParams(
             @Nullable LowerCaseCharSequenceObjHashMap<CharSequence> hints,
             @NotNull CharSequence hintName,
             @Nullable CharSequence tableNameA,

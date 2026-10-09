@@ -25,7 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlCodeGenerator;
+import io.questdb.griffin.codegen.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.plan.logical.LogicalPlan;
@@ -64,6 +64,83 @@ public class OrderAliasTest extends AbstractCairoTest {
             assertRows("SELECT DISTINCT d+1.0 v FROM oa_u ORDER BY v+1.0", "v\n2.0\n3.0\n4.0\n");
             assertRows("SELECT DISTINCT d+1.0 v FROM oa_u ORDER BY abs(v) DESC", "v\n4.0\n3.0\n2.0\n");
             assertQuery("SELECT DISTINCT d+1.0 v FROM oa_u ORDER BY v-id").noLeakCheck().fails(45, "ORDER BY expressions must appear in select list. Invalid column: id");
+        });
+    }
+
+    @Test
+    public void testOrderByColumnReadingEarlierAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertRows("SELECT v, v2 FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2)", "v\tv2\n2.0\t2.0\n2.0\t2.0\n3.0\t3.0\n4.0\t4.0\n");
+            assertRows("SELECT v FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2 DESC)", "v\n4.0\n3.0\n2.0\n2.0\n");
+            assertRows("SELECT v FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2) WHERE v > 2.0 LIMIT 1", "v\n3.0\n");
+            assertRows("SELECT lag(v) OVER () prev FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2)", "prev\nnull\n2.0\n2.0\n3.0\n");
+            assertRows("SELECT row_number() OVER () rn, sum(v) OVER () total FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2)",
+                    "rn\ttotal\n1\t11.0\n2\t11.0\n3\t11.0\n4\t11.0\n");
+            assertRows("SELECT count() FROM (SELECT r, lag(r) OVER () prev FROM (SELECT rnd_int(1, 1_000_000, 0) r, r r2 FROM long_sequence(20) ORDER BY r2)) WHERE prev > r",
+                    "count\n0\n");
+        });
+    }
+
+    @Test
+    public void testOrderingProjectionPreservesTimestampForTemporalConsumers() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE oa_ts(d DOUBLE,ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO oa_ts VALUES(3,'2020-01-01T00:00:01'),(1,'2020-01-01T00:00:02'),(2,'2020-01-01T00:00:03')");
+            final String sql = "SELECT ts,d+1.0 v FROM oa_ts ORDER BY ts,v+1.0 LIMIT 2";
+            assertRows(sql, "ts\tv\n2020-01-01T00:00:01.000000Z\t4.0\n2020-01-01T00:00:02.000000Z\t2.0\n");
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                    LogicalPlan plan = compiler.getPlanForTesting();
+                    while (!(plan instanceof SortPlan)) {
+                        plan = plan.inputAt(0);
+                    }
+                    Assert.assertEquals(0, plan.inputAt(0).getOutput().getTimestampIndex());
+                    Assert.assertEquals(0, factory.getMetadata().getTimestampIndex());
+                }
+            }
+            assertRows("SELECT a.ts,a.v,b.d FROM (SELECT ts,d+1.0 v FROM oa_ts ORDER BY ts,v+1.0 LIMIT 2) a TIMESTAMP(ts) ASOF JOIN oa_ts b",
+                    "ts\tv\td\n2020-01-01T00:00:01.000000Z\t4.0\t3.0\n2020-01-01T00:00:02.000000Z\t2.0\t1.0\n");
+        });
+    }
+
+    @Test
+    public void testRejectedScopesAndDiagnosticPositions() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertQuery("SELECT d+1.0 v FROM oa_u ORDER BY oa_u.v+1.0").noLeakCheck().fails(34, "Invalid column: oa_u.v");
+            assertQuery("SELECT d+1.0 v FROM oa_u ORDER BY missing+1.0").noLeakCheck().fails(34, "Invalid column: missing");
+            assertQuery("SELECT d+1.0 v FROM oa_u ORDER BY v+1.0,id").noLeakCheck().fails(34, "Invalid column: v");
+            assertQuery("SELECT d+1.0 v FROM oa_u ORDER BY id,v+1.0").noLeakCheck().fails(37, "Invalid column: v");
+            assertQuery("SELECT d+1.0 v FROM oa_u ORDER BY v+1.0,missing").noLeakCheck().fails(40, "Invalid column: missing");
+            assertQuery("SELECT sum(d) v FROM oa_u ORDER BY v+1.0").noLeakCheck().fails(35, "Invalid column: v");
+            assertQuery("SELECT id,sum(d) v FROM oa_u GROUP BY id ORDER BY v+1.0").noLeakCheck().fails(50, "Invalid column: v");
+            assertQuery("SELECT l.d+1.0 d FROM oa_u l JOIN oa_u r ON l.id=r.id ORDER BY d+1.0").noLeakCheck().fails(63, "Ambiguous column [name=d]");
+        });
+    }
+
+    @Test
+    public void testRetainedAliasOrderingFactoryRebindsAfterCompilerClose() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            bindVariableService.setDouble(0, 1.0);
+            RecordCursorFactory retained = null;
+            try {
+                try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                    retained = compiler.compile("SELECT d+$1 v FROM oa_u ORDER BY v-id", sqlExecutionContext).getRecordCursorFactory();
+                    try (RecordCursorFactory other = compiler.compile("SELECT d FROM oa_u", sqlExecutionContext).getRecordCursorFactory()) {
+                        Assert.assertNotNull(other);
+                    }
+                    compiler.clear();
+                }
+                assertFactory(retained).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary()
+                        .returns("v\n2.0\n3.0\n2.0\n4.0\n");
+                bindVariableService.setDouble(0, 10.0);
+                assertFactory(retained).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary()
+                        .returns("v\n11.0\n12.0\n11.0\n13.0\n");
+            } finally {
+                Misc.free(retained);
+            }
         });
     }
 
@@ -120,83 +197,6 @@ public class OrderAliasTest extends AbstractCairoTest {
                     "v\n2.0\n2.0\n3.0\n3.0\n3.0\n4.0\n4.0\n5.0\n");
             assertQuery("SELECT d+1.0 v FROM oa_u UNION ALL SELECT d+2.0 w FROM oa_u ORDER BY w+1.0").noLeakCheck().fails(69, "Invalid column: w");
             assertQuery("SELECT d+1.0 v FROM oa_u UNION ALL SELECT d+2.0 w FROM oa_u ORDER BY d+1.0").noLeakCheck().fails(69, "Invalid column: d");
-        });
-    }
-
-    @Test
-    public void testRejectedScopesAndDiagnosticPositions() throws Exception {
-        assertMemoryLeak(() -> {
-            createRows();
-            assertQuery("SELECT d+1.0 v FROM oa_u ORDER BY oa_u.v+1.0").noLeakCheck().fails(34, "Invalid column: oa_u.v");
-            assertQuery("SELECT d+1.0 v FROM oa_u ORDER BY missing+1.0").noLeakCheck().fails(34, "Invalid column: missing");
-            assertQuery("SELECT d+1.0 v FROM oa_u ORDER BY v+1.0,id").noLeakCheck().fails(34, "Invalid column: v");
-            assertQuery("SELECT d+1.0 v FROM oa_u ORDER BY id,v+1.0").noLeakCheck().fails(37, "Invalid column: v");
-            assertQuery("SELECT d+1.0 v FROM oa_u ORDER BY v+1.0,missing").noLeakCheck().fails(40, "Invalid column: missing");
-            assertQuery("SELECT sum(d) v FROM oa_u ORDER BY v+1.0").noLeakCheck().fails(35, "Invalid column: v");
-            assertQuery("SELECT id,sum(d) v FROM oa_u GROUP BY id ORDER BY v+1.0").noLeakCheck().fails(50, "Invalid column: v");
-            assertQuery("SELECT l.d+1.0 d FROM oa_u l JOIN oa_u r ON l.id=r.id ORDER BY d+1.0").noLeakCheck().fails(63, "Ambiguous column [name=d]");
-        });
-    }
-
-    @Test
-    public void testOrderByColumnReadingEarlierAlias() throws Exception {
-        assertMemoryLeak(() -> {
-            createRows();
-            assertRows("SELECT v, v2 FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2)", "v\tv2\n2.0\t2.0\n2.0\t2.0\n3.0\t3.0\n4.0\t4.0\n");
-            assertRows("SELECT v FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2 DESC)", "v\n4.0\n3.0\n2.0\n2.0\n");
-            assertRows("SELECT v FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2) WHERE v > 2.0 LIMIT 1", "v\n3.0\n");
-            assertRows("SELECT lag(v) OVER () prev FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2)", "prev\nnull\n2.0\n2.0\n3.0\n");
-            assertRows("SELECT row_number() OVER () rn, sum(v) OVER () total FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2)",
-                    "rn\ttotal\n1\t11.0\n2\t11.0\n3\t11.0\n4\t11.0\n");
-            assertRows("SELECT count() FROM (SELECT r, lag(r) OVER () prev FROM (SELECT rnd_int(1, 1_000_000, 0) r, r r2 FROM long_sequence(20) ORDER BY r2)) WHERE prev > r",
-                    "count\n0\n");
-        });
-    }
-
-    @Test
-    public void testOrderingProjectionPreservesTimestampForTemporalConsumers() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE oa_ts(d DOUBLE,ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("INSERT INTO oa_ts VALUES(3,'2020-01-01T00:00:01'),(1,'2020-01-01T00:00:02'),(2,'2020-01-01T00:00:03')");
-            final String sql = "SELECT ts,d+1.0 v FROM oa_ts ORDER BY ts,v+1.0 LIMIT 2";
-            assertRows(sql, "ts\tv\n2020-01-01T00:00:01.000000Z\t4.0\n2020-01-01T00:00:02.000000Z\t2.0\n");
-            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                    LogicalPlan plan = compiler.getPlanForTesting();
-                    while (!(plan instanceof SortPlan)) {
-                        plan = plan.inputAt(0);
-                    }
-                    Assert.assertEquals(0, plan.inputAt(0).getOutput().getTimestampIndex());
-                    Assert.assertEquals(0, factory.getMetadata().getTimestampIndex());
-                }
-            }
-            assertRows("SELECT a.ts,a.v,b.d FROM (SELECT ts,d+1.0 v FROM oa_ts ORDER BY ts,v+1.0 LIMIT 2) a TIMESTAMP(ts) ASOF JOIN oa_ts b",
-                    "ts\tv\td\n2020-01-01T00:00:01.000000Z\t4.0\t3.0\n2020-01-01T00:00:02.000000Z\t2.0\t1.0\n");
-        });
-    }
-
-    @Test
-    public void testRetainedAliasOrderingFactoryRebindsAfterCompilerClose() throws Exception {
-        assertMemoryLeak(() -> {
-            createRows();
-            bindVariableService.setDouble(0, 1.0);
-            RecordCursorFactory retained = null;
-            try {
-                try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                    retained = compiler.compile("SELECT d+$1 v FROM oa_u ORDER BY v-id", sqlExecutionContext).getRecordCursorFactory();
-                    try (RecordCursorFactory other = compiler.compile("SELECT d FROM oa_u", sqlExecutionContext).getRecordCursorFactory()) {
-                        Assert.assertNotNull(other);
-                    }
-                    compiler.clear();
-                }
-                assertFactory(retained).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary()
-                        .returns("v\n2.0\n3.0\n2.0\n4.0\n");
-                bindVariableService.setDouble(0, 10.0);
-                assertFactory(retained).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary()
-                        .returns("v\n11.0\n12.0\n11.0\n13.0\n");
-            } finally {
-                Misc.free(retained);
-            }
         });
     }
 

@@ -3033,7 +3033,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                             // TODO: test with partition by, order by and various frame modes
                             if (factory.isWindow()) {
-                                sqlExecutionContext.configureWindowContext(null, null, null, false, PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowExpression.FRAMING_RANGE, Long.MIN_VALUE, (char) 0, 10, 10, 0, (char) 0, 20, 20, WindowExpression.EXCLUDE_NO_OTHERS, 0, -1, ColumnType.NULL, false, 0);
+                                sqlExecutionContext.configureWindowContext(null, null, null, false, PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, WindowExpression.FRAMING_RANGE, Long.MIN_VALUE, (char) 0, 10, 10, 0, (char) 0, 20, 20, WindowExpression.EXCLUDE_NO_OTHERS, 0, -1, ColumnType.NULL, false, 0);
                             }
                             Function function = null;
                             try {
@@ -4412,7 +4412,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "CREATE TABLE rc_b (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY"
                 )
                 .noRandomAccess()
-                .timestamp("ts")
                 .withPlanContaining("Interval forward scan on: rc_a", "Interval forward scan on: rc_b")
                 .returns("ts\tv\tts1\tv1\n");
     }
@@ -5573,7 +5572,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinFilterStacksWithSubQueryInternalWhere() throws Exception {
         // The subquery already carries its own internal WHERE (a.av='keep'), processed during
-        // JoinBinder.bindJoins. The consumer then adds WHERE k='x', which FilterPushdownPass.pushDownFilters pushes
+        // JoinBinder.bindJoins. The consumer then adds WHERE k='x', which FilterPushdown.pushDownFilters pushes
         // into the same nested model. The pushed predicate must AND with the pre-existing internal
         // filter, not clobber it, while still deriving bkey='x' on the slave. Only the
         // ('x','keep') master row survives both filters, and it attaches the matching tb row.
@@ -11212,10 +11211,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWhereOrderByLimit_virtualRecordPeel() throws Exception {
         // ORDER BY str references a column absent from the SELECT list, forcing the
         // optimizer to keep str inside VirtualRecord for the sort but project it away on top.
-        // The top-K gate fires while recordCursorFactory is the VirtualRecord wrapper:
-        // translateOrderByColumnToBase peels VirtualRecord -> JIT filter leaf in a single step.
-        // The outer SelectedRecord visible in the plan is added afterwards by ProjectionFactoryGenerator
-        // and is not what the gate inspects.
+        // The parallel top-K builds the VirtualRecord over itself and reads its sort key from the
+        // scan under the JIT filter it steals. The outer SelectedRecord visible in the plan is added
+        // afterwards by ProjectionFactoryGenerator.
         assertQuery("select x + 1 as xp, x from xx where str is not null order by str desc limit 10")
                 .ddl("create table xx ( x long, str varchar ) ")
                 .assertsPlan("""
@@ -12180,7 +12178,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         // Regression lock-in for a self-join wrapped in a subquery: both join instances reference the
         // same table and the same column name 'k'. The constant pinned to the master instance
         // (a.k='x') must propagate to the slave instance (b.k) without conflating the two
-        // identically-named columns - FilterPushdownPass.deriveTransitiveFilters matches on both name AND join-model index,
+        // identically-named columns - FilterPushdown.deriveTransitiveFilters matches on both name AND join-model index,
         // so only the slave's own key is filtered. ORDER BY makes the hash-join output deterministic.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (k SYMBOL INDEX, v STRING)");

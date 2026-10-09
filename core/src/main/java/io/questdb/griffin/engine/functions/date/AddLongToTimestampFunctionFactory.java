@@ -29,16 +29,20 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class AddLongToTimestampFunctionFactory implements FunctionFactory {
+public class AddLongToTimestampFunctionFactory implements FunctionFactory, MonotonicTimestampFunctionFactory {
     @Override
     public int getResultType(IntList argTypes) {
         return ColumnType.getTimestampType(argTypes.getQuick(0));
@@ -50,6 +54,17 @@ public class AddLongToTimestampFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public int getTimestampArgumentIndex(FunctionExpression call, ConstantArguments arguments) {
+        return 0;
+    }
+
+    @Override
+    public int invertTimestampInterval(FunctionExpression call, Interval io, boolean isTimestampArgMonotonic, ConstantArguments arguments) throws SqlException {
+        return call.argumentAt(1) instanceof ConstantExpression ? invert(io, arguments.constant(call.argumentAt(1)).getLong(null),
+                MonotonicTimestampFunction.shiftInputCeiling(isTimestampArgMonotonic, call.getDataType())) : MonotonicTimestampFunction.NONE;
+    }
+
+    @Override
     public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) {
         return true;
     }
@@ -58,6 +73,14 @@ public class AddLongToTimestampFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function arg = args.getQuick(0);
         return new AddLongFunc(arg, args.getQuick(1), ColumnType.getTimestampType(arg.getType()));
+    }
+
+
+    private static int invert(Interval io, long k, long shiftInputCeiling) {
+        if (k == Numbers.LONG_NULL) {
+            return MonotonicTimestampFunction.NONE;
+        }
+        return MonotonicTimestampFunction.invertConstantShift(io, k, shiftInputCeiling);
     }
 
     private static class AddLongFunc extends TimestampFunction implements BinaryFunction, MonotonicTimestampFunction {
@@ -102,14 +125,7 @@ public class AddLongToTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public int invertTimestampInterval(Interval io) {
-            if (!right.isConstant()) {
-                return NONE;
-            }
-            final long k = right.getLong(null);
-            if (k == Numbers.LONG_NULL) {
-                return NONE;
-            }
-            return MonotonicTimestampFunction.invertConstantShift(io, k, shiftInputCeiling(getType()));
+            return right.isConstant() ? invert(io, right.getLong(null), shiftInputCeiling(getType())) : NONE;
         }
 
         @Override

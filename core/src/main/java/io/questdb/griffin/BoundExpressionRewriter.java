@@ -64,7 +64,7 @@ public final class BoundExpressionRewriter implements Mutable {
      * Allocates descriptions from the given pools, which their owner empties, and retargets the given preparations;
      * the temporary lists are borrowed for single calls only.
      */
-    BoundExpressionRewriter(
+    public BoundExpressionRewriter(
             FunctionFactoryCache functionFactoryCache,
             ObjectPool<ColumnExpression> columns,
             ObjectPool<ConstantExpression> constants,
@@ -93,6 +93,55 @@ public final class BoundExpressionRewriter implements Mutable {
     @Override
     public void clear() {
         rewriteArguments.clear();
+    }
+
+    /**
+     * Combines independently bound conjuncts without constructing executable
+     * children again. Their preparations remain separately owned until generation.
+     */
+    public BoundExpression combineConjunction(BoundExpression left, BoundExpression right, int position) throws SqlException {
+        if (left == null) {
+            return right;
+        }
+        if (right == null) {
+            return left;
+        }
+        final int leftType = left.getDataType();
+        final int rightType = right.getDataType();
+        if (leftType != ColumnType.BOOLEAN && leftType != ColumnType.NULL
+                || rightType != ColumnType.BOOLEAN && rightType != ColumnType.NULL) {
+            // Match the single AND registration's first mismatching argument.
+            final BoundExpression invalid = leftType != ColumnType.BOOLEAN ? left : right;
+            throw SqlException.$(invalid.getPosition(), "expression type mismatch, expected: BOOLEAN, actual: ")
+                    .put(ColumnType.nameOf(invalid.getDataType()));
+        }
+        final ObjList<FunctionFactoryDescriptor> overloads = functionFactoryCache.getOverloadList("and");
+        if (overloads != null) {
+            for (int i = 0, n = overloads.size(); i < n; i++) {
+                final FunctionFactoryDescriptor overload = overloads.getQuick(i);
+                if (overload.getSigArgCount() == 2
+                        && overload.getArgTypeWithFlags(0) == ColumnType.BOOLEAN
+                        && overload.getArgTypeWithFlags(1) == ColumnType.BOOLEAN) {
+                    // Preserve registry priority: an override must be reviewed,
+                    // never silently skipped in favour of the built-in factory.
+                    if (!overload.isAnd()) {
+                        throw new IllegalStateException("AND is not bound to the built-in factory");
+                    }
+                    return conjunction(overload, left, right, position);
+                }
+            }
+        }
+        throw new IllegalStateException("AND is not registered");
+    }
+
+    /**
+     * The filter combined with constant conjuncts: a constant false joins as a literal, a constant true drops out.
+     */
+    public BoundExpression combineConstantFilter(BoundExpression filter, BoundExpression constantFilter, int position) throws SqlException {
+        if (constantFilter instanceof ConstantExpression constant) {
+            return constant.getLongValue() == 0 ? combineConjunction(filter, constant.markLiteral(), position) : filter;
+        }
+        return combineConjunction(filter, constantFilter, position);
     }
 
     public FunctionExpression commuteEquality(FunctionExpression original) {
@@ -129,6 +178,37 @@ public final class BoundExpressionRewriter implements Mutable {
     }
 
     /**
+     * Describes the argument-free window function {@code name}, such as {@code row_number}, without preparing
+     * it; the generator builds windows under their final window context.
+     */
+    public FunctionExpression describeWindowCall(CharSequence name, int position) {
+        final ObjList<FunctionFactoryDescriptor> overloads = functionFactoryCache.getOverloadList(name);
+        for (int i = 0, n = overloads == null ? 0 : overloads.size(); i < n; i++) {
+            final FunctionFactoryDescriptor overload = overloads.getQuick(i);
+            if (overload.getSigArgCount() == 0 && overload.getFactory().isWindow()) {
+                tmpArguments.clear();
+                tmpPositions.clear();
+                return functions.next().of(overload, tmpArguments, tmpPositions, ColumnType.LONG, 0, position);
+            }
+        }
+        throw new IllegalStateException("window function is not registered");
+    }
+
+    /**
+     * Copies the expression with the value itself at the first reference to the column, so its preparation is
+     * adopted there, and its own copy at every further reference; preparations of rewritten calls stay with the
+     * original.
+     */
+    public BoundExpression moveToColumn(BoundExpression expression, int columnId, BoundExpression value) {
+        isReplacementPlaced = false;
+        return substituteColumn0(expression, columnId, value);
+    }
+
+    public BoundExpression newFalseConstant(int position) {
+        return constants.next().ofBoolean(false, position);
+    }
+
+    /**
      * Moves an expression through a projection of plain columns. Descriptions are
      * copied; an unadopted preparation follows the replacement and only its private
      * leaves change IDs. Call only when replacing the old expression occurrence.
@@ -142,11 +222,117 @@ public final class BoundExpressionRewriter implements Mutable {
         }
     }
 
+    /**
+     * Returns the expression with each column and outer column the map holds read under its mapped id, as a
+     * column. Unchanged sub-expressions are shared; a changed call is a fresh description without a preparation.
+     */
+    public BoundExpression remapColumns(BoundExpression expression, IntIntHashMap columnIds) {
+        if (expression instanceof ColumnExpression column) {
+            final int columnId = columnIds.get(column.getColumnId());
+            return columnId < 0 ? column
+                    : columns.next().of(columnId, column.getDataType(), column.getPosition(), column.isDirectReference(), column.isCast());
+        }
+        if (expression instanceof OuterColumnExpression outer) {
+            final int columnId = columnIds.get(outer.getColumnId());
+            return columnId < 0 ? outer : columns.next().of(columnId, outer.getDataType(), outer.getPosition());
+        }
+        if (expression instanceof FunctionExpression call) {
+            return remapColumns(call, columnIds);
+        }
+        return expression;
+    }
+
+    public FunctionExpression remapColumns(FunctionExpression call, IntIntHashMap columnIds) {
+        final ObjList<BoundExpression> args = rewriteArguments.next();
+        boolean isChanged = false;
+        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+            final BoundExpression argument = call.argumentAt(i);
+            final BoundExpression remapped = remapColumns(argument, columnIds);
+            args.add(remapped);
+            isChanged |= remapped != argument;
+        }
+        return isChanged ? functions.next().of(call, args) : call;
+    }
+
+    public BoundExpression replaceConjunction(FunctionExpression original, BoundExpression left, BoundExpression right) {
+        assert original.isAnd()
+                && original.getArgumentCount() == 2;
+        if (left == original.argumentAt(0) && right == original.argumentAt(1)) {
+            return original;
+        }
+        return conjunction(original.getOverload(), left, right, original.getPosition());
+    }
+
+    /**
+     * Copies the expression with every reference to the column replaced by its own copy of the replacement,
+     * which stays untouched; preparations stay with the original.
+     */
+    public BoundExpression substituteColumn(BoundExpression expression, int columnId, BoundExpression replacement) {
+        isReplacementPlaced = true;
+        return substituteColumn0(expression, columnId, replacement);
+    }
+
+    /**
+     * Replaces each column with the expression the projection computes for it: an input column or
+     * a timestamp offset. Each reference reads its own copy of the projected expression, so the projection keeps
+     * its own preparation.
+     */
+    public BoundExpression substituteProjection(BoundExpression expression, ProjectPlan projection) {
+        if (expression instanceof ColumnExpression column) {
+            final int index = projection.getOutput().getColumnIndexById(column.getColumnId());
+            final BoundExpression projected = projection.getExpressions().getQuick(index);
+            if (projected instanceof ColumnExpression projectedColumn) {
+                return columns.next().of(projectedColumn.getColumnId(), column.getDataType(), column.getPosition(),
+                        column.isDirectReference() && projectedColumn.isDirectReference(), column.isCast() || projectedColumn.isCast());
+            }
+            return copy((FunctionExpression) projected).markProjectedOffset();
+        }
+        if (expression instanceof FunctionExpression call) {
+            final ObjList<BoundExpression> args = rewriteArguments.next();
+            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+                args.add(substituteProjection(call.argumentAt(i), projection));
+            }
+            return functions.next().of(call, args, substitutedFlags(call, args));
+        }
+        return expression;
+    }
+
+    /**
+     * Returns {@code key IN (values)} bound to the SYMBOL overload, or null when none is registered.
+     */
+    public FunctionExpression symbolIn(BoundExpression key, ObjList<BoundExpression> values, IntList valuePositions, int functionFlags, int position) {
+        final ObjList<FunctionFactoryDescriptor> overloads = functionFactoryCache.getOverloadList("in");
+        if (overloads == null) {
+            return null;
+        }
+        for (int i = 0, n = overloads.size(); i < n; i++) {
+            final FunctionFactoryDescriptor overload = overloads.getQuick(i);
+            if (overload.getSigArgCount() == 2
+                    && FunctionFactoryDescriptor.toTypeTag(overload.getArgTypeWithFlags(0)) == ColumnType.SYMBOL
+                    && FunctionFactoryDescriptor.toTypeTag(overload.getArgTypeWithFlags(1)) == ColumnType.VAR_ARG) {
+                tmpArguments.clear();
+                tmpPositions.clear();
+                try {
+                    tmpArguments.add(key);
+                    tmpArguments.addAll(values);
+                    tmpPositions.add(key.getPosition());
+                    tmpPositions.addAll(valuePositions);
+                    return functions.next().of(overload, tmpArguments, tmpPositions,
+                            ColumnType.BOOLEAN, functionFlags, position);
+                } finally {
+                    tmpArguments.clear();
+                    tmpPositions.clear();
+                }
+            }
+        }
+        return null;
+    }
+
     private static int conjunctionFlags(BoundExpression left, BoundExpression right) {
         final int leftFlags = left.getFunctionFlags();
         final int rightFlags = right.getFunctionFlags();
         int flags = leftFlags & rightFlags & BoundExpression.CONSTANT;
-        flags |= (leftFlags | rightFlags) & BoundExpression.NON_DETERMINISTIC;
+        flags |= (leftFlags | rightFlags) & (BoundExpression.NON_DETERMINISTIC | BoundExpression.RANDOM | BoundExpression.NO_RANDOM_ACCESS | BoundExpression.NO_PARALLELISM);
         flags |= leftFlags & rightFlags & BoundExpression.STABLE_WITHIN_EXECUTION;
         if ((leftFlags & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) != 0
                 && (rightFlags & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) != 0
@@ -166,14 +352,14 @@ public final class BoundExpressionRewriter implements Mutable {
     }
 
     /**
-     * The flags of a call whose column arguments were replaced by expressions: their non-determinism and
-     * instability carry over to the call.
+     * The flags of a call whose column arguments were replaced by expressions: their non-determinism, randomness,
+     * lack of random access, lack of parallelism and instability carry over to the call.
      */
     private static int substitutedFlags(FunctionExpression call, ObjList<BoundExpression> arguments) {
         int flags = call.getFunctionFlags();
         for (int i = 0, n = arguments.size(); i < n; i++) {
             final int argumentFlags = arguments.getQuick(i).getFunctionFlags();
-            flags |= argumentFlags & BoundExpression.NON_DETERMINISTIC;
+            flags |= argumentFlags & (BoundExpression.NON_DETERMINISTIC | BoundExpression.RANDOM | BoundExpression.NO_RANDOM_ACCESS | BoundExpression.NO_PARALLELISM);
             flags &= argumentFlags | ~BoundExpression.STABLE_WITHIN_EXECUTION;
         }
         return flags;
@@ -320,7 +506,7 @@ public final class BoundExpressionRewriter implements Mutable {
             isReplacementPlaced = true;
             return replacement;
         }
-        if (expression instanceof FunctionExpression call && references(call, columnId)) {
+        if (expression instanceof FunctionExpression call && LogicalPlans.readsColumn(call, columnId)) {
             final ObjList<BoundExpression> args = rewriteArguments.next();
             for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
                 args.add(substituteColumn0(call.argumentAt(i), columnId, replacement));
@@ -328,206 +514,6 @@ public final class BoundExpressionRewriter implements Mutable {
             return functions.next().of(call, args, substitutedFlags(call, args));
         }
         return expression;
-    }
-
-    static boolean references(BoundExpression expression, int columnId) {
-        if (expression instanceof ColumnExpression column) {
-            return column.getColumnId() == columnId;
-        }
-        if (expression instanceof FunctionExpression call) {
-            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                if (references(call.argumentAt(i), columnId)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Combines independently bound conjuncts without constructing executable
-     * children again. Their preparations remain separately owned until generation.
-     */
-    BoundExpression combineConjunction(BoundExpression left, BoundExpression right, int position) throws SqlException {
-        if (left == null) {
-            return right;
-        }
-        if (right == null) {
-            return left;
-        }
-        final int leftType = left.getDataType();
-        final int rightType = right.getDataType();
-        if (leftType != ColumnType.BOOLEAN && leftType != ColumnType.NULL
-                || rightType != ColumnType.BOOLEAN && rightType != ColumnType.NULL) {
-            // Match the single AND registration's first mismatching argument.
-            final BoundExpression invalid = leftType != ColumnType.BOOLEAN ? left : right;
-            throw SqlException.$(invalid.getPosition(), "expression type mismatch, expected: BOOLEAN, actual: ")
-                    .put(ColumnType.nameOf(invalid.getDataType()));
-        }
-        final ObjList<FunctionFactoryDescriptor> overloads = functionFactoryCache.getOverloadList("and");
-        if (overloads != null) {
-            for (int i = 0, n = overloads.size(); i < n; i++) {
-                final FunctionFactoryDescriptor overload = overloads.getQuick(i);
-                if (overload.getSigArgCount() == 2
-                        && overload.getArgTypeWithFlags(0) == ColumnType.BOOLEAN
-                        && overload.getArgTypeWithFlags(1) == ColumnType.BOOLEAN) {
-                    // Preserve registry priority: an override must be reviewed,
-                    // never silently skipped in favour of the built-in factory.
-                    if (!overload.isAnd()) {
-                        throw new IllegalStateException("AND is not bound to the built-in factory");
-                    }
-                    return conjunction(overload, left, right, position);
-                }
-            }
-        }
-        throw new IllegalStateException("AND is not registered");
-    }
-
-    /**
-     * The filter combined with constant conjuncts: a constant false joins as a literal, a constant true drops out.
-     */
-    BoundExpression combineConstantFilter(BoundExpression filter, BoundExpression constantFilter, int position) throws SqlException {
-        if (constantFilter instanceof ConstantExpression constant) {
-            return constant.getLongValue() == 0 ? combineConjunction(filter, constant.markLiteral(), position) : filter;
-        }
-        return combineConjunction(filter, constantFilter, position);
-    }
-
-    /**
-     * Describes the argument-free window function {@code name}, such as {@code row_number}, without preparing
-     * it; the generator builds windows under their final window context.
-     */
-    FunctionExpression describeWindowCall(CharSequence name, int position) {
-        final ObjList<FunctionFactoryDescriptor> overloads = functionFactoryCache.getOverloadList(name);
-        for (int i = 0, n = overloads == null ? 0 : overloads.size(); i < n; i++) {
-            final FunctionFactoryDescriptor overload = overloads.getQuick(i);
-            if (overload.getSigArgCount() == 0 && overload.getFactory().isWindow()) {
-                tmpArguments.clear();
-                tmpPositions.clear();
-                return functions.next().of(overload, tmpArguments, tmpPositions, ColumnType.LONG, 0, position);
-            }
-        }
-        throw new IllegalStateException("window function is not registered");
-    }
-
-    /**
-     * Copies the expression with the value itself at the first reference to the column, so its preparation is
-     * adopted there, and its own copy at every further reference; preparations of rewritten calls stay with the
-     * original.
-     */
-    BoundExpression moveToColumn(BoundExpression expression, int columnId, BoundExpression value) {
-        isReplacementPlaced = false;
-        return substituteColumn0(expression, columnId, value);
-    }
-
-    BoundExpression newFalseConstant(int position) {
-        return constants.next().ofBoolean(false, position);
-    }
-
-    /**
-     * Returns the expression with each column and outer column the map holds read under its mapped id, as a
-     * column. Unchanged sub-expressions are shared; a changed call is a fresh description without a preparation.
-     */
-    BoundExpression remapColumns(BoundExpression expression, IntIntHashMap columnIds) {
-        if (expression instanceof ColumnExpression column) {
-            final int columnId = columnIds.get(column.getColumnId());
-            return columnId < 0 ? column
-                    : columns.next().of(columnId, column.getDataType(), column.getPosition(), column.isDirectReference(), column.isCast());
-        }
-        if (expression instanceof OuterColumnExpression outer) {
-            final int columnId = columnIds.get(outer.getColumnId());
-            return columnId < 0 ? outer : columns.next().of(columnId, outer.getDataType(), outer.getPosition());
-        }
-        if (expression instanceof FunctionExpression call) {
-            return remapColumns(call, columnIds);
-        }
-        return expression;
-    }
-
-    FunctionExpression remapColumns(FunctionExpression call, IntIntHashMap columnIds) {
-        final ObjList<BoundExpression> args = rewriteArguments.next();
-        boolean isChanged = false;
-        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-            final BoundExpression argument = call.argumentAt(i);
-            final BoundExpression remapped = remapColumns(argument, columnIds);
-            args.add(remapped);
-            isChanged |= remapped != argument;
-        }
-        return isChanged ? functions.next().of(call, args) : call;
-    }
-
-    BoundExpression replaceConjunction(FunctionExpression original, BoundExpression left, BoundExpression right) {
-        assert original.isAnd()
-                && original.getArgumentCount() == 2;
-        if (left == original.argumentAt(0) && right == original.argumentAt(1)) {
-            return original;
-        }
-        return conjunction(original.getOverload(), left, right, original.getPosition());
-    }
-
-    /**
-     * Copies the expression with every reference to the column replaced by its own copy of the replacement,
-     * which stays untouched; preparations stay with the original.
-     */
-    BoundExpression substituteColumn(BoundExpression expression, int columnId, BoundExpression replacement) {
-        isReplacementPlaced = true;
-        return substituteColumn0(expression, columnId, replacement);
-    }
-
-    /**
-     * Replaces each column with the expression the projection computes for it: an input column or
-     * a timestamp offset. Each reference reads its own copy of the projected expression, so the projection keeps
-     * its own preparation.
-     */
-    BoundExpression substituteProjection(BoundExpression expression, ProjectPlan projection) {
-        if (expression instanceof ColumnExpression column) {
-            final int index = projection.getOutput().getColumnIndexById(column.getColumnId());
-            final BoundExpression projected = projection.getExpressions().getQuick(index);
-            if (projected instanceof ColumnExpression projectedColumn) {
-                return columns.next().of(projectedColumn.getColumnId(), column.getDataType(), column.getPosition(),
-                        column.isDirectReference() && projectedColumn.isDirectReference(), column.isCast() || projectedColumn.isCast());
-            }
-            return copy((FunctionExpression) projected).markProjectedOffset();
-        }
-        if (expression instanceof FunctionExpression call) {
-            final ObjList<BoundExpression> args = rewriteArguments.next();
-            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                args.add(substituteProjection(call.argumentAt(i), projection));
-            }
-            return functions.next().of(call, args, substitutedFlags(call, args));
-        }
-        return expression;
-    }
-
-    /**
-     * Returns {@code key IN (values)} bound to the SYMBOL overload, or null when none is registered.
-     */
-    FunctionExpression symbolIn(BoundExpression key, ObjList<BoundExpression> values, IntList valuePositions, int functionFlags, int position) {
-        final ObjList<FunctionFactoryDescriptor> overloads = functionFactoryCache.getOverloadList("in");
-        if (overloads == null) {
-            return null;
-        }
-        for (int i = 0, n = overloads.size(); i < n; i++) {
-            final FunctionFactoryDescriptor overload = overloads.getQuick(i);
-            if (overload.getSigArgCount() == 2
-                    && FunctionFactoryDescriptor.toTypeTag(overload.getArgTypeWithFlags(0)) == ColumnType.SYMBOL
-                    && FunctionFactoryDescriptor.toTypeTag(overload.getArgTypeWithFlags(1)) == ColumnType.VAR_ARG) {
-                tmpArguments.clear();
-                tmpPositions.clear();
-                try {
-                    tmpArguments.add(key);
-                    tmpArguments.addAll(values);
-                    tmpPositions.add(key.getPosition());
-                    tmpPositions.addAll(valuePositions);
-                    return functions.next().of(overload, tmpArguments, tmpPositions,
-                            ColumnType.BOOLEAN, functionFlags, position);
-                } finally {
-                    tmpArguments.clear();
-                    tmpPositions.clear();
-                }
-            }
-        }
-        return null;
     }
 
     /**

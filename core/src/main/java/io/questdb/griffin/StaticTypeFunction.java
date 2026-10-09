@@ -32,12 +32,14 @@ import io.questdb.std.Mutable;
  * Stands in, while binding, for a call whose factory declares its result type, or for a constant that has no
  * value; it carries only that type and is never evaluated.
  */
-final class StaticTypeFunction extends UntypedFunction implements Mutable {
+public final class StaticTypeFunction extends UntypedFunction implements Mutable {
+    private boolean isParallel;
     private int type;
 
     @Override
     public void clear() {
         type = ColumnType.UNDEFINED;
+        isParallel = true;
     }
 
     @Override
@@ -45,8 +47,14 @@ final class StaticTypeFunction extends UntypedFunction implements Mutable {
         return type;
     }
 
-    StaticTypeFunction of(int type) {
+    public StaticTypeFunction of(int type, boolean isParallel) {
         this.type = type;
+        this.isParallel = isParallel;
         return this;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return isParallel;
     }
 }

@@ -64,13 +64,6 @@ public final class ResultTypes {
     }
 
     /**
-     * The decimal type that holds the values of both decimal types: the wider integer part and the larger scale.
-     */
-    public static int decimalUnion(int leftType, int rightType) {
-        return decimalWithExtraDigits(leftType, rightType, 0);
-    }
-
-    /**
      * The type of a decimal rounded to zero decimal places: unchanged without a fraction, otherwise the integer
      * digits plus a carry digit for every rounding mode except {@link RoundingMode#DOWN}.
      */
@@ -93,6 +86,13 @@ public final class ResultTypes {
             default -> Decimals.MAX_PRECISION;
         };
         return ColumnType.getDecimalType(precision, ColumnType.getDecimalScale(argType));
+    }
+
+    /**
+     * The decimal type that holds the values of both decimal types: the wider integer part and the larger scale.
+     */
+    public static int decimalUnion(int leftType, int rightType) {
+        return decimalWithExtraDigits(leftType, rightType, 0);
     }
 
     /**

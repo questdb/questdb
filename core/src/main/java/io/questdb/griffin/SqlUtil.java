@@ -1604,6 +1604,16 @@ public class SqlUtil {
         }
     }
 
+    /**
+     * True when the factory, or a factory under it along the base chain, reads long_sequence().
+     */
+    public static boolean isLongSequence(RecordCursorFactory factory) {
+        while (factory != null && !factory.getClass().getSimpleName().contains("LongSequence")) {
+            factory = factory.getBaseFactory();
+        }
+        return factory != null;
+    }
+
     public static boolean isNotPlainSelectModel(QueryModel model) {
         return model.getTableName() != null
                 || model.getGroupBy().size() > 0
@@ -1649,6 +1659,14 @@ public class SqlUtil {
         return ast.type == ExpressionNode.FUNCTION
                 && (Chars.equalsIgnoreCase(TimestampFloorFunctionFactory.NAME, ast.token)
                 || Chars.equalsIgnoreCase(TimestampFloorFromOffsetUtcFunctionFactory.NAME, ast.token));
+    }
+
+    public static boolean isZeroOnEmptyAggregate(ExpressionNode node) {
+        return node != null
+                && node.type == ExpressionNode.FUNCTION
+                && (Chars.equalsIgnoreCase(node.token, "count")
+                || Chars.equalsIgnoreCase(node.token, "count_distinct")
+                || Chars.equalsIgnoreCase(node.token, "approx_count_distinct"));
     }
 
     public static ExpressionNode nextExpr(ObjectPool<ExpressionNode> pool, int exprNodeType, CharSequence token, int position) {
@@ -1898,6 +1916,239 @@ public class SqlUtil {
             return 0;
         }
         return TableUtils.packParquetConfig(encoding, packedCompression, packedLevel, bloomFilter);
+    }
+
+    public static boolean printPivotValue(Record record, RecordMetadata metadata, StringSink sink, int position) throws SqlException {
+        final int columnType = metadata.getColumnType(0);
+        sink.clear();
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.STRING:
+            case ColumnType.ARRAY_STRING: {
+                final CharSequence val = record.getStrA(0);
+                if (val == null) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.SYMBOL: {
+                final CharSequence val = record.getSymA(0);
+                if (val == null) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.VARCHAR: {
+                final var val = record.getVarcharA(0);
+                if (val == null) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.INT: {
+                final int val = record.getInt(0);
+                if (val == Numbers.INT_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.LONG: {
+                final long val = record.getLong(0);
+                if (val == Numbers.LONG_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.SHORT: {
+                // short and byte doesn't have null
+                final short val = record.getShort(0);
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.BYTE: {
+                final byte val = record.getByte(0);
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.DOUBLE: {
+                final double val = record.getDouble(0);
+                if (!Numbers.isFinite(val)) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.FLOAT: {
+                final float val = record.getFloat(0);
+                if (!Numbers.isFinite(val)) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.DATE: {
+                final long val = record.getDate(0);
+                if (val == Numbers.LONG_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.putISODateMillis(val);
+                return false;
+            }
+            case ColumnType.TIMESTAMP: {
+                final long val = record.getTimestamp(0);
+                if (val == Numbers.LONG_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.putISODate(ColumnType.getTimestampDriver(columnType), val);
+                return false;
+            }
+            case ColumnType.CHAR: {
+                final char val = record.getChar(0);
+                if (val == 0) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.BOOLEAN: {
+                sink.put(record.getBool(0));
+                return false;
+            }
+            case ColumnType.NULL: {
+                sink.put("NULL");
+                return true;
+            }
+            case ColumnType.GEOBYTE: {
+                final byte val = record.getGeoByte(0);
+                if (val == GeoHashes.BYTE_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.GEOSHORT: {
+                final short val = record.getGeoShort(0);
+                if (val == GeoHashes.SHORT_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.GEOINT: {
+                final int val = record.getGeoInt(0);
+                if (val == GeoHashes.INT_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.GEOLONG: {
+                final long val = record.getGeoLong(0);
+                if (val == GeoHashes.NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                sink.put(val);
+                return false;
+            }
+            case ColumnType.LONG128:
+                // fall through
+            case ColumnType.UUID: {
+                final long hi = record.getLong128Hi(0);
+                final long lo = record.getLong128Lo(0);
+                if (Uuid.isNull(lo, hi)) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Uuid uuid = new Uuid(lo, hi);
+                uuid.toSink(sink);
+                return false;
+            }
+            case ColumnType.IPv4: {
+                final int val = record.getIPv4(0);
+                if (val == Numbers.IPv4_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Numbers.intToIPv4Sink(sink, val);
+                return false;
+            }
+            case ColumnType.DECIMAL8: {
+                final byte val = record.getDecimal8(0);
+                if (val == Decimals.DECIMAL8_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Decimals.append(val, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                return false;
+            }
+            case ColumnType.DECIMAL16: {
+                final short val = record.getDecimal16(0);
+                if (val == Decimals.DECIMAL16_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Decimals.append(val, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                return false;
+            }
+            case ColumnType.DECIMAL32: {
+                final int val = record.getDecimal32(0);
+                if (val == Decimals.DECIMAL32_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Decimals.append(val, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                return false;
+            }
+            case ColumnType.DECIMAL64: {
+                final long val = record.getDecimal64(0);
+                if (val == Decimals.DECIMAL64_NULL) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Decimals.append(val, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                return false;
+            }
+            case ColumnType.DECIMAL128: {
+                final var decimal = Misc.getThreadLocalDecimal128();
+                record.getDecimal128(0, decimal);
+                if (decimal.isNull()) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Decimals.append(decimal, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                return false;
+            }
+            case ColumnType.DECIMAL256: {
+                final var decimal = Misc.getThreadLocalDecimal256();
+                record.getDecimal256(0, decimal);
+                if (decimal.isNull()) {
+                    sink.put("NULL");
+                    return true;
+                }
+                Decimals.append(decimal, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                return false;
+            }
+            default:
+                throw SqlException.$(position, "unsupported PIVOT FOR column type: ").put(ColumnType.nameOf(columnType));
+        }
     }
 
     /**
@@ -2250,14 +2501,6 @@ public class SqlUtil {
         throw NumericException.instance();
     }
 
-    static boolean isZeroOnEmptyAggregate(ExpressionNode node) {
-        return node != null
-                && node.type == ExpressionNode.FUNCTION
-                && (Chars.equalsIgnoreCase(node.token, "count")
-                || Chars.equalsIgnoreCase(node.token, "count_distinct")
-                || Chars.equalsIgnoreCase(node.token, "approx_count_distinct"));
-    }
-
     static QueryColumn nextColumn(
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<ExpressionNode> sqlNodePool,
@@ -2275,239 +2518,6 @@ public class SqlUtil {
 
     static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
         return nextExpr(pool, ExpressionNode.LITERAL, token, position);
-    }
-
-    static boolean printPivotValue(Record record, RecordMetadata metadata, StringSink sink, int position) throws SqlException {
-        final int columnType = metadata.getColumnType(0);
-        sink.clear();
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.STRING:
-            case ColumnType.ARRAY_STRING: {
-                final CharSequence val = record.getStrA(0);
-                if (val == null) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.SYMBOL: {
-                final CharSequence val = record.getSymA(0);
-                if (val == null) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.VARCHAR: {
-                final var val = record.getVarcharA(0);
-                if (val == null) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.INT: {
-                final int val = record.getInt(0);
-                if (val == Numbers.INT_NULL) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.LONG: {
-                final long val = record.getLong(0);
-                if (val == Numbers.LONG_NULL) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.SHORT: {
-                // short and byte doesn't have null
-                final short val = record.getShort(0);
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.BYTE: {
-                final byte val = record.getByte(0);
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.DOUBLE: {
-                final double val = record.getDouble(0);
-                if (!Numbers.isFinite(val)) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.FLOAT: {
-                final float val = record.getFloat(0);
-                if (!Numbers.isFinite(val)) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.DATE: {
-                final long val = record.getDate(0);
-                if (val == Numbers.LONG_NULL) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.putISODateMillis(val);
-                return false;
-            }
-            case ColumnType.TIMESTAMP: {
-                final long val = record.getTimestamp(0);
-                if (val == Numbers.LONG_NULL) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.putISODate(ColumnType.getTimestampDriver(columnType), val);
-                return false;
-            }
-            case ColumnType.CHAR: {
-                final char val = record.getChar(0);
-                if (val == 0) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.BOOLEAN: {
-                sink.put(record.getBool(0));
-                return false;
-            }
-            case ColumnType.NULL: {
-                sink.put("NULL");
-                return true;
-            }
-            case ColumnType.GEOBYTE: {
-                final byte val = record.getGeoByte(0);
-                if (val == GeoHashes.BYTE_NULL) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.GEOSHORT: {
-                final short val = record.getGeoShort(0);
-                if (val == GeoHashes.SHORT_NULL) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.GEOINT: {
-                final int val = record.getGeoInt(0);
-                if (val == GeoHashes.INT_NULL) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.GEOLONG: {
-                final long val = record.getGeoLong(0);
-                if (val == GeoHashes.NULL) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.LONG128:
-                // fall through
-            case ColumnType.UUID: {
-                final long hi = record.getLong128Hi(0);
-                final long lo = record.getLong128Lo(0);
-                if (Uuid.isNull(lo, hi)) {
-                    sink.put("NULL");
-                    return true;
-                }
-                Uuid uuid = new Uuid(lo, hi);
-                uuid.toSink(sink);
-                return false;
-            }
-            case ColumnType.IPv4: {
-                final int val = record.getIPv4(0);
-                if (val == Numbers.IPv4_NULL) {
-                    sink.put("NULL");
-                    return true;
-                }
-                Numbers.intToIPv4Sink(sink, val);
-                return false;
-            }
-            case ColumnType.DECIMAL8: {
-                final byte val = record.getDecimal8(0);
-                if (val == Decimals.DECIMAL8_NULL) {
-                    sink.put("NULL");
-                    return true;
-                }
-                Decimals.append(val, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
-                return false;
-            }
-            case ColumnType.DECIMAL16: {
-                final short val = record.getDecimal16(0);
-                if (val == Decimals.DECIMAL16_NULL) {
-                    sink.put("NULL");
-                    return true;
-                }
-                Decimals.append(val, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
-                return false;
-            }
-            case ColumnType.DECIMAL32: {
-                final int val = record.getDecimal32(0);
-                if (val == Decimals.DECIMAL32_NULL) {
-                    sink.put("NULL");
-                    return true;
-                }
-                Decimals.append(val, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
-                return false;
-            }
-            case ColumnType.DECIMAL64: {
-                final long val = record.getDecimal64(0);
-                if (val == Decimals.DECIMAL64_NULL) {
-                    sink.put("NULL");
-                    return true;
-                }
-                Decimals.append(val, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
-                return false;
-            }
-            case ColumnType.DECIMAL128: {
-                final var decimal = Misc.getThreadLocalDecimal128();
-                record.getDecimal128(0, decimal);
-                if (decimal.isNull()) {
-                    sink.put("NULL");
-                    return true;
-                }
-                Decimals.append(decimal, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
-                return false;
-            }
-            case ColumnType.DECIMAL256: {
-                final var decimal = Misc.getThreadLocalDecimal256();
-                record.getDecimal256(0, decimal);
-                if (decimal.isNull()) {
-                    sink.put("NULL");
-                    return true;
-                }
-                Decimals.append(decimal, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
-                return false;
-            }
-            default:
-                throw SqlException.$(position, "unsupported PIVOT FOR column type: ").put(ColumnType.nameOf(columnType));
-        }
     }
 
     private static class Long256ConstantFactory implements Long256Acceptor {

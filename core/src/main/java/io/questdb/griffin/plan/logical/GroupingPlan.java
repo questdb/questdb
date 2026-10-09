@@ -110,4 +110,10 @@ public abstract sealed class GroupingPlan extends UnaryPlan permits AggregatePla
     public void setSampleByBucket(boolean hasSampleByBucket) {
         this.hasSampleByBucket = hasSampleByBucket;
     }
+
+    @Override
+    public void visitReads(PlanExpressionVisitor visitor) {
+        PlanReads.expressions(groupingExpressions, visitor);
+        PlanReads.functions(aggregates, visitor);
+    }
 }

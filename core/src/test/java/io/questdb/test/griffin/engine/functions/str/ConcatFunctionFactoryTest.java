@@ -209,6 +209,18 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderedProjectionEvaluatesStatefulArgumentOnce() throws Exception {
+        assertMemoryLeak(() -> assertQuery("SELECT x, concat(timestamp_sequence(0, 1), '') c FROM long_sequence(3) ORDER BY x DESC")
+                .expectSize()
+                .returns("""
+                        x\tc
+                        3\t1970-01-01T00:00:00.000002Z
+                        2\t1970-01-01T00:00:00.000001Z
+                        1\t1970-01-01T00:00:00.000000Z
+                        """));
+    }
+
+    @Test
     public void testPipeWithSingleArgConcat() throws Exception {
         // SqlParser.rewriteConcat folds a nested concat() into the parent '||' node's argument
         // list. A concat() call with fewer than three arguments carries them in rhs/lhs rather

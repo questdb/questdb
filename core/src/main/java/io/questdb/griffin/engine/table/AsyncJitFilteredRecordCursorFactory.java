@@ -170,7 +170,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             }
             Misc.free(bindVarMemory, th);
             // The cursors are not open yet, and close() frees their records only once they are, so
-            // release the records directly - the same call halfClose() makes on the open factory.
+            // release the records directly.
             freeRecordsBestEffort(th, cursor);
             freeRecordsBestEffort(th, negativeLimitCursor);
             Misc.free(compiledCountOnlyFilter, th);
@@ -210,21 +210,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
-    }
-
-    @Override
-    public ObjList<Function> getBindVarFunctions() {
-        return bindVarFunctions;
-    }
-
-    @Override
-    public MemoryCARW getBindVarMemory() {
-        return bindVarMemory;
-    }
-
-    @Override
-    public CompiledFilter getCompiledFilter() {
-        return compiledFilter;
     }
 
     @Override
@@ -295,14 +280,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public TableToken getTableToken() {
         return base.getTableToken();
-    }
-
-    @Override
-    public void halfClose() {
-        Misc.free(frameSequence);
-        Misc.free(compiledCountOnlyFilter);
-        cursor.freeRecords();
-        negativeLimitCursor.freeRecords();
     }
 
     @Override

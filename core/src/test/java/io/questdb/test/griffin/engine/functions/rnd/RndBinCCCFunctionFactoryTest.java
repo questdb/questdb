@@ -95,6 +95,18 @@ public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
+    public void testVarLengthIsEvaluatedOncePerRowWhenOrdered() throws Exception {
+        // rnd_bin reads the unseeded context random, so a second cursor pass yields different values
+        assertMemoryLeak(() -> assertQuery("SELECT x, to_char(rnd_bin(3, 8, 0)) b FROM long_sequence(3) ORDER BY x DESC")
+                .returnsOnce("""
+                        x\tb
+                        3\t00000000 59 88 c4 91 3b 72
+                        2\t00000000 17 fa d8 cc 14
+                        1\t00000000 41 1d 15
+                        """));
+    }
+
+    @Test
     public void testVarLengthNoNulls() throws Exception {
         assertQuery("x\n" +
                         "00000000 41 1d 15\n" +

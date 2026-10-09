@@ -37,8 +37,8 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
 
-import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
-import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
+import static io.questdb.griffin.codegen.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
+import static io.questdb.griffin.codegen.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 
 public class SumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
     private static final int COUNT_PADDING = Misc.CACHE_LINE_SIZE / Long.BYTES;

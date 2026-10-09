@@ -34,55 +34,11 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-final class SubsampleValidator {
+public final class SubsampleValidator {
     private SubsampleValidator() {
     }
 
-    private static void validateStride(Function targetFunc, int targetType, int position) throws SqlException {
-        final long value;
-        if (targetType == ColumnType.LONG) {
-            value = targetFunc.getLong(null);
-            if (value == Numbers.LONG_NULL) {
-                throw SqlException.$(position, "stride must be set");
-            }
-        } else {
-            final int intValue = targetFunc.getInt(null);
-            if (intValue == Numbers.INT_NULL) {
-                throw SqlException.$(position, "stride must be set");
-            }
-            value = intValue;
-        }
-        if (value < 1) {
-            throw SqlException.$(position, "stride must be at least 1");
-        }
-        if (value > Integer.MAX_VALUE) {
-            throw SqlException.$(position, "stride exceeds maximum of ").put(Integer.MAX_VALUE);
-        }
-    }
-
-    private static void validateTargetPoints(Function targetFunc, int targetType, int position) throws SqlException {
-        final long value;
-        if (targetType == ColumnType.LONG) {
-            value = targetFunc.getLong(null);
-            if (value == Numbers.LONG_NULL) {
-                throw SqlException.$(position, "target point count must be set");
-            }
-        } else {
-            final int intValue = targetFunc.getInt(null);
-            if (intValue == Numbers.INT_NULL) {
-                throw SqlException.$(position, "target point count must be set");
-            }
-            value = intValue;
-        }
-        if (value < 2) {
-            throw SqlException.$(position, "target points must be at least 2");
-        }
-        if (value > Integer.MAX_VALUE) {
-            throw SqlException.$(position, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
-        }
-    }
-
-    static boolean hasUnresolvableSdtCompdevReference(ExpressionNode compdevNode, SqlExecutionContext sqlExecutionContext) {
+    public static boolean hasUnresolvableSdtCompdevReference(ExpressionNode compdevNode, SqlExecutionContext sqlExecutionContext) {
         // An independently invalid outer reference preserves SDT's shape error even when
         // parsing encounters another error first. Inspect only the error path: successful
         // constant folding can discard binds. Query models have their own metadata scope.
@@ -130,7 +86,7 @@ final class SubsampleValidator {
         return false;
     }
 
-    static void validateCadenceSeedOrThrow(
+    public static void validateCadenceSeedOrThrow(
             ExpressionNode node,
             FunctionParser functionParser,
             SqlExecutionContext sqlExecutionContext
@@ -150,7 +106,7 @@ final class SubsampleValidator {
     /**
      * Borrows the function; a NULL seed selects random cadence.
      */
-    static void validateCadenceSeedOrThrow(Function function, int position) throws SqlException {
+    public static void validateCadenceSeedOrThrow(Function function, int position) throws SqlException {
         if (ColumnType.isNull(function.getType())) {
             return;
         }
@@ -166,7 +122,51 @@ final class SubsampleValidator {
         }
     }
 
-    static void validateLttbGapOrThrow(ExpressionNode gapNode) throws SqlException {
+    private static void validateStride(Function targetFunc, int targetType, int position) throws SqlException {
+        final long value;
+        if (targetType == ColumnType.LONG) {
+            value = targetFunc.getLong(null);
+            if (value == Numbers.LONG_NULL) {
+                throw SqlException.$(position, "stride must be set");
+            }
+        } else {
+            final int intValue = targetFunc.getInt(null);
+            if (intValue == Numbers.INT_NULL) {
+                throw SqlException.$(position, "stride must be set");
+            }
+            value = intValue;
+        }
+        if (value < 1) {
+            throw SqlException.$(position, "stride must be at least 1");
+        }
+        if (value > Integer.MAX_VALUE) {
+            throw SqlException.$(position, "stride exceeds maximum of ").put(Integer.MAX_VALUE);
+        }
+    }
+
+    private static void validateTargetPoints(Function targetFunc, int targetType, int position) throws SqlException {
+        final long value;
+        if (targetType == ColumnType.LONG) {
+            value = targetFunc.getLong(null);
+            if (value == Numbers.LONG_NULL) {
+                throw SqlException.$(position, "target point count must be set");
+            }
+        } else {
+            final int intValue = targetFunc.getInt(null);
+            if (intValue == Numbers.INT_NULL) {
+                throw SqlException.$(position, "target point count must be set");
+            }
+            value = intValue;
+        }
+        if (value < 2) {
+            throw SqlException.$(position, "target points must be at least 2");
+        }
+        if (value > Integer.MAX_VALUE) {
+            throw SqlException.$(position, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
+        }
+    }
+
+    public static void validateLttbGapOrThrow(ExpressionNode gapNode) throws SqlException {
         final CharSequence gapStr = gapNode.token;
         if (gapNode.type != ExpressionNode.CONSTANT || !Chars.isQuoted(gapStr)) {
             throw SqlException.$(gapNode.position, "gap threshold must be a string constant such as '1h'");
@@ -174,7 +174,7 @@ final class SubsampleValidator {
         LttbFunctionFactory.parseGapThresholdMicros(Chars.toString(gapStr, 1, gapStr.length() - 1), gapNode.position);
     }
 
-    static void validateNumericType(int valueType, int position) throws SqlException {
+    public static void validateNumericType(int valueType, int position) throws SqlException {
         final int valueTag = ColumnType.tagOf(valueType);
         if (valueTag != ColumnType.DOUBLE && valueTag != ColumnType.FLOAT
                 && valueTag != ColumnType.INT && valueTag != ColumnType.LONG
@@ -184,7 +184,7 @@ final class SubsampleValidator {
     }
 
     // Callers own the AST: FunctionParser can reassociate even a successfully parsed constant.
-    static void validatePositionTargetOrThrow(
+    public static void validatePositionTargetOrThrow(
             ExpressionNode node,
             boolean isCadence,
             FunctionParser functionParser,
@@ -206,7 +206,7 @@ final class SubsampleValidator {
     /**
      * Borrows the function; runtime values are validated by the window function at each execution.
      */
-    static void validatePositionTargetOrThrow(Function function, int position, boolean isCadence) throws SqlException {
+    public static void validatePositionTargetOrThrow(Function function, int position, boolean isCadence) throws SqlException {
         final boolean isConstant = function.isConstant();
         if (!isConstant && !function.isRuntimeConstant()) {
             throw SqlException.$(position, isCadence ? "stride" : "target point count")
@@ -231,7 +231,7 @@ final class SubsampleValidator {
     /**
      * Borrows the function and retains no executable state.
      */
-    static void validateSdtCompdev(Function function, int position) throws SqlException {
+    public static void validateSdtCompdev(Function function, int position) throws SqlException {
         if (function.isConstant()) {
             final int tag = ColumnType.tagOf(function.getType());
             if (tag == ColumnType.DOUBLE || tag == ColumnType.FLOAT

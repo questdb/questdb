@@ -132,4 +132,9 @@ public final class JoinEquality implements Mutable {
         rightName = name;
         rightPosition = position;
     }
+
+    void visitReads(PlanExpressionVisitor visitor) {
+        leftColumnId = PlanReads.columnId(leftColumnId, leftPosition, visitor);
+        rightColumnId = PlanReads.columnId(rightColumnId, rightPosition, visitor);
+    }
 }

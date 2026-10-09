@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.ParanoiaState;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -32,15 +33,11 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
-import io.questdb.griffin.engine.functions.ScalarSubQueryTimestampFunction;
 import io.questdb.griffin.model.DateExpressionEvaluator;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.griffin.model.RuntimeIntervalModelBuilder;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
-import io.questdb.griffin.model.ScalarTimestampBoundHolder;
-import io.questdb.griffin.model.TimestampMonotonicInverter;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
@@ -59,24 +56,43 @@ import io.questdb.std.str.StringSink;
 /**
  * Timestamp bounds for a single generated scan occurrence.
  */
-final class IntervalExtractor implements Mutable {
+public final class IntervalExtractor implements Mutable {
     private static final int MAX_SPECULATIVE_SCALAR_BOUND_DEPTH = 4;
     private final CairoConfiguration configuration;
     private final StringSink intervalText;
     private final Interval intervalValue = new Interval();
-    private final RuntimeIntervalModelBuilder intervals = new RuntimeIntervalModelBuilder();
+    private final RuntimeIntervalModelBuilder intervals = new RuntimeIntervalModelBuilder() {
+        @Override
+        protected Function compileTickExpr(CharSequence seq, int lo, int lim, int position) throws SqlException {
+            return bounds.compileTickExpr(ColumnType.getTimestampDriver(timestampType), configuration, seq, lo, lim, position);
+        }
+    };
     private final Interval inverted = new Interval();
     private final LongList parsedIntervals;
+    private IntervalAnalysis analysis;
+    private IntervalBoundSource bounds;
     private boolean isBoundSpeculationAllowed;
     private boolean isIntrinsicFalse;
     private boolean isNestedOffset;
     private IntervalExtractor offsetIntervals;
     private int timestampType;
 
-    IntervalExtractor(CairoConfiguration configuration, StringSink intervalText, LongList parsedIntervals) {
+    public IntervalExtractor(CairoConfiguration configuration, StringSink intervalText, LongList parsedIntervals) {
         this.configuration = configuration;
         this.intervalText = intervalText;
         this.parsedIntervals = parsedIntervals;
+    }
+
+    /**
+     * A string literal spelled in SQL as itself rather than folded from an expression.
+     */
+    public static boolean isStringLiteral(ConstantExpression constant) {
+        return isQuotedLiteral(constant) && constant.getDataType() == ColumnType.STRING;
+    }
+
+    public RuntimeIntrinsicIntervalModel build(int partitionBy) {
+        intervals.of(timestampType, partitionBy, configuration);
+        return intervals.hasIntervalFilters() ? intervals.build() : null;
     }
 
     @Override
@@ -87,10 +103,47 @@ final class IntervalExtractor implements Mutable {
         CairoException.rethrowCleanupFailure(failure);
     }
 
-    private static Function boundFunction(BoundExpression bound, OutputSchema input, FunctionInstantiator instantiator,
-                                          SqlExecutionContext executionContext) throws SqlException {
-        return bound instanceof CursorExpression ? timestampCursor(bound, instantiator, executionContext)
-                : instantiator.instantiate(bound, input, executionContext);
+    /**
+     * Returns only the conjuncts the intervals do not implement.
+     *
+     * @param depth the generation depth of the scan's query level, which caps sub-query bound speculation
+     */
+    public BoundExpression extract(BoundExpression predicate, int timestampColumnId, OutputSchema input, IntervalBoundSource bounds,
+                                   BoundExpressionRewriter rewriter, int depth, SqlExecutionContext executionContext) throws SqlException {
+        final int timestampType = input.getColumnType(input.getColumnIndexById(timestampColumnId));
+        final BoundExpression residual = extract(predicate, timestampColumnId, timestampType, depth < MAX_SPECULATIVE_SCALAR_BOUND_DEPTH,
+                bounds, input, rewriter, executionContext);
+        if (ParanoiaState.PLAN_PARANOIA_MODE) {
+            verifyAnalysis(predicate, timestampColumnId, timestampType, depth, rewriter, residual);
+        }
+        return residual;
+    }
+
+    public boolean isIntrinsicFalse() {
+        return isIntrinsicFalse;
+    }
+
+    /**
+     * Merges the static intervals of a window join master with the same timestamp type, see
+     * {@link RuntimeIntervalModelBuilder#merge(TimestampDriver, LongList, long, long)}.
+     */
+    public void merge(LongList masterIntervals, long lo, long hi) {
+        intervals.merge(ColumnType.getTimestampDriver(timestampType), masterIntervals, lo, hi);
+        isIntrinsicFalse |= intervals.isEmptySet();
+    }
+
+    public void of(int timestampType) {
+        clear();
+        this.timestampType = timestampType;
+        intervals.of(timestampType, PartitionBy.NONE, configuration);
+    }
+
+    /**
+     * Intersects the timestamp range the execution context imposes on the table, such as a mat view refresh range.
+     */
+    public void override(TableToken tableToken, SqlExecutionContext executionContext) {
+        executionContext.overrideWhereIntervals(tableToken, intervals, timestampType);
+        isIntrinsicFalse |= intervals.isEmptySet();
     }
 
     private static long constantBoundValue(ConstantExpression constant, TimestampDriver driver) throws NumericException {
@@ -175,6 +228,10 @@ final class IntervalExtractor implements Mutable {
                 || expression instanceof ColumnExpression column && !column.isDirectReference();
     }
 
+    private static boolean isQuotedLiteral(ConstantExpression constant) {
+        return constant.isLiteral() && constant.getSource() == null;
+    }
+
     private static boolean isSameOffset(BoundExpression left, BoundExpression right) {
         if (left instanceof ColumnExpression l && right instanceof ColumnExpression r) {
             return l.getColumnId() == r.getColumnId();
@@ -186,41 +243,15 @@ final class IntervalExtractor implements Mutable {
                 && isSameOffset(l.argumentAt(2), r.argumentAt(2));
     }
 
-    private static boolean isQuotedLiteral(ConstantExpression constant) {
-        return constant.isLiteral() && constant.getSource() == null;
+    private static boolean isSameResidual(BoundExpression residual, BoundExpression other) {
+        return residual == other || residual instanceof FunctionExpression call && other instanceof FunctionExpression that
+                && call.isAnd() && that.isAnd() && isSameResidual(call.argumentAt(0), that.argumentAt(0))
+                && isSameResidual(call.argumentAt(1), that.argumentAt(1));
     }
 
     private static boolean isTimestampCursor(CursorExpression cursor) {
         final OutputSchema output = cursor.getPlan().getOutput();
         return !cursor.isBoolean() && output.getColumnCount() == 1 && ColumnType.isTimestamp(output.getColumnType(0));
-    }
-
-    private static Function parkDeclinedBound(BoundExpression bound, Function function, FunctionInstantiator instantiator) {
-        if (bound instanceof CursorExpression cursor && function instanceof ScalarSubQueryTimestampFunction owner) {
-            instantiator.parkSubquery(cursor, owner.releaseCursorFunction());
-            owner.close();
-            return null;
-        }
-        return function;
-    }
-
-    private static void shareScalarBound(BoundExpression bound, Function function, FunctionInstantiator instantiator) {
-        if (bound instanceof CursorExpression cursor && function instanceof ScalarSubQueryTimestampFunction owner) {
-            final ScalarTimestampBoundHolder holder = new ScalarTimestampBoundHolder(owner.getType());
-            owner.setPublishHolder(holder);
-            instantiator.shareScalarBound(cursor, holder);
-        }
-    }
-
-    private static Function timestampCursor(BoundExpression bound, FunctionInstantiator instantiator, SqlExecutionContext executionContext)
-            throws SqlException {
-        final Function cursor = instantiator.instantiateSubquery((CursorExpression) bound, executionContext);
-        try {
-            return new ScalarSubQueryTimestampFunction(cursor, bound.getPosition());
-        } catch (Throwable th) {
-            Misc.free(cursor, th);
-            throw th;
-        }
     }
 
     // A literal bound must parse as a date; a computed bound must cast to TIMESTAMP.
@@ -243,14 +274,21 @@ final class IntervalExtractor implements Mutable {
         }
     }
 
-    /**
-     * A string literal spelled in SQL as itself rather than folded from an expression.
-     */
-    static boolean isStringLiteral(ConstantExpression constant) {
-        return isQuotedLiteral(constant) && constant.getDataType() == ColumnType.STRING;
+    private Function boundFunction(BoundExpression bound, OutputSchema input, SqlExecutionContext executionContext) throws SqlException {
+        return bound instanceof CursorExpression cursor ? bounds.instantiateTimestampCursor(cursor, executionContext)
+                : bounds.instantiate(bound, input, executionContext);
     }
 
-    private BoundExpression intersect(BoundExpression predicate, int timestampColumnId, OutputSchema input, FunctionInstantiator instantiator,
+    private BoundExpression extract(BoundExpression predicate, int timestampColumnId, int timestampType, boolean isBoundSpeculationAllowed,
+                                    IntervalBoundSource bounds, OutputSchema input, BoundExpressionRewriter rewriter,
+                                    SqlExecutionContext executionContext) throws SqlException {
+        of(timestampType);
+        this.isBoundSpeculationAllowed = isBoundSpeculationAllowed;
+        this.bounds = bounds;
+        return intersect(predicate, timestampColumnId, input, rewriter, executionContext);
+    }
+
+    private BoundExpression intersect(BoundExpression predicate, int timestampColumnId, OutputSchema input,
                                       BoundExpressionRewriter rewriter, SqlExecutionContext executionContext) throws SqlException {
         if (!(predicate instanceof FunctionExpression call)) {
             return predicate;
@@ -258,23 +296,23 @@ final class IntervalExtractor implements Mutable {
         if (!call.isAnd()) {
             final FunctionExpression offset = findProjectedOffset(call);
             if (offset != null) {
-                return intersectOffset(call, offset, timestampColumnId, input, instantiator, rewriter, executionContext);
+                return intersectOffset(call, offset, timestampColumnId, input, rewriter, executionContext);
             }
         }
         final String operator = call.getName();
         if ("between".equals(operator) && call.getArgumentCount() == 3) {
-            return intersectBetween(call, false, timestampColumnId, input, instantiator, executionContext);
+            return intersectBetween(call, false, timestampColumnId, input, executionContext);
         }
         if ("in".equals(operator) && call.getArgumentCount() >= 2) {
-            return intersectIn(call, false, timestampColumnId, input, instantiator, executionContext);
+            return intersectIn(call, false, timestampColumnId, input, executionContext);
         }
         if ("not".equals(operator) && call.getArgumentCount() == 1
                 && call.argumentAt(0) instanceof FunctionExpression negated) {
             final BoundExpression remaining;
             if ("between".equals(negated.getName()) && negated.getArgumentCount() == 3) {
-                remaining = intersectBetween(negated, true, timestampColumnId, input, instantiator, executionContext);
+                remaining = intersectBetween(negated, true, timestampColumnId, input, executionContext);
             } else if ("in".equals(negated.getName()) && negated.getArgumentCount() >= 2) {
-                remaining = intersectIn(negated, true, timestampColumnId, input, instantiator, executionContext);
+                remaining = intersectIn(negated, true, timestampColumnId, input, executionContext);
             } else {
                 return predicate;
             }
@@ -289,11 +327,11 @@ final class IntervalExtractor implements Mutable {
             // Match intrinsic extraction's right-leaf-first order: an earlier
             // interval prevents a later OR from becoming a union.
             if (call.argumentAt(1) instanceof FunctionExpression nested && nested.isAnd()) {
-                left = intersect(call.argumentAt(0), timestampColumnId, input, instantiator, rewriter, executionContext);
-                right = intersect(call.argumentAt(1), timestampColumnId, input, instantiator, rewriter, executionContext);
+                left = intersect(call.argumentAt(0), timestampColumnId, input, rewriter, executionContext);
+                right = intersect(call.argumentAt(1), timestampColumnId, input, rewriter, executionContext);
             } else {
-                right = intersect(call.argumentAt(1), timestampColumnId, input, instantiator, rewriter, executionContext);
-                left = intersect(call.argumentAt(0), timestampColumnId, input, instantiator, rewriter, executionContext);
+                right = intersect(call.argumentAt(1), timestampColumnId, input, rewriter, executionContext);
+                left = intersect(call.argumentAt(0), timestampColumnId, input, rewriter, executionContext);
             }
             // Rewrite descriptions only. The original preparation still owns its
             // complete closure; generation independently instantiates the residual.
@@ -302,7 +340,7 @@ final class IntervalExtractor implements Mutable {
         if (call.isOr()) {
             // A union must not widen bounds already extracted from another conjunct.
             if (!intervals.hasIntervalFilters() && isTimestampUnion(call, timestampColumnId, timestampType)) {
-                unionTimestampPredicates(call, input, instantiator, executionContext);
+                unionTimestampPredicates(call, input, executionContext);
                 return null;
             }
             return predicate;
@@ -318,7 +356,7 @@ final class IntervalExtractor implements Mutable {
             bound = left;
             isReversed = true;
         } else {
-            return intersectMonotonic(call, timestampColumnId, input, instantiator, executionContext);
+            return intersectMonotonic(call, timestampColumnId, input, executionContext);
         }
         if (left instanceof ColumnExpression l && right instanceof ColumnExpression r
                 && l.getColumnId() == r.getColumnId() && l.isDirectReference() && r.isDirectReference()) {
@@ -355,7 +393,7 @@ final class IntervalExtractor implements Mutable {
         if (!isIntegralBound && !isRuntimeTimestampBound && convertedBound == Numbers.LONG_NULL
                 && (left.getDataType() != timestampType || right.getDataType() != timestampType)) {
             if (!column.isDirectReference() && bound instanceof ConstantExpression) {
-                return intersectMonotonic(call, timestampColumnId, input, instantiator, executionContext);
+                return intersectMonotonic(call, timestampColumnId, input, executionContext);
             }
             return predicate;
         }
@@ -403,8 +441,8 @@ final class IntervalExtractor implements Mutable {
                 intersectBound(value, isLower, isStrict);
             }
         } else if (isCursorBound || (bound.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0) {
-            final Function function = isCursorBound ? timestampCursor(bound, instantiator, executionContext)
-                    : instantiator.instantiate(bound, input, executionContext);
+            final Function function = isCursorBound ? bounds.instantiateTimestampCursor((CursorExpression) bound, executionContext)
+                    : bounds.instantiate(bound, input, executionContext);
             if (isExclusion) {
                 intervals.subtractEquals(function, bound.getPosition());
             } else if (isEquality) {
@@ -425,7 +463,6 @@ final class IntervalExtractor implements Mutable {
             boolean negated,
             int timestampColumnId,
             OutputSchema input,
-            FunctionInstantiator instantiator,
             SqlExecutionContext executionContext
     ) throws SqlException {
         final BoundExpression operand = predicate.argumentAt(0);
@@ -443,13 +480,13 @@ final class IntervalExtractor implements Mutable {
                 return predicate;
             }
             return intersectMonotonicRange(predicate, operand, lo, hi, (short) 0, (short) 0,
-                    true, timestampColumnId, input, instantiator, executionContext);
+                    true, timestampColumnId, input, executionContext);
         }
         Throwable failure = null;
         try {
             intervals.setBetweenNegated(negated);
-            setBetweenBoundary(lo, input, instantiator, executionContext);
-            setBetweenBoundary(hi, input, instantiator, executionContext);
+            setBetweenBoundary(lo, input, executionContext);
+            setBetweenBoundary(hi, input, executionContext);
             isIntrinsicFalse |= intervals.isEmptySet();
             return null;
         } catch (NumericException e) {
@@ -490,19 +527,18 @@ final class IntervalExtractor implements Mutable {
             boolean negated,
             int timestampColumnId,
             OutputSchema input,
-            FunctionInstantiator instantiator,
             SqlExecutionContext executionContext
     ) throws SqlException {
         if (!(predicate.argumentAt(0) instanceof ColumnExpression column)
                 || column.getColumnId() != timestampColumnId || column.getDataType() != timestampType
                 || negated && !column.isDirectReference()) {
-            return negated ? predicate : intersectMonotonicIn(predicate, timestampColumnId, input, instantiator, executionContext);
+            return negated ? predicate : intersectMonotonicIn(predicate, timestampColumnId, input, executionContext);
         }
         final int count = predicate.getArgumentCount();
         if (count == 2) {
             final BoundExpression bound = predicate.argumentAt(1);
             if (ColumnType.isInterval(bound.getDataType())) {
-                return intersectInterval(predicate, bound, negated, input, instantiator, executionContext);
+                return intersectInterval(predicate, bound, negated, input, executionContext);
             }
             if (isUnusableTimestampBound(bound) || bound instanceof CursorExpression) {
                 return predicate;
@@ -541,7 +577,7 @@ final class IntervalExtractor implements Mutable {
                     }
                 }
             } else {
-                final Function function = instantiator.instantiate(bound, input, executionContext);
+                final Function function = bounds.instantiate(bound, input, executionContext);
                 if (ColumnType.isVarcharOrString(bound.getDataType())) {
                     if (negated) {
                         intervals.subtractRuntimeIntervals(function, bound.getPosition());
@@ -589,7 +625,6 @@ final class IntervalExtractor implements Mutable {
             BoundExpression bound,
             boolean negated,
             OutputSchema input,
-            FunctionInstantiator instantiator,
             SqlExecutionContext executionContext
     ) throws SqlException {
         if (bound instanceof ConstantExpression constant) {
@@ -601,7 +636,7 @@ final class IntervalExtractor implements Mutable {
                 intervals.intersect(interval.getLo(), interval.getHi());
             }
         } else if ((bound.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0) {
-            final Function function = instantiator.instantiate(bound, input, executionContext);
+            final Function function = bounds.instantiate(bound, input, executionContext);
             if (negated) {
                 intervals.subtractRuntimeIntervals(function, bound.getPosition());
             } else {
@@ -618,7 +653,6 @@ final class IntervalExtractor implements Mutable {
             FunctionExpression predicate,
             int timestampColumnId,
             OutputSchema input,
-            FunctionInstantiator instantiator,
             SqlExecutionContext executionContext
     ) throws SqlException {
         final String operator = predicate.getName();
@@ -649,14 +683,13 @@ final class IntervalExtractor implements Mutable {
         final short adjustment = "<".equals(operator) || ">".equals(operator) ? (short) (isLower ? 1 : -1) : 0;
         return intersectMonotonicRange(predicate, operand, isEquality || isLower ? bound : null,
                 isEquality || !isLower ? bound : null, isLower ? adjustment : 0, !isLower ? adjustment : 0,
-                false, timestampColumnId, input, instantiator, executionContext);
+                false, timestampColumnId, input, executionContext);
     }
 
     private BoundExpression intersectMonotonicIn(
             FunctionExpression predicate,
             int timestampColumnId,
             OutputSchema input,
-            FunctionInstantiator instantiator,
             SqlExecutionContext executionContext
     ) throws SqlException {
         if (predicate.getArgumentCount() != 2 || !isMonotonicOperand(predicate.argumentAt(0))
@@ -671,16 +704,16 @@ final class IntervalExtractor implements Mutable {
                 return predicate;
             }
         }
-        final Function head = instantiator.instantiate(predicate.argumentAt(0), input, executionContext);
+        final Function head = bounds.instantiate(predicate.argumentAt(0), input, executionContext);
         Throwable failure = null;
         try {
-            if (FunctionInstantiator.monotonicTimestampColumnId(head) != timestampColumnId) {
+            if (bounds.monotonicColumnId(predicate.argumentAt(0), head) != timestampColumnId) {
                 return predicate;
             }
             parsedIntervals.clear();
             intervalText.clear();
             try {
-                IntervalUtils.parseTickExpr(ColumnType.getTimestampDriver(head.getType()), configuration,
+                IntervalUtils.parseTickExpr(ColumnType.getTimestampDriver(predicate.argumentAt(0).getDataType()), configuration,
                         text, 0, text.length(), constant.getPosition(), parsedIntervals,
                         IntervalOperation.INTERSECT, intervalText, true);
             } catch (SqlException | CairoException e) {
@@ -692,7 +725,7 @@ final class IntervalExtractor implements Mutable {
             inverted.of(parsedIntervals.getQuick(0), parsedIntervals.getQuick(1));
             final int soundness;
             try {
-                soundness = invert(head);
+                soundness = bounds.invertMonotonic(predicate.argumentAt(0), head, inverted);
             } catch (CairoException e) {
                 return predicate;
             }
@@ -726,7 +759,6 @@ final class IntervalExtractor implements Mutable {
             boolean isBetween,
             int timestampColumnId,
             OutputSchema input,
-            FunctionInstantiator instantiator,
             SqlExecutionContext executionContext
     ) throws SqlException {
         final int outputType = operand.getDataType();
@@ -736,12 +768,12 @@ final class IntervalExtractor implements Mutable {
                 || hi != null && (ColumnType.isTimestamp(hi.getDataType()) || hi instanceof CursorExpression))) {
             return predicate;
         }
-        Function head = instantiator.instantiate(operand, input, executionContext);
+        Function head = bounds.instantiate(operand, input, executionContext);
         Function loFunction = null;
         Function hiFunction = null;
         Throwable failure = null;
         try {
-            if (FunctionInstantiator.monotonicTimestampColumnId(head) != timestampColumnId) {
+            if (bounds.monotonicColumnId(operand, head) != timestampColumnId) {
                 return predicate;
             }
             final TimestampDriver driver = ColumnType.getTimestampDriver(isTimestamp ? outputType : timestampType);
@@ -755,7 +787,7 @@ final class IntervalExtractor implements Mutable {
                 }
                 loValue += loAdjustment;
             } else if (lo != null) {
-                loFunction = boundFunction(lo, input, instantiator, executionContext);
+                loFunction = boundFunction(lo, input, executionContext);
             }
             if (hi instanceof ConstantExpression constant) {
                 hiValue = constantBoundValue(constant, driver);
@@ -765,12 +797,12 @@ final class IntervalExtractor implements Mutable {
                 }
                 hiValue += hiAdjustment;
             } else if (hi != null) {
-                hiFunction = hi == lo ? loFunction : boundFunction(hi, input, instantiator, executionContext);
+                hiFunction = hi == lo ? loFunction : boundFunction(hi, input, executionContext);
             }
             if (loFunction == null && hiFunction == null) {
                 inverted.of(isBetween ? Math.min(loValue, hiValue) : loValue,
                         isBetween ? Math.max(loValue, hiValue) : hiValue);
-                final int soundness = invert(head);
+                final int soundness = bounds.invertMonotonic(operand, head, inverted);
                 if (soundness == MonotonicTimestampFunction.NONE) {
                     return predicate;
                 }
@@ -782,16 +814,16 @@ final class IntervalExtractor implements Mutable {
                 return soundness == MonotonicTimestampFunction.EXACT ? null : predicate;
             }
             inverted.of(Long.MIN_VALUE, Long.MAX_VALUE);
-            if (invert(head) == MonotonicTimestampFunction.NONE) {
+            if (bounds.invertMonotonic(operand, head, inverted) == MonotonicTimestampFunction.NONE) {
                 return predicate;
             }
-            final TimestampMonotonicInverter inverter = new TimestampMonotonicInverter(
+            final Function inverter = bounds.newMonotonicInverter(
                     head, loFunction, loFunction != null ? loAdjustment : 0, loValue,
                     hiFunction, hiFunction != null ? hiAdjustment : 0, hiValue, isBetween, driver
             );
-            shareScalarBound(lo, loFunction, instantiator);
+            bounds.publishScalarBound(lo, loFunction);
             if (hi != lo) {
-                shareScalarBound(hi, hiFunction, instantiator);
+                bounds.publishScalarBound(hi, hiFunction);
             }
             head = loFunction = hiFunction = null;
             intervals.intersectMonotonicTimestamp(inverter);
@@ -807,8 +839,8 @@ final class IntervalExtractor implements Mutable {
             Throwable closeFailure = Misc.freeBestEffort(failure, head);
             // The retained residual adopts a declined sub-query bound instead of generating it again.
             if (failure == null) {
-                loFunction = parkDeclinedBound(lo, loFunction, instantiator);
-                hiFunction = hi == lo ? null : parkDeclinedBound(hi, hiFunction, instantiator);
+                loFunction = bounds.parkDeclinedBound(lo, loFunction);
+                hiFunction = hi == lo ? null : bounds.parkDeclinedBound(hi, hiFunction);
             }
             closeFailure = Misc.freeBestEffort(closeFailure, loFunction);
             if (hiFunction != loFunction) {
@@ -830,7 +862,6 @@ final class IntervalExtractor implements Mutable {
             FunctionExpression outerOffset,
             int timestampColumnId,
             OutputSchema input,
-            FunctionInstantiator instantiator,
             BoundExpressionRewriter rewriter,
             SqlExecutionContext executionContext
     ) throws SqlException {
@@ -855,8 +886,8 @@ final class IntervalExtractor implements Mutable {
         source.isNestedOffset = true;
         final BoundExpression residual;
         try {
-            residual = source.extract(rewriter.unwrapProjectedOffsets(predicate),
-                    timestampColumnId, input, instantiator, rewriter, executionContext);
+            residual = source.extract(rewriter.unwrapProjectedOffsets(predicate), timestampColumnId, timestampType,
+                    isBoundSpeculationAllowed, bounds, input, rewriter, executionContext);
         } catch (Throwable th) {
             Misc.clearBestEffort(th, source);
             throw th;
@@ -897,22 +928,6 @@ final class IntervalExtractor implements Mutable {
         } catch (NumericException e) {
             return isStringLiteral(constant) ? quote(text) : text;
         }
-    }
-
-    private int invert(Function head) {
-        int soundness = MonotonicTimestampFunction.EXACT;
-        while (head instanceof MonotonicTimestampFunction function) {
-            final int grade = function.invertTimestampInterval(inverted);
-            if (grade == MonotonicTimestampFunction.NONE) {
-                return grade;
-            }
-            soundness = Math.min(soundness, grade);
-            if (inverted.getLo() > inverted.getHi()) {
-                break;
-            }
-            head = function.getTimestampArg();
-        }
-        return soundness;
     }
 
     private boolean isScalarBound(BoundExpression expression) {
@@ -989,7 +1004,7 @@ final class IntervalExtractor implements Mutable {
         return intervalText;
     }
 
-    private void setBetweenBoundary(BoundExpression bound, OutputSchema input, FunctionInstantiator instantiator, SqlExecutionContext executionContext)
+    private void setBetweenBoundary(BoundExpression bound, OutputSchema input, SqlExecutionContext executionContext)
             throws SqlException, NumericException {
         if (bound instanceof ConstantExpression constant) {
             final int type = constant.getDataType();
@@ -1004,7 +1019,7 @@ final class IntervalExtractor implements Mutable {
             }
             return;
         }
-        final Function function = boundFunction(bound, input, instantiator, executionContext);
+        final Function function = boundFunction(bound, input, executionContext);
         try {
             intervals.setBetweenBoundary(function, bound.getPosition());
         } catch (Throwable th) {
@@ -1045,10 +1060,10 @@ final class IntervalExtractor implements Mutable {
         }
     }
 
-    private void unionTimestampPredicates(FunctionExpression call, OutputSchema input, FunctionInstantiator instantiator, SqlExecutionContext executionContext) throws SqlException {
+    private void unionTimestampPredicates(FunctionExpression call, OutputSchema input, SqlExecutionContext executionContext) throws SqlException {
         if (call.isOr()) {
-            unionTimestampPredicates((FunctionExpression) call.argumentAt(0), input, instantiator, executionContext);
-            unionTimestampPredicates((FunctionExpression) call.argumentAt(1), input, instantiator, executionContext);
+            unionTimestampPredicates((FunctionExpression) call.argumentAt(0), input, executionContext);
+            unionTimestampPredicates((FunctionExpression) call.argumentAt(1), input, executionContext);
         } else if ("in".equals(call.getName())) {
             final CharSequence text = call.getArgumentCount() == 2 && call.argumentAt(1) instanceof ConstantExpression constant
                     && ColumnType.isVarcharOrString(constant.getDataType()) ? constantText(constant) : null;
@@ -1062,7 +1077,7 @@ final class IntervalExtractor implements Mutable {
                     if (bound instanceof ConstantExpression constant) {
                         unionElement(constant, intervalElement(constant));
                     } else {
-                        intervals.unionRuntimeTimestamp(instantiator.instantiate(bound, input, executionContext), bound.getPosition());
+                        intervals.unionRuntimeTimestamp(bounds.instantiate(bound, input, executionContext), bound.getPosition());
                     }
                 }
             }
@@ -1072,46 +1087,37 @@ final class IntervalExtractor implements Mutable {
                 final long value = constant.getDataType() == ColumnType.NULL ? Numbers.LONG_NULL : constant.getLongValue();
                 intervals.union(value, value);
             } else {
-                intervals.unionRuntimeTimestamp(boundFunction(bound, input, instantiator, executionContext), bound.getPosition());
+                intervals.unionRuntimeTimestamp(boundFunction(bound, input, executionContext), bound.getPosition());
             }
         }
     }
 
-    RuntimeIntrinsicIntervalModel build(int partitionBy) {
-        intervals.of(timestampType, partitionBy, configuration);
-        return intervals.hasIntervalFilters() ? intervals.build() : null;
+    private void verifyAnalysis(BoundExpression predicate, int timestampColumnId, int timestampType, int depth,
+                                BoundExpressionRewriter rewriter, BoundExpression residual) {
+        if (analysis == null) {
+            analysis = new IntervalAnalysis(configuration);
+        }
+        try {
+            analysis.analyse(predicate, timestampColumnId, timestampType, depth, rewriter);
+        } catch (SqlException | CairoException e) {
+            throw new AssertionError("interval analysis fails where extraction succeeds", e);
+        }
+        if (analysis.hasIntervalFilters() != intervals.hasIntervalFilters() || analysis.isStatic() != intervals.isStatic()
+                || !analysis.getStaticIntervals().equals(intervals.getStaticIntervals())
+                || !isSameResidual(analysis.getResidual(), residual)) {
+            throw new AssertionError("interval analysis differs from the extracted intervals");
+        }
     }
 
     /**
-     * Returns only the conjuncts the intervals do not implement.
+     * The residual of the predicate; throws as {@link #extract} would.
      */
-    BoundExpression extract(BoundExpression predicate, int timestampColumnId, OutputSchema input, FunctionInstantiator instantiator,
-                            BoundExpressionRewriter rewriter, SqlExecutionContext executionContext) throws SqlException {
-        of(input.getColumnType(input.getColumnIndexById(timestampColumnId)));
-        isBoundSpeculationAllowed = instantiator.getDepth() < MAX_SPECULATIVE_SCALAR_BOUND_DEPTH;
-        return intersect(predicate, timestampColumnId, input, instantiator, rewriter, executionContext);
+    BoundExpression analyse(BoundExpression predicate, int timestampColumnId, int timestampType, int depth, IntervalBoundSource bounds,
+                            BoundExpressionRewriter rewriter) throws SqlException {
+        return extract(predicate, timestampColumnId, timestampType, depth < MAX_SPECULATIVE_SCALAR_BOUND_DEPTH, bounds, null, rewriter, null);
     }
 
-    boolean isIntrinsicFalse() {
-        return isIntrinsicFalse;
-    }
-
-    void merge(RuntimeIntervalModel model, long lo, long hi) {
-        intervals.merge(model, lo, hi);
-        isIntrinsicFalse |= intervals.isEmptySet();
-    }
-
-    void of(int timestampType) {
-        clear();
-        this.timestampType = timestampType;
-        intervals.of(timestampType, PartitionBy.NONE, configuration);
-    }
-
-    /**
-     * Intersects the timestamp range the execution context imposes on the table, such as a mat view refresh range.
-     */
-    void override(TableToken tableToken, SqlExecutionContext executionContext) {
-        executionContext.overrideWhereIntervals(tableToken, intervals, timestampType);
-        isIntrinsicFalse |= intervals.isEmptySet();
+    RuntimeIntervalModelBuilder getIntervals() {
+        return intervals;
     }
 }

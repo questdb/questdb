@@ -72,6 +72,11 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     private static final ArrayColumnTypes STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES;
     private static final ArrayColumnTypes STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES;
 
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
     // Naive sum-of-squares formula, used by sliding-window (removable) frames.
     static double computeResult(double sum, double sumSq, long count, boolean isSample, boolean isSqrt) {
         long denom = isSample ? count - 1 : count;
@@ -104,11 +109,6 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     protected abstract boolean isSqrt();
 
     protected abstract String name();
-
-    @Override
-    public int getResultType(IntList argTypes) {
-        return ColumnType.DOUBLE;
-    }
 
     @Override
     public Function newInstance(

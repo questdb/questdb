@@ -133,7 +133,7 @@ public class DesignatedTimestampIntervalLiteralTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM x WHERE NOT (ts = '2014-01-02T12:30')").noLeakCheck().timestamp("ts").returns("ts\tts2\tv\n");
             assertQuery("SELECT * FROM xn WHERE ts != '2014-01-02T12:30'").noLeakCheck().timestamp("ts").returns("ts\tts2\tv\n");
             assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE b.ts != '2014-01-02T12:30'").noLeakCheck()
-                    .timestamp("ts").noRandomAccess().returns("ts\tts2\tv\tts1\tts21\tv1\n");
+                    .noRandomAccess().returns("ts\tts2\tv\tts1\tts21\tv1\n");
             assertQuery("SELECT * FROM x WHERE ts != '2014-01-02T12:30'").noLeakCheck().assertsPlan("""
                     PageFrame
                         Row forward scan
@@ -281,6 +281,65 @@ public class DesignatedTimestampIntervalLiteralTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck("UPDATE x SET v = (ts = 'zz')::int, ts2 = timestamp_floor('xx', ts)", 23, "invalid timestamp");
             assertExceptionNoLeakCheck("UPDATE x SET v = (ts IN ('2014', 'zz'))::int", 33, "Invalid date");
             assertExceptionNoLeakCheck("UPDATE x SET ts2 = timestamp_floor('xx', ts), v = (ts = 'zz')::int", 35, "invalid unit 'xx'");
+        });
+    }
+
+    @Test
+    public void testRangeBoundCastToFloatIsInvalidDate() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertError("SELECT * FROM x WHERE ts > v::float", 28, "Invalid date");
+            assertError("SELECT * FROM xn WHERE ts > v::float", 29, "Invalid date");
+        });
+    }
+
+    @Test
+    public void testRangeBoundComputedDoubleIsInvalidDate() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertError("SELECT * FROM x WHERE ts > v * 1.5", 29, "Invalid date");
+            assertError("SELECT * FROM xn WHERE ts < sqrt(v)", 28, "Invalid date");
+        });
+    }
+
+    @Test
+    public void testRangeBoundInLatestByIsInvalidDate() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertError("SELECT * FROM x WHERE ts > v * 1.5 LATEST ON ts PARTITION BY v", 29, "Invalid date");
+        });
+    }
+
+    @Test
+    public void testRangeBoundInPostingDistinctIsInvalidDate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE xp (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO xp VALUES ('2014-01-02T12:30:00.000Z', 'a', 1)");
+            assertError("SELECT DISTINCT sym FROM xp WHERE ts > v * 1.5", 41, "Invalid date");
+        });
+    }
+
+    @Test
+    public void testRangeBoundInSubqueryIsInvalidDate() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertError("SELECT * FROM x WHERE v = (SELECT max(v) FROM x y WHERE y.ts > y.v * 1.5)", 67, "Invalid date");
+        });
+    }
+
+    @Test
+    public void testRangeBoundLong256IsInvalidDate() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertError("SELECT * FROM x WHERE ts > v::long256", 28, "Invalid date");
+        });
+    }
+
+    @Test
+    public void testRangeBoundNegativeDoubleLiteralIsInvalidDate() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertError("SELECT * FROM x WHERE ts <= -1.5", 28, "Invalid date");
         });
     }
 

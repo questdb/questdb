@@ -62,11 +62,6 @@ public class GeoLongColumn extends GeoLongFunction implements ColumnFunction {
         return rec.getGeoLong(columnIndex);
     }
 
-    @Override
-    public boolean isThreadSafe() {
-        return true;
-    }
-
     static {
         int bits = ColumnType.GEOLONG_MAX_BITS - ColumnType.GEOLONG_MIN_BITS + 1;
         COLUMNS = new GeoLongColumn[STATIC_COLUMN_COUNT * bits];

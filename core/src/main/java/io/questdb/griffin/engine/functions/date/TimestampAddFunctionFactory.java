@@ -37,9 +37,12 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
@@ -61,11 +64,11 @@ import io.questdb.std.datetime.CommonUtils;
  * <p><b>If this function's signature changes, the optimizer must be updated accordingly.</b></p>
  * <p>Specifically, the following components depend on this function's signature:</p>
  * <ul>
- *   <li>{@code FilterPushdownPass} - pushes predicates through projected dateadd offsets</li>
+ *   <li>{@code FilterPushdown} - pushes predicates through projected dateadd offsets</li>
  *   <li>{@code IntervalExtractor} - applies the offset during interval extraction</li>
  * </ul>
  */
-public class TimestampAddFunctionFactory implements FunctionFactory {
+public class TimestampAddFunctionFactory implements FunctionFactory, MonotonicTimestampFunctionFactory {
 
     @Override
     public int getResultType(IntList argTypes) {
@@ -75,6 +78,19 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "dateadd(AIN)";
+    }
+
+    @Override
+    public int getTimestampArgumentIndex(FunctionExpression call, ConstantArguments arguments) {
+        return call.argumentAt(0) instanceof ConstantExpression && call.argumentAt(1) instanceof ConstantExpression ? 2 : -1;
+    }
+
+    @Override
+    public int invertTimestampInterval(FunctionExpression call, Interval io, boolean isTimestampArgMonotonic, ConstantArguments arguments) throws SqlException {
+        final char period = arguments.constant(call.argumentAt(0)).getChar(null);
+        final int timestampType = call.getDataType();
+        return TimestampAddConstConstVar.invert(io, period, ColumnType.getTimestampDriver(timestampType).getAddMethod(period),
+                arguments.constant(call.argumentAt(1)).getInt(null), MonotonicTimestampFunction.shiftInputCeiling(isTimestampArgMonotonic, timestampType));
     }
 
     @Override
@@ -163,6 +179,19 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
 
         @Override
         public int invertTimestampInterval(Interval io) {
+            return invert(io, period, periodAddFunction, stride, shiftInputCeiling(getType()));
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("dateadd('").val(period).val("',").val(stride).val(',').val(timestampFunc).val(')');
+        }
+
+        private static boolean addOverflows(long base, long result, int units) {
+            return units > 0 ? result <= base : units < 0 && result >= base;
+        }
+
+        static int invert(Interval io, char period, TimestampDriver.TimestampAddMethod periodAddFunction, int stride, long shiftInputCeiling) {
             if (stride == Integer.MIN_VALUE) {
                 return NONE;
             }
@@ -195,18 +224,9 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             }
             if (CommonUtils.isFixedDurationUnit(period)) {
                 // a fixed unit adds the same constant to every timestamp
-                return MonotonicTimestampFunction.invertConstantShift(io, periodAddFunction.add(0, stride), shiftInputCeiling(getType()));
+                return MonotonicTimestampFunction.invertConstantShift(io, periodAddFunction.add(0, stride), shiftInputCeiling);
             }
             return NONE;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val("dateadd('").val(period).val("',").val(stride).val(',').val(timestampFunc).val(')');
-        }
-
-        private static boolean addOverflows(long base, long result, int units) {
-            return units > 0 ? result <= base : units < 0 && result >= base;
         }
     }
 

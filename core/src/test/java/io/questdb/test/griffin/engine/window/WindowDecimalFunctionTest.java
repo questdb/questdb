@@ -9661,7 +9661,6 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute("INSERT INTO m VALUES ('a', 'group-a')");
             assertQuery("SELECT t.ts, m.label, sum(t.v64) OVER () s64 FROM t JOIN m ON t.grp = m.k")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .expectSize()
                     .returns("""
                             ts\tlabel\ts64

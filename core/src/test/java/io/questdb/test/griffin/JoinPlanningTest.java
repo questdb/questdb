@@ -356,6 +356,10 @@ public class JoinPlanningTest extends AbstractCairoTest {
                 for (boolean fullFat : new boolean[]{false, true}) {
                     compiler.setFullFatJoins(fullFat);
                     try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                        Assert.assertEquals(fullFat ? 0 : -1, factory.getMetadata().getTimestampIndex());
+                        assertResult(factory, "b\n2020-01-01T00:00:00.000000Z\n2020-01-02T00:00:00.000000Z\n");
+                    }
+                    try (RecordCursorFactory factory = compiler.compile(sql + " ORDER BY q.b", sqlExecutionContext).getRecordCursorFactory()) {
                         Assert.assertEquals(0, factory.getMetadata().getTimestampIndex());
                         assertResult(factory, "b\n2020-01-01T00:00:00.000000Z\n2020-01-02T00:00:00.000000Z\n");
                     }

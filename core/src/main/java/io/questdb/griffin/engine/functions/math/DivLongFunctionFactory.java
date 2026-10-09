@@ -68,7 +68,7 @@ public class DivLongFunctionFactory implements FunctionFactory {
         final Function right = args.getQuick(1);
         // null / x and x / null always evaluate to null. Fold at construction time so the
         // non-null operand (potentially a column reference) is never evaluated with a null
-        // record via FunctionParser.functionToConstant().
+        // record via FunctionResolver.functionToConstant().
         if (left.isNullConstant()) {
             Misc.free(right);
             return LongConstant.NULL;

@@ -35,7 +35,9 @@ public final class WindowPlan extends UnaryPlan {
     public static final ObjectFactory<WindowPlan> FACTORY = WindowPlan::new;
     private final IntList functionColumnIds = new IntList();
     private final ObjList<FunctionExpression> functions = new ObjList<>();
+    private final SortKeys queryOrder = new SortKeys();
     private final ObjList<WindowSpec> specs = new ObjList<>();
+    private Algorithm algorithm;
     private boolean isSelectOrdered;
 
     @Override
@@ -43,8 +45,17 @@ public final class WindowPlan extends UnaryPlan {
         super.clear();
         functionColumnIds.clear();
         functions.clear();
+        queryOrder.clear();
         specs.clear();
+        algorithm = null;
         isSelectOrdered = false;
+    }
+
+    /**
+     * The window factory order planning records for the window; null before planning.
+     */
+    public Algorithm getAlgorithm() {
+        return algorithm;
     }
 
     public IntList getFunctionColumnIds() {
@@ -53,6 +64,14 @@ public final class WindowPlan extends UnaryPlan {
 
     public ObjList<FunctionExpression> getFunctions() {
         return functions;
+    }
+
+    /**
+     * The ORDER BY of the query level the window output feeds, when it is the order this window's SELECT sorts
+     * by; empty otherwise.
+     */
+    public SortKeys getQueryOrder() {
+        return queryOrder;
     }
 
     public ObjList<WindowSpec> getSpecs() {
@@ -73,5 +92,26 @@ public final class WindowPlan extends UnaryPlan {
     public WindowPlan of(LogicalPlan input, int position) {
         configure(input, position);
         return this;
+    }
+
+    public void setAlgorithm(Algorithm algorithm) {
+        this.algorithm = algorithm;
+    }
+
+    @Override
+    public void visitReads(PlanExpressionVisitor visitor) {
+        PlanReads.functions(functions, visitor);
+        for (int i = 0, n = specs.size(); i < n; i++) {
+            specs.getQuick(i).visitReads(visitor);
+        }
+    }
+
+    /**
+     * How the generator computes the windows: streaming over its input when every window is evaluated in one pass
+     * over rows its input delivers in the window order; otherwise caching the rows, as row ids into an input with
+     * random access whose sort keys all encode and whose window results are all fixed-width, or as copies of them.
+     */
+    public enum Algorithm {
+        CACHED, CACHED_LIGHT, STREAMING
     }
 }

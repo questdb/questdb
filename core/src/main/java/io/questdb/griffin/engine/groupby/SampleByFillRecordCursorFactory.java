@@ -128,6 +128,22 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
      * - two LONGs) the cursor expects on every key entry. External map builders
      * must call this so slot indices stay authoritative.
      */
+    // Fixed-size scalars and wide types that MapValue can put/get directly.
+    // SYMBOL is cached as the int symbol id. UUID, INTERVAL, and variable-width
+    // types fall back to the recordAt path -- MapValue lacks symmetric put APIs
+    // for those.
+    public static boolean isPrevSlotEligible(int srcTag) {
+        return switch (srcTag) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.CHAR, ColumnType.DATE, ColumnType.DECIMAL128,
+                 ColumnType.DECIMAL16, ColumnType.DECIMAL256, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
+                 ColumnType.DECIMAL8, ColumnType.DOUBLE, ColumnType.FLOAT, ColumnType.GEOBYTE, ColumnType.GEOINT,
+                 ColumnType.GEOLONG, ColumnType.GEOSHORT, ColumnType.INT, ColumnType.IPv4, ColumnType.LONG,
+                 ColumnType.LONG128, ColumnType.LONG256, ColumnType.SHORT, ColumnType.SYMBOL,
+                 ColumnType.TIMESTAMP -> true;
+            default -> false;
+        };
+    }
+
     public static void populateMapValueTypes(ArrayColumnTypes mapValueTypes) {
         mapValueTypes.add(ColumnType.LONG);
         mapValueTypes.add(ColumnType.LONG);

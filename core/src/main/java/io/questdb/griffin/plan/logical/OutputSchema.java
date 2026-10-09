@@ -191,6 +191,55 @@ public final class OutputSchema implements Mutable {
         return columnTypes.getQuick(index);
     }
 
+    public OutputSchema getMetadata(int index) {
+        return columnMetadata.getQuick(index);
+    }
+
+    public int getTimestampColumnId() {
+        return timestampIndex < 0 ? -1 : getColumnId(timestampIndex);
+    }
+
+    public int getTimestampIndex() {
+        return timestampIndex;
+    }
+
+    public boolean hasColumnQualifier(CharSequence qualifier) {
+        for (int i = 0, n = columnQualifiers.size(); i < n; i++) {
+            if (Chars.equalsIgnoreCaseNc(qualifier, columnQualifiers.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean hasColumnQualifiers() {
+        for (int i = 0, n = columnQualifiers.size(); i < n; i++) {
+            if (columnQualifiers.getQuick(i) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean isNameProtected(int index) {
+        return (columnFlags.getQuick(index) & NAME_PROTECTED) != 0;
+    }
+
+    public boolean isSymbolTableStatic(int index) {
+        return (columnFlags.getQuick(index) & SYMBOL_TABLE_STATIC) != 0;
+    }
+
+    public boolean isVisible(int index) {
+        return (columnFlags.getQuick(index) & VISIBLE) != 0;
+    }
+
+    /**
+     * A compiler-protected name (dotted, or an operator token) that enclosing queries cannot reference.
+     */
+    public void protectName(int index) {
+        columnFlags.setQuick(index, columnFlags.getQuick(index) | NAME_PROTECTED);
+    }
+
     public void remove(int index) {
         columnIds.removeIndex(index);
         columnMetadata.remove(index);
@@ -249,62 +298,9 @@ public final class OutputSchema implements Mutable {
         columnTypes.setQuick(index, type);
     }
 
-    public OutputSchema getMetadata(int index) {
-        return columnMetadata.getQuick(index);
-    }
-
-    public int getTimestampColumnId() {
-        return timestampIndex < 0 ? -1 : getColumnId(timestampIndex);
-    }
-
-    public int getTimestampIndex() {
-        return timestampIndex;
-    }
-
-    public boolean hasColumnQualifier(CharSequence qualifier) {
-        for (int i = 0, n = columnQualifiers.size(); i < n; i++) {
-            if (Chars.equalsIgnoreCaseNc(qualifier, columnQualifiers.getQuick(i))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    public boolean hasColumnQualifiers() {
-        for (int i = 0, n = columnQualifiers.size(); i < n; i++) {
-            if (columnQualifiers.getQuick(i) != null) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    public boolean isNameProtected(int index) {
-        return (columnFlags.getQuick(index) & NAME_PROTECTED) != 0;
-    }
-
-    /**
-     * A compiler-protected name (dotted, or an operator token) that enclosing queries cannot reference.
-     */
-    public void protectName(int index) {
-        columnFlags.setQuick(index, columnFlags.getQuick(index) | NAME_PROTECTED);
-    }
-
-    public boolean isSymbolTableStatic(int index) {
-        return (columnFlags.getQuick(index) & SYMBOL_TABLE_STATIC) != 0;
-    }
-
     public void setSymbolTableStatic(int index, boolean isStatic) {
         final int flags = columnFlags.getQuick(index);
         columnFlags.setQuick(index, isStatic ? flags | SYMBOL_TABLE_STATIC : flags & ~SYMBOL_TABLE_STATIC);
-    }
-
-    public boolean isVisible(int index) {
-        return (columnFlags.getQuick(index) & VISIBLE) != 0;
-    }
-
-    private boolean isReferenceable(int index) {
-        return (columnFlags.getQuick(index) & (VISIBLE | NAME_PROTECTED)) == VISIBLE;
     }
 
     /**
@@ -320,4 +316,9 @@ public final class OutputSchema implements Mutable {
         }
         timestampIndex = index;
     }
+
+    private boolean isReferenceable(int index) {
+        return (columnFlags.getQuick(index) & (VISIBLE | NAME_PROTECTED)) == VISIBLE;
+    }
+
 }

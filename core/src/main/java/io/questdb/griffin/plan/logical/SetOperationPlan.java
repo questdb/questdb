@@ -33,10 +33,14 @@ public final class SetOperationPlan extends LogicalPlan {
     public static final ObjectFactory<SetOperationPlan> FACTORY = SetOperationPlan::new;
     private final IntList remappedSymbolColumns = new IntList();
     private final IntList symbolColumns = new IntList();
+    private boolean isMerged;
     private boolean isSymbolRestorationRequired;
     private LogicalPlan left;
     private SetOperationKind operation;
     private LogicalPlan right;
+    private int requestedOrderColumnId = -1;
+    private SortDirection requestedOrderDirection;
+    private SortPlan.Algorithm rightBranchSort;
     private int rightPosition = -1;
 
     @Override
@@ -45,7 +49,11 @@ public final class SetOperationPlan extends LogicalPlan {
         left = null;
         right = null;
         operation = null;
+        isMerged = false;
         isSymbolRestorationRequired = false;
+        requestedOrderColumnId = -1;
+        requestedOrderDirection = null;
+        rightBranchSort = null;
         rightPosition = -1;
         symbolColumns.clear();
     }
@@ -58,8 +66,30 @@ public final class SetOperationPlan extends LogicalPlan {
         return operation;
     }
 
+    /**
+     * The output column the consumer would like the rows ordered by, or -1.
+     */
+    public int getRequestedOrderColumnId() {
+        return requestedOrderColumnId;
+    }
+
+    /**
+     * The direction of {@link #getRequestedOrderColumnId()}, or null when the consumer names none.
+     */
+    public SortDirection getRequestedOrderDirection() {
+        return requestedOrderDirection;
+    }
+
     public LogicalPlan getRight() {
         return right;
+    }
+
+    /**
+     * How the generator sorts the right branch of a UNION ALL into the requested timestamp order, or null when it
+     * does not sort it.
+     */
+    public SortPlan.Algorithm getRightBranchSort() {
+        return rightBranchSort;
     }
 
     public int getRightPosition() {
@@ -84,8 +114,30 @@ public final class SetOperationPlan extends LogicalPlan {
         return 2;
     }
 
+    /**
+     * True when the UNION ALL merges its branches, each in the requested timestamp order, instead of concatenating
+     * them; order planning decides it.
+     */
+    public boolean isMerged() {
+        return isMerged;
+    }
+
     public boolean isSymbolRestorationRequired() {
         return isSymbolRestorationRequired;
+    }
+
+    /**
+     * True when every UNION ALL branch has a designated timestamp and the first one is the requested order column.
+     */
+    public boolean isTimestampOrderPushable(int orderIndex) {
+        LogicalPlan plan = this;
+        while (plan instanceof SetOperationPlan union && union.operation == SetOperationKind.UNION_ALL) {
+            if (union.right.getOutput().getTimestampIndex() < 0) {
+                return false;
+            }
+            plan = union.left;
+        }
+        return plan.getOutput().getTimestampIndex() == orderIndex;
     }
 
     public SetOperationPlan of(LogicalPlan left, LogicalPlan right, SetOperationKind operation, int leftPosition, int rightPosition, boolean isSymbolRestorationRequired) {
@@ -121,4 +173,15 @@ public final class SetOperationPlan extends LogicalPlan {
             default -> throw new IndexOutOfBoundsException("input index: " + index);
         }
     }
+
+    public void setMerge(boolean isMerged, SortPlan.Algorithm rightBranchSort) {
+        this.isMerged = isMerged;
+        this.rightBranchSort = rightBranchSort;
+    }
+
+    public void setRequestedOrder(int columnId, SortDirection direction) {
+        requestedOrderColumnId = columnId;
+        requestedOrderDirection = direction;
+    }
+
 }

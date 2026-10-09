@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowFunction;
@@ -158,14 +159,14 @@ public class FunctionBinderSubsampleTest extends AbstractCairoTest {
     public void testTargetExpressionConstructedOnlyOnceDuringBinding() throws Exception {
         assertMemoryLeak(() -> {
             final ObjList<String> constructions = new ObjList<>();
-            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache()) {
+            final FunctionParser parser = new FunctionParser(configuration, new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
                 @Override
                 public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
                                                ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
                     constructions.add(overload.getName().toString());
                     return super.createFunction(overload, position, name, args, positions, context);
                 }
-            };
+            });
             final ExpressionNode sum = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.OPERATION, "+", 0, 17);
             sum.paramCount = 2;
             sum.lhs = constant("2", 17);
@@ -188,20 +189,6 @@ public class FunctionBinderSubsampleTest extends AbstractCairoTest {
                 }
             }
         });
-    }
-
-    private void assertError(FunctionBindingHarness binder, ExpressionNode expression, int position, String message) throws Exception {
-        final SqlException error = Assert.assertThrows(SqlException.class,
-                () -> binder.bindWindow(expression, schema(), null, sqlExecutionContext));
-        Assert.assertEquals(position, error.getPosition());
-        TestUtils.assertEquals(message, error.getFlyweightMessage());
-    }
-
-    private void configure() throws SqlException {
-        sqlExecutionContext.configureWindowContext(null, null, new ArrayColumnTypes(), true,
-                RecordCursorFactory.SCAN_DIRECTION_FORWARD, 0, true, WindowExpression.FRAMING_RANGE,
-                Long.MIN_VALUE, (char) 0, 0, 0, 0, (char) 0, 0, 0, WindowExpression.EXCLUDE_NO_OTHERS, 0,
-                0, ColumnType.TIMESTAMP_MICRO, false, 0);
     }
 
     private static ExpressionNode constant(String token, int position) {
@@ -248,4 +235,19 @@ public class FunctionBinderSubsampleTest extends AbstractCairoTest {
         node.rhs = seed;
         return node;
     }
+
+    private void assertError(FunctionBindingHarness binder, ExpressionNode expression, int position, String message) throws Exception {
+        final SqlException error = Assert.assertThrows(SqlException.class,
+                () -> binder.bindWindow(expression, schema(), null, sqlExecutionContext));
+        Assert.assertEquals(position, error.getPosition());
+        TestUtils.assertEquals(message, error.getFlyweightMessage());
+    }
+
+    private void configure() throws SqlException {
+        sqlExecutionContext.configureWindowContext(null, null, new ArrayColumnTypes(), true,
+                RecordCursorFactory.SCAN_DIRECTION_FORWARD, 0, WindowExpression.FRAMING_RANGE,
+                Long.MIN_VALUE, (char) 0, 0, 0, 0, (char) 0, 0, 0, WindowExpression.EXCLUDE_NO_OTHERS, 0,
+                0, ColumnType.TIMESTAMP_MICRO, false, 0);
+    }
+
 }

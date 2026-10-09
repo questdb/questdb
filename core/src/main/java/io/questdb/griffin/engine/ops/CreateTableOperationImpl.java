@@ -566,6 +566,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     @Override
+    public boolean isTimestampRequired() {
+        return timestampColumnName == null && (tableKind != TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT || partitionBy != PartitionBy.NONE);
+    }
+
+    @Override
     public boolean isWalEnabled() {
         return walEnabled;
     }

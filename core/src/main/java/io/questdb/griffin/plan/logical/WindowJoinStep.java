@@ -24,8 +24,11 @@
 
 package io.questdb.griffin.plan.logical;
 
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 
@@ -37,6 +40,7 @@ public final class WindowJoinStep implements Mutable {
     private final ObjList<FunctionExpression> aggregates = new ObjList<>();
     private final OutputSchema masterScope = new OutputSchema();
     private final OutputSchema scope = new OutputSchema();
+    private Algorithm algorithm;
     private BoundExpression filter;
     private long hi;
     private BoundExpression hiExpression;
@@ -61,6 +65,7 @@ public final class WindowJoinStep implements Mutable {
         aggregates.clear();
         masterScope.clear();
         scope.clear();
+        algorithm = null;
         filter = null;
         hi = 0;
         hiExpression = null;
@@ -88,6 +93,14 @@ public final class WindowJoinStep implements Mutable {
         return aggregates;
     }
 
+    /**
+     * The window join execution order planning records for the step; null for a step whose filter is constant false,
+     * which null-extends its master instead of joining.
+     */
+    public Algorithm getAlgorithm() {
+        return algorithm;
+    }
+
     public BoundExpression getFilter() {
         return filter;
     }
@@ -110,6 +123,25 @@ public final class WindowJoinStep implements Mutable {
 
     public char getHiTimeUnit() {
         return hiTimeUnit;
+    }
+
+    /**
+     * The upper offset of the window in units of {@code timestampType}, which widens each master interval a slave
+     * scan reads.
+     */
+    public long getIntervalHi(int timestampType) throws SqlException {
+        return hiTimeUnit == 0 ? hi : WindowContextImpl.toTimestampUnits(timestampType, hi, hiTimeUnit, hiPosition, "end");
+    }
+
+    /**
+     * The lower offset of the window in units of {@code timestampType}, {@link Numbers#LONG_NULL} when the window
+     * reaches back to the prevailing row.
+     */
+    public long getIntervalLo(int timestampType) throws SqlException {
+        if (isIncludePrevailing) {
+            return Numbers.LONG_NULL;
+        }
+        return loTimeUnit == 0 ? lo : WindowContextImpl.toTimestampUnits(timestampType, lo, loTimeUnit, loPosition, "start");
     }
 
     public long getLo() {
@@ -177,6 +209,10 @@ public final class WindowJoinStep implements Mutable {
         return this;
     }
 
+    public void setAlgorithm(Algorithm algorithm) {
+        this.algorithm = algorithm;
+    }
+
     public void setFilter(BoundExpression filter) {
         this.filter = filter;
     }
@@ -203,5 +239,20 @@ public final class WindowJoinStep implements Mutable {
 
     void setSlave(LogicalPlan slave) {
         this.slave = Objects.requireNonNull(slave);
+    }
+
+    void visitReads(PlanExpressionVisitor visitor) {
+        PlanReads.functions(aggregates, visitor);
+        filter = PlanReads.expression(filter, visitor);
+        loExpression = PlanReads.expression(loExpression, visitor);
+        hiExpression = PlanReads.expression(hiExpression, visitor);
+    }
+
+    /**
+     * How the generator joins the step: on one thread, or in parallel over the page frames of its master or over the
+     * frames under a filter it steals from the master.
+     */
+    public enum Algorithm {
+        PARALLEL, PARALLEL_STOLEN_FILTER, SERIAL
     }
 }

@@ -34,6 +34,8 @@ public final class AggregatePlan extends GroupingPlan {
     public static final ObjectFactory<AggregatePlan> FACTORY = AggregatePlan::new;
     private final IntList sharedInputIds = new IntList();
     private final IntList sharedSourceIds = new IntList();
+    private Algorithm algorithm;
+    private int sharedConsumerCount;
     private JoinInput sharedSource;
 
     @Override
@@ -41,12 +43,31 @@ public final class AggregatePlan extends GroupingPlan {
         super.clear();
         sharedInputIds.clear();
         sharedSourceIds.clear();
+        algorithm = null;
+        sharedConsumerCount = 0;
         sharedSource = null;
     }
 
     /**
+     * The GROUP BY execution order planning records for the aggregate; null for a count, a posting-index distinct
+     * and a horizon join, which build no GROUP BY.
+     */
+    public Algorithm getAlgorithm() {
+        return algorithm;
+    }
+
+    /**
+     * The number of decorrelation domains of the query level whose shared source re-reads the aggregate, which order
+     * planning counts; the generator lets that many consumers share the rows it computes once.
+     */
+    public int getSharedConsumerCount() {
+        return sharedConsumerCount;
+    }
+
+    /**
      * Input column ids of a relation that re-reads {@link #getSharedSource()}, paired with
-     * {@link #getSharedSourceIds()}, so the generator can read the source's factory instead.
+     * {@link #getSharedSourceIds()}, so the generator can read the source's factory instead. The pairs map columns
+     * rather than read them: a pass that drops an input column may leave its pair, which the generator ignores.
      */
     public IntList getSharedInputIds() {
         return sharedInputIds;
@@ -65,7 +86,24 @@ public final class AggregatePlan extends GroupingPlan {
         return this;
     }
 
+    public void setAlgorithm(Algorithm algorithm) {
+        this.algorithm = algorithm;
+    }
+
+    public void setSharedConsumerCount(int sharedConsumerCount) {
+        this.sharedConsumerCount = sharedConsumerCount;
+    }
+
     public void setSharedSource(JoinInput sharedSource) {
         this.sharedSource = sharedSource;
+    }
+
+    /**
+     * How the generator executes the GROUP BY: on one thread, in parallel over the page frames of its input or over
+     * the frames under a filter it steals from its input, or in the vectorised GROUP BY of a single key, which order
+     * planning never picks over a table whose parquet partitions store a column under a converted type.
+     */
+    public enum Algorithm {
+        PARALLEL, PARALLEL_STOLEN_FILTER, SERIAL, VECTORISED
     }
 }

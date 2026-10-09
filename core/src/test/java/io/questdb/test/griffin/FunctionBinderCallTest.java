@@ -96,6 +96,19 @@ public class FunctionBinderCallTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastsAndTemporalComparisonsMatchSqlText() throws Exception {
+        assertEquivalent(
+                "i::int",
+                "b + d",
+                "ts BETWEEN '2024-01-01' AND '2024-01-02'",
+                "ts = '2024-01-01T00:00:00.000000001'",
+                "dateadd('d', 1, '2024-01-01')",
+                "i IN (1, 2, 3)",
+                "str IN ('a', 'b')"
+        );
+    }
+
+    @Test
     public void testDecimalCastUsesFloatLiteralSpelling() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
@@ -119,14 +132,17 @@ public class FunctionBinderCallTest extends AbstractCairoTest {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                  FunctionBindingHarness binder = new FunctionBindingHarness(engine, new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
                 final OutputSchema input = input();
-                final String[] texts = {"bo * 3", "sum(bo)", "nosuch(i)", "s + count(i)"};
+                final String[] texts = {"bo * 3", "sum(bo)", "nosuch(i)", "s + count(i)", "ts = 'bad'", "ts BETWEEN 'bad' AND '2024-01-01'", "dateadd('d', 1, 'bad')"};
                 final String[] messages = {
                         "there is no matching operator `*` with the argument types: BOOLEAN * INT",
                         "there is no matching function `sum` with the argument types: (BOOLEAN)",
                         "unknown function name: nosuch(INT)",
-                        "Aggregate function cannot be passed as an argument"
+                        "Aggregate function cannot be passed as an argument",
+                        "invalid timestamp",
+                        "Invalid date",
+                        "Invalid date [str=bad]"
                 };
-                final int[] positions = {3, 0, 0, 4};
+                final int[] positions = {3, 0, 0, 4, 5, 11, 16};
                 for (int i = 0; i < texts.length; i++) {
                     final ExpressionNode node = compiler.parseExpression(texts[i]);
                     final SqlException expected = bindingError(binder, node, input, false);
@@ -249,6 +265,21 @@ public class FunctionBinderCallTest extends AbstractCairoTest {
         }
     }
 
+    private static SqlException bindingError(FunctionBindingHarness binder, ExpressionNode node, OutputSchema input, boolean isViaApi) {
+        try {
+            if (isViaApi) {
+                bindViaApi(binder, node, input);
+            } else if (binder.isGroupBy(node.token)) {
+                binder.bindAggregate(node, input, null, sqlExecutionContext);
+            } else {
+                binder.bind(node, input, null, sqlExecutionContext);
+            }
+            throw new AssertionError("binding error expected: " + node);
+        } catch (SqlException e) {
+            return e;
+        }
+    }
+
     /**
      * Rebuilds the bound tree bottom-up through bindCall(), binding only leaves from SQL text.
      */
@@ -271,21 +302,6 @@ public class FunctionBinderCallTest extends AbstractCairoTest {
             }
         }
         return binder.bindCall(node.token, node.position, args, input, sqlExecutionContext);
-    }
-
-    private static SqlException bindingError(FunctionBindingHarness binder, ExpressionNode node, OutputSchema input, boolean isViaApi) {
-        try {
-            if (isViaApi) {
-                bindViaApi(binder, node, input);
-            } else if (binder.isGroupBy(node.token)) {
-                binder.bindAggregate(node, input, null, sqlExecutionContext);
-            } else {
-                binder.bind(node, input, null, sqlExecutionContext);
-            }
-            throw new AssertionError("binding error expected: " + node);
-        } catch (SqlException e) {
-            return e;
-        }
     }
 
     private static OutputSchema input() {

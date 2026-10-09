@@ -83,4 +83,9 @@ public final class HorizonJoinSlave implements Mutable {
     void setInput(LogicalPlan input) {
         this.input = Objects.requireNonNull(input);
     }
+
+    void visitReads(PlanExpressionVisitor visitor) {
+        PlanReads.columnIds(masterKeyColumnIds, keyPositions, visitor);
+        PlanReads.columnIds(slaveKeyColumnIds, keyPositions, visitor);
+    }
 }

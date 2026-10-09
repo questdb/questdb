@@ -53,6 +53,12 @@ final class OverloadResolver {
     private OverloadResolver() {
     }
 
+    private static int mergeWithExactMatch(int match) {
+        return match == MATCH_NO_MATCH ? MATCH_EXACT_MATCH
+                : match == MATCH_FUZZY_MATCH ? MATCH_PARTIAL_MATCH
+                  : match;
+    }
+
     /**
      * Returns the overload the call binds to, or null when no signature accepts the arguments.
      *
@@ -242,9 +248,4 @@ final class OverloadResolver {
         return candidate;
     }
 
-    private static int mergeWithExactMatch(int match) {
-        return match == MATCH_NO_MATCH ? MATCH_EXACT_MATCH
-                : match == MATCH_FUZZY_MATCH ? MATCH_PARTIAL_MATCH
-                  : match;
-    }
 }

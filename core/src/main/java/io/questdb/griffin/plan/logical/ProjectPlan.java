@@ -31,31 +31,47 @@ import io.questdb.std.ObjList;
 public final class ProjectPlan extends UnaryPlan {
     public static final ObjectFactory<ProjectPlan> FACTORY = ProjectPlan::new;
     private final ObjList<BoundExpression> expressions = new ObjList<>();
+    private final SortKeys requestedOrder = new SortKeys();
     private final IntList updateTargetTypes = new IntList();
     private boolean hasPrunedComputedColumns;
     private boolean hasTimestampDeclaration;
     private boolean isImplied;
+    private boolean isTimestampDropped;
+    private int requestedOrderColumnId = -1;
 
     @Override
     public void clear() {
         super.clear();
         expressions.clear();
+        requestedOrder.clear();
         updateTargetTypes.clear();
         hasPrunedComputedColumns = false;
         hasTimestampDeclaration = false;
         isImplied = false;
+        isTimestampDropped = false;
+        requestedOrderColumnId = -1;
     }
 
     public ObjList<BoundExpression> getExpressions() {
         return expressions;
     }
 
-    public IntList getUpdateTargetTypes() {
-        return updateTargetTypes;
+    /**
+     * The order the consumer of the projection would like its rows in.
+     */
+    public SortKeys getRequestedOrder() {
+        return requestedOrder;
     }
 
-    public boolean hasUpdateConversions() {
-        return updateTargetTypes.size() > 0;
+    /**
+     * The output column the consumer would like the rows ordered by in a single direction, or -1.
+     */
+    public int getRequestedOrderColumnId() {
+        return requestedOrderColumnId;
+    }
+
+    public IntList getUpdateTargetTypes() {
+        return updateTargetTypes;
     }
 
     /**
@@ -71,12 +87,24 @@ public final class ProjectPlan extends UnaryPlan {
         return hasTimestampDeclaration;
     }
 
+    public boolean hasUpdateConversions() {
+        return updateTargetTypes.size() > 0;
+    }
+
     /**
      * True when the query text names none of the projection's columns: it stands for a bare table name, which SQL
      * reads as the table rather than as {@code SELECT *}.
      */
     public boolean isImplied() {
         return isImplied;
+    }
+
+    /**
+     * True when the generator drops the designated timestamp of a computing projection over a window join: in the
+     * order the SELECT list reads them, the master's columns do not keep the master timestamp at its position.
+     */
+    public boolean isTimestampDropped() {
+        return isTimestampDropped;
     }
 
     public void markImplied() {
@@ -87,12 +115,25 @@ public final class ProjectPlan extends UnaryPlan {
         hasTimestampDeclaration = true;
     }
 
-    public void setPrunedComputedColumns(boolean hasPrunedComputedColumns) {
-        this.hasPrunedComputedColumns = hasPrunedComputedColumns;
+    public void markTimestampDropped() {
+        isTimestampDropped = true;
     }
 
     public ProjectPlan of(LogicalPlan input, int position) {
         configure(input, position);
         return this;
+    }
+
+    public void setPrunedComputedColumns(boolean hasPrunedComputedColumns) {
+        this.hasPrunedComputedColumns = hasPrunedComputedColumns;
+    }
+
+    public void setRequestedOrderColumnId(int requestedOrderColumnId) {
+        this.requestedOrderColumnId = requestedOrderColumnId;
+    }
+
+    @Override
+    public void visitReads(PlanExpressionVisitor visitor) {
+        PlanReads.expressions(expressions, visitor);
     }
 }

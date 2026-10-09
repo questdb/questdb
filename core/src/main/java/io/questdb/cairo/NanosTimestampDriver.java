@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlCodeGenerator;
+import io.questdb.griffin.codegen.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;

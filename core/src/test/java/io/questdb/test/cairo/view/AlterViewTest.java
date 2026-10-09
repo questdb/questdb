@@ -111,7 +111,7 @@ public class AlterViewTest extends AbstractViewTest {
                             1970-01-01T00:01:10.000000Z\t7
                             1970-01-01T00:01:20.000000Z\t8
                             """,
-                    VIEW1, "ts", false, false,
+                    VIEW1, null, false, false,
                     """
                             QUERY PLAN
                             SelectedRecord
@@ -136,7 +136,7 @@ public class AlterViewTest extends AbstractViewTest {
                     "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
                     "{\"index\":1,\"name\":\"v\",\"type\":\"LONG\"}" +
                     "]," +
-                    "\"timestampIndex\":0" +
+                    "\"timestampIndex\":-1" +
                     "}");
         });
     }
@@ -245,7 +245,7 @@ public class AlterViewTest extends AbstractViewTest {
                             1970-01-01T00:01:10.000000Z\t7
                             1970-01-01T00:01:20.000000Z\t8
                             """,
-                    VIEW1, "ts", false, false,
+                    VIEW1, null, false, false,
                     """
                             QUERY PLAN
                             SelectedRecord
@@ -270,7 +270,7 @@ public class AlterViewTest extends AbstractViewTest {
                     "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
                     "{\"index\":1,\"name\":\"v\",\"type\":\"LONG\"}" +
                     "]," +
-                    "\"timestampIndex\":0" +
+                    "\"timestampIndex\":-1" +
                     "}");
         });
     }

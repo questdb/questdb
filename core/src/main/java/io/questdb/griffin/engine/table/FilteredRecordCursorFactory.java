@@ -100,11 +100,6 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public void halfClose() {
-        Misc.free(cursor);
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
     }

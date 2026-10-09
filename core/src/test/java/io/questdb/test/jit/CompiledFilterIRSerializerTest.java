@@ -371,7 +371,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testConstantArithFoldOnLongColumn() throws Exception {
         // The subtree is pure INT arithmetic, so it wraps exactly as the Java filter's
-        // FunctionParser#functionToConstant0 fold does ((int) 10000000000L = 1410065408). A LONG
+        // FunctionResolver#functionToConstant0 fold does ((int) 10000000000L = 1410065408). A LONG
         // column reads that IntConstant through getLong(), a plain sign extension here, so the
         // wrapped value is emitted as a single I8 IMM - the width the i64 peer compares at, and the
         // one that keeps the predicate on a vectorized loop.
@@ -397,7 +397,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     public void testConstantArithFoldVariousOps() throws Exception {
         // A constant subtree folds at its own DECLARED type. An operand outside the INT range makes
         // the subtree LONG, so it folds at full width; an all-INT one folds at INT width and wraps,
-        // exactly as FunctionParser#functionToConstant0 does. The comparison peer does not enter
+        // exactly as FunctionResolver#functionToConstant0 does. The comparison peer does not enter
         // into it - that is the whole point of the one-value rule.
         serialize("along > 5000000000 + 5000000000");
         assertIR("(i64 10000000000L)(i64 along)(>)(ret)");
@@ -562,6 +562,20 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // has nothing to do with the constant.
         options = serialize("along + anint * 2 > 5_000_000_000", false, false, true);
         assertOptionsHint("along + anint * 2 > 5_000_000_000", options, OptionsHint.SCALAR);
+    }
+
+    @Test
+    public void testInNullElementNonNullableNarrowKeyFoldDropsKeyWidth() throws Exception {
+        int options = serialize("anint = 1 and abyte in (null)", false, false, false);
+        assertIR("(i32 0L)(i32 1L)(=)(i32 1L)(i32 anint)(=)(&&)(ret)");
+        assertOptionsHint("anint = 1 and abyte in (null)", options, OptionsHint.SINGLE_SIZE);
+
+        options = serialize("anint = 1 or abyte in (null, null)", false, false, false);
+        assertIR("(i32 0L)(i32 1L)(=)(i32 0L)(i32 1L)(=)(||)(i32 1L)(i32 anint)(=)(||)(ret)");
+        assertOptionsHint("anint = 1 or abyte in (null, null)", options, OptionsHint.SINGLE_SIZE);
+
+        options = serialize("anint = 1 and abyte in (null, 1)", false, false, false);
+        assertOptionsHint("anint = 1 and abyte in (null, 1)", options, OptionsHint.MIXED_SIZES);
     }
 
     @Test
@@ -1396,20 +1410,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "short type is not nullable");
         }
-    }
-
-    @Test
-    public void testInNullElementNonNullableNarrowKeyFoldDropsKeyWidth() throws Exception {
-        int options = serialize("anint = 1 and abyte in (null)", false, false, false);
-        assertIR("(i32 0L)(i32 1L)(=)(i32 1L)(i32 anint)(=)(&&)(ret)");
-        assertOptionsHint("anint = 1 and abyte in (null)", options, OptionsHint.SINGLE_SIZE);
-
-        options = serialize("anint = 1 or abyte in (null, null)", false, false, false);
-        assertIR("(i32 0L)(i32 1L)(=)(i32 0L)(i32 1L)(=)(||)(i32 1L)(i32 anint)(=)(||)(ret)");
-        assertOptionsHint("anint = 1 or abyte in (null, null)", options, OptionsHint.SINGLE_SIZE);
-
-        options = serialize("anint = 1 and abyte in (null, 1)", false, false, false);
-        assertOptionsHint("anint = 1 and abyte in (null, 1)", options, OptionsHint.MIXED_SIZES);
     }
 
     @Test

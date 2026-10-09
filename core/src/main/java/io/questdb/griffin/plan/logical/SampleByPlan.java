@@ -39,6 +39,7 @@ public final class SampleByPlan extends GroupingPlan {
     public static final int FILL_VALUE = 4;
     private final ObjList<CharSequence> fillTokens = new ObjList<>();
     private final ObjList<BoundExpression> fillValues = new ObjList<>();
+    private Algorithm algorithm;
     private int fillMode;
     private BoundExpression from;
     private boolean isJoinInput;
@@ -58,6 +59,7 @@ public final class SampleByPlan extends GroupingPlan {
         super.clear();
         fillTokens.clear();
         fillValues.clear();
+        algorithm = null;
         fillMode = FILL_NONE;
         from = null;
         isJoinInput = false;
@@ -71,6 +73,13 @@ public final class SampleByPlan extends GroupingPlan {
         timestampColumnId = -1;
         timezone = null;
         to = null;
+    }
+
+    /**
+     * The SAMPLE BY factory order planning records for the node; null before planning.
+     */
+    public Algorithm getAlgorithm() {
+        return algorithm;
     }
 
     public int getFillMode() {
@@ -157,6 +166,10 @@ public final class SampleByPlan extends GroupingPlan {
         return this;
     }
 
+    public void setAlgorithm(Algorithm algorithm) {
+        this.algorithm = algorithm;
+    }
+
     public void setFillMode(int fillMode) {
         this.fillMode = fillMode;
     }
@@ -195,5 +208,27 @@ public final class SampleByPlan extends GroupingPlan {
 
     public void setTo(BoundExpression to) {
         this.to = to;
+    }
+
+    @Override
+    public void visitReads(PlanExpressionVisitor visitor) {
+        super.visitReads(visitor);
+        PlanReads.expressions(fillValues, visitor);
+        from = PlanReads.expression(from, visitor);
+        to = PlanReads.expression(to, visitor);
+        offset = PlanReads.expression(offset, visitor);
+        period = PlanReads.expression(period, visitor);
+        timezone = PlanReads.expression(timezone, visitor);
+        timestampColumnId = PlanReads.columnId(timestampColumnId, -1, visitor);
+    }
+
+    /**
+     * How the generator samples: interpolating a FILL(LINEAR); reading the first and last values of each bucket
+     * straight from the bitmap index of the single symbol key a table scan filters on, which order planning never
+     * picks over a table whose parquet partitions store a column under a converted type; or aggregating each bucket
+     * in the SAMPLE BY cursor, without a fill or filling keyless buckets with constants.
+     */
+    public enum Algorithm {
+        FILL_NONE, FILL_VALUE, FIRST_LAST_INDEX, INTERPOLATE
     }
 }

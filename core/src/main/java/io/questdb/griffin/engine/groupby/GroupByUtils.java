@@ -76,8 +76,6 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
-import io.questdb.griffin.engine.functions.groupby.SparklineGroupByFunction;
-import io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -409,18 +407,4 @@ public class GroupByUtils {
     public static void toTop(ObjList<? extends Function> args) {
         PerWorkerFunctionList.toTop(args);
     }
-
-    public static void validateTimestampOrder(
-            GroupByFunction function,
-            int timestampIndex,
-            boolean isBaseTimestampAscending,
-            int position
-    ) throws SqlException {
-        if (function instanceof TwapGroupByFunction twap) {
-            twap.validateTimestampArg(timestampIndex, isBaseTimestampAscending, position);
-        } else if (function instanceof SparklineGroupByFunction sparkline) {
-            sparkline.validateScanDirection(isBaseTimestampAscending, position);
-        }
-    }
-
 }

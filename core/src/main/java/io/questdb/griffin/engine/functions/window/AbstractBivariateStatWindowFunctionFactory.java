@@ -70,6 +70,11 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
     private static final ArrayColumnTypes BIVAR_OVER_PARTITION_RANGE_COLUMN_TYPES;
     private static final ArrayColumnTypes BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES;
 
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
     // Naive sum-of-products formula, used by sliding-window (removable) frames.
     static double computeCorr(double sumXY, double sumXX, double sumYY, double sumX, double sumY, long count) {
         if (count <= 1) {
@@ -125,11 +130,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         } else {
             return computeCovar(sumXY, sumX, sumY, count, isSample);
         }
-    }
-
-    @Override
-    public int getResultType(IntList argTypes) {
-        return ColumnType.DOUBLE;
     }
 
     @Override

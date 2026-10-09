@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
@@ -93,7 +94,7 @@ public class FunctionBinderTimestampFloorUtcTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             for (int type : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
                 final ObjList<Function> constructions = new ObjList<>();
-                final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache()) {
+                final FunctionParser parser = new FunctionParser(configuration, new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
                     @Override
                     public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
                                                    ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
@@ -101,7 +102,7 @@ public class FunctionBinderTimestampFloorUtcTest extends AbstractCairoTest {
                         constructions.add(function);
                         return function;
                     }
-                };
+                });
                 final OutputSchema input = new OutputSchema().add(1, "unused", ColumnType.INT, true)
                         .add(70, "ts", type, true);
                 final OutputSchema pruned = new OutputSchema().add(70, "renamed", type, true);
@@ -160,7 +161,7 @@ public class FunctionBinderTimestampFloorUtcTest extends AbstractCairoTest {
                     positions.add(i + 1);
                 }
                 try {
-                    parser.createFunction(descriptor, 0, "timestamp_floor_utc", args, positions, sqlExecutionContext);
+                    parser.getFunctionResolver().createFunction(descriptor, 0, "timestamp_floor_utc", args, positions, sqlExecutionContext);
                     Assert.fail("invalid timezone accepted");
                 } catch (SqlException e) {
                     Assert.assertEquals(5, e.getPosition());
@@ -212,28 +213,6 @@ public class FunctionBinderTimestampFloorUtcTest extends AbstractCairoTest {
         });
     }
 
-    private void assertFloor(int type, String unit, String offset, String timezone, String value, String expected) throws Exception {
-        final TimestampDriver driver = ColumnType.getTimestampDriver(type);
-        final OutputSchema input = new OutputSchema().add(70, "ts", type, true);
-        final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-        try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
-            final FunctionExpression expression = (FunctionExpression) binder.bind(
-                    floor(constant("'" + unit + "'"), literal("ts"), constant("null"),
-                            constant("'" + offset + "'"), constant("'" + timezone + "'")), input, null, sqlExecutionContext);
-            try (Function first = binder.instantiate(expression, input, sqlExecutionContext);
-                 Function second = binder.instantiate(expression, input, sqlExecutionContext)) {
-                Assert.assertEquals(type, first.getType());
-                first.init(null, sqlExecutionContext);
-                second.init(null, sqlExecutionContext);
-                final long timestamp = driver.parseFloorLiteral(value);
-                final long result = driver.parseFloorLiteral(expected);
-                Assert.assertEquals(result, first.getTimestamp(record(0, timestamp)));
-                Assert.assertEquals(result, second.getTimestamp(record(0, timestamp)));
-                Assert.assertEquals(Numbers.LONG_NULL, first.getTimestamp(record(0, Numbers.LONG_NULL)));
-            }
-        }
-    }
-
     private static ExpressionNode cast(ExpressionNode value, String type) {
         final ExpressionNode node = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, "cast", 0, 0);
         node.lhs = value;
@@ -274,6 +253,28 @@ public class FunctionBinderTimestampFloorUtcTest extends AbstractCairoTest {
 
     private static ExpressionNode variable(String value) {
         return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.BIND_VARIABLE, value, 0, 1);
+    }
+
+    private void assertFloor(int type, String unit, String offset, String timezone, String value, String expected) throws Exception {
+        final TimestampDriver driver = ColumnType.getTimestampDriver(type);
+        final OutputSchema input = new OutputSchema().add(70, "ts", type, true);
+        final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
+        try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
+            final FunctionExpression expression = (FunctionExpression) binder.bind(
+                    floor(constant("'" + unit + "'"), literal("ts"), constant("null"),
+                            constant("'" + offset + "'"), constant("'" + timezone + "'")), input, null, sqlExecutionContext);
+            try (Function first = binder.instantiate(expression, input, sqlExecutionContext);
+                 Function second = binder.instantiate(expression, input, sqlExecutionContext)) {
+                Assert.assertEquals(type, first.getType());
+                first.init(null, sqlExecutionContext);
+                second.init(null, sqlExecutionContext);
+                final long timestamp = driver.parseFloorLiteral(value);
+                final long result = driver.parseFloorLiteral(expected);
+                Assert.assertEquals(result, first.getTimestamp(record(0, timestamp)));
+                Assert.assertEquals(result, second.getTimestamp(record(0, timestamp)));
+                Assert.assertEquals(Numbers.LONG_NULL, first.getTimestamp(record(0, Numbers.LONG_NULL)));
+            }
+        }
     }
 
     private static class CountingTimestamp extends TimestampFunction {

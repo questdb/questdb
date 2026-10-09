@@ -30,6 +30,7 @@ import io.questdb.std.ObjectFactory;
 public final class LatestByPlan extends ForwardingPlan {
     public static final ObjectFactory<LatestByPlan> FACTORY = LatestByPlan::new;
     private final IntList keyColumnIds = new IntList();
+    private Algorithm algorithm;
     private boolean isTimestampOrderInherited;
     private int timestampColumnId = -1;
 
@@ -37,8 +38,17 @@ public final class LatestByPlan extends ForwardingPlan {
     public void clear() {
         super.clear();
         keyColumnIds.clear();
+        algorithm = null;
         isTimestampOrderInherited = false;
         timestampColumnId = -1;
+    }
+
+    /**
+     * How the generator finds the latest rows of a derived input, or null before order planning decided it or when
+     * the LATEST BY reads a table scan.
+     */
+    public Algorithm getAlgorithm() {
+        return algorithm;
     }
 
     public IntList getKeyColumnIds() {
@@ -59,7 +69,36 @@ public final class LatestByPlan extends ForwardingPlan {
         return this;
     }
 
+    public void setAlgorithm(Algorithm algorithm) {
+        this.algorithm = algorithm;
+    }
+
     public void setTimestampOrderInherited(boolean isTimestampOrderInherited) {
         this.isTimestampOrderInherited = isTimestampOrderInherited;
+    }
+
+    @Override
+    public void visitReads(PlanExpressionVisitor visitor) {
+        PlanReads.columnIds(keyColumnIds, null, visitor);
+        timestampColumnId = PlanReads.columnId(timestampColumnId, -1, visitor);
+    }
+
+    /**
+     * How the generator finds the latest rows of a derived input.
+     */
+    public enum Algorithm {
+        /**
+         * Keeps the row id of the latest row of each key of a random-access input.
+         */
+        LIGHT,
+        /**
+         * Keeps the row id of the latest row of each key of a random-access input that delivers the rows in ascending
+         * timestamp order, so the last row of a key is its latest.
+         */
+        ASCENDING_LIGHT,
+        /**
+         * Keeps a copy of the latest row of each key of an input without random access.
+         */
+        MATERIALIZED
     }
 }

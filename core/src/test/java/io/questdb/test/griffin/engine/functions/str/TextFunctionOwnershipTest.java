@@ -60,6 +60,30 @@ import org.junit.Test;
 
 public class TextFunctionOwnershipTest extends AbstractCairoTest {
     @Test
+    public void testCloseFailureDoesNotDoubleCloseDetachedOrRetainedArguments() throws Exception {
+        assertMemoryLeak(() -> {
+            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
+            final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(new ReplaceVarcharFunctionFactory());
+            for (boolean isReturnArgument : new boolean[]{false, true}) {
+                final CountingText value = new CountingText(true, !isReturnArgument);
+                final CountingText other = new CountingText(true, isReturnArgument);
+                final ObjList<Function> args = isReturnArgument
+                        ? new ObjList<>(value.asFunction(), VarcharConstant.EMPTY, other.asFunction())
+                        : new ObjList<>(value.asFunction(), other.asFunction(), VarcharConstant.NULL);
+                try (Function ignored = parser.getFunctionResolver().createFunction(descriptor, 0, "replace", args, new IntList(), sqlExecutionContext)) {
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "text argument close");
+                }
+                Assert.assertEquals(1, value.closeCount);
+                Assert.assertEquals(1, other.closeCount);
+                Assert.assertEquals(0, value.readCount);
+                Assert.assertEquals(0, other.readCount);
+            }
+        });
+    }
+
+    @Test
     public void testNullCountAndSearchReleaseDiscardedValue() throws Exception {
         assertMemoryLeak(() -> {
             final ObjList<FunctionFactory> factories = new ObjList<>(
@@ -82,27 +106,6 @@ public class TextFunctionOwnershipTest extends AbstractCairoTest {
                     Assert.assertEquals(0, value.readCount);
                 }
                 Assert.assertEquals(1, value.closeCount);
-            }
-        });
-    }
-
-    @Test
-    public void testSubstringNullAndEmptyBranchesReleaseAllArguments() throws Exception {
-        assertMemoryLeak(() -> {
-            final ObjList<FunctionFactory> factories = new ObjList<>(new SubStringFunctionFactory(), new SubStringVarcharFunctionFactory());
-            for (int i = 0; i < factories.size(); i++) {
-                for (int length : new int[]{0, Numbers.INT_NULL}) {
-                    final CountingText value = new CountingText(i == 1, false);
-                    try (Function result = factories.getQuick(i).newInstance(0,
-                            new ObjList<>(value.asFunction(), IntConstant.newInstance(1), IntConstant.newInstance(length)),
-                            new IntList(), configuration, sqlExecutionContext)) {
-                        Assert.assertEquals(ColumnType.STRING, result.getType());
-                        Assert.assertEquals(length == 0 ? "" : null, result.getStrA(null));
-                        Assert.assertEquals(1, value.closeCount);
-                        Assert.assertEquals(0, value.readCount);
-                    }
-                    Assert.assertEquals(1, value.closeCount);
-                }
             }
         });
     }
@@ -149,25 +152,22 @@ public class TextFunctionOwnershipTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCloseFailureDoesNotDoubleCloseDetachedOrRetainedArguments() throws Exception {
+    public void testSubstringNullAndEmptyBranchesReleaseAllArguments() throws Exception {
         assertMemoryLeak(() -> {
-            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-            final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(new ReplaceVarcharFunctionFactory());
-            for (boolean isReturnArgument : new boolean[]{false, true}) {
-                final CountingText value = new CountingText(true, !isReturnArgument);
-                final CountingText other = new CountingText(true, isReturnArgument);
-                final ObjList<Function> args = isReturnArgument
-                        ? new ObjList<>(value.asFunction(), VarcharConstant.EMPTY, other.asFunction())
-                        : new ObjList<>(value.asFunction(), other.asFunction(), VarcharConstant.NULL);
-                try (Function ignored = parser.createFunction(descriptor, 0, "replace", args, new IntList(), sqlExecutionContext)) {
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "text argument close");
+            final ObjList<FunctionFactory> factories = new ObjList<>(new SubStringFunctionFactory(), new SubStringVarcharFunctionFactory());
+            for (int i = 0; i < factories.size(); i++) {
+                for (int length : new int[]{0, Numbers.INT_NULL}) {
+                    final CountingText value = new CountingText(i == 1, false);
+                    try (Function result = factories.getQuick(i).newInstance(0,
+                            new ObjList<>(value.asFunction(), IntConstant.newInstance(1), IntConstant.newInstance(length)),
+                            new IntList(), configuration, sqlExecutionContext)) {
+                        Assert.assertEquals(ColumnType.STRING, result.getType());
+                        Assert.assertEquals(length == 0 ? "" : null, result.getStrA(null));
+                        Assert.assertEquals(1, value.closeCount);
+                        Assert.assertEquals(0, value.readCount);
+                    }
+                    Assert.assertEquals(1, value.closeCount);
                 }
-                Assert.assertEquals(1, value.closeCount);
-                Assert.assertEquals(1, other.closeCount);
-                Assert.assertEquals(0, value.readCount);
-                Assert.assertEquals(0, other.readCount);
             }
         });
     }

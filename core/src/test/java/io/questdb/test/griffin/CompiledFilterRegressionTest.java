@@ -1620,7 +1620,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertQueryNotNullNoLeakCheck("x where i16 > (1_000_000 * 1_000_000) / 7");
             assertQueryNotNullNoLeakCheck("x where i32 > (1_000_000 * 1_000_000) / 7");
             // The LONG comparison reads the SAME INT-width fold, not a long-width one: DivInt
-            // is an IntFunction, so FunctionParser#functionToConstant0 folds the subtree to
+            // is an IntFunction, so FunctionResolver#functionToConstant0 folds the subtree to
             // IntConstant(-103_911_424) and IntFunction#getLong sign-extends that wrap onto the
             // i64 lane. Every i64 row (>= -99) exceeds it, so this line pins rows exactly like
             // its narrow siblings; a revert to a long-width fold (142_857_142_857) returns none.
@@ -6419,7 +6419,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             // is fail-closed on subtree SHAPE, so these decline too. Underscore separators are the
             // style CLAUDE.md mandates and arithExprType reads them through Numbers.parseInt,
             // while Numbers.parseDouble rejects them; 'd'/'D' suffixes are accepted by
-            // FunctionParser.createConstant but unknown to floatConstantTypeCode. Both used to
+            // FunctionResolver.createConstant but unknown to floatConstantTypeCode. Both used to
             // slip past the guard and return every row on the JIT.
             assertJitMatchesJava("nf where d <= 1_000_000_000 * 1e300", false,
                     "d\tf\tk\n" +

@@ -50,6 +50,7 @@ public final class JoinInput implements Mutable {
     private final OutputSchema output = new OutputSchema();
     private final IntList slaveKeyColumnIds = new IntList();
     private final ObjList<CharSequence> slaveKeyNames = new ObjList<>();
+    private Algorithm algorithm;
     private CharSequence bindingAlias;
     private int hints;
     private LogicalPlan input;
@@ -59,11 +60,28 @@ public final class JoinInput implements Mutable {
     private BoundExpression keyFilter;
     private int markoutSequenceColumnId = -1;
     private int markoutTimestampColumnId = -1;
+    private MasterSide masterSide;
     private BoundExpression onResidual;
     private int position = -1;
     private BoundExpression postJoinFilter;
     private long toleranceInterval = Numbers.LONG_NULL;
     private UnnestSpec unnest;
+
+    /**
+     * Keys the step on a master and a slave column unless it already is.
+     */
+    public void addKey(int masterId, int slaveId, CharSequence masterName, CharSequence slaveName, int position) {
+        for (int i = 0, n = masterKeyColumnIds.size(); i < n; i++) {
+            if (masterKeyColumnIds.getQuick(i) == masterId && slaveKeyColumnIds.getQuick(i) == slaveId) {
+                return;
+            }
+        }
+        masterKeyColumnIds.add(masterId);
+        slaveKeyColumnIds.add(slaveId);
+        masterKeyNames.add(masterName);
+        slaveKeyNames.add(slaveName);
+        keyPositions.add(position);
+    }
 
     @Override
     public void clear() {
@@ -73,6 +91,7 @@ public final class JoinInput implements Mutable {
         output.clear();
         slaveKeyColumnIds.clear();
         slaveKeyNames.clear();
+        algorithm = null;
         bindingAlias = null;
         hints = 0;
         input = null;
@@ -82,11 +101,19 @@ public final class JoinInput implements Mutable {
         joinType = null;
         markoutSequenceColumnId = -1;
         markoutTimestampColumnId = -1;
+        masterSide = null;
         onResidual = null;
         position = -1;
         postJoinFilter = null;
         toleranceInterval = Numbers.LONG_NULL;
         unnest = null;
+    }
+
+    /**
+     * How the generator joins this step to its master, or null before order planning decided it.
+     */
+    public Algorithm getAlgorithm() {
+        return algorithm;
     }
 
     public CharSequence getBindingAlias() {
@@ -133,6 +160,13 @@ public final class JoinInput implements Mutable {
 
     public ObjList<CharSequence> getMasterKeyNames() {
         return masterKeyNames;
+    }
+
+    /**
+     * Which input drives the step, or null before order planning decided it.
+     */
+    public MasterSide getMasterSide() {
+        return masterSide;
     }
 
     public BoundExpression getOnResidual() {
@@ -207,6 +241,15 @@ public final class JoinInput implements Mutable {
         return this;
     }
 
+    /**
+     * Records the algorithm; the master side of a light INNER hash join stays undecided until order planning decides
+     * it.
+     */
+    public void setAlgorithm(Algorithm algorithm) {
+        this.algorithm = algorithm;
+        masterSide = algorithm == Algorithm.LIGHT_HASH && joinType == JoinKind.INNER ? null : MasterSide.FIXED;
+    }
+
     public void setDependent(boolean isDependent) {
         this.isDependent = isDependent;
     }
@@ -230,6 +273,10 @@ public final class JoinInput implements Mutable {
     public void setMarkout(int timestampColumnId, int sequenceColumnId) {
         markoutTimestampColumnId = timestampColumnId;
         markoutSequenceColumnId = sequenceColumnId;
+    }
+
+    public void setMasterSide(MasterSide masterSide) {
+        this.masterSide = masterSide;
     }
 
     public void setOnResidual(BoundExpression onResidual) {
@@ -257,5 +304,83 @@ public final class JoinInput implements Mutable {
         if (dot > -1) {
             slaveKeyNames.setQuick(index, name.subSequence(dot + 1, name.length()));
         }
+    }
+
+    void visitReads(PlanExpressionVisitor visitor) {
+        if (unnest != null) {
+            unnest.visitReads(visitor);
+        }
+        PlanReads.columnIds(masterKeyColumnIds, keyPositions, visitor);
+        PlanReads.columnIds(slaveKeyColumnIds, keyPositions, visitor);
+        keyFilter = PlanReads.expression(keyFilter, visitor);
+        onResidual = PlanReads.expression(onResidual, visitor);
+        postJoinFilter = PlanReads.expression(postJoinFilter, visitor);
+        markoutTimestampColumnId = PlanReads.columnId(markoutTimestampColumnId, -1, visitor);
+        markoutSequenceColumnId = PlanReads.columnId(markoutSequenceColumnId, -1, visitor);
+    }
+
+    /**
+     * How the generator joins a step to its master.
+     */
+    public enum Algorithm {
+        /**
+         * Pairs every master row with every slave row that passes the join condition.
+         */
+        NESTED_LOOP,
+        /**
+         * Hashes copies of the slave rows by key.
+         */
+        HASH,
+        /**
+         * Hashes the row ids of a random-access slave by key.
+         */
+        LIGHT_HASH,
+        /**
+         * Expands each master row over a long_sequence() slave of horizon offsets, in master timestamp order.
+         */
+        MARKOUT,
+        /**
+         * An ASOF or LT join that scans a random-access slave linearly and reads it back by row id.
+         */
+        TEMPORAL,
+        /**
+         * An ASOF or LT join that navigates the time frames of its slave.
+         */
+        TEMPORAL_TIME_FRAME,
+        /**
+         * An ASOF join that applies the filter of its slave itself, while it reads the time frames under that filter.
+         */
+        TEMPORAL_STOLEN_FILTER,
+        /**
+         * An ASOF or LT join that keeps copies of the slave rows.
+         */
+        FULL_FAT_TEMPORAL,
+        /**
+         * A SPLICE join.
+         */
+        SPLICE,
+        /**
+         * A SPLICE join under full-fat joins, which the generator rejects.
+         */
+        FULL_FAT_SPLICE,
+        /**
+         * Expands each master row by the UNNEST expressions.
+         */
+        UNNEST
+    }
+
+    /**
+     * The input a join step drives the join with.
+     */
+    public enum MasterSide {
+        /**
+         * Always the master, so the step emits rows in the master's order.
+         */
+        FIXED,
+        /**
+         * The smaller of the two inputs at execution; the step then emits rows in either input's order and declares no
+         * designated timestamp.
+         */
+        SMALLER
     }
 }

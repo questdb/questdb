@@ -71,7 +71,6 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
             boolean isOrdered,
             int orderByDirection,
             int orderByPos,
-            boolean baseSupportsRandomAccess,
             int framingMode,
             long rowsLo,
             char rowsLoUnit,

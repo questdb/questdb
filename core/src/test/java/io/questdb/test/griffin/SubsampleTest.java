@@ -6219,7 +6219,6 @@ public class SubsampleTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000040Z\t4\t800
                     """;
             assertQuery("SELECT s.ts, s.x, e.label FROM (SELECT ts, x FROM t SUBSAMPLE uniform(2)) s JOIN tse e ON e.ts = s.ts")
-                    .timestamp("ts")
                     .noRandomAccess()
                     .returns(innerExpected);
             assertQuery("SELECT s.ts, s.x, e.label FROM (SELECT ts, x FROM t SUBSAMPLE uniform(2)) s TIMESTAMP(ts) JOIN tse e ON e.ts = s.ts")

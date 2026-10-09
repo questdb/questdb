@@ -2244,7 +2244,7 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillValueWithSumMinusConstantOverFill() throws Exception {
-        // AggregateRewritePass would normally split sum(c - K) into sum(c) -
+        // AggregateRewrite would normally split sum(c - K) into sum(c) -
         // count(*) * K when K is an integer constant. Under SAMPLE BY FILL the rewrite
         // is unsafe: the per-aggregate FILL value would land on both inner aggregates
         // and the outer arithmetic would yield v - v * K instead of the user-visible

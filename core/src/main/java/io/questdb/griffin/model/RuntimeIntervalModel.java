@@ -86,9 +86,26 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         this.partitionBy = partitionBy;
     }
 
+    /**
+     * Whether a model with these intervals reads at most one partition; a model with dynamic intervals never claims it.
+     */
+    public static boolean allIntervalsHitOnePartition(TimestampDriver timestampDriver, int partitionBy, LongList intervals, boolean isStatic) {
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            return true;
+        }
+        if (!isStatic) {
+            return false;
+        }
+        if (intervals.size() == 0) {
+            return true;
+        }
+        final TimestampDriver.TimestampFloorMethod floorMethod = timestampDriver.getPartitionFloorMethod(partitionBy);
+        return floorMethod.floor(intervals.getQuick(0)) == floorMethod.floor(intervals.getLast());
+    }
+
     @Override
     public boolean allIntervalsHitOnePartition() {
-        return !PartitionBy.isPartitioned(partitionBy) || allIntervalsHitOnePartition(timestampDriver.getPartitionFloorMethod(partitionBy));
+        return allIntervalsHitOnePartition(timestampDriver, partitionBy, intervals, isStatic());
     }
 
     @Override
@@ -447,17 +464,6 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         if (unionRunStart >= 0) {
             mergePendingUnionRun(outIntervals, unionRunStart);
         }
-    }
-
-    private boolean allIntervalsHitOnePartition(TimestampDriver.TimestampFloorMethod floorMethod) {
-        if (!isStatic()) {
-            return false;
-        }
-        if (intervals.size() == 0) {
-            return true;
-        }
-
-        return floorMethod.floor(intervals.getQuick(0)) == floorMethod.floor(intervals.getLast());
     }
 
     private void applyInterval(LongList outIntervals, Interval interval) {

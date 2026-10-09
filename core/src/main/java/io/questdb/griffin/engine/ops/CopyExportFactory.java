@@ -146,7 +146,13 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
                 CairoEngine engine = executionContext.getCairoEngine();
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    CompiledQuery selectQuery = compiler.compile(resolvedSelectText, executionContext);
+                    final CompiledQuery selectQuery;
+                    executionContext.pushTimestampRequiredFlag(partitionBy != -1 && partitionBy != PartitionBy.NONE);
+                    try {
+                        selectQuery = compiler.compile(resolvedSelectText, executionContext);
+                    } finally {
+                        executionContext.popTimestampRequiredFlag();
+                    }
                     if (selectQuery.getType() != CompiledQuery.SELECT) {
                         selectQuery.closeAllButSelect();
                         throw SqlException.$(0, "Copy command only accepts SELECT queries");

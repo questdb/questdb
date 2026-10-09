@@ -1484,31 +1484,32 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGroupByTrivialExpressionKeyReferencedByAlias() throws Exception {
-        // AggregateRewritePass drops a trivial key such as 859371 + (cnt * -237288)
-        // when its base column (cnt) is also a key, and computes it above the
-        // aggregate. A GROUP BY that names the dropped key by its alias must still bind.
+    public void testGroupByTrivialExpressionKeyBesideUnaryKey() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE fuzz_t1 (c4 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO fuzz_t1 VALUES (1, 0), (2, 1000), (1, 2000)");
-            String expected = """
-                    e0\te1\ta0
-                    1\t622083\t1
-                    2\t384795\t1
-                    """;
-            String body = "FROM (SELECT c4 AS k, count() AS cnt FROM fuzz_t1) t0\n";
-            // alias reference in GROUP BY - the shape the query fuzzer hit
-            assertQuery("SELECT t0.cnt AS e0, (859371 + (t0.cnt * -237288)) AS e1, count() AS a0\n"
-                    + body + "GROUP BY t0.cnt, e1 ORDER BY 1 ASC, e1")
+            execute("CREATE TABLE t (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 0), (2, 1000), (1, 2000)");
+            assertQuery("SELECT a, a + 1, -a, count() FROM t GROUP BY a, a + 1, -a ORDER BY a")
                     .expectSize()
                     .noLeakCheck()
-                    .returns(expected);
-            // and the same query spelling out the expression in GROUP BY
-            assertQuery("SELECT t0.cnt AS e0, (859371 + (t0.cnt * -237288)) AS e1, count() AS a0\n"
-                    + body + "GROUP BY t0.cnt, (859371 + (t0.cnt * -237288)) ORDER BY 1 ASC, e1")
-                    .expectSize()
-                    .noLeakCheck()
-                    .returns(expected);
+                    .withPlan("""
+                            Encode sort light
+                              keys: [a]
+                                VirtualRecord
+                                  functions: [a,a+1,column1,count]
+                                    Async Group By workers: 1
+                                      keys: [a,column1]
+                                      keyFunctions: [-a]
+                                      values: [count(*)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
+                    .returns("""
+                            a\tcolumn\tcolumn1\tcount
+                            1\t2\t-1\t2
+                            2\t3\t-2\t1
+                            """);
         });
     }
 
@@ -1541,32 +1542,31 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGroupByTrivialExpressionKeyBesideUnaryKey() throws Exception {
+    public void testGroupByTrivialExpressionKeyReferencedByAlias() throws Exception {
+        // AggregateRewrite drops a trivial key such as 859371 + (cnt * -237288)
+        // when its base column (cnt) is also a key, and computes it above the
+        // aggregate. A GROUP BY that names the dropped key by its alias must still bind.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES (1, 0), (2, 1000), (1, 2000)");
-            assertQuery("SELECT a, a + 1, -a, count() FROM t GROUP BY a, a + 1, -a ORDER BY a")
+            execute("CREATE TABLE fuzz_t1 (c4 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO fuzz_t1 VALUES (1, 0), (2, 1000), (1, 2000)");
+            String expected = """
+                    e0\te1\ta0
+                    1\t622083\t1
+                    2\t384795\t1
+                    """;
+            String body = "FROM (SELECT c4 AS k, count() AS cnt FROM fuzz_t1) t0\n";
+            // alias reference in GROUP BY - the shape the query fuzzer hit
+            assertQuery("SELECT t0.cnt AS e0, (859371 + (t0.cnt * -237288)) AS e1, count() AS a0\n"
+                    + body + "GROUP BY t0.cnt, e1 ORDER BY 1 ASC, e1")
                     .expectSize()
                     .noLeakCheck()
-                    .withPlan("""
-                            Encode sort light
-                              keys: [a]
-                                VirtualRecord
-                                  functions: [a,a+1,column1,count]
-                                    Async Group By workers: 1
-                                      keys: [a,column1]
-                                      keyFunctions: [-a]
-                                      values: [count(*)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t
-                            """)
-                    .returns("""
-                            a\tcolumn\tcolumn1\tcount
-                            1\t2\t-1\t2
-                            2\t3\t-2\t1
-                            """);
+                    .returns(expected);
+            // and the same query spelling out the expression in GROUP BY
+            assertQuery("SELECT t0.cnt AS e0, (859371 + (t0.cnt * -237288)) AS e1, count() AS a0\n"
+                    + body + "GROUP BY t0.cnt, (859371 + (t0.cnt * -237288)) ORDER BY 1 ASC, e1")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 

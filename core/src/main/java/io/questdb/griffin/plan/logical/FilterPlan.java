@@ -30,12 +30,22 @@ import java.util.Objects;
 
 public final class FilterPlan extends ForwardingPlan {
     public static final ObjectFactory<FilterPlan> FACTORY = FilterPlan::new;
+    private Algorithm algorithm;
     private BoundExpression predicate;
 
     @Override
     public void clear() {
         super.clear();
+        algorithm = null;
         predicate = null;
+    }
+
+    /**
+     * How the generator executes the filter over its input, which order planning records; null for a filter fused
+     * into the scan under it, whose scan records it, and for a predicate the generator folds or gates once.
+     */
+    public Algorithm getAlgorithm() {
+        return algorithm;
     }
 
     public BoundExpression getPredicate() {
@@ -46,5 +56,23 @@ public final class FilterPlan extends ForwardingPlan {
         configure(input, position);
         this.predicate = Objects.requireNonNull(predicate);
         return this;
+    }
+
+    public void setAlgorithm(Algorithm algorithm) {
+        this.algorithm = algorithm;
+    }
+
+    @Override
+    public void visitReads(PlanExpressionVisitor visitor) {
+        predicate = PlanReads.expression(predicate, visitor);
+    }
+
+    /**
+     * How the generator executes a filter: on one thread, in parallel over the page frames of the factory under it,
+     * where it applies the LIMIT it is given, or, for the keep flag of SUBSAMPLE, within the light cached window under
+     * it, which selects the rows its sole row-selecting function keeps.
+     */
+    public enum Algorithm {
+        PARALLEL, SERIAL, WINDOW_KEEP_FLAG
     }
 }

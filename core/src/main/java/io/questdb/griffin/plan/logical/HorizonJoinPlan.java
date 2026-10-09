@@ -111,4 +111,11 @@ public final class HorizonJoinPlan extends LogicalPlan {
             slaves.getQuick(index - 1).setInput(input);
         }
     }
+
+    @Override
+    public void visitReads(PlanExpressionVisitor visitor) {
+        for (int i = 0, n = slaves.size(); i < n; i++) {
+            slaves.getQuick(i).visitReads(visitor);
+        }
+    }
 }

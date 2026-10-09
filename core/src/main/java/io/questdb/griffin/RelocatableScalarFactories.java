@@ -438,7 +438,12 @@ import io.questdb.std.ObjHashSet;
 /**
  * The audited scalar function factories whose construction depends only on their typed arguments: a private leaf
  * may relocate before adoption and a selected call may be constructed again. A factory qualifies by its exact class;
- * the cache's argument-swapping and negating aliases inherit the flag from their source descriptor.
+ * the cache's argument-swapping and negating aliases inherit the flag from their source descriptor. Over arguments
+ * that are neither random nor without random access, a factory builds a function that is neither, so a call the
+ * binder leaves unconstructed records neither {@link io.questdb.griffin.plan.logical.BoundExpression#RANDOM} nor
+ * {@link io.questdb.griffin.plan.logical.BoundExpression#NO_RANDOM_ACCESS}. Such a call records
+ * {@link io.questdb.griffin.plan.logical.BoundExpression#NO_PARALLELISM} exactly when it returns SYMBOL, whose functions
+ * never support parallelism, or when an argument records it, which the function inherits.
  */
 final class RelocatableScalarFactories {
     private static final ObjHashSet<Class<? extends FunctionFactory>> FACTORIES = new ObjHashSet<>();

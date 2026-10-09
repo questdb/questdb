@@ -827,7 +827,7 @@ public final class QueryRunner {
      * into the async filter (those two factories are the only ones that render it).
      * <p>
      * The optimiser introduces this limit not only for an explicit {@code LIMIT}
-     * but also implicitly: {@code TimestampEndpointPass.limitEndpointInputs}
+     * but also implicitly: {@code TimestampEndpointLimit.limitEndpointInputs}
      * rewrites a lone {@code min} / {@code max} / {@code first} / {@code last} over
      * the designated timestamp (e.g. {@code SELECT max(ts) FROM t WHERE ...}) into
      * an {@code ORDER BY ts [DESC] LIMIT 1} scan, whose SQL text carries no

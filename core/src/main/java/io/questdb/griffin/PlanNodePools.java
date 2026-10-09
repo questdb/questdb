@@ -68,49 +68,52 @@ import io.questdb.std.ObjectPool;
  * that contains it consumes them. {@link #syntheticNodes} and {@link #staticTypes} live for one binding call instead: the call takes a
  * mark on entry and rewinds to it on exit, so a sub-query bound inside the call releases only its own. Between
  * statements a pool of bound expressions keeps at most the configured expression pool capacity and a pool of plan
- * nodes at most the configured model pool capacity.
+ * nodes at most the configured model pool capacity. The pools also number the columns the nodes define: an id is
+ * unique across the statement, whichever query level or pass allocates it, so a plan can refer to any column of the
+ * statement and a subtree can move between levels without renumbering.
  */
-final class PlanNodePools implements Mutable {
-    final ObjectPool<AggregatePlan> aggregates;
-    final ObjectPool<ColumnExpression> columns;
-    final ObjectPool<ConstantExpression> constants;
-    final ObjectPool<CursorExpression> cursors;
-    final ObjectPool<DistinctPlan> distincts;
-    final ObjectPool<FillPlan> fills;
-    final ObjectPool<FilterPlan> filters;
-    final ObjectPool<FunctionSourcePlan> functionSources;
-    final ObjectPool<FunctionExpression> functions;
-    final ObjectPool<HorizonJoinPlan> horizonJoinPlans;
-    final ObjectPool<HorizonJoinSlave> horizonJoinSlaves;
+public final class PlanNodePools implements Mutable {
+    public final ObjectPool<AggregatePlan> aggregates;
+    public final ObjectPool<ColumnExpression> columns;
+    public final ObjectPool<ConstantExpression> constants;
+    public final ObjectPool<CursorExpression> cursors;
+    public final ObjectPool<DistinctPlan> distincts;
+    public final ObjectPool<FillPlan> fills;
+    public final ObjectPool<FilterPlan> filters;
+    public final ObjectPool<FunctionSourcePlan> functionSources;
+    public final ObjectPool<FunctionExpression> functions;
+    public final ObjectPool<HorizonJoinPlan> horizonJoinPlans;
+    public final ObjectPool<HorizonJoinSlave> horizonJoinSlaves;
     final ObjectPool<JoinDependency> joinDependencies;
     final ObjectPool<JoinEquality> joinEqualities;
-    final ObjectPool<JoinGraph> joinGraphs;
-    final ObjectPool<JoinInput> joinInputs;
-    final ObjectPool<JoinPlan> joins;
-    final ObjectPool<LatestByPlan> latestByPlans;
-    final ObjectPool<LimitPlan> limits;
-    final int maxRetainedExpressions;
+    public final ObjectPool<JoinGraph> joinGraphs;
+    public final ObjectPool<JoinInput> joinInputs;
+    public final ObjectPool<JoinPlan> joins;
+    public final ObjectPool<LatestByPlan> latestByPlans;
+    public final ObjectPool<LimitPlan> limits;
+    public final int maxRetainedExpressions;
     final int maxRetainedJoinContexts;
-    final ObjectPool<OuterColumnExpression> outerColumns;
-    final ObjectPool<BindVariableExpression> parameters;
-    final ObjectPool<ProjectPlan> projects;
-    final ObjectPool<SampleByPlan> sampleByPlans;
-    final ObjectPool<ScanPlan> scans;
-    final ObjectPool<SetOperationPlan> setOperations;
-    final ObjectPool<SortPlan> sorts;
-    final ObjectPool<StaticTypeFunction> staticTypes;
+    public final ObjectPool<OuterColumnExpression> outerColumns;
+    public final ObjectPool<BindVariableExpression> parameters;
+    public final ObjectPool<ProjectPlan> projects;
+    public final ObjectPool<SampleByPlan> sampleByPlans;
+    public final ObjectPool<ScanPlan> scans;
+    public final ObjectPool<SetOperationPlan> setOperations;
+    public final ObjectPool<SortPlan> sorts;
+    public final ObjectPool<StaticTypeFunction> staticTypes;
     final ObjectPool<Subquery> subqueries;
-    final ObjectPool<ExpressionNode> syntheticNodes;
-    final ObjectPool<TypeExpression> types;
-    final WindowExpression unboundedWindow = WindowExpression.FACTORY.newInstance();
-    final ObjectPool<UnnestSpec> unnestSpecs;
-    final ObjectPool<WindowJoinPlan> windowJoinPlans;
-    final ObjectPool<WindowJoinStep> windowJoinSteps;
-    final ObjectPool<WindowPlan> windowPlans;
-    final ObjectPool<WindowSpec> windowSpecs;
-    final ObjectPool<WindowExpression> windowSyntax;
+    public final ObjectPool<ExpressionNode> syntheticNodes;
+    public final ObjectPool<TypeExpression> types;
+    public final WindowExpression unboundedWindow = WindowExpression.FACTORY.newInstance();
+    public final ObjectPool<UnnestSpec> unnestSpecs;
+    public final ObjectPool<WindowJoinPlan> windowJoinPlans;
+    public final ObjectPool<WindowJoinStep> windowJoinSteps;
+    public final ObjectPool<WindowPlan> windowPlans;
+    public final ObjectPool<WindowSpec> windowSpecs;
+    public final ObjectPool<WindowExpression> windowSyntax;
+    private int nextColumnId;
 
-    PlanNodePools(CairoConfiguration configuration) {
+    public PlanNodePools(CairoConfiguration configuration) {
         final int expressionCapacity = configuration.getSqlExpressionPoolCapacity();
         final int planCapacity = configuration.getSqlModelPoolCapacity();
         this.maxRetainedExpressions = expressionCapacity;
@@ -182,13 +185,14 @@ final class PlanNodePools implements Mutable {
         windowPlans.clear();
         windowSpecs.clear();
         windowSyntax.clear();
+        nextColumnId = 0;
     }
 
     /**
      * Recycles the bound expressions and the sub-queries they read while the plan nodes stay: a standalone expression
      * keeps only the function it instantiated.
      */
-    void clearExpressions() {
+    public void clearExpressions() {
         columns.clear();
         constants.clear();
         cursors.clear();
@@ -199,7 +203,14 @@ final class PlanNodePools implements Mutable {
         types.clear();
     }
 
-    void rewindSyntheticNodes(int mark) {
+    /**
+     * Allocates a column id no other column of the statement has.
+     */
+    public int nextColumnId() {
+        return nextColumnId++;
+    }
+
+    public void rewindSyntheticNodes(int mark) {
         syntheticNodes.rewind(mark);
     }
 }

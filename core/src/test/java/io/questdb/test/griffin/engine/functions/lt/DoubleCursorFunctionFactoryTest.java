@@ -988,13 +988,10 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
             );
             final String query = "SELECT qty + alloc(32) > (SELECT max(price) FROM t) k, avg(price) a " +
                     "FROM t WHERE test_fault() GROUP BY k";
-            // test_fault() compiles five times before the keyed group-by clones the stolen
-            // filter: once for the owner filter and four times for the async filter factory's
-            // worker clones (FilterFactoryGenerator builds those before the group-by steals the
-            // filter). The keyed group-by then compiles the per-worker projection clones and
-            // re-clones the filter once per worker; fail on the second of those, after every
-            // projection clone compiled
-            TestFaultFunctionFactory.armToFailAfterCompiles(6);
+            // test_fault() compiles once for the owner filter. The keyed group-by then compiles
+            // the per-worker projection clones and clones the filter it applies once per worker;
+            // fail on the second filter clone, after every projection clone compiled
+            TestFaultFunctionFactory.armToFailAfterCompiles(2);
             try {
                 compiler.compile(query, ctx);
                 Assert.fail("compilation should have failed with the injected fault");

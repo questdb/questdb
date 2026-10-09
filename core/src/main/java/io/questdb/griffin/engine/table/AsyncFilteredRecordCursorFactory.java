@@ -143,8 +143,8 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                 Misc.freeObjList(perWorkerFilters, th);
             }
             // The cursors are not open yet, and close() frees their records only once they are, so
-            // release the records directly - the same call halfClose() makes on the open factory.
-            halfCloseBestEffort(th, frameSequence, cursor, negativeLimitCursor);
+            // release the records directly.
+            freeExecutionStateBestEffort(th, frameSequence, cursor, negativeLimitCursor);
             Misc.free(filter, th);
             Misc.free(limitLoFunction, th);
             Misc.free(base, th);
@@ -157,6 +157,18 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         this.maxNegativeLimit = maxNegativeLimit;
         this.limitLoFunction = limitLoFunction;
         this.workerCount = workerCount;
+    }
+
+    /**
+     * Test-only entry point for exercising execution-state cleanup failure handling without exposing concrete cursors.
+     */
+    @TestOnly
+    public static void freeExecutionStateForTesting(
+            Closeable frameSequence,
+            RecordFreer cursor,
+            RecordFreer negativeLimitCursor
+    ) {
+        freeExecutionState(frameSequence, cursor, negativeLimitCursor);
     }
 
     @Override
@@ -251,11 +263,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public void halfClose() {
-        halfClose(frameSequence, cursor, negativeLimitCursor);
-    }
-
-    @Override
     public boolean implementsLimit() {
         return limitLoFunction != null;
     }
@@ -314,18 +321,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         }
         sink.attr("filter").val(frameSequence.getAtom());
         sink.child(base, order);
-    }
-
-    /**
-     * Test-only entry point for exercising half-close failure handling without exposing concrete cursors.
-     */
-    @TestOnly
-    public static void halfCloseForTesting(
-            Closeable frameSequence,
-            RecordFreer cursor,
-            RecordFreer negativeLimitCursor
-    ) {
-        halfClose(frameSequence, cursor, negativeLimitCursor);
     }
 
     private static void filter(
@@ -394,15 +389,15 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         }
     }
 
-    private static void halfClose(
+    private static void freeExecutionState(
             Closeable frameSequence,
             RecordFreer cursor,
             RecordFreer negativeLimitCursor
     ) {
-        CairoException.rethrowCleanupFailure(halfCloseBestEffort(null, frameSequence, cursor, negativeLimitCursor));
+        CairoException.rethrowCleanupFailure(freeExecutionStateBestEffort(null, frameSequence, cursor, negativeLimitCursor));
     }
 
-    private static Throwable halfCloseBestEffort(
+    private static Throwable freeExecutionStateBestEffort(
             Throwable cleanupFailure,
             @Nullable Closeable frameSequence,
             @Nullable RecordFreer cursor,
@@ -435,7 +430,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     /**
-     * Test-only abstraction for observable record cleanup in {@link #halfCloseForTesting}.
+     * Test-only abstraction for observable record cleanup in {@link #freeExecutionStateForTesting}.
      */
     @FunctionalInterface
     @TestOnly
@@ -465,7 +460,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
 
         Throwable cleanupFailure = Misc.freeBestEffort(null, base);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, negativeLimitRows);
-        cleanupFailure = halfCloseBestEffort(cleanupFailure, frameSequence, cursor, negativeLimitCursor);
+        cleanupFailure = freeExecutionStateBestEffort(cleanupFailure, frameSequence, cursor, negativeLimitCursor);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, filter);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, limitLoFunction);
         CairoException.rethrowCleanupFailure(cleanupFailure);

@@ -7114,7 +7114,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
             execute("CREATE TABLE tab2 (y INT)");
             assertQuery("tab1 join tab2 on tab1.x = tab2.y where coalesce(tab1.x, 42) is not null")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .withPlan("""
                             SelectedRecord
@@ -7141,7 +7140,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
             execute("CREATE TABLE tab2 (y INT)");
             assertQuery("tab1 join tab2 on tab1.x = tab2.y where coalesce(tab1.x, 42) is null")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .withPlan("""
                             SelectedRecord
@@ -9615,9 +9613,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
                               keys: [TABLE_TYPE, TABLE_SCHEM, TABLE_NAME]
                                 VirtualRecord
                                   functions: [null,n.nspname,c.relname,case([(n.nspname ~ ^pg_ or n.nspname='information_schema'),case([(n.nspname='pg_catalog' or n.nspname='information_schema'),case(['SYSTEM TABLE','SYSTEM VIEW','SYSTEM INDEX',null,c.relkind]),n.nspname='pg_toast',case(['SYSTEM TOAST TABLE','SYSTEM TOAST INDEX',null,c.relkind]),case(['TEMPORARY TABLE','TEMPORARY TABLE','TEMPORARY INDEX','TEMPORARY SEQUENCE','TEMPORARY VIEW',null,c.relkind])]),case(['TABLE','PARTITIONED TABLE','INDEX','SEQUENCE','VIEW','TYPE','FOREIGN TABLE','MATERIALIZED VIEW',null,c.relkind])]),d.description,'','','','','']
-                                    Filter filter: (c.relnamespace=n.oid and c.relkind=r)
-                                        Cross Join
-                                            Filter filter: c.relname ~ quickstart-events2
+                                    Hash Join
+                                      condition: c.relnamespace=n.oid
+                                        Filter filter: (nspname !~ ^pg_ and nspname!='information_schema')
+                                            GenericRecord
+                                        Hash
+                                            Filter filter: (c.relname ~ quickstart-events2 and c.relkind=r)
                                                 Hash Right Outer Join
                                                   condition: dn.oid=dc.relnamespace
                                                   filter: dn.nspname='pg_catalog'
@@ -9634,8 +9635,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                                             pg_class
                                                     Hash
                                                         GenericRecord
-                                            Filter filter: (nspname !~ ^pg_ and nspname!='information_schema')
-                                                GenericRecord
                             """)
                     .returns("TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tTABLE_TYPE\tREMARKS\tTYPE_CAT\tTYPE_SCHEM\tTYPE_NAME\tSELF_REFERENCING_COL_NAME\tREF_GENERATION\n");
             assertQuery(query.replace("#OUTER_JOIN_TYPE", "full"))
@@ -9645,9 +9644,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
                               keys: [TABLE_TYPE, TABLE_SCHEM, TABLE_NAME]
                                 VirtualRecord
                                   functions: [null,n.nspname,c.relname,case([(n.nspname ~ ^pg_ or n.nspname='information_schema'),case([(n.nspname='pg_catalog' or n.nspname='information_schema'),case(['SYSTEM TABLE','SYSTEM VIEW','SYSTEM INDEX',null,c.relkind]),n.nspname='pg_toast',case(['SYSTEM TOAST TABLE','SYSTEM TOAST INDEX',null,c.relkind]),case(['TEMPORARY TABLE','TEMPORARY TABLE','TEMPORARY INDEX','TEMPORARY SEQUENCE','TEMPORARY VIEW',null,c.relkind])]),case(['TABLE','PARTITIONED TABLE','INDEX','SEQUENCE','VIEW','TYPE','FOREIGN TABLE','MATERIALIZED VIEW',null,c.relkind])]),d.description,'','','','','']
-                                    Filter filter: (c.relnamespace=n.oid and c.relkind=r)
-                                        Cross Join
-                                            Filter filter: c.relname ~ quickstart-events2
+                                    Hash Join
+                                      condition: c.relnamespace=n.oid
+                                        Filter filter: (nspname !~ ^pg_ and nspname!='information_schema')
+                                            GenericRecord
+                                        Hash
+                                            Filter filter: (c.relname ~ quickstart-events2 and c.relkind=r)
                                                 Hash Full Outer Join
                                                   condition: dn.oid=dc.relnamespace
                                                   filter: dn.nspname='pg_catalog'
@@ -9664,8 +9666,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                                             pg_class
                                                     Hash
                                                         GenericRecord
-                                            Filter filter: (nspname !~ ^pg_ and nspname!='information_schema')
-                                                GenericRecord
                             """)
                     .returns("TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tTABLE_TYPE\tREMARKS\tTYPE_CAT\tTYPE_SCHEM\tTYPE_NAME\tSELF_REFERENCING_COL_NAME\tREF_GENERATION\n");
         });
@@ -12184,7 +12184,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
             execute("CREATE TABLE tab2 (y INT)");
             assertQuery("tab1 join tab2 on tab1.x = tab2.y where tab1.x is not null")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .withPlan("""
                             SelectedRecord
@@ -12211,7 +12210,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
             execute("CREATE TABLE tab2 (y INT)");
             assertQuery("tab1 join tab2 on tab1.x = tab2.y where tab1.x is null")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .withPlan("""
                             SelectedRecord

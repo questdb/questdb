@@ -24,14 +24,13 @@
 
 package io.questdb.test.griffin.engine;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlCodeGenerator;
+import io.questdb.griffin.codegen.SqlCodeGenerator;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.union.UnionSymbolCastRecordCursorFactory;
 import io.questdb.std.IntList;
@@ -80,8 +79,8 @@ public class UnionSymbolProjectionConstructionLeakTest extends AbstractCairoTest
             try {
                 SqlCodeGenerator.resymboliseUnion(union, symbolColumns(0, 1));
                 Assert.fail("expected union symbol projection failure");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "union symbol projection requires a serial base cursor");
+            } catch (AssertionError e) {
+                TestUtils.assertContains(e.getMessage(), "union symbol projection requires a serial base cursor");
             }
             Assert.assertEquals(1, union.closeCount);
         });

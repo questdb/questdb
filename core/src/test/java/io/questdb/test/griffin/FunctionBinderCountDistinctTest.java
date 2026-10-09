@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -130,6 +131,107 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
                         Assert.assertEquals(1, worker.getLong(workerValue));
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testCopiedRemapsLeaveOriginalPreparationOwned() throws Exception {
+        assertMemoryLeak(() -> {
+            final ObjList<Function> constructions = new ObjList<>();
+            final OutputSchema original = new OutputSchema().add(27, "v", ColumnType.INT, true);
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser(constructions))) {
+                final BoundExpression expression = binder.bind(binary("|", literal("v"), constant("2")), original, null, sqlExecutionContext);
+                final ProjectPlan left = projection(10);
+                final ProjectPlan right = projection(11);
+                final BoundExpression firstCopy = binder.copyRemappedColumns(expression, left);
+                final BoundExpression secondCopy = binder.copyRemappedColumns(expression, right);
+                Assert.assertEquals(1, constructions.size());
+                try (Function first = binder.instantiate(firstCopy, left.getInput().getOutput(), sqlExecutionContext);
+                     Function second = binder.instantiate(secondCopy, right.getInput().getOutput(), sqlExecutionContext);
+                     Function retained = binder.instantiate(expression, original, sqlExecutionContext)) {
+                    Assert.assertSame(constructions.getQuick(0), retained);
+                    Assert.assertNotSame(first, second);
+                    Assert.assertEquals(3, constructions.size());
+                    binder.clear();
+                    final ValueRecord record = new ValueRecord(0).of(5);
+                    Assert.assertEquals(7, first.getInt(record));
+                    Assert.assertEquals(7, second.getInt(record));
+                    Assert.assertEquals(7, retained.getInt(record));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOwnedScalarArgumentsCloseOnFailureAndReconstruction() throws Exception {
+        assertMemoryLeak(() -> {
+            final FunctionParser parser = parser(new ObjList<>());
+            final OutputSchema full = new OutputSchema().add(1, "unused", ColumnType.INT, true)
+                    .add(27, "v", ColumnType.LONG, true);
+            final OutputSchema pruned = new OutputSchema().add(27, "v", ColumnType.LONG, true);
+            final ObjList<ExpressionNode> inArgs = new ObjList<>();
+            inArgs.add(literal("v"));
+            inArgs.add(constant("1"));
+            inArgs.add(constant("2"));
+            inArgs.add(constant("3"));
+            final ObjList<ExpressionNode> caseArgs = new ObjList<>();
+            caseArgs.add(call("in", inArgs));
+            caseArgs.add(literal("v"));
+            caseArgs.add(constant("null"));
+            final ExpressionNode counted = unary("count_distinct", call("case", caseArgs));
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
+                try {
+                    binder.bindAggregate(unary("count_distinct", counted), full, null, sqlExecutionContext);
+                    Assert.fail("nested aggregate accepted");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Aggregate function cannot be passed as an argument");
+                }
+                final FunctionExpression expression = binder.bindAggregate(counted, full, null, sqlExecutionContext);
+                try (Function owner = binder.instantiateAggregate(expression, pruned, metadata(ColumnType.LONG, false), sqlExecutionContext);
+                     Function worker = binder.instantiateAggregate(expression, full, metadata(ColumnType.LONG, true), sqlExecutionContext);
+                     FastGroupByAllocator allocator = new FastGroupByAllocator(1024, 4096);
+                     SimpleMapValue value = new SimpleMapValue(2)) {
+                    binder.clear();
+                    parser.clear();
+                    final GroupByFunction aggregate = (GroupByFunction) owner;
+                    aggregate.initValueTypes(new ArrayColumnTypes());
+                    aggregate.setAllocator(allocator);
+                    owner.init(null, sqlExecutionContext);
+                    worker.init(null, sqlExecutionContext);
+                    final ValueRecord record = new ValueRecord(0);
+                    aggregate.computeFirst(value, record.of(1), 0);
+                    aggregate.computeNext(value, record.of(2), 1);
+                    aggregate.computeNext(value, record.of(4), 2);
+                    Assert.assertEquals(2, owner.getLong(value));
+                }
+                // A new unclaimed preparation must also release its native IN set.
+                binder.bindAggregate(counted, full, null, sqlExecutionContext);
+            }
+        });
+    }
+
+    @Test
+    public void testScalarAndNestedAggregateContextsRemainRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            final ObjList<Function> constructions = new ObjList<>();
+            final OutputSchema input = new OutputSchema().add(27, "v", ColumnType.INT, true);
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser(constructions))) {
+                try {
+                    binder.bind(unary("count_distinct", literal("v")), input, null, sqlExecutionContext);
+                    Assert.fail("aggregate accepted as scalar");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "aggregate functions are not allowed in this context");
+                }
+                try {
+                    binder.bindAggregate(unary("count_distinct", unary("count_distinct", literal("v"))), input, null, sqlExecutionContext);
+                    Assert.fail("nested aggregate accepted");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Aggregate function cannot be passed as an argument");
+                }
+                Assert.assertEquals(0, constructions.size());
+                binder.bindAggregate(unary("count_distinct", literal("v")), input, null, sqlExecutionContext);
+                Assert.assertEquals(1, constructions.size());
             }
         });
     }
@@ -237,107 +339,6 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testOwnedScalarArgumentsCloseOnFailureAndReconstruction() throws Exception {
-        assertMemoryLeak(() -> {
-            final FunctionParser parser = parser(new ObjList<>());
-            final OutputSchema full = new OutputSchema().add(1, "unused", ColumnType.INT, true)
-                    .add(27, "v", ColumnType.LONG, true);
-            final OutputSchema pruned = new OutputSchema().add(27, "v", ColumnType.LONG, true);
-            final ObjList<ExpressionNode> inArgs = new ObjList<>();
-            inArgs.add(literal("v"));
-            inArgs.add(constant("1"));
-            inArgs.add(constant("2"));
-            inArgs.add(constant("3"));
-            final ObjList<ExpressionNode> caseArgs = new ObjList<>();
-            caseArgs.add(call("in", inArgs));
-            caseArgs.add(literal("v"));
-            caseArgs.add(constant("null"));
-            final ExpressionNode counted = unary("count_distinct", call("case", caseArgs));
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
-                try {
-                    binder.bindAggregate(unary("count_distinct", counted), full, null, sqlExecutionContext);
-                    Assert.fail("nested aggregate accepted");
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "Aggregate function cannot be passed as an argument");
-                }
-                final FunctionExpression expression = binder.bindAggregate(counted, full, null, sqlExecutionContext);
-                try (Function owner = binder.instantiateAggregate(expression, pruned, metadata(ColumnType.LONG, false), sqlExecutionContext);
-                     Function worker = binder.instantiateAggregate(expression, full, metadata(ColumnType.LONG, true), sqlExecutionContext);
-                     FastGroupByAllocator allocator = new FastGroupByAllocator(1024, 4096);
-                     SimpleMapValue value = new SimpleMapValue(2)) {
-                    binder.clear();
-                    parser.clear();
-                    final GroupByFunction aggregate = (GroupByFunction) owner;
-                    aggregate.initValueTypes(new ArrayColumnTypes());
-                    aggregate.setAllocator(allocator);
-                    owner.init(null, sqlExecutionContext);
-                    worker.init(null, sqlExecutionContext);
-                    final ValueRecord record = new ValueRecord(0);
-                    aggregate.computeFirst(value, record.of(1), 0);
-                    aggregate.computeNext(value, record.of(2), 1);
-                    aggregate.computeNext(value, record.of(4), 2);
-                    Assert.assertEquals(2, owner.getLong(value));
-                }
-                // A new unclaimed preparation must also release its native IN set.
-                binder.bindAggregate(counted, full, null, sqlExecutionContext);
-            }
-        });
-    }
-
-    @Test
-    public void testScalarAndNestedAggregateContextsRemainRejected() throws Exception {
-        assertMemoryLeak(() -> {
-            final ObjList<Function> constructions = new ObjList<>();
-            final OutputSchema input = new OutputSchema().add(27, "v", ColumnType.INT, true);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser(constructions))) {
-                try {
-                    binder.bind(unary("count_distinct", literal("v")), input, null, sqlExecutionContext);
-                    Assert.fail("aggregate accepted as scalar");
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "aggregate functions are not allowed in this context");
-                }
-                try {
-                    binder.bindAggregate(unary("count_distinct", unary("count_distinct", literal("v"))), input, null, sqlExecutionContext);
-                    Assert.fail("nested aggregate accepted");
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "Aggregate function cannot be passed as an argument");
-                }
-                Assert.assertEquals(0, constructions.size());
-                binder.bindAggregate(unary("count_distinct", literal("v")), input, null, sqlExecutionContext);
-                Assert.assertEquals(1, constructions.size());
-            }
-        });
-    }
-
-    @Test
-    public void testCopiedRemapsLeaveOriginalPreparationOwned() throws Exception {
-        assertMemoryLeak(() -> {
-            final ObjList<Function> constructions = new ObjList<>();
-            final OutputSchema original = new OutputSchema().add(27, "v", ColumnType.INT, true);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser(constructions))) {
-                final BoundExpression expression = binder.bind(binary("|", literal("v"), constant("2")), original, null, sqlExecutionContext);
-                final ProjectPlan left = projection(10);
-                final ProjectPlan right = projection(11);
-                final BoundExpression firstCopy = binder.copyRemappedColumns(expression, left);
-                final BoundExpression secondCopy = binder.copyRemappedColumns(expression, right);
-                Assert.assertEquals(1, constructions.size());
-                try (Function first = binder.instantiate(firstCopy, left.getInput().getOutput(), sqlExecutionContext);
-                     Function second = binder.instantiate(secondCopy, right.getInput().getOutput(), sqlExecutionContext);
-                     Function retained = binder.instantiate(expression, original, sqlExecutionContext)) {
-                    Assert.assertSame(constructions.getQuick(0), retained);
-                    Assert.assertNotSame(first, second);
-                    Assert.assertEquals(3, constructions.size());
-                    binder.clear();
-                    final ValueRecord record = new ValueRecord(0).of(5);
-                    Assert.assertEquals(7, first.getInt(record));
-                    Assert.assertEquals(7, second.getInt(record));
-                    Assert.assertEquals(7, retained.getInt(record));
-                }
-            }
-        });
-    }
-
     private static ExpressionNode binary(String name, ExpressionNode left, ExpressionNode right) {
         final ExpressionNode node = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, name, 0, 0);
         node.lhs = left;
@@ -372,18 +373,6 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
         return metadata;
     }
 
-    private FunctionParser parser(ObjList<Function> constructions) {
-        return new FunctionParser(configuration, engine.getFunctionFactoryCache()) {
-            @Override
-            public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
-                                           ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
-                final Function function = super.createFunction(overload, position, name, args, positions, context);
-                constructions.add(function);
-                return function;
-            }
-        };
-    }
-
     private static ProjectPlan projection(int inputId) {
         final ScanPlan input = new ScanPlan();
         input.getOutput().add(inputId, "physical", ColumnType.INT, true);
@@ -398,6 +387,18 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
         node.rhs = argument;
         node.paramCount = 1;
         return node;
+    }
+
+    private FunctionParser parser(ObjList<Function> constructions) {
+        return new FunctionParser(configuration, new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
+            @Override
+            public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
+                                           ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
+                final Function function = super.createFunction(overload, position, name, args, positions, context);
+                constructions.add(function);
+                return function;
+            }
+        });
     }
 
     private static class ValueRecord implements Record {

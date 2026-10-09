@@ -43,12 +43,10 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -92,11 +90,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
-    public boolean canPeelForTopK() {
-        return true;
-    }
-
-    @Override
     public boolean followedOrderByAdvice() {
         return base.followedOrderByAdvice();
     }
@@ -112,26 +105,9 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         return base.isNonDeterministic();
     }
 
-    // to be used in combination with compiled filter
-    @Nullable
-    public ObjList<Function> getBindVarFunctions() {
-        return base.getBindVarFunctions();
-    }
-
-    // to be used in combination with compiled filter
-    @Nullable
-    public MemoryCARW getBindVarMemory() {
-        return base.getBindVarMemory();
-    }
-
     @Override
     public IntList getColumnCrossIndex() {
         return columnCrossIndex;
-    }
-
-    @Override
-    public CompiledFilter getCompiledFilter() {
-        return base.getCompiledFilter();
     }
 
     @Override
@@ -218,11 +194,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
-    public void halfClose() {
-        base.halfClose();
-    }
-
-    @Override
     public boolean implementsLimit() {
         return base.implementsLimit();
     }
@@ -255,15 +226,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
-    public RecordCursorFactory rewrapOverTopK(RecordCursorFactory topK, RecordMetadata orderedMetadata) {
-        RecordCursorFactory rewrappedBase = base.rewrapOverTopK(topK, base.getMetadata());
-        // Shares columnCrossIndex with the orphaned wrapper. Per the
-        // RecordCursorFactory.rewrapOverTopK contract, the caller must not close the orphan;
-        // its state has transferred here. Same precedent as the AsOf and LatestBy peels.
-        return new SelectedRecordCursorFactory(orderedMetadata, columnCrossIndex, rewrappedBase);
-    }
-
-    @Override
     public boolean supportsPageFrameCursor() {
         return base.supportsPageFrameCursor();
     }
@@ -287,14 +249,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     public void toPlan(PlanSink sink) {
         sink.type("SelectedRecord");
         sink.child(base);
-    }
-
-    @Override
-    public int translateOrderByColumnToBase(int projectedIndex) {
-        if (projectedIndex < 0 || projectedIndex >= columnCrossIndex.size()) {
-            return -1;
-        }
-        return base.translateOrderByColumnToBase(columnCrossIndex.getQuick(projectedIndex));
     }
 
     @Override

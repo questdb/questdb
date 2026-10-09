@@ -188,6 +188,17 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
+    default boolean supportsRandomAccess() {
+        final ObjList<Function> args = args();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            if (!args.getQuick(i).supportsRandomAccess()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
     default void toPlan(PlanSink sink) {
         sink.val(getName()).val('(').val(args()).val(')');
     }

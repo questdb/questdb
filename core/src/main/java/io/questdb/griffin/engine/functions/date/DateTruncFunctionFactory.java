@@ -31,11 +31,14 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
 
-public class DateTruncFunctionFactory implements FunctionFactory {
+public class DateTruncFunctionFactory implements FunctionFactory, MonotonicTimestampFunctionFactory {
     @Override
     public int getResultType(IntList argTypes) {
         final int type = argTypes.getQuick(1);
@@ -48,9 +51,25 @@ public class DateTruncFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public int getTimestampArgumentIndex(FunctionExpression call, ConstantArguments arguments) {
+        return 1;
+    }
+
+    @Override
+    public int invertTimestampInterval(FunctionExpression call, Interval io, boolean isTimestampArgMonotonic, ConstantArguments arguments) throws SqlException {
+        return TimestampFloorFunctions.invertFloor(io, ColumnType.getTimestampDriver(call.getDataType()),
+                unit(arguments.constant(call.argumentAt(0)).getStrA(null), call.argumentAt(0).getPosition()));
+    }
+
+    @Override
     public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
         final String unit = unit(args.getQuick(0).getStrA(null), argPositions.getQuick(0));
         return !isIdentity(unit, timestampType(args.getQuick(1)));
+    }
+
+    @Override
+    public boolean isIdentity(FunctionExpression call, ConstantArguments arguments) throws SqlException {
+        return isIdentity(unit(arguments.constant(call.argumentAt(0)).getStrA(null), call.argumentAt(0).getPosition()), call.getDataType());
     }
 
     @Override

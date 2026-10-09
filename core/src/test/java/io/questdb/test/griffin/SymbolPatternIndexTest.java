@@ -102,6 +102,208 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         super.tearDown();
     }
 
+    @Test
+    public void testInvalidPatternLimitCompilationReleasesInputs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM t WHERE sym LIKE 'a%' LIMIT 5 + 0.3",
+                    44,
+                    "invalid type: DOUBLE"
+            );
+        });
+    }
+
+    @Test
+    public void testNonThreadSafeCoveredResidualLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX TYPE POSTING INCLUDE (txt), txt STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('aa', 'x', 0),
+                        ('ab', 'y', 1),
+                        ('ba', 'x', 2),
+                        ('ab', 'x', 3),
+                        ('aa', null, 4),
+                        (null, 'x', 5)
+                    """);
+            assertQuery("SELECT sym, txt FROM t WHERE sym LIKE 'a%' AND txt = 'x' LIMIT 1")
+                    .withPlan("""
+                            Async Filter workers: 1
+                              limit: 1
+                              filter: sym like a% [state-shared] and txt='x'
+                                AdaptiveSymbolPattern policy: matching rows <= 2%, bounded probes route: one child per open
+                                    SymbolPatternIndex
+                                      on: sym
+                                        Table-order scan
+                                        Frame forward scan on: t
+                                    CoveringIndex on: sym with: txt
+                                      filter: sym matches pattern
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """)
+                    .returns("""
+                            sym	txt
+                            aa	x
+                            """);
+        });
+    }
+
+    @Test
+    public void testNonThreadSafeResidualIlikePattern() throws Exception {
+        assertNonThreadSafeResidual("SELECT sym, txt FROM t WHERE sym ILIKE 'A%' AND txt = 'x'", """
+                AdaptiveSymbolPattern policy: matching rows <= 5%, bounded probes route: one child per open
+                  indexRouteFilter: sym ilike a% [state-shared] and txt='x'
+                    SymbolPatternIndex
+                      on: sym
+                        Table-order scan
+                        Frame forward scan on: t
+                    Async Filter workers: 1
+                      filter: sym ilike a% [state-shared] and txt='x'
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: t
+                """, """
+                sym	txt
+                aa	x
+                ab	x
+                """);
+    }
+
+    @Test
+    public void testNonThreadSafeResidualLikePattern() throws Exception {
+        assertNonThreadSafeResidual("SELECT sym, txt FROM t WHERE sym LIKE 'a%' AND txt = 'x'", """
+                AdaptiveSymbolPattern policy: matching rows <= 5%, bounded probes route: one child per open
+                  indexRouteFilter: sym like a% [state-shared] and txt='x'
+                    SymbolPatternIndex
+                      on: sym
+                        Table-order scan
+                        Frame forward scan on: t
+                    Async Filter workers: 1
+                      filter: sym like a% [state-shared] and txt='x'
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: t
+                """, """
+                sym	txt
+                aa	x
+                ab	x
+                """);
+    }
+
+    @Test
+    public void testNonThreadSafeResidualLikePatternLimit() throws Exception {
+        assertNonThreadSafeResidual("SELECT sym, txt FROM t WHERE sym LIKE 'a%' AND txt = 'x' LIMIT 1", """
+                Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                    AdaptiveSymbolPattern policy: matching rows <= 5%, bounded probes route: one child per open
+                      indexRouteFilter: sym like a% [state-shared] and txt='x'
+                        SymbolPatternIndex
+                          on: sym
+                            Table-order scan
+                            Frame forward scan on: t
+                        Async Filter workers: 1
+                          limit: 1
+                          filter: sym like a% [state-shared] and txt='x'
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: t
+                """, """
+                sym	txt
+                aa	x
+                """);
+    }
+
+    @Test
+    public void testNonThreadSafeResidualLikePatternTimestampOrderLimit() throws Exception {
+        assertNonThreadSafeResidual("SELECT sym, txt FROM t WHERE sym LIKE 'a%' AND txt = 'x' ORDER BY ts LIMIT 1", """
+                SelectedRecord
+                    Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                        AdaptiveSymbolPattern policy: matching rows <= 5%, bounded probes route: one child per open
+                          indexRouteFilter: sym like a% [state-shared] and txt='x'
+                            SymbolPatternIndex
+                              on: sym
+                                Table-order scan
+                                Frame forward scan on: t
+                            Async Filter workers: 1
+                              limit: 1
+                              filter: sym like a% [state-shared] and txt='x'
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                """, """
+                sym	txt
+                aa	x
+                """);
+    }
+
+    @Test
+    public void testNonThreadSafeResidualNegatedPattern() throws Exception {
+        assertNonThreadSafeResidual("SELECT sym, txt FROM t WHERE sym NOT LIKE 'a%' AND txt = 'x'", """
+                AdaptiveSymbolPattern policy: matching rows <= 5%, bounded probes route: one child per open
+                  indexRouteFilter: not(sym like a% [state-shared]) and txt='x'
+                    SymbolPatternIndex
+                      on: sym
+                        Table-order scan
+                        Frame forward scan on: t
+                    Async Filter workers: 1
+                      filter: not(sym like a% [state-shared]) and txt='x'
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: t
+                """, """
+                sym	txt
+                ba	x
+                	x
+                """);
+    }
+
+    @Test
+    public void testNonThreadSafeResidualRegexPattern() throws Exception {
+        assertNonThreadSafeResidual("SELECT sym, txt FROM t WHERE sym ~ '^a' AND txt = 'x'", """
+                AdaptiveSymbolPattern policy: matching rows <= 5%, bounded probes route: one child per open
+                  indexRouteFilter: sym ~ ^a and txt='x'
+                    SymbolPatternIndex
+                      on: sym
+                        Table-order scan
+                        Frame forward scan on: t
+                    Async Filter workers: 1
+                      filter: sym ~ ^a and txt='x'
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: t
+                """, """
+                sym	txt
+                aa	x
+                ab	x
+                """);
+    }
+
+    /**
+     * Stands in for the real LIKE/regex providers in
+     * {@link #testPreparedFilterAssertsPrepareRanBeforeGetBool()}: the only thing that test needs from a
+     * provider is that it satisfies the {@link SymbolKeySetProvider} cast the prepared filter performs.
+     */
+    private void assertNonThreadSafeResidual(String query, String expectedPlan, String expected) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, txt STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('aa', 'x', 0),
+                        ('ab', 'y', 1),
+                        ('ba', 'x', 2),
+                        ('ab', 'x', 3),
+                        ('aa', null, 4),
+                        (null, 'x', 5)
+                    """);
+            assertQuery(query).withPlan(expectedPlan).returns(expected);
+            assertQuery(query.replace("SELECT", "SELECT /*+ no_symbol_pattern_index(t) */"))
+                    .withPlanNotContaining("AdaptiveSymbolPattern")
+                    .returns(expected);
+        });
+    }
+
     /**
      * Compiles {@code predicate} (e.g. {@code "sym like 'A%'"}) as a standalone
      * boolean function bound to table {@code t}'s reader, then returns the matched
@@ -2002,19 +2204,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInvalidPatternLimitCompilationReleasesInputs() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-
-            assertExceptionNoLeakCheck(
-                    "SELECT * FROM t WHERE sym LIKE 'a%' LIMIT 5 + 0.3",
-                    44,
-                    "invalid type: DOUBLE"
-            );
-        });
-    }
-
-    @Test
     public void testNegativeLimitPatternUsesBackwardLimitedFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -3037,27 +3226,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                     .returns("ts\tcount\n" +
                             "2024-01-01T00:00:00.000000Z\t2\n" +
                             "2024-01-02T00:00:00.000000Z\t2\n");
-        });
-    }
-
-    // LIKE residuals own mutable matcher state and require one filter clone per worker.
-    @Test
-    public void testNonThreadSafeResidualPreservesParallelFilter() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (sym SYMBOL INDEX, txt STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO t VALUES
-                        ('aa', 'xxaZbyy', 0),
-                        ('ab', 'nomatch', 1),
-                        ('ba', 'xxaZbyy', 2),
-                        ('aa', null, 3),
-                        (null, 'xxaZbyy', 4)
-                    """);
-
-            assertQuery("SELECT sym, txt FROM t WHERE sym LIKE 'a%' AND txt LIKE '%a_b%'")
-                    .withPlanContaining("Async Filter workers: 1")
-                    .withPlanNotContaining("AdaptiveSymbolPattern")
-                    .returns("sym\ttxt\naa\txxaZbyy\n");
         });
     }
 
@@ -4213,11 +4381,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         return localSink.toString();
     }
 
-    /**
-     * Stands in for the real LIKE/regex providers in
-     * {@link #testPreparedFilterAssertsPrepareRanBeforeGetBool()}: the only thing that test needs from a
-     * provider is that it satisfies the {@link SymbolKeySetProvider} cast the prepared filter performs.
-     */
     private static class AlwaysMatchingKeySetProvider extends BooleanFunction implements SymbolKeySetProvider {
         private final IntList matchedSymbolKeys = new IntList();
 
@@ -4257,4 +4420,5 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             throw new RuntimeException(CLOSE_FAILURE_MESSAGE);
         }
     }
+
 }

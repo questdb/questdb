@@ -194,7 +194,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             boolean ordered,
             int orderByDirection,
             int orderByPos,
-            boolean baseSupportsRandomAccess,
             int framingMode,
             long rowsLo,
             char rowsLoUnit,

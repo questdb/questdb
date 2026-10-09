@@ -26,17 +26,21 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-public class TimestampFloorFunctionFactory implements FunctionFactory {
+public class TimestampFloorFunctionFactory implements FunctionFactory, MonotonicTimestampFunctionFactory {
     public static final String NAME = "timestamp_floor";
 
     @Override
@@ -47,6 +51,21 @@ public class TimestampFloorFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return NAME + "(sN)";
+    }
+
+    @Override
+    public int getTimestampArgumentIndex(FunctionExpression call, ConstantArguments arguments) {
+        return 1;
+    }
+
+    @Override
+    public int invertTimestampInterval(FunctionExpression call, Interval io, boolean isTimestampArgMonotonic, ConstantArguments arguments) throws SqlException {
+        final CharSequence str = arguments.constant(call.argumentAt(0)).getStrA(null);
+        final int stride = stride(str);
+        final String unit = unitName(stride > 0 ? unit(str) : 1, str, call.argumentAt(0).getPosition());
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(call.getDataType());
+        return stride > 1 ? TimestampFloorFunctions.invertFloorWithStride(io, timestampDriver, unit, stride)
+                : TimestampFloorFunctions.invertFloor(io, timestampDriver, unit);
     }
 
     @Override
@@ -72,29 +91,14 @@ public class TimestampFloorFunctionFactory implements FunctionFactory {
         final char c = stride > 0 ? unit(str) : 1;
         Function arg = args.getQuick(1);
         int timestampType = ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(arg.getType()), ColumnType.TIMESTAMP_MICRO);
-        switch (c) {
-            case 'M':
-                return createFloorFunction(arg, "month", stride, timestampType);
-            case 'y':
-                return createFloorFunction(arg, "year", stride, timestampType);
-            case 'w':
-                return createFloorFunction(arg, "week", stride, timestampType);
-            case 'd':
-                return createFloorFunction(arg, "day", stride, timestampType);
-            case 'h':
-                return createFloorFunction(arg, "hour", stride, timestampType);
-            case 'm':
-                return createFloorFunction(arg, "minute", stride, timestampType);
-            case 's':
-                return createFloorFunction(arg, "second", stride, timestampType);
-            case 'T':
-                return createFloorFunction(arg, "millisecond", stride, timestampType);
-            case 'U':
-                return createFloorFunction(arg, "microsecond", stride, timestampType);
-            case 'n':
-                return createFloorFunction(arg, "nanosecond", stride, timestampType);
-            default:
-                throw invalidUnit(c, str, argPositions.getQuick(0));
+        return createFloorFunction(arg, unitName(c, str, argPositions.getQuick(0)), stride, timestampType);
+    }
+
+    private static Function createFloorFunction(Function arg, String unit, int stride, int timestampType) {
+        if (stride > 1) {
+            return new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, unit, stride, timestampType);
+        } else {
+            return new TimestampFloorFunctions.TimestampFloorFunction(arg, unit, timestampType);
         }
     }
 
@@ -125,11 +129,19 @@ public class TimestampFloorFunctionFactory implements FunctionFactory {
         return str.isEmpty() ? 1 : str.charAt(str.length() - 1);
     }
 
-    private static Function createFloorFunction(Function arg, String unit, int stride, int timestampType) {
-        if (stride > 1) {
-            return new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, unit, stride, timestampType);
-        } else {
-            return new TimestampFloorFunctions.TimestampFloorFunction(arg, unit, timestampType);
-        }
+    private static String unitName(char c, CharSequence str, int position) throws SqlException {
+        return switch (c) {
+            case 'M' -> "month";
+            case 'y' -> "year";
+            case 'w' -> "week";
+            case 'd' -> "day";
+            case 'h' -> "hour";
+            case 'm' -> "minute";
+            case 's' -> "second";
+            case 'T' -> "millisecond";
+            case 'U' -> "microsecond";
+            case 'n' -> "nanosecond";
+            default -> throw invalidUnit(c, str, position);
+        };
     }
 }

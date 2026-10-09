@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.BoundExpressionRewriter;
-import io.questdb.griffin.FunctionBinder;
+import io.questdb.griffin.bind.FunctionBinder;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlCompilerImpl;
@@ -140,6 +140,10 @@ public final class FunctionBindingHarness implements Closeable {
 
     public BoundExpression copyRemappedColumns(BoundExpression expression, ProjectPlan projection) {
         return rewriter.copyRemappedColumns(expression, projection);
+    }
+
+    public BoundExpressionRewriter getRewriter() {
+        return rewriter;
     }
 
     public Function instantiate(BoundExpression expression, OutputSchema input) {

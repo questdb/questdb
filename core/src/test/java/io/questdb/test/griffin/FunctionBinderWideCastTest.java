@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -127,6 +128,99 @@ public class FunctionBinderWideCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidUuidTextClosesBothArgumentsAndPreservesCleanupFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            final int[] closes = new int[2];
+            final RuntimeException first = new RuntimeException("uuid close");
+            final RuntimeException second = new RuntimeException("text close");
+            final ObjList<Function> args = new ObjList<>();
+            args.add(new UuidFunction() {
+                @Override
+                public void close() {
+                    closes[0]++;
+                    throw first;
+                }
+
+                @Override
+                public long getLong128Hi(Record rec) {
+                    return 0;
+                }
+
+                @Override
+                public long getLong128Lo(Record rec) {
+                    return 0;
+                }
+            });
+            args.add(new StrFunction() {
+                @Override
+                public void close() {
+                    closes[1]++;
+                    throw second;
+                }
+
+                @Override
+                public CharSequence getStrA(Record rec) {
+                    return "invalid uuid";
+                }
+
+                @Override
+                public CharSequence getStrB(Record rec) {
+                    return getStrA(rec);
+                }
+
+                @Override
+                public boolean isConstant() {
+                    return true;
+                }
+            });
+            final RuntimeException actual = Assert.assertThrows(RuntimeException.class,
+                    () -> new EqUuidStrFunctionFactory().newInstance(0, args, new IntList(), configuration, sqlExecutionContext));
+            Assert.assertSame(first, actual);
+            Assert.assertArrayEquals(new Throwable[]{second}, actual.getSuppressed());
+            Assert.assertArrayEquals(new int[]{1, 1}, closes);
+            Assert.assertNull(args.getQuick(0));
+            Assert.assertNull(args.getQuick(1));
+        });
+    }
+
+    @Test
+    public void testInvalidUuidTextClosesNativeOperandForEveryAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            final long before = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
+            final boolean[] allocated = {false};
+            final FunctionParser parser = new FunctionParser(configuration, new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
+                @Override
+                public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
+                                               ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
+                    final Function result = super.createFunction(overload, position, name, args, positions, context);
+                    if (Chars.equals(name, "in")) {
+                        allocated[0] |= Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS) > before;
+                    }
+                    return result;
+                }
+            });
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                 FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
+                final OutputSchema input = new OutputSchema().add(70, "id", ColumnType.LONG, true);
+                final String operand = "(CASE WHEN id IN (1,2,3) THEN '00000000-0000-0000-0000-000000000001'::uuid ELSE null::uuid END)";
+                for (String op : new String[]{"=", "!=", "<>"}) {
+                    for (boolean swapped : new boolean[]{false, true}) {
+                        final String sql = swapped ? "'invalid uuid'" + op + operand : operand + op + "'invalid uuid'";
+                        final BoundExpression expression = binder.bind(compiler.parseExpression(sql), input, null, sqlExecutionContext);
+                        Assert.assertTrue(allocated[0]);
+                        Assert.assertTrue(expression instanceof ConstantExpression);
+                        Assert.assertEquals(before, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
+                        try (Function owner = binder.instantiate(expression, new OutputSchema(), sqlExecutionContext)) {
+                            Assert.assertEquals(!op.equals("="), owner.getBool(null));
+                        }
+                        binder.clear();
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testWideConstantsOwnCopiedPayloadsAfterBinderReuse() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
@@ -197,99 +291,6 @@ public class FunctionBinderWideCastTest extends AbstractCairoTest {
                     }
                 }
             }
-        });
-    }
-
-    @Test
-    public void testInvalidUuidTextClosesNativeOperandForEveryAlias() throws Exception {
-        assertMemoryLeak(() -> {
-            final long before = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
-            final boolean[] allocated = {false};
-            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache()) {
-                @Override
-                public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
-                                               ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
-                    final Function result = super.createFunction(overload, position, name, args, positions, context);
-                    if (Chars.equals(name, "in")) {
-                        allocated[0] |= Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS) > before;
-                    }
-                    return result;
-                }
-            };
-            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                 FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
-                final OutputSchema input = new OutputSchema().add(70, "id", ColumnType.LONG, true);
-                final String operand = "(CASE WHEN id IN (1,2,3) THEN '00000000-0000-0000-0000-000000000001'::uuid ELSE null::uuid END)";
-                for (String op : new String[]{"=", "!=", "<>"}) {
-                    for (boolean swapped : new boolean[]{false, true}) {
-                        final String sql = swapped ? "'invalid uuid'" + op + operand : operand + op + "'invalid uuid'";
-                        final BoundExpression expression = binder.bind(compiler.parseExpression(sql), input, null, sqlExecutionContext);
-                        Assert.assertTrue(allocated[0]);
-                        Assert.assertTrue(expression instanceof ConstantExpression);
-                        Assert.assertEquals(before, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
-                        try (Function owner = binder.instantiate(expression, new OutputSchema(), sqlExecutionContext)) {
-                            Assert.assertEquals(!op.equals("="), owner.getBool(null));
-                        }
-                        binder.clear();
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testInvalidUuidTextClosesBothArgumentsAndPreservesCleanupFailure() throws Exception {
-        assertMemoryLeak(() -> {
-            final int[] closes = new int[2];
-            final RuntimeException first = new RuntimeException("uuid close");
-            final RuntimeException second = new RuntimeException("text close");
-            final ObjList<Function> args = new ObjList<>();
-            args.add(new UuidFunction() {
-                @Override
-                public void close() {
-                    closes[0]++;
-                    throw first;
-                }
-
-                @Override
-                public long getLong128Hi(Record rec) {
-                    return 0;
-                }
-
-                @Override
-                public long getLong128Lo(Record rec) {
-                    return 0;
-                }
-            });
-            args.add(new StrFunction() {
-                @Override
-                public void close() {
-                    closes[1]++;
-                    throw second;
-                }
-
-                @Override
-                public CharSequence getStrA(Record rec) {
-                    return "invalid uuid";
-                }
-
-                @Override
-                public CharSequence getStrB(Record rec) {
-                    return getStrA(rec);
-                }
-
-                @Override
-                public boolean isConstant() {
-                    return true;
-                }
-            });
-            final RuntimeException actual = Assert.assertThrows(RuntimeException.class,
-                    () -> new EqUuidStrFunctionFactory().newInstance(0, args, new IntList(), configuration, sqlExecutionContext));
-            Assert.assertSame(first, actual);
-            Assert.assertArrayEquals(new Throwable[]{second}, actual.getSuppressed());
-            Assert.assertArrayEquals(new int[]{1, 1}, closes);
-            Assert.assertNull(args.getQuick(0));
-            Assert.assertNull(args.getQuick(1));
         });
     }
 

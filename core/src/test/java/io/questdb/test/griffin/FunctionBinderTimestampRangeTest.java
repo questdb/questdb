@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -53,36 +54,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
-    @Test
-    public void testSqlParserSetPredicatesBindWithoutAstRewriting() throws Exception {
-        assertMemoryLeak(() -> {
-            final OutputSchema input = new OutputSchema().add(70, "ts", ColumnType.TIMESTAMP_MICRO, true);
-            input.setTimestampIndex(0);
-            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                 FunctionBindingHarness binder = new FunctionBindingHarness(engine, new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
-                for (String sql : new String[]{"ts BETWEEN '1970-01-01' AND '1970-01-02'",
-                        "ts NOT BETWEEN '1970-01-01' AND '1970-01-02'",
-                        "ts IN '1970-01-01'", "ts NOT IN '1970-01-01'",
-                        "ts IN ('1970-01-01','1970-01-02')", "ts NOT IN ('1970-01-01','1970-01-02')"}) {
-                    final ExpressionNode node = compiler.parseExpression(sql);
-                    final boolean negated = sql.contains("NOT");
-                    final ExpressionNode predicate = negated ? node.rhs : node;
-                    final boolean between = sql.contains("BETWEEN");
-                    final boolean list = sql.contains("(");
-                    TestUtils.assertEquals(between ? "between" : "in", predicate.token);
-                    Assert.assertEquals(sql, list ? ExpressionNode.FUNCTION : ExpressionNode.SET_OPERATION, predicate.type);
-                    Assert.assertEquals(sql, between || list ? 3 : 2, predicate.paramCount);
-                    final BoundExpression expression = binder.bindPredicate(node, input, null, sqlExecutionContext);
-                    try (Function function = binder.instantiate(expression, input, sqlExecutionContext)) {
-                        compiler.clear();
-                        binder.clear();
-                        Assert.assertEquals(!negated, function.getBool(record(0, 0)));
-                    }
-                }
-            }
-        });
-    }
-
     @Test
     public void testBareNumericNativeInIsATimestampPoint() throws Exception {
         assertMemoryLeak(() -> {
@@ -290,35 +261,6 @@ public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNullBetweenClosesDiscardedNativeOperand() throws Exception {
-        assertMemoryLeak(() -> {
-            final long memoryBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
-            final boolean[] allocated = {false};
-            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache()) {
-                @Override
-                public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
-                                               ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
-                    final Function result = super.createFunction(overload, position, name, args, positions, context);
-                    if (Chars.equals(name, "in")) {
-                        allocated[0] = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS) > memoryBefore;
-                    }
-                    return result;
-                }
-            };
-            final OutputSchema input = new OutputSchema().add(70, "id", ColumnType.LONG, true);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
-                final ExpressionNode value = cast(cast(call("in", literal("id"), constant("1"), constant("2"), constant("3")), "long"), "timestamp");
-                final BoundExpression expression = binder.bind(call("between", value, constant("null"), cast(constant("1"), "timestamp")),
-                        input, null, sqlExecutionContext);
-                Assert.assertTrue(allocated[0]);
-                Assert.assertTrue(expression instanceof ConstantExpression);
-                Assert.assertEquals(0, ((ConstantExpression) expression).getLongValue());
-                Assert.assertEquals(memoryBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
-            }
-        });
-    }
-
-    @Test
     public void testNullBetweenCleanupClosesEveryArgumentOnceAfterFailure() throws Exception {
         assertMemoryLeak(() -> {
             for (boolean timestampKey : new boolean[]{false, true}) {
@@ -347,6 +289,65 @@ public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
                 Assert.assertArrayEquals(new int[]{1, 1, 1}, closes);
                 for (int i = 0; i < 3; i++) {
                     Assert.assertNull(args.getQuick(i));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNullBetweenClosesDiscardedNativeOperand() throws Exception {
+        assertMemoryLeak(() -> {
+            final long memoryBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
+            final boolean[] allocated = {false};
+            final FunctionParser parser = new FunctionParser(configuration, new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
+                @Override
+                public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
+                                               ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
+                    final Function result = super.createFunction(overload, position, name, args, positions, context);
+                    if (Chars.equals(name, "in")) {
+                        allocated[0] = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS) > memoryBefore;
+                    }
+                    return result;
+                }
+            });
+            final OutputSchema input = new OutputSchema().add(70, "id", ColumnType.LONG, true);
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
+                final ExpressionNode value = cast(cast(call("in", literal("id"), constant("1"), constant("2"), constant("3")), "long"), "timestamp");
+                final BoundExpression expression = binder.bind(call("between", value, constant("null"), cast(constant("1"), "timestamp")),
+                        input, null, sqlExecutionContext);
+                Assert.assertTrue(allocated[0]);
+                Assert.assertTrue(expression instanceof ConstantExpression);
+                Assert.assertEquals(0, ((ConstantExpression) expression).getLongValue());
+                Assert.assertEquals(memoryBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
+            }
+        });
+    }
+
+    @Test
+    public void testSqlParserSetPredicatesBindWithoutAstRewriting() throws Exception {
+        assertMemoryLeak(() -> {
+            final OutputSchema input = new OutputSchema().add(70, "ts", ColumnType.TIMESTAMP_MICRO, true);
+            input.setTimestampIndex(0);
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                 FunctionBindingHarness binder = new FunctionBindingHarness(engine, new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
+                for (String sql : new String[]{"ts BETWEEN '1970-01-01' AND '1970-01-02'",
+                        "ts NOT BETWEEN '1970-01-01' AND '1970-01-02'",
+                        "ts IN '1970-01-01'", "ts NOT IN '1970-01-01'",
+                        "ts IN ('1970-01-01','1970-01-02')", "ts NOT IN ('1970-01-01','1970-01-02')"}) {
+                    final ExpressionNode node = compiler.parseExpression(sql);
+                    final boolean negated = sql.contains("NOT");
+                    final ExpressionNode predicate = negated ? node.rhs : node;
+                    final boolean between = sql.contains("BETWEEN");
+                    final boolean list = sql.contains("(");
+                    TestUtils.assertEquals(between ? "between" : "in", predicate.token);
+                    Assert.assertEquals(sql, list ? ExpressionNode.FUNCTION : ExpressionNode.SET_OPERATION, predicate.type);
+                    Assert.assertEquals(sql, between || list ? 3 : 2, predicate.paramCount);
+                    final BoundExpression expression = binder.bindPredicate(node, input, null, sqlExecutionContext);
+                    try (Function function = binder.instantiate(expression, input, sqlExecutionContext)) {
+                        compiler.clear();
+                        binder.clear();
+                        Assert.assertEquals(!negated, function.getBool(record(0, 0)));
+                    }
                 }
             }
         });

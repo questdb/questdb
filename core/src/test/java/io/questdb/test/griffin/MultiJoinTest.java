@@ -751,6 +751,214 @@ public class MultiJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMasterNullingJoinsOfSeveralCommaGroups() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT)");
+            execute("CREATE TABLE b (k INT)");
+            execute("CREATE TABLE c (k INT)");
+            execute("CREATE TABLE d (k INT)");
+            execute("INSERT INTO a VALUES (1)");
+            execute("INSERT INTO b VALUES (1)");
+            execute("INSERT INTO c VALUES (1)");
+            execute("INSERT INTO d VALUES (1)");
+            assertQuery("SELECT a.k ak, b.k bk, c.k ck, d.k dk FROM a RIGHT JOIN b ON a.k = b.k, c RIGHT JOIN d ON c.k = d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Cross Join
+                                    Hash Right Outer Join Light
+                                      condition: b.k=a.k
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                                    Hash Right Outer Join Light
+                                      condition: d.k=c.k
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: d
+                            """)
+                    .returns("""
+                            ak	bk	ck	dk
+                            1	1	1	1
+                            """);
+            for (String left : new String[]{"RIGHT", "FULL"}) {
+                for (String right : new String[]{"RIGHT", "FULL"}) {
+                    final String expected = """
+                            ak	bk	ck	dk
+                            1	1	1	1
+                            """;
+                    assertQuery("SELECT a.k ak, b.k bk, c.k ck, d.k dk FROM a " + left + " JOIN b ON a.k = b.k, c " + right + " JOIN d ON c.k = d.k")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns(expected);
+                    assertQuery("SELECT ak, bk, ck, dk FROM (SELECT a.k ak, b.k bk FROM a " + left + " JOIN b ON a.k = b.k) "
+                            + "CROSS JOIN (SELECT c.k ck, d.k dk FROM c " + right + " JOIN d ON c.k = d.k)")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns(expected);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMasterNullingJoinsOfSeveralCommaGroupsNullExtendTheirOwnGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT)");
+            execute("CREATE TABLE b (k INT)");
+            execute("CREATE TABLE c (k INT)");
+            execute("CREATE TABLE d (k INT)");
+            execute("INSERT INTO a VALUES (1), (2), (null)");
+            execute("INSERT INTO b VALUES (1), (3)");
+            execute("INSERT INTO c VALUES (1), (4), (null)");
+            execute("INSERT INTO d VALUES (1), (5), (null)");
+            assertCommaGroups("RIGHT", "FULL", "", false, """
+                            Encode sort
+                              keys: [ak, bk, ck, dk]
+                                SelectedRecord
+                                    Cross Join
+                                        Hash Right Outer Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        Hash Full Outer Join Light
+                                          condition: d.k=c.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: d
+                            """,
+                    """
+                            ak	bk	ck	dk
+                            null	3	null	null
+                            null	3	null	5
+                            null	3	1	1
+                            null	3	4	null
+                            1	1	null	null
+                            1	1	null	5
+                            1	1	1	1
+                            1	1	4	null
+                            """);
+            assertCommaGroups("RIGHT", "RIGHT", " WHERE c.k IS NULL AND a.k IS NULL", false, """
+                            Encode sort
+                              keys: [ak, bk, ck, dk]
+                                SelectedRecord
+                                    Cross Join
+                                        Filter filter: a.k=null
+                                            Hash Right Outer Join Light
+                                              condition: b.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                        Filter filter: c.k=null
+                                            Hash Right Outer Join Light
+                                              condition: d.k=c.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: d
+                            """,
+                    """
+                            ak	bk	ck	dk
+                            null	3	null	null
+                            null	3	null	5
+                            """);
+            assertCommaGroups("FULL", "RIGHT", " WHERE b.k = d.k", true, """
+                            Encode sort
+                              keys: [ak, bk, ck, dk]
+                                SelectedRecord
+                                    Hash Join
+                                      condition: d.k=b.k
+                                        Hash Full Outer Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        Hash
+                                            Hash Right Outer Join Light
+                                              condition: d.k=c.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: d
+                            """,
+                    """
+                            ak	bk	ck	dk
+                            null	null	null	null
+                            1	1	1	1
+                            2	null	null	null
+                            """);
+            assertCommaGroups("FULL", "FULL", " WHERE d.k = 5 OR a.k = 2", false, """
+                            Encode sort
+                              keys: [ak, bk, ck, dk]
+                                SelectedRecord
+                                    Filter filter: (d.k=5 or a.k=2)
+                                        Cross Join
+                                            Hash Full Outer Join Light
+                                              condition: b.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                            Hash Full Outer Join Light
+                                              condition: d.k=c.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: d
+                            """,
+                    """
+                            ak	bk	ck	dk
+                            null	null	null	5
+                            null	3	null	5
+                            1	1	null	5
+                            2	null	null	null
+                            2	null	null	5
+                            2	null	1	1
+                            2	null	4	null
+                            """);
+            assertException("SELECT * FROM a, c RIGHT JOIN d ON d.k = a.k", 41, "Invalid table name or alias");
+        });
+    }
+
+    @Test
     public void testMixedEqualityTransitivityDoesNotChangeOuterMatching() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
@@ -1074,7 +1282,66 @@ public class MultiJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRightJoinOfLaterCommaGroupJoinsBeforeFirstInput() throws Exception {
+    public void testRightAndFullJoinsOfLaterCommaGroupKeepKeyedEarlierGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE l (x INT)");
+            execute("INSERT INTO l VALUES (10), (20)");
+            execute("CREATE TABLE m (x INT, id INT)");
+            execute("INSERT INTO m VALUES (10, 1), (20, 1)");
+            execute("CREATE TABLE c (id INT)");
+            execute("INSERT INTO c VALUES (1), (2)");
+            execute("CREATE TABLE d (id INT)");
+            execute("INSERT INTO d VALUES (0), (2), (3)");
+            assertQuery("SELECT l.x, m.id mid, c.id cid, d.id did FROM l JOIN m ON m.x = l.x, c RIGHT JOIN d ON d.id = c.id ORDER BY 1, 4")
+                    .noLeakCheck()
+                    .returns("""
+                            x	mid	cid	did
+                            10	1	null	0
+                            10	1	2	2
+                            10	1	null	3
+                            20	1	null	0
+                            20	1	2	2
+                            20	1	null	3
+                            """);
+            assertQuery("SELECT l.x, c.id cid, d.id did FROM l JOIN m ON m.x = l.x, c RIGHT JOIN d ON d.id > c.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .returns("""
+                            x	cid	did
+                            10	null	0
+                            10	1	2
+                            10	1	3
+                            10	2	3
+                            20	null	0
+                            20	1	2
+                            20	1	3
+                            20	2	3
+                            """);
+            assertQuery("SELECT l.x, c.id cid, d.id did FROM l JOIN m ON m.x = l.x, c FULL JOIN d ON d.id = c.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .returns("""
+                            x	cid	did
+                            10	null	0
+                            10	null	3
+                            10	1	null
+                            10	2	2
+                            20	null	0
+                            20	null	3
+                            20	1	null
+                            20	2	2
+                            """);
+            assertQuery("SELECT l.x, c.id cid, d.id did FROM l JOIN m ON m.x = l.x, c RIGHT JOIN d ON d.id = c.id WHERE l.x = 10 ORDER BY 3")
+                    .noLeakCheck()
+                    .returns("""
+                            x	cid	did
+                            10	null	0
+                            10	2	2
+                            10	null	3
+                            """);
+        });
+    }
+
+    @Test
+    public void testRightJoinOfLaterCommaGroupCrossJoinsFirstInput() throws Exception {
         assertMemoryLeak(() -> {
             createOrderTables();
             assertQuery("SELECT a.v, b.w, d.id FROM a, b RIGHT JOIN d ON b.id = d.id ORDER BY 1, 3")
@@ -1089,6 +1356,49 @@ public class MultiJoinTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM a, b RIGHT JOIN d ON b.id = d.id")
                     .noLeakCheck()
                     .assertsPlanContaining("Cross Join");
+        });
+    }
+
+    @Test
+    public void testSpliceJoinOfLaterCommaGroupNullExtendsItsOwnGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE b (k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE c (k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO a VALUES (1, '2024-01-01T00:00:01'), (2, '2024-01-01T00:00:02')");
+            execute("INSERT INTO b VALUES (10, '2024-01-01T00:00:01'), (30, '2024-01-01T00:00:03')");
+            execute("INSERT INTO c VALUES (20, '2024-01-01T00:00:02')");
+            final String expected = """
+                    ak	bk	ck
+                    1	10	null
+                    1	10	20
+                    1	30	20
+                    2	10	null
+                    2	10	20
+                    2	30	20
+                    """;
+            assertQuery("SELECT a.k ak, b.k bk, c.k ck FROM a, b SPLICE JOIN c ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [ak, bk, ck]
+                                SelectedRecord
+                                    Cross Join
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                                        Splice Join
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                            """)
+                    .returns(expected);
+            assertQuery("SELECT a.k ak, bk, ck FROM a CROSS JOIN (SELECT b.k bk, c.k ck FROM b SPLICE JOIN c) ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -1399,20 +1709,68 @@ public class MultiJoinTest extends AbstractCairoTest {
         });
     }
 
-    private void assertRows(String sql, boolean isFullFat, String expected) throws Exception {
-        assertRows(sql, isFullFat, expected, null);
-    }
-
-    private void assertRows(String sql, boolean isFullFat, String expected, String expectedPlan) throws Exception {
-        try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-            compiler.setFullFatJoins(isFullFat);
-            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
-                if (expectedPlan != null) {
-                    TestUtils.assertEquals(JitUtil.isJitSupported() ? expectedPlan : expectedPlan.replace("Async JIT", "Async"), plan(factory));
-                }
-            }
-        }
+    @Test
+    public void testThreeCommaGroupsMixInnerLeftAndRightJoins() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT)");
+            execute("CREATE TABLE b (k INT)");
+            execute("CREATE TABLE c (k INT)");
+            execute("CREATE TABLE d (k INT)");
+            execute("INSERT INTO a VALUES (1), (2)");
+            execute("INSERT INTO b VALUES (1), (3)");
+            execute("INSERT INTO c VALUES (1), (4)");
+            execute("INSERT INTO d VALUES (1), (5)");
+            final String expected = """
+                    ak	bk	ck	dk	d2k	b2k
+                    1	1	1	1	null	3
+                    1	1	1	1	1	1
+                    1	1	4	null	null	3
+                    1	1	4	null	1	1
+                    """;
+            assertQuery("SELECT a.k ak, b.k bk, c.k ck, d.k dk, d2.k d2k, b2.k b2k "
+                    + "FROM a JOIN b ON a.k = b.k, c LEFT JOIN d ON c.k = d.k, d d2 RIGHT JOIN b b2 ON d2.k = b2.k ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [ak, bk, ck, dk, d2k]
+                                SelectedRecord
+                                    Cross Join
+                                        Hash Left Outer Join Light
+                                          condition: d.k=c.k
+                                            Cross Join
+                                                Hash Join Light
+                                                  condition: b.k=a.k
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: a
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: b
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: d
+                                        Hash Right Outer Join Light
+                                          condition: b2.k=d2.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: d
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                            """)
+                    .returns(expected);
+            assertQuery("SELECT ak, bk, ck, dk, d2k, b2k FROM (SELECT a.k ak, b.k bk FROM a JOIN b ON a.k = b.k) "
+                    + "CROSS JOIN (SELECT c.k ck, d.k dk FROM c LEFT JOIN d ON c.k = d.k) "
+                    + "CROSS JOIN (SELECT d2.k d2k, b2.k b2k FROM d d2 RIGHT JOIN b b2 ON d2.k = b2.k) ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
     }
 
     private static void createOrderTables() throws Exception {
@@ -1442,6 +1800,37 @@ public class MultiJoinTest extends AbstractCairoTest {
                     (1, '2024-01-01T00:00:07.000000Z'),
                     (3, '2024-01-01T00:00:08.000000Z')
                 """);
+    }
+
+    private void assertCommaGroups(String left, String right, String where, boolean isSizeKnown, String plan, String expected) throws Exception {
+        assertQuery("SELECT a.k ak, b.k bk, c.k ck, d.k dk FROM a " + left + " JOIN b ON a.k = b.k, c " + right + " JOIN d ON c.k = d.k"
+                + where + " ORDER BY 1, 2, 3, 4")
+                .noLeakCheck()
+                .expectSize(isSizeKnown)
+                .withPlan(plan)
+                .returns(expected);
+        assertQuery("SELECT ak, bk, ck, dk FROM (SELECT a.k ak, b.k bk FROM a " + left + " JOIN b ON a.k = b.k) "
+                + "CROSS JOIN (SELECT c.k ck, d.k dk FROM c " + right + " JOIN d ON c.k = d.k)"
+                + where.replace("a.k", "ak").replace("b.k", "bk").replace("c.k", "ck").replace("d.k", "dk") + " ORDER BY 1, 2, 3, 4")
+                .noLeakCheck()
+                .expectSize(isSizeKnown)
+                .returns(expected);
+    }
+
+    private void assertRows(String sql, boolean isFullFat, String expected) throws Exception {
+        assertRows(sql, isFullFat, expected, null);
+    }
+
+    private void assertRows(String sql, boolean isFullFat, String expected, String expectedPlan) throws Exception {
+        try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+            compiler.setFullFatJoins(isFullFat);
+            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
+                if (expectedPlan != null) {
+                    TestUtils.assertEquals(JitUtil.isJitSupported() ? expectedPlan : expectedPlan.replace("Async JIT", "Async"), plan(factory));
+                }
+            }
+        }
     }
 
     private void createRows() throws Exception {

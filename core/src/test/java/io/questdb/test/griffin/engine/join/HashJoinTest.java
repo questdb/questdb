@@ -291,7 +291,6 @@ public class HashJoinTest extends AbstractCairoTest {
             createOrdersAndFills("STRING");
             assertQuery("SELECT o.ts, o.sym, f.qty FROM orders o JOIN fills f ON o.sym = f.sym AND o.venue = f.venue")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .withPlanContaining("Hash Join Light", "symbolKeyJoin: true")
                     .returns("""
@@ -398,7 +397,6 @@ public class HashJoinTest extends AbstractCairoTest {
             createOrdersAndFills("VARCHAR");
             assertQuery("SELECT o.ts, o.sym, f.qty FROM orders o JOIN fills f ON o.sym = f.sym AND o.venue = f.venue")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .withPlanContaining("Hash Join Light", "symbolKeyJoin: true")
                     .returns("""
@@ -794,7 +792,6 @@ public class HashJoinTest extends AbstractCairoTest {
             createBook();
             assertQuery("SELECT a.ts, a.sym, b.qty FROM book a JOIN book b ON a.sym = b.sym AND a.side = b.side_str")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .withPlanContaining("Hash Join Light")
                     .returns("""
@@ -813,7 +810,6 @@ public class HashJoinTest extends AbstractCairoTest {
             createBook();
             assertQuery("SELECT a.ts, b.qty, b.sym FROM book a JOIN book b ON a.sym = b.sym AND a.side_str = b.side")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .withPlanContaining("Hash Join Light")
                     .returns("""

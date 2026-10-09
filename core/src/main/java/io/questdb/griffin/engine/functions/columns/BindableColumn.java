@@ -75,6 +75,11 @@ public interface BindableColumn extends Function {
      */
     boolean isOpen();
 
+    @Override
+    default boolean isThreadSafe() {
+        return ColumnFunction.isThreadSafeType(getType());
+    }
+
     void setColumnId(int columnId);
 
     void setColumnIndex(int columnIndex);

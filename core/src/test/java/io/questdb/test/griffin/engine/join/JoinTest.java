@@ -1786,7 +1786,7 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testBarrierJoinedMasterFilterStaysPostJoin() throws Exception {
         // The filter references a single table (u1), but u1 is itself the slave of a LEFT join, so
-        // FilterPushdownPass.pushJoinFilters cannot push it into u1's sub-query and routes it to the multi-reference
+        // FilterPushdown.pushJoinFilters cannot push it into u1's sub-query and routes it to the multi-reference
         // else-branch. A later RIGHT join NULL-extends both u0 and u1 for the unmatched u2 key 2;
         // the predicate must be held back past it. Anchoring at the LEFT join (where u1 arrives)
         // leaked that NULL-master row, returning 2 rows instead of 1.
@@ -1877,7 +1877,7 @@ public class JoinTest extends AbstractCairoTest {
         // JoinOrderSolver used to append after c, NULL-extending c; pushing c.c1 = c.c2 into c then emptied
         // c (7 != 8) and leaked (null,50,null,null) -- 1 row for 0. JoinBinder.constrainNullingJoinConsumers
         // keeps the outer join before c, so c is never NULL-extended and the exec-order-aware
-        // FilterPushdownPass.pushJoinFilters pushes c.c1 = c.c2 into c. The matched (100,50,7,8) row fails c1=c2, so the
+        // FilterPushdown.pushJoinFilters pushes c.c1 = c.c2 into c. The matched (100,50,7,8) row fails c1=c2, so the
         // correct result is empty.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (x INT, k INT)");
@@ -3164,7 +3164,7 @@ public class JoinTest extends AbstractCairoTest {
             execute("INSERT INTO tc VALUES ('x', 'cx'), ('y', 'cy')");
             execute("CREATE VIEW v1 AS (SELECT t1.akey AS k, t1.av FROM ta t1 CROSS JOIN tb2 t2 WHERE t1.akey = t2.akey)");
 
-            // FilterPushdownPass.pushDownFilters pushes k='x' into the view's join inside the
+            // FilterPushdown.pushDownFilters pushes k='x' into the view's join inside the
             // IN-lambda and re-derives transitive filters from the pushed predicate.
             // The const-map entry it writes must not survive into the enclosing
             // query's join pass, or tc picks up a derived ckey='x' filter and the
@@ -5091,7 +5091,6 @@ public class JoinTest extends AbstractCairoTest {
 
             assertQuery(sql)
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .returns(expected);
         });
@@ -5299,7 +5298,6 @@ public class JoinTest extends AbstractCairoTest {
 
             assertQuery(sql)
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .returns(expected);
         });
@@ -7841,7 +7839,7 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testMultiTableEqualityMasterFilterStaysPostJoin() throws Exception {
         // Companion to testMultiTableMasterFilterStaysPostJoin, which uses an INEQUALITY (t0.a < t1.b)
-        // that JoinBinder.bindJoinConditions routes straight to FilterPushdownPass.pushJoinFilters. An EQUALITY across two master tables
+        // that JoinBinder.bindJoinConditions routes straight to FilterPushdown.pushJoinFilters. An EQUALITY across two master tables
         // (t0.a = t1.b) instead folds into the inner join's keys, so it was applied BEFORE the later
         // RIGHT/FULL OUTER NULL-extends t0 and t1 for the unmatched t2 key 2. With the equality folded,
         // the inner t0/t1 join is empty (1 != 5), so every t2 row became a NULL-master row and the
@@ -7897,12 +7895,12 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testMultiTableEqualityReorderedFilterStaysPostJoin() throws Exception {
         // Covers the hasNonEquiNullingJoin arm of the two-table equality deferral;
-        // testMultiTableEqualityMasterFilterStaysPostJoin covers the FilterPushdownPass.hasMasterNullingJoin arm.
+        // testMultiTableEqualityMasterFilterStaysPostJoin covers the FilterPushdown.hasMasterNullingJoin arm.
         // The WHERE equality (c.c1 = d.d1) is across two INNER-joined tables whose NULL-extension
         // comes from a lower-model-index non-equi RIGHT/FULL OUTER. That join carries no JoinContext,
         // so JoinBinder rewrites it to a CROSS variant JoinOrderSolver appends last -- after
         // c and d join -- and NULL-extends them. JoinBinder.bindJoinConditions therefore defers the
-        // equality (hasNonEquiNullingJoin) to the exec-order-aware FilterPushdownPass.pushJoinFilters,
+        // equality (hasNonEquiNullingJoin) to the exec-order-aware FilterPushdown.pushJoinFilters,
         // keeping c.c1 = d.d1 post-join. Folding it into the c/d inner
         // join applies it before the reordered outer join, emptying that subtree (7 != 8) so the join
         // pairs the slave row with NULL c/d and leaks (null,50,null,null) -- 1 row for 0.
@@ -7928,7 +7926,7 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testMultiTableMasterFilterStaysPostJoin() throws Exception {
-        // A WHERE predicate that references TWO master tables (t0.a < t1.b) reaches FilterPushdownPass.pushJoinFilters'
+        // A WHERE predicate that references TWO master tables (t0.a < t1.b) reaches FilterPushdown.pushJoinFilters'
         // multi-reference else-branch, which anchored it at the inner join where both tables arrive.
         // A later RIGHT/FULL OUTER join NULL-extends t0 and t1 for the unmatched t2 key 2; the filter
         // must stay above that join. Anchoring below it leaked the (null,null,2) row -- 2 rows for 1.
@@ -8025,7 +8023,7 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testNonEquiOuterJoinMasterFilterStaysPostJoin() throws Exception {
         // A RIGHT/FULL OUTER join with a NON-equi ON clause carries no JoinContext, so
-        // JoinBinder (which runs before FilterPushdownPass.pushJoinFilters) rewrites it to
+        // JoinBinder (which runs before FilterPushdown.pushJoinFilters) rewrites it to
         // JOIN_CROSS_RIGHT/JOIN_CROSS_FULL. Those CROSS variants still NULL-extend the
         // master (NestedLoopRight/FullJoin), so a master-only WHERE must stay a post-join
         // filter. With the predicate pushed into the master sub-query the unmatched
@@ -8062,7 +8060,7 @@ public class JoinTest extends AbstractCairoTest {
         // JOIN_CROSS_RIGHT/JOIN_CROSS_FULL, which JoinOrderSolver used to append after c, NULL-extending
         // c; pushing c.v = 1 into c then leaked the (null,100,null) row -- 2 rows for 1.
         // JoinBinder.constrainNullingJoinConsumers keeps the outer join before c, whose INNER join drops
-        // that row, so the exec-order-aware FilterPushdownPass.pushJoinFilters pushes c.v = 1 into c.
+        // that row, so the exec-order-aware FilterPushdown.pushJoinFilters pushes c.v = 1 into c.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (x INT, k INT)");
             execute("INSERT INTO a VALUES (10, 1)");
@@ -8331,7 +8329,7 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testOperatorMasterFilterStaysPostJoin() throws Exception {
-        // FilterPushdownPass.pushJoinFilters routes a non-folded operator predicate (a.c1 < 100) on a NULL-extending
+        // FilterPushdown.pushJoinFilters routes a non-folded operator predicate (a.c1 < 100) on a NULL-extending
         // master to a post-join filter; the existing folded-FALSE splice test only exercises that
         // path for a constant-FALSE predicate. The master row (c1=50) matches the slave and passes
         // the filter; the slave's unmatched row becomes a NULL-master row that c1<100 drops
@@ -8360,7 +8358,7 @@ public class JoinTest extends AbstractCairoTest {
         // master-only WHERE a.k = 1. That WHERE references the NULL-extended master, so the
         // master-nulling guard keeps it post-join and records no transitive fact for a's constant.
         // A fact that leaked across join levels would let the outer query's "k -> 2" survive into
-        // the nested join, and FilterPushdownPass.deriveTransitiveFilters would inject b.k = 2 into
+        // the nested join, and FilterPushdown.deriveTransitiveFilters would inject b.k = 2 into
         // the nested slave, dropping the matching row (0 rows instead of 1).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tc (q INT, k INT)");
@@ -8386,7 +8384,7 @@ public class JoinTest extends AbstractCairoTest {
         // Keeps transitive facts scoped per join level: unlike the sibling test where the nested
         // WHERE a.k = 1 re-registers "k" and masks a leaked fact, here the nested master WHERE
         // filters a DIFFERENT column (a.j = 1) while the join key still reuses "k". Without the
-        // scoping the outer "k -> 2" survives and FilterPushdownPass.deriveTransitiveFilters injects a foreign b.k = 2 into
+        // scoping the outer "k -> 2" survives and FilterPushdown.deriveTransitiveFilters injects a foreign b.k = 2 into
         // the nested slave, dropping the matching row (0 rows instead of 1).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tc (q INT, k INT)");
@@ -8705,7 +8703,6 @@ public class JoinTest extends AbstractCairoTest {
                     """;
             assertQuery(query)
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .returns(expected);
         });
@@ -8738,7 +8735,6 @@ public class JoinTest extends AbstractCairoTest {
                     """;
             assertQuery(query)
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .returns(expected);
         });
@@ -8813,7 +8809,7 @@ public class JoinTest extends AbstractCairoTest {
         // Const-on-LHS variant of testSpliceJoinMasterFilterProjectsSlaveColumn: the equality is
         // written 'A' = m.k, so JoinBinder.bindJoinConditions routes it through the case-0 (constant on the left)
         // branch rather than case-1. That branch registers the literal const for the transitive
-        // slave prune, but FilterPushdownPass.deriveTransitiveFilters must still skip the push for SPLICE: SPLICE is a
+        // slave prune, but FilterPushdown.deriveTransitiveFilters must still skip the push for SPLICE: SPLICE is a
         // temporal prevailing join, so pruning the slave to key 'A' shifts which slave row prevails
         // at each master timestamp and diverges the literal from the bind form. The master-side
         // predicate stays a post-join filter and the slave column is projected to surface a diverging
@@ -9323,7 +9319,7 @@ public class JoinTest extends AbstractCairoTest {
         // set joins is NOT neutral for SPLICE. SPLICE is a temporal prevailing join, so removing
         // slave rows of other keys (pushing s.k = 'A' into the slave) shifts which slave row
         // prevails at a master timestamp. The master-side literal predicate stays a post-join filter,
-        // but the const must NOT be pushed into the slave; FilterPushdownPass.deriveTransitiveFilters skips SPLICE. The
+        // but the const must NOT be pushed into the slave; FilterPushdown.deriveTransitiveFilters skips SPLICE. The
         // bug only surfaces when a SLAVE column is projected: testSpliceJoinMasterFilterStaysPostJoin
         // projects master columns only, hiding the diverging slave value.
         assertMemoryLeak(() -> {
@@ -9739,7 +9735,7 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testSpliceOperatorMasterFilterStaysPostJoin() throws Exception {
-        // SPLICE variant of testOperatorMasterFilterStaysPostJoin: FilterPushdownPass.pushJoinFilters routes a non-folded
+        // SPLICE variant of testOperatorMasterFilterStaysPostJoin: FilterPushdown.pushJoinFilters routes a non-folded
         // operator predicate (m.c1 < 100) on a NULL-extending master to a post-join filter; the only
         // existing SPLICE master-filter test for a live operator is the folded-FALSE case. The master
         // row (c1=50) passes the filter, so pushing the predicate into the master leaves it unchanged,
@@ -9791,7 +9787,7 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testStackedNullingJoinsMasterFilterStaysPostJoin() throws Exception {
-        // Two stacked nulling joins both NULL-extend the master mm. FilterPushdownPass.hasMasterNullingJoin must
+        // Two stacked nulling joins both NULL-extend the master mm. FilterPushdown.hasMasterNullingJoin must
         // anchor the master-only WHERE to the OUTERMOST nulling join (the ..s2 join), not the inner
         // one: a filter applied after only the inner join would be re-exposed to the NULL-master rows
         // synthesized by the outer join. Here the inner join (mm..s1) matches on k=1, so mm.col
@@ -10005,8 +10001,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testThreeTableMasterFilterStaysPostJoin() throws Exception {
         // A WHERE predicate that references THREE master tables (t0.a + t1.b + t2.c > 0), wrapped in a
-        // sub-query so FilterPushdownPass.pushDownFilters re-anchors it. The multi-table branch there routes
-        // through FilterPushdownPass.hasMasterNullingJoin, whose loop over the referenced indexes only
+        // sub-query so FilterPushdown.pushDownFilters re-anchors it. The multi-table branch there routes
+        // through FilterPushdown.hasMasterNullingJoin, whose loop over the referenced indexes only
         // iterated over two entries in every other test. A later RIGHT/FULL join NULL-extends t0, t1
         // and t2 for the unmatched t3 key 2; the predicate must stay above that join. Anchoring at the
         // highest referenced model index (t2's inner join) would leak the (null,null,null,2) row -- 2
@@ -10149,10 +10145,10 @@ public class JoinTest extends AbstractCairoTest {
     public void testWrappedBarrierSlaveMasterFilterStaysPostJoin() throws Exception {
         // LEAK-B: a single-table predicate (b.w + b.m > 0) references only b, which is the SLAVE of
         // the inner RIGHT join AND is NULL-extended by the later c RIGHT join. Because the join is
-        // wrapped in a sub-query, the predicate routes through FilterPushdownPass.pushDownFilters' barrier
+        // wrapped in a sub-query, the predicate routes through FilterPushdown.pushDownFilters' barrier
         // branch, which anchored it at b's own join -- below the c nulling join. The unmatched c key
         // 2 produces a NULL-master row that the predicate must drop; anchoring below the c join leaked
-        // it (2 rows for 1). The non-wrapped form already stays post-join via FilterPushdownPass.pushJoinFilters.
+        // it (2 rows for 1). The non-wrapped form already stays post-join via FilterPushdown.pushJoinFilters.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (k INT)");
             execute("INSERT INTO a VALUES (1)");
@@ -10174,9 +10170,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testWrappedMultiTableMasterFilterStaysPostJoin() throws Exception {
         // LEAK-A: companion to testMultiTableMasterFilterStaysPostJoin, but the join is wrapped in a
-        // sub-query. After FilterPushdownPass.pushDownFilters inlines the outer predicate into the join model,
+        // sub-query. After FilterPushdown.pushDownFilters inlines the outer predicate into the join model,
         // the rewritten t0.a < t1.b references two master tables and routes through the
-        // distinctIndexes>1 branch instead of FilterPushdownPass.pushJoinFilters. A later RIGHT/FULL join NULL-extends t0
+        // distinctIndexes>1 branch instead of FilterPushdown.pushJoinFilters. A later RIGHT/FULL join NULL-extends t0
         // and t1 for the unmatched t2 key 2; the filter must stay above that join. Anchoring at the
         // highest referenced model index (t1's inner join) leaked the (null,null,2) row -- 2 for 1.
         assertMemoryLeak(() -> {
@@ -10202,7 +10198,7 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testWrappedSubQueryMasterFilterStaysPostJoin() throws Exception {
         // The join is wrapped in a sub-query and the master predicate sits on the outer model, so
-        // it reaches FilterPushdownPass.pushDownFilters instead of JoinBinder.bindJoinConditions. The same master-nulling
+        // it reaches FilterPushdown.pushDownFilters instead of JoinBinder.bindJoinConditions. The same master-nulling
         // guard must apply: RIGHT/FULL/SPLICE all NULL-extend the master, and the master has no
         // 's2' row, so every output row is NULL-master and WHERE a = 's2' must return nothing.
         // Pushing the predicate into the master sub-query emptied it and leaked 2 NULL-master rows.

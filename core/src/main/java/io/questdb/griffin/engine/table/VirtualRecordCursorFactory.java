@@ -37,7 +37,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -94,11 +93,6 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
             Misc.free(this, th);
             throw th;
         }
-    }
-
-    @Override
-    public boolean canPeelForTopK() {
-        return true;
     }
 
     @Override
@@ -182,21 +176,6 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public RecordCursorFactory rewrapOverTopK(RecordCursorFactory topK, RecordMetadata orderedMetadata) {
-        RecordCursorFactory rewrappedBase = base.rewrapOverTopK(topK, base.getMetadata());
-        // Shares functions and priorityMetadata with the orphaned wrapper. Per the
-        // RecordCursorFactory.rewrapOverTopK contract, the caller must not close the orphan;
-        // its state has transferred here. Same precedent as the AsOf and LatestBy peels.
-        return new VirtualRecordCursorFactory(
-                orderedMetadata,
-                priorityMetadata,
-                functions,
-                rewrappedBase,
-                priorityMetadata.getVirtualColumnReservedSlots()
-        );
-    }
-
-    @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return base.supportsUpdateRowId(tableToken);
     }
@@ -206,22 +185,6 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.type("VirtualRecord");
         sink.optAttr("functions", functions, true);
         sink.child(base);
-    }
-
-    @Override
-    public int translateOrderByColumnToBase(int projectedIndex) {
-        if (projectedIndex < 0 || projectedIndex >= functions.size()) {
-            return -1;
-        }
-        ColumnFunction columnFn = ColumnFunction.unwrap(functions.getQuick(projectedIndex));
-        if (columnFn == null) {
-            return -1;
-        }
-        int baseIdx = priorityMetadata.getBaseColumnIndex(columnFn.getColumnIndex());
-        if (baseIdx < 0) {
-            return -1;
-        }
-        return base.translateOrderByColumnToBase(baseIdx);
     }
 
     @Override

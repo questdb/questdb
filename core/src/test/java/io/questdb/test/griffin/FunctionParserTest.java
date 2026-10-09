@@ -968,6 +968,28 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testFoldedTextConstantsPreserveDecodedValues() throws Exception {
+        assertMemoryLeak(() -> {
+            final ObjList<String> values = new ObjList<>();
+            values.add(null);
+            values.add("");
+            values.add("'");
+            values.add("'edge'");
+            values.add("'leading");
+            values.add("O'Reilly");
+            values.add("True");
+            values.add("fAlSe");
+            values.add("'\u03bb\u4e2d'");
+            for (int i = 0, n = values.size(); i < n; i++) {
+                final String value = values.getQuick(i);
+                assertFoldedTextValue(ColumnType.STRING, value);
+                assertFoldedTextValue(ColumnType.VARCHAR, value);
+                assertFoldedTextValue(ColumnType.SYMBOL, value);
+            }
+        });
+    }
+
+    @Test
     public void testFunctionDoesNotExist() {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN));
@@ -1009,7 +1031,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         assertFail(0, "bad function factory (NULL), check log", "x()", metadata);
     }
 
-    // The next three tests pin the cleanup contract of FunctionParser.createFunction():
+    // The next three tests pin the cleanup contract of FunctionResolver.createFunction():
     // when a factory fails to construct (throwing SqlException, throwing a generic exception, or
     // returning null), every already-parsed argument must be closed and the intended validation
     // error must survive. Functions can allocate native memory, so a fail-fast cleanup that
@@ -1078,6 +1100,34 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     // and the constant var-arg check in createFunction(). Each must close every already-parsed
     // argument (best-effort, no stranding) and keep the real error instead of a masking close()
     // failure.
+
+    @Test
+    public void testSelectedFunctionRejectionFreesFunctionNativeMemory() throws Exception {
+        final FunctionFactoryDescriptor overload = new FunctionFactoryDescriptor(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "nondet_alloc()";
+            }
+
+            @Override
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext executionContext) {
+                return new NonDeterministicAllocatingFunction();
+            }
+        });
+        assertMemoryLeak(() -> {
+            final boolean allowed = sqlExecutionContext.allowNonDeterministicFunctions();
+            sqlExecutionContext.setAllowNonDeterministicFunction(false);
+            try {
+                createFunctionParser().getFunctionResolver().createFunction(overload, 29, "nondet_alias", null, null, sqlExecutionContext);
+                fail("expected non-deterministic rejection");
+            } catch (SqlException e) {
+                assertEquals(29, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "non-deterministic function cannot be used in materialized view: nondet_alias");
+            } finally {
+                sqlExecutionContext.setAllowNonDeterministicFunction(allowed);
+            }
+        });
+    }
 
     @Test
     public void testUnknownFunctionClosesArgsAndKeepsError() {
@@ -1609,28 +1659,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testFoldedTextConstantsPreserveDecodedValues() throws Exception {
-        assertMemoryLeak(() -> {
-            final ObjList<String> values = new ObjList<>();
-            values.add(null);
-            values.add("");
-            values.add("'");
-            values.add("'edge'");
-            values.add("'leading");
-            values.add("O'Reilly");
-            values.add("True");
-            values.add("fAlSe");
-            values.add("'\u03bb\u4e2d'");
-            for (int i = 0, n = values.size(); i < n; i++) {
-                final String value = values.getQuick(i);
-                assertFoldedTextValue(ColumnType.STRING, value);
-                assertFoldedTextValue(ColumnType.VARCHAR, value);
-                assertFoldedTextValue(ColumnType.SYMBOL, value);
-            }
-        });
-    }
-
-    @Test
     public void testImplicitConstantStr() throws SqlException {
         functions.add(new FunctionFactory() {
             @Override
@@ -1832,10 +1860,10 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         final IntList argPositions = new IntList();
         argPositions.add(11);
         argPositions.add(19);
-        try (Function function = parser.createFunction(overload, 17, "+", args, argPositions, sqlExecutionContext)) {
+        try (Function function = parser.getFunctionResolver().createFunction(overload, 17, "+", args, argPositions, sqlExecutionContext)) {
             assertEquals(1, constructionCount.get());
             assertEquals(0, args.size());
-            assertEquals(17, parser.getExecutionRequirements().getPosition(SqlExecutionRequirements.REQUIRES_LIVE_WAL_PROGRESS));
+            assertEquals(17, parser.getFunctionResolver().getExecutionRequirements().getPosition(SqlExecutionRequirements.REQUIRES_LIVE_WAL_PROGRESS));
             parser.clear();
             assertEquals(42, function.getInt(null));
         }
@@ -1864,7 +1892,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         final boolean allowed = sqlExecutionContext.allowNonDeterministicFunctions();
         sqlExecutionContext.setAllowNonDeterministicFunction(false);
         try {
-            createFunctionParser().createFunction(overload, 23, "admin_alias", null, null, sqlExecutionContext);
+            createFunctionParser().getFunctionResolver().createFunction(overload, 23, "admin_alias", null, null, sqlExecutionContext);
             fail("expected administrative function rejection");
         } catch (SqlException e) {
             assertEquals(23, e.getPosition());
@@ -1873,34 +1901,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         } finally {
             sqlExecutionContext.setAllowNonDeterministicFunction(allowed);
         }
-    }
-
-    @Test
-    public void testSelectedFunctionRejectionFreesFunctionNativeMemory() throws Exception {
-        final FunctionFactoryDescriptor overload = new FunctionFactoryDescriptor(new FunctionFactory() {
-            @Override
-            public String getSignature() {
-                return "nondet_alloc()";
-            }
-
-            @Override
-            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext executionContext) {
-                return new NonDeterministicAllocatingFunction();
-            }
-        });
-        assertMemoryLeak(() -> {
-            final boolean allowed = sqlExecutionContext.allowNonDeterministicFunctions();
-            sqlExecutionContext.setAllowNonDeterministicFunction(false);
-            try {
-                createFunctionParser().createFunction(overload, 29, "nondet_alias", null, null, sqlExecutionContext);
-                fail("expected non-deterministic rejection");
-            } catch (SqlException e) {
-                assertEquals(29, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "non-deterministic function cannot be used in materialized view: nondet_alias");
-            } finally {
-                sqlExecutionContext.setAllowNonDeterministicFunction(allowed);
-            }
-        });
     }
 
     @Test

@@ -393,12 +393,13 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     }
 
     @Override
+    public void toPlan(PlanSink sink) {
+        sink.val("Interpolated(").val(wrappedFunction).val(")");
+    }
+
+    @Override
     public void toTop() {
         wrappedFunction.toTop();
     }
 
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.val("Interpolated(").val(wrappedFunction).val(")");
-    }
 }

@@ -52,12 +52,12 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PhysicalProperties;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -65,10 +65,10 @@ import java.io.Closeable;
 /**
  * Owns prepared table-function roots independently of pooled logical descriptions.
  */
-final class TableFunctionSources implements Closeable, Mutable {
+public final class TableFunctionSources implements Closeable, Mutable {
     private final ObjList<ExpressionNode> expressions = new ObjList<>();
     private final FunctionParser parser;
-    private final ObjectPool<FunctionSourcePlan> plans;
+    private final PlanNodePools planNodes;
     private final ObjList<FunctionSourcePlan> prepared = new ObjList<>();
     private final ResourceScope resources = new ResourceScope();
     private final ObjList<QueryModel> showModels = new ObjList<>();
@@ -76,9 +76,83 @@ final class TableFunctionSources implements Closeable, Mutable {
     private SqlParserCallback callback;
     private Path path;
 
-    TableFunctionSources(FunctionParser parser, ObjectPool<FunctionSourcePlan> plans) {
+    public TableFunctionSources(FunctionParser parser, PlanNodePools planNodes) {
         this.parser = parser;
-        this.plans = plans;
+        this.planNodes = planNodes;
+    }
+
+    public FunctionSourcePlan bind(ExpressionNode expression, SqlExecutionContext executionContext) throws SqlException {
+        assert expression.type == ExpressionNode.FUNCTION;
+        final FunctionSourcePlan plan = planNodes.functionSources.next().of(expression.position);
+        final int slot = resources.reserve();
+        prepared.add(plan);
+        expressions.add(expression);
+        slots.add(slot);
+        try {
+            final Function function = parser.parseFunction(expression, AnyRecordMetadata.INSTANCE, executionContext);
+            resources.own(slot, function);
+            if (!(function instanceof CursorFunction)) {
+                throw SqlException.$(expression.position, "function must return CURSOR");
+            }
+            describe(plan, function.getRecordCursorFactory());
+            plan.setProjectable(function.getRecordCursorFactory() instanceof ProjectableRecordCursorFactory);
+            return plan;
+        } catch (Throwable th) {
+            closeSlot(slot, th);
+            throw th;
+        }
+    }
+
+    /**
+     * Binds a SELECT-list cursor call as one RECORD column that carries each row of the call.
+     */
+    public FunctionSourcePlan bindRecord(ExpressionNode expression, CharSequence name, SqlExecutionContext executionContext) throws SqlException {
+        assert expression.type == ExpressionNode.FUNCTION;
+        final FunctionSourcePlan plan = planNodes.functionSources.next().of(expression.position);
+        final int slot = resources.reserve();
+        prepared.add(plan);
+        expressions.add(expression);
+        slots.add(slot);
+        try {
+            final Function function = parser.parseFunction(expression, AnyRecordMetadata.INSTANCE, executionContext);
+            resources.own(slot, function);
+            if (!(function instanceof CursorFunction)) {
+                throw SqlException.$(expression.position, "function must return CURSOR");
+            }
+            final RecordCursorFactory factory = function.getRecordCursorFactory();
+            final RecordMetadata metadata = factory.getMetadata();
+            describeSource(plan, factory);
+            final OutputSchema record = plan.getRecordSchema();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                record.add(i, metadata.getColumnName(i), metadata.getColumnType(i), true);
+            }
+            plan.getOutput().add(planNodes.nextColumnId(), name, ColumnType.RECORD, record, true);
+            plan.getSourceColumnIndexes().add(0);
+            plan.setRecordName(name);
+            return plan;
+        } catch (Throwable th) {
+            closeSlot(slot, th);
+            throw th;
+        }
+    }
+
+    public FunctionSourcePlan bindShow(QueryModel model, SqlExecutionContext executionContext, SqlParserCallback callback) throws SqlException {
+        final FunctionSourcePlan plan = planNodes.functionSources.next().of(model.getModelPosition());
+        final int slot = resources.reserve();
+        prepared.add(plan);
+        expressions.add(null);
+        showModels.extendAndSet(prepared.size() - 1, model);
+        slots.add(slot);
+        this.callback = callback;
+        try {
+            resources.own(slot, new CursorFunction(createShowFactory(model, executionContext, callback, path())));
+            parser.getFunctionResolver().markCursorFunctionInstantiated();
+            describe(plan, resources.function(slot).getRecordCursorFactory());
+            return plan;
+        } catch (Throwable th) {
+            closeSlot(slot, th);
+            throw th;
+        }
     }
 
     @Override
@@ -99,24 +173,54 @@ final class TableFunctionSources implements Closeable, Mutable {
         CairoException.rethrowCleanupFailure(Misc.freeBestEffort(failure, ownedPath));
     }
 
-    private static void describe(FunctionSourcePlan plan, RecordCursorFactory factory, int firstColumnId) {
-        final RecordMetadata metadata = factory.getMetadata();
-        final OutputSchema output = plan.getOutput();
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            if (ColumnType.tagOf(metadata.getColumnType(i)) == ColumnType.RECORD) {
-                throw new IllegalStateException("table function returned a RECORD column");
-            }
-            output.add(firstColumnId + i, metadata.getColumnName(i), metadata.getColumnType(i), true);
-            output.setSymbolTableStatic(i, metadata.isSymbolTableStatic(i));
-            plan.getSourceColumnIndexes().add(i);
+    public Throwable closePrepared(Throwable primary) {
+        return resources.closeOwned(primary);
+    }
+
+    /**
+     * Copies a prepared source without its output, which the caller fills. The copy creates its own
+     * function from the same call when generated.
+     */
+    public FunctionSourcePlan copy(FunctionSourcePlan plan) {
+        final int index = prepared.indexOf(plan);
+        if (index < 0) {
+            throw new IllegalStateException("table-function source was not prepared");
         }
-        output.setTimestampIndex(metadata.getTimestampIndex());
-        describeSource(plan, factory);
+        final FunctionSourcePlan copy = planNodes.functionSources.next().of(plan.getPosition());
+        copy.getRecordSchema().copyFrom(plan.getRecordSchema());
+        copy.getSourceColumnIndexes().addAll(plan.getSourceColumnIndexes());
+        copy.setExternalDataSource(plan.hasExternalDataSource());
+        copy.setDeterministic(plan.isDeterministic());
+        copy.setProjectable(plan.isProjectable());
+        copy.copyPhysicalProperties(plan);
+        copy.setRecordName(plan.getRecordName());
+        prepared.add(copy);
+        expressions.add(expressions.getQuick(index));
+        if (index < showModels.size()) {
+            showModels.extendAndSet(prepared.size() - 1, showModels.getQuick(index));
+        }
+        slots.add(resources.reserve());
+        return copy;
+    }
+
+    public RecordCursorFactory takeFactory(FunctionSourcePlan plan, SqlExecutionContext executionContext) throws SqlException {
+        final RecordCursorFactory factory = takeSourceFactory(plan, executionContext);
+        if (plan.getRecordName() == null) {
+            return factory;
+        }
+        try {
+            return new RecordAsAFieldRecordCursorFactory(factory, plan.getRecordName());
+        } catch (Throwable th) {
+            Misc.free(factory, th);
+            throw th;
+        }
     }
 
     private static void describeSource(FunctionSourcePlan plan, RecordCursorFactory factory) {
         plan.setExternalDataSource(factory.usesExternalDataSource());
         plan.setDeterministic(!factory.isNonDeterministic());
+        plan.setPhysicalProperties(factory.recordCursorSupportsRandomAccess(), factory.supportsPageFrameCursor(),
+                PhysicalProperties.ScanDirection.of(factory.getScanDirection()), SqlUtil.isLongSequence(factory));
     }
 
     private static TableToken existingShowTable(QueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
@@ -131,6 +235,21 @@ final class TableFunctionSources implements Closeable, Mutable {
         if (resources.isOwned(slot)) {
             Misc.free(resources.detach(slot), primary);
         }
+    }
+
+    private void describe(FunctionSourcePlan plan, RecordCursorFactory factory) {
+        final RecordMetadata metadata = factory.getMetadata();
+        final OutputSchema output = plan.getOutput();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (ColumnType.tagOf(metadata.getColumnType(i)) == ColumnType.RECORD) {
+                throw new IllegalStateException("table function returned a RECORD column");
+            }
+            output.add(planNodes.nextColumnId(), metadata.getColumnName(i), metadata.getColumnType(i), true);
+            output.setSymbolTableStatic(i, metadata.isSymbolTableStatic(i));
+            plan.getSourceColumnIndexes().add(i);
+        }
+        output.setTimestampIndex(metadata.getTimestampIndex());
+        describeSource(plan, factory);
     }
 
     private Path path() {
@@ -205,122 +324,5 @@ final class TableFunctionSources implements Closeable, Mutable {
                     sqlParserCallback.generateShowCreateViewFactory(model, executionContext, path);
             default -> sqlParserCallback.generateShowSqlFactory(model);
         };
-    }
-
-    FunctionSourcePlan bind(ExpressionNode expression, SqlExecutionContext executionContext, int firstColumnId) throws SqlException {
-        assert expression.type == ExpressionNode.FUNCTION;
-        final FunctionSourcePlan plan = plans.next().of(expression.position);
-        final int slot = resources.reserve();
-        prepared.add(plan);
-        expressions.add(expression);
-        slots.add(slot);
-        try {
-            final Function function = parser.parseFunction(expression, AnyRecordMetadata.INSTANCE, executionContext);
-            resources.own(slot, function);
-            if (!(function instanceof CursorFunction)) {
-                throw SqlException.$(expression.position, "function must return CURSOR");
-            }
-            describe(plan, function.getRecordCursorFactory(), firstColumnId);
-            plan.setProjectable(function.getRecordCursorFactory() instanceof ProjectableRecordCursorFactory);
-            return plan;
-        } catch (Throwable th) {
-            closeSlot(slot, th);
-            throw th;
-        }
-    }
-
-    /**
-     * Binds a SELECT-list cursor call as one RECORD column that carries each row of the call.
-     */
-    FunctionSourcePlan bindRecord(ExpressionNode expression, CharSequence name, SqlExecutionContext executionContext, int columnId) throws SqlException {
-        assert expression.type == ExpressionNode.FUNCTION;
-        final FunctionSourcePlan plan = plans.next().of(expression.position);
-        final int slot = resources.reserve();
-        prepared.add(plan);
-        expressions.add(expression);
-        slots.add(slot);
-        try {
-            final Function function = parser.parseFunction(expression, AnyRecordMetadata.INSTANCE, executionContext);
-            resources.own(slot, function);
-            if (!(function instanceof CursorFunction)) {
-                throw SqlException.$(expression.position, "function must return CURSOR");
-            }
-            final RecordCursorFactory factory = function.getRecordCursorFactory();
-            final RecordMetadata metadata = factory.getMetadata();
-            describeSource(plan, factory);
-            final OutputSchema record = plan.getRecordSchema();
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                record.add(i, metadata.getColumnName(i), metadata.getColumnType(i), true);
-            }
-            plan.getOutput().add(columnId, name, ColumnType.RECORD, record, true);
-            plan.getSourceColumnIndexes().add(0);
-            plan.setRecordName(name);
-            return plan;
-        } catch (Throwable th) {
-            closeSlot(slot, th);
-            throw th;
-        }
-    }
-
-    FunctionSourcePlan bindShow(QueryModel model, SqlExecutionContext executionContext, SqlParserCallback callback,
-                                int firstColumnId) throws SqlException {
-        final FunctionSourcePlan plan = plans.next().of(model.getModelPosition());
-        final int slot = resources.reserve();
-        prepared.add(plan);
-        expressions.add(null);
-        showModels.extendAndSet(prepared.size() - 1, model);
-        slots.add(slot);
-        this.callback = callback;
-        try {
-            resources.own(slot, new CursorFunction(createShowFactory(model, executionContext, callback, path())));
-            parser.markCursorFunctionInstantiated();
-            describe(plan, resources.function(slot).getRecordCursorFactory(), firstColumnId);
-            return plan;
-        } catch (Throwable th) {
-            closeSlot(slot, th);
-            throw th;
-        }
-    }
-
-    Throwable closePrepared(Throwable primary) {
-        return resources.closeOwned(primary);
-    }
-
-    /**
-     * Copies a prepared source without its output, which the caller fills. The copy creates its own
-     * function from the same call when generated.
-     */
-    FunctionSourcePlan copy(FunctionSourcePlan plan) {
-        final int index = prepared.indexOf(plan);
-        if (index < 0) {
-            throw new IllegalStateException("table-function source was not prepared");
-        }
-        final FunctionSourcePlan copy = plans.next().of(plan.getPosition());
-        copy.getRecordSchema().copyFrom(plan.getRecordSchema());
-        copy.getSourceColumnIndexes().addAll(plan.getSourceColumnIndexes());
-        copy.setExternalDataSource(plan.hasExternalDataSource());
-        copy.setDeterministic(plan.isDeterministic());
-        copy.setProjectable(plan.isProjectable());
-        copy.setRecordName(plan.getRecordName());
-        prepared.add(copy);
-        expressions.add(expressions.getQuick(index));
-        if (index < showModels.size()) {
-            showModels.extendAndSet(prepared.size() - 1, showModels.getQuick(index));
-        }
-        slots.add(resources.reserve());
-        return copy;
-    }
-
-    RecordCursorFactory takeFactory(FunctionSourcePlan plan, SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursorFactory factory = takeSourceFactory(plan, executionContext);
-        if (plan.getRecordName() == null) {
-            return factory;
-        }
-        try {
-            return new RecordAsAFieldRecordCursorFactory(factory, plan.getRecordName());
-        } catch (Throwable th) {
-            Misc.free(factory, th);
-            throw th;
-        }
     }
 }

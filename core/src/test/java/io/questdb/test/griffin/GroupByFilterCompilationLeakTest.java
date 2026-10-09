@@ -65,16 +65,17 @@ public class GroupByFilterCompilationLeakTest extends AbstractCairoTest {
                     SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, 4);
                     SqlCompilerImpl compiler = new SqlCompilerImpl(engine)
             ) {
-                // Owner + four filter workers succeed; the aggregate's second filter clone fails.
-                TestThrowingFilterFunctionFactory.reset(7);
+                // The owner filter and the first worker clone succeed; the second clone the GROUP BY prepares
+                // for the filter it steals fails.
+                TestThrowingFilterFunctionFactory.reset(3);
                 try {
                     try (RecordCursorFactory ignored = compiler.compile(query, ctx).getRecordCursorFactory()) {
                         Assert.fail("expected worker filter compilation to fail");
                     } catch (SqlException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "configured to throw on call 7");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "configured to throw on call 3");
                     }
-                    Assert.assertEquals(7, TestThrowingFilterFunctionFactory.CONSTRUCT_COUNT.get());
-                    Assert.assertEquals(6, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
+                    Assert.assertEquals(3, TestThrowingFilterFunctionFactory.CONSTRUCT_COUNT.get());
+                    Assert.assertEquals(2, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
                 } finally {
                     TestThrowingFilterFunctionFactory.reset(-1);
                 }

@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
@@ -61,7 +62,7 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
             final long memoryBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
             final boolean[] hasNativeChild = {false};
             final int[] foldedCastCalls = {0};
-            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache()) {
+            final FunctionParser parser = new FunctionParser(configuration, new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
                 @Override
                 public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
                                                ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
@@ -77,7 +78,7 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
                     }
                     return result;
                 }
-            };
+            });
             final OutputSchema input = new OutputSchema().add(7, "id", ColumnType.LONG, true);
             try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final BoundExpression expression = binder.bind(cast(in(constant("2")), "string"), input, null, sqlExecutionContext);
@@ -291,10 +292,6 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
         return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, value, 0, 0);
     }
 
-    private static ExpressionNode parameter(String token) {
-        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.BIND_VARIABLE, token, 0, 0);
-    }
-
     private static Record longRecord(int expectedIndex, long value) {
         return new Record() {
             @Override
@@ -303,6 +300,10 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
                 return value;
             }
         };
+    }
+
+    private static ExpressionNode parameter(String token) {
+        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.BIND_VARIABLE, token, 0, 0);
     }
 
     private static OutputSchema schema(RecordMetadata metadata, int firstId) {
@@ -334,7 +335,7 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
     }
 
     private FunctionParser parser(ObjList<Function> constructed) {
-        return new FunctionParser(configuration, engine.getFunctionFactoryCache()) {
+        return new FunctionParser(configuration, new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
             @Override
             public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
                                            ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
@@ -342,6 +343,6 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
                 constructed.add(function);
                 return function;
             }
-        };
+        });
     }
 }

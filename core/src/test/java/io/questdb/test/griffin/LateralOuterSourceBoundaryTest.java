@@ -28,14 +28,10 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
@@ -88,18 +84,19 @@ public class LateralOuterSourceBoundaryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInternalRetryAfterPrimaryGenerationControl() throws Exception {
+    public void testInternalRetryAfterPrimaryBindingControl() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            try (RetryContext context = new RetryContext(); RetryCompiler compiler = new RetryCompiler()) {
+            try (RetryContext context = new RetryContext(); SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 String query = "SELECT o.ts, o.x, l.c FROM "
                         + "(SELECT ts, x FROM t WHERE x IN (1, 101, 200)) o "
                         + "JOIN LATERAL (SELECT count() c FROM u WHERE u.ts <= o.ts) l ON true ORDER BY o.x";
+                assertQuery(query).withCompiler(compiler).returns(SELECTED_RESULT);
+                final int modelPoolCapacity = compiler.getQueryModelPoolCapacity();
                 assertQuery(query).withCompiler(compiler).withContext(context).returns(SELECTED_RESULT);
-                Assert.assertTrue("must inject after compiling the primary t source", context.hasInjected);
-                Assert.assertTrue("must retry inside one compile", compiler.attempts >= 2);
-                Assert.assertTrue("retry must reuse pooled root identity", compiler.hasReusedRoot);
-                // Reuse the same compiler with a different logical predicate after the retry.
+                Assert.assertTrue("must inject after binding the primary t source", context.hasInjected);
+                Assert.assertTrue("must bind again inside one compile", context.primaryReadsAfterInjection > 0);
+                Assert.assertEquals("retry must reuse pooled models", modelPoolCapacity, compiler.getQueryModelPoolCapacity());
                 assertQuery("SELECT x FROM t WHERE x = 200").withCompiler(compiler).withContext(context)
                         .returns("x\n200\n");
             }
@@ -414,30 +411,10 @@ public class LateralOuterSourceBoundaryTest extends AbstractCairoTest {
         execute("CREATE TABLE u AS (SELECT x::TIMESTAMP ts FROM long_sequence(50)) TIMESTAMP(ts)");
     }
 
-    private static class RetryCompiler extends SqlCompilerImpl {
-        private int attempts;
-        private QueryModel firstRoot;
-        private boolean hasReusedRoot;
-
-        private RetryCompiler() {
-            super(AbstractCairoTest.engine);
-        }
-
-        @Override
-        protected RecordCursorFactory generateSelectOneShot(QueryModel model, SqlExecutionContext context, boolean isProgressLogger) throws SqlException {
-            attempts++;
-            if (firstRoot == null) {
-                firstRoot = model;
-            } else if (attempts == 2) {
-                hasReusedRoot = firstRoot == model;
-            }
-            return super.generateSelectOneShot(model, context, isProgressLogger);
-        }
-    }
-
     private static class RetryContext extends SqlExecutionContextImpl {
         private boolean hasInjected;
         private boolean hasReadPrimary;
+        private int primaryReadsAfterInjection;
 
         private RetryContext() {
             super(AbstractCairoTest.engine, 1);
@@ -446,13 +423,26 @@ public class LateralOuterSourceBoundaryTest extends AbstractCairoTest {
 
         @Override
         public TableReader getReader(TableToken token, long version) {
+            inject(token);
+            return super.getReader(token, version);
+        }
+
+        @Override
+        public TableReader getReader(TableToken token) {
+            inject(token);
+            return super.getReader(token);
+        }
+
+        private void inject(TableToken token) {
             if (token.getTableName().equals("t")) {
                 hasReadPrimary = true;
+                if (hasInjected) {
+                    primaryReadsAfterInjection++;
+                }
             } else if (token.getTableName().equals("u") && hasReadPrimary && !hasInjected) {
                 hasInjected = true;
                 throw TableReferenceOutOfDateException.of(token);
             }
-            return super.getReader(token, version);
         }
     }
 }

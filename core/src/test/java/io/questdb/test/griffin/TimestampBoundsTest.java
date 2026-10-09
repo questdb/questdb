@@ -608,7 +608,7 @@ public class TimestampBoundsTest extends AbstractCairoTest {
     /**
      * The pushed-down twin of
      * {@link #testDesignatedNanosTimestampOutOfBoundsRowSurvivesDateaddFilter()}. The sub-query
-     * projection makes {@code FilterPushdownPass} substitute the projected offset into the predicate
+     * projection makes {@code FilterPushdown} substitute the projected offset into the predicate
      * and push it onto the base table, and {@code IntervalExtractor.intersectOffset()} then reads the driver ceiling
      * itself rather than going through a {@code MonotonicTimestampFunction}. The plan assertion pins
      * the decline: the predicate has to stay a residual filter instead of becoming an interval scan

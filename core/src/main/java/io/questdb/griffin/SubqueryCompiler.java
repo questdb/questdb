@@ -32,7 +32,7 @@ import io.questdb.griffin.plan.logical.Subquery;
  * The compiler operations the binder and the function instantiator need: binding a sub-query one depth deeper, and
  * generating an optimised sub-query for one of its consumers.
  */
-interface SubqueryCompiler {
+public interface SubqueryCompiler {
 
     /**
      * Binds a sub-query of the query binding now with the scope one depth deeper and returns it.

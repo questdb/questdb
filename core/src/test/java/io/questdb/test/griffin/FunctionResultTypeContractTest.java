@@ -45,7 +45,7 @@ import java.util.List;
 /**
  * Builds every registered function over every argument type its signature accepts, as columns, constants,
  * typed and untyped NULLs and bind variables, and over the constant values factories branch on. Fails when
- * {@code getResultType} throws, when the {@code -ea} check in {@code FunctionParser.createFunction} finds a
+ * {@code getResultType} throws, when the {@code -ea} check in {@code FunctionResolver.createFunction} finds a
  * built type other than the declared one, when a call the binder left unconstructed builds into a function
  * with other semantics than the binder recorded, or when compiling a call throws anything other than a
  * SqlException, CairoException or ImplicitCastException that is not a known crash master shares.
@@ -404,6 +404,9 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
         }
     }
 
+    private record Form(String sql, short tag, boolean isConstant, boolean isValue) {
+    }
+
     private void sample(String name, boolean isWindow, ObjList<ObjList<String>> base, int count) {
         final ObjList<String> args = new ObjList<>();
         for (int k = 0; k < count; k++) {
@@ -425,9 +428,6 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
             }
         }
         return values;
-    }
-
-    private record Form(String sql, short tag, boolean isConstant, boolean isValue) {
     }
 
     static {

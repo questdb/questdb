@@ -1791,7 +1791,7 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
             // Two distinct keys, with a data gap between 00:00 and 04:00 so
             // the intermediate buckets must carry forward key + a+b via
             // FILL(PREV). The outer expression `a + b` over the inner
-            // SAMPLE BY triggers ColumnPruningPass in SqlOptimiser,
+            // SAMPLE BY triggers ColumnPruning in SqlOptimiser,
             // reordering the inner model's columns. Pre-fix: the bare
             // FILL(PREV) branch called isKeyColumn(factoryIdx, bottomUpCols,
             // timestampIndex) with a factory-indexed `i` against a

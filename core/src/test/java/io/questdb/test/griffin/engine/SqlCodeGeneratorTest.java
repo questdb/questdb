@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine;
 
+
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -35,11 +36,11 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.griffin.SetOperationBinder;
+import io.questdb.griffin.SetOperationCasts;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.bind.SetOperationBinder;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
@@ -56,13 +57,14 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.IntFunction;
+
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
-
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.IntFunction;
 
 public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
@@ -96,7 +98,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "    timestamp_sequence(0, 10000) k" +
                         "  from long_sequence(3)" +
                         ") timestamp(k)")
-                .timestamp("k")
                 .noRandomAccess()
                 .returns("""
                         col_k\ta\tk\tcol_k1
@@ -116,7 +117,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "    timestamp_sequence(0, 10000) k" +
                         "  from long_sequence(3)" +
                         ") timestamp(k)")
-                .timestamp("k")
                 .noRandomAccess()
                 .returns("""
                         col_k\ta\tk\ta1\tk1
@@ -384,7 +384,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "    timestamp_sequence(0, 10000) k" +
                         "  from long_sequence(3)" +
                         ") timestamp(k)")
-                .timestamp("k")
                 .noRandomAccess()
                 .returns("""
                         klong1\tklong2\ta\tk\ta1\tk1
@@ -8352,12 +8351,12 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testUnionCastMatrix() {
-        final int[][] expected = SetOperationBinder.expectedUnionCastMatrix();
+        final int[][] expected = SetOperationCasts.expectedUnionCastMatrix();
         printExpectedUnionCastMatrix(expected);
 
         Assert.assertTrue(expectedUnionCastMatrixIsSymmetrical(expected));
 
-        final int[][] actual = SetOperationBinder.actualUnionCastMatrix();
+        final int[][] actual = SetOperationCasts.actualUnionCastMatrix();
         Assert.assertEquals(expected.length, actual.length);
 
         for (int typeA = 0; typeA <= ColumnType.NULL; typeA++) {
@@ -8376,8 +8375,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals(
                         "typeA: " + typeA + ", typeB: " + typeB,
-                        SetOperationBinder.getUnionCastType(typeA, typeB),
-                        SetOperationBinder.getUnionCastType(typeB, typeA)
+                        SetOperationCasts.getUnionCastType(typeA, typeB),
+                        SetOperationCasts.getUnionCastType(typeB, typeA)
                 );
             }
         }

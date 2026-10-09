@@ -50,12 +50,12 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private final boolean isMasterFixed;
     private final RecordSink masterSink;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
     private final RecordSink slaveKeySink;
     private final int @Nullable [] slaveSymbolKeyColumnIndices;
     private HashJoinRecordCursor cursor;
-    private boolean masterDetermined = false;
     private @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
 
     public HashJoinLightRecordCursorFactory(
@@ -70,9 +70,11 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             int columnSplit,
             Plannable joinContext,
             int @Nullable [] masterSymbolKeyColumnIndices,
-            int @Nullable [] slaveSymbolKeyColumnIndices
+            int @Nullable [] slaveSymbolKeyColumnIndices,
+            boolean isMasterFixed
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        this.isMasterFixed = isMasterFixed;
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
         try {
@@ -90,9 +92,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public boolean followedOrderByAdvice() {
-        boolean followOrderBy = masterFactory.followedOrderByAdvice();
-        masterDetermined |= followOrderBy;
-        return followOrderBy;
+        return isMasterFixed && masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -102,7 +102,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         try {
             masterCursor = masterFactory.getCursor(executionContext);
             boolean swapped = false;
-            if (masterFactory.recordCursorSupportsRandomAccess() && !masterDetermined) {
+            if (!isMasterFixed && masterFactory.recordCursorSupportsRandomAccess()) {
                 long masterSize = masterCursor.size();
                 long slaveSize = slaveCursor.size();
 
@@ -129,9 +129,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public int getScanDirection() {
-        int scanDirection = masterFactory.getScanDirection();
-        masterDetermined |= scanDirection != RecordCursorFactory.SCAN_DIRECTION_OTHER;
-        return scanDirection;
+        return isMasterFixed ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
     }
 
     @Override

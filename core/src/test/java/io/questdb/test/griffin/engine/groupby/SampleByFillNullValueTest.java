@@ -1955,7 +1955,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     @Test
     public void testFillValueAppliesAfterAggregateArithmetic() throws Exception {
         // FILL(v) over sum(col*K) must show v in empty buckets, not v*K. Sum normalisation
-        // (now AggregateRewritePass) used to split sum(x*10) into sum(x)*10, so the fill
+        // (now AggregateRewrite) used to split sum(x*10) into sum(x)*10, so the fill
         // landed on sum(x) and empty buckets returned 420. Coverage: ALIGN TO CALENDAR
         // and ALIGN TO FIRST OBSERVATION, each in non-keyed and keyed form.
         assertMemoryLeak(() -> {

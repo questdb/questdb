@@ -38,13 +38,37 @@ import org.jetbrains.annotations.TestOnly;
  * Owns the executable roots the parser builds while binding, one slot per bound expression, and the constant arguments
  * and column leaves of calls the binder leaves unconstructed, until a consumer adopts, retargets or closes them.
  */
-final class PreparedFunctions implements Mutable {
+public final class PreparedFunctions implements Mutable {
     private final ObjectPool<Entry> entries;
     private final ObjList<Entry> prepared = new ObjList<>();
     private final ResourceScope resources = new ResourceScope();
 
-    PreparedFunctions(int maxRetainedEntries) {
+    public PreparedFunctions(int maxRetainedEntries) {
         this.entries = new ObjectPool<>(Entry::new, 4, maxRetainedEntries);
+    }
+
+    /**
+     * Whether every open column leaf of the entry is a column its description reads: the binder closes and removes
+     * the leaves of the operands its folds drop.
+     */
+    public static boolean hasOnlyReadLeaves(Entry entry) {
+        for (int i = 0, n = entry.leaves.size(); i < n; i++) {
+            final BindableColumn leaf = entry.leaves.getQuick(i);
+            if (leaf.isOpen() && !LogicalPlans.readsColumn(entry.expression, leaf.getColumnId())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Reserves the slot of the root the parser is about to build.
+     */
+    public Entry begin() {
+        final Entry entry = entries.next();
+        entry.slot = resources.reserve();
+        prepared.add(entry);
+        return entry;
     }
 
     @Override
@@ -58,34 +82,10 @@ final class PreparedFunctions implements Mutable {
     }
 
     /**
-     * Whether every open column leaf of the entry is a column its description reads: the binder closes and removes
-     * the leaves of the operands its folds drop.
-     */
-    static boolean hasOnlyReadLeaves(Entry entry) {
-        for (int i = 0, n = entry.leaves.size(); i < n; i++) {
-            final BindableColumn leaf = entry.leaves.getQuick(i);
-            if (leaf.isOpen() && !BoundExpressionRewriter.references(entry.expression, leaf.getColumnId())) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Reserves the slot of the root the parser is about to build.
-     */
-    Entry begin() {
-        final Entry entry = entries.next();
-        entry.slot = resources.reserve();
-        prepared.add(entry);
-        return entry;
-    }
-
-    /**
      * Closes the roots prepared since {@code mark} when their binding fails; the parser owns its partial roots and
      * the roots prepared earlier stay with their consumers.
      */
-    void closeOnFailure(int mark, @NotNull Throwable primary) {
+    public void closeOnFailure(int mark, @NotNull Throwable primary) {
         for (int i = mark, n = prepared.size(); i < n; i++) {
             final Entry entry = prepared.getQuick(i);
             if (entry.slot >= 0 && resources.isOwned(entry.slot)) {
@@ -95,16 +95,9 @@ final class PreparedFunctions implements Mutable {
     }
 
     /**
-     * Closes every root nothing adopted and chains close failures onto {@code primary}.
-     */
-    Throwable closePrepared(Throwable primary) {
-        return resources.closeOwned(primary);
-    }
-
-    /**
      * Transfers the entry's root to the caller.
      */
-    Function detach(Entry entry) {
+    public Function detach(Entry entry) {
         final Function function = (Function) resources.detach(entry.slot);
         entry.slot = -1;
         return function;
@@ -113,7 +106,7 @@ final class PreparedFunctions implements Mutable {
     /**
      * The first entry that still owns a root describing {@code expression}, or null.
      */
-    Entry findOwned(BoundExpression expression) {
+    public Entry findOwned(BoundExpression expression) {
         for (int i = 0, n = prepared.size(); i < n; i++) {
             final Entry entry = prepared.getQuick(i);
             if (entry.expression == expression && entry.slot >= 0 && resources.isOwned(entry.slot)) {
@@ -127,7 +120,7 @@ final class PreparedFunctions implements Mutable {
      * The first entry that still owns a root describing {@code expression} converted for {@code updateTargetType}
      * (-1 for an unconverted root), or null.
      */
-    Entry findOwned(BoundExpression expression, int updateTargetType) {
+    public Entry findOwned(BoundExpression expression, int updateTargetType) {
         for (int i = 0, n = prepared.size(); i < n; i++) {
             final Entry entry = prepared.getQuick(i);
             if (entry.expression == expression && entry.updateTargetType == updateTargetType
@@ -138,29 +131,24 @@ final class PreparedFunctions implements Mutable {
         return null;
     }
 
-    @TestOnly
-    int getEntryCapacity() {
-        return entries.getCapacity();
-    }
-
     /**
      * The position of the next root, from which {@link #closeOnFailure} closes.
      */
-    int mark() {
+    public int mark() {
         return prepared.size();
     }
 
     /**
      * Fills the entry's reserved slot with the built root.
      */
-    void own(Entry entry, Function root) {
+    public void own(Entry entry, Function root) {
         resources.own(entry.slot, root);
     }
 
     /**
      * Moves the entry to a slot reserved with {@link #reserve()} and fills it with a converted root.
      */
-    void own(Entry entry, int slot, Function root) {
+    public void own(Entry entry, int slot, Function root) {
         resources.own(slot, root);
         entry.slot = slot;
     }
@@ -168,26 +156,38 @@ final class PreparedFunctions implements Mutable {
     /**
      * Reserves a slot before building the root that fills it, so growth cannot orphan a built root.
      */
-    int reserve() {
+    public int reserve() {
         return resources.reserve();
     }
 
     /**
      * The entry's root, which stays owned here.
      */
-    Function root(Entry entry) {
+    public Function root(Entry entry) {
         return resources.function(entry.slot);
+    }
+
+    /**
+     * Closes every root nothing adopted and chains close failures onto {@code primary}.
+     */
+    Throwable closePrepared(Throwable primary) {
+        return resources.closeOwned(primary);
+    }
+
+    @TestOnly
+    int getEntryCapacity() {
+        return entries.getCapacity();
     }
 
     /**
      * One prepared root: the description it implements, its relocatable column leaves and the slot that owns it.
      */
-    static final class Entry implements Mutable {
-        final ObjList<BindableColumn> leaves = new ObjList<>();
-        BoundExpression expression;
-        boolean isRebuildRequired;
+    public static final class Entry implements Mutable {
+        public final ObjList<BindableColumn> leaves = new ObjList<>();
+        public BoundExpression expression;
+        public boolean isRebuildRequired;
         int slot = -1;
-        int updateTargetType = -1;
+        public int updateTargetType = -1;
 
         @Override
         public void clear() {

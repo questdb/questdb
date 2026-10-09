@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
@@ -82,6 +83,62 @@ public class FunctionBinderWindowTest extends AbstractCairoTest {
                     binder.bindWindow(call("row_number"), input, null, sqlExecutionContext);
                 } finally {
                     sqlExecutionContext.clearWindowContext();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCurrentRowFramesReleaseNativePartitionExpressions() throws Exception {
+        assertMemoryLeak(() -> {
+            final OutputSchema input = schema(false);
+            input.add(28, "i", ColumnType.INT, true);
+            final GenericRecordMetadata metadata = metadata(false);
+            metadata.add(new TableColumnMetadata("i", ColumnType.INT));
+            final ObjList<String> names = new ObjList<>("first_value", "last_value", "nth_value", "sum", "ksum", "avg", "min", "max",
+                    "count", "stddev_pop", "var_samp", "corr", "covar_pop");
+            final FunctionParser parser = parser(new ObjList<>());
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
+                for (int i = 0; i < names.size(); i++) {
+                    final String name = names.getQuick(i);
+                    final ExpressionNode window = name.equals("nth_value")
+                            ? call(name, literal("v"), constant("1"))
+                            : name.equals("corr") || name.equals("covar_pop")
+                              ? call(name, literal("v"), literal("v")) : call(name, literal("v"));
+                    for (boolean ignoreNulls : new boolean[]{false, true}) {
+                        if (ignoreNulls && !name.equals("first_value") && !name.equals("last_value") && !name.equals("nth_value")) {
+                            continue;
+                        }
+                        final BoundExpression partition = binder.bind(call("in", literal("i"), constant("1"), constant("2")),
+                                input, null, sqlExecutionContext);
+                        final ObjList<Function> prototypePartition = new ObjList<>();
+                        prototypePartition.add(binder.instantiate(partition, input, sqlExecutionContext));
+                        try {
+                            configure(new VirtualRecord(prototypePartition), ignoreNulls, WindowExpression.FRAMING_ROWS, 0, 0);
+                            final FunctionExpression expression = binder.bindWindow(window, input, null, sqlExecutionContext);
+                            if (!name.equals("last_value") || ignoreNulls) {
+                                Assert.assertNull(prototypePartition.getQuick(0));
+                            }
+                            final ObjList<Function> runtimePartition = new ObjList<>();
+                            runtimePartition.add(binder.instantiate(partition, input, metadata, sqlExecutionContext));
+                            try {
+                                configure(new VirtualRecord(runtimePartition), ignoreNulls, WindowExpression.FRAMING_ROWS, 0, 0);
+                                try (WindowFunction function = binder.instantiateWindow(expression, input, metadata, sqlExecutionContext)) {
+                                    if (!name.equals("last_value") || ignoreNulls) {
+                                        Assert.assertNull(runtimePartition.getQuick(0));
+                                    }
+                                    Assert.assertEquals(expression.getDataType(), function.getType());
+                                }
+                            } finally {
+                                Misc.freeObjList(runtimePartition);
+                            }
+                        } finally {
+                            sqlExecutionContext.clearWindowContext();
+                            Misc.freeObjList(prototypePartition);
+                            binder.clear();
+                            parser.clear();
+                        }
+                    }
                 }
             }
         });
@@ -161,7 +218,7 @@ public class FunctionBinderWindowTest extends AbstractCairoTest {
             try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 for (int i = 0; i < calls.size(); i++) {
                     sqlExecutionContext.configureWindowContext(null, null, new ArrayColumnTypes(), true,
-                            RecordCursorFactory.SCAN_DIRECTION_FORWARD, 0, true, WindowExpression.FRAMING_RANGE,
+                            RecordCursorFactory.SCAN_DIRECTION_FORWARD, 0, WindowExpression.FRAMING_RANGE,
                             Long.MIN_VALUE, (char) 0, 0, 0, 0, (char) 0, 0, 0, WindowExpression.EXCLUDE_NO_OTHERS, 0,
                             1, ColumnType.TIMESTAMP_MICRO, false, 0);
                     try {
@@ -176,62 +233,6 @@ public class FunctionBinderWindowTest extends AbstractCairoTest {
                         sqlExecutionContext.clearWindowContext();
                         binder.clear();
                         parser.clear();
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testCurrentRowFramesReleaseNativePartitionExpressions() throws Exception {
-        assertMemoryLeak(() -> {
-            final OutputSchema input = schema(false);
-            input.add(28, "i", ColumnType.INT, true);
-            final GenericRecordMetadata metadata = metadata(false);
-            metadata.add(new TableColumnMetadata("i", ColumnType.INT));
-            final ObjList<String> names = new ObjList<>("first_value", "last_value", "nth_value", "sum", "ksum", "avg", "min", "max",
-                    "count", "stddev_pop", "var_samp", "corr", "covar_pop");
-            final FunctionParser parser = parser(new ObjList<>());
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
-                for (int i = 0; i < names.size(); i++) {
-                    final String name = names.getQuick(i);
-                    final ExpressionNode window = name.equals("nth_value")
-                            ? call(name, literal("v"), constant("1"))
-                            : name.equals("corr") || name.equals("covar_pop")
-                              ? call(name, literal("v"), literal("v")) : call(name, literal("v"));
-                    for (boolean ignoreNulls : new boolean[]{false, true}) {
-                        if (ignoreNulls && !name.equals("first_value") && !name.equals("last_value") && !name.equals("nth_value")) {
-                            continue;
-                        }
-                        final BoundExpression partition = binder.bind(call("in", literal("i"), constant("1"), constant("2")),
-                                input, null, sqlExecutionContext);
-                        final ObjList<Function> prototypePartition = new ObjList<>();
-                        prototypePartition.add(binder.instantiate(partition, input, sqlExecutionContext));
-                        try {
-                            configure(new VirtualRecord(prototypePartition), ignoreNulls, WindowExpression.FRAMING_ROWS, 0, 0);
-                            final FunctionExpression expression = binder.bindWindow(window, input, null, sqlExecutionContext);
-                            if (!name.equals("last_value") || ignoreNulls) {
-                                Assert.assertNull(prototypePartition.getQuick(0));
-                            }
-                            final ObjList<Function> runtimePartition = new ObjList<>();
-                            runtimePartition.add(binder.instantiate(partition, input, metadata, sqlExecutionContext));
-                            try {
-                                configure(new VirtualRecord(runtimePartition), ignoreNulls, WindowExpression.FRAMING_ROWS, 0, 0);
-                                try (WindowFunction function = binder.instantiateWindow(expression, input, metadata, sqlExecutionContext)) {
-                                    if (!name.equals("last_value") || ignoreNulls) {
-                                        Assert.assertNull(runtimePartition.getQuick(0));
-                                    }
-                                    Assert.assertEquals(expression.getDataType(), function.getType());
-                                }
-                            } finally {
-                                Misc.freeObjList(runtimePartition);
-                            }
-                        } finally {
-                            sqlExecutionContext.clearWindowContext();
-                            Misc.freeObjList(prototypePartition);
-                            binder.clear();
-                            parser.clear();
-                        }
                     }
                 }
             }
@@ -302,17 +303,6 @@ public class FunctionBinderWindowTest extends AbstractCairoTest {
         return node;
     }
 
-    private void configure(VirtualRecord partition, boolean ignoreNulls, int framingMode, long lo, long hi) throws SqlException {
-        final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-        if (partition != null) {
-            keyTypes.add(ColumnType.BOOLEAN);
-        }
-        sqlExecutionContext.configureWindowContext(partition, null, keyTypes, true,
-                RecordCursorFactory.SCAN_DIRECTION_OTHER, 0, true, framingMode,
-                lo, (char) 0, 0, 0, hi, (char) 0, 0, 0, WindowExpression.EXCLUDE_NO_OTHERS, 0,
-                -1, ColumnType.UNDEFINED, ignoreNulls, 0);
-    }
-
     private static ExpressionNode constant(String value) {
         return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, value, 0, 3);
     }
@@ -328,18 +318,6 @@ public class FunctionBinderWindowTest extends AbstractCairoTest {
         }
         metadata.add(new TableColumnMetadata("physical", ColumnType.DOUBLE));
         return metadata;
-    }
-
-    private FunctionParser parser(ObjList<Function> constructions) {
-        return new FunctionParser(configuration, engine.getFunctionFactoryCache()) {
-            @Override
-            public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
-                                           ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
-                final Function function = super.createFunction(overload, position, name, args, positions, context);
-                constructions.add(function);
-                return function;
-            }
-        };
     }
 
     private static Record record(int index, double value) {
@@ -358,6 +336,29 @@ public class FunctionBinderWindowTest extends AbstractCairoTest {
             schema.add(10, "unused", ColumnType.INT, true);
         }
         return schema.add(27, "v", ColumnType.DOUBLE, true);
+    }
+
+    private void configure(VirtualRecord partition, boolean ignoreNulls, int framingMode, long lo, long hi) throws SqlException {
+        final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+        if (partition != null) {
+            keyTypes.add(ColumnType.BOOLEAN);
+        }
+        sqlExecutionContext.configureWindowContext(partition, null, keyTypes, true,
+                RecordCursorFactory.SCAN_DIRECTION_OTHER, 0, framingMode,
+                lo, (char) 0, 0, 0, hi, (char) 0, 0, 0, WindowExpression.EXCLUDE_NO_OTHERS, 0,
+                -1, ColumnType.UNDEFINED, ignoreNulls, 0);
+    }
+
+    private FunctionParser parser(ObjList<Function> constructions) {
+        return new FunctionParser(configuration, new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
+            @Override
+            public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
+                                           ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
+                final Function function = super.createFunction(overload, position, name, args, positions, context);
+                constructions.add(function);
+                return function;
+            }
+        });
     }
 
     private static class CountingDouble extends DoubleFunction {

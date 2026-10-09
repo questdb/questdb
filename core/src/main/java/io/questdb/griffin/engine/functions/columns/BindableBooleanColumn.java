@@ -59,11 +59,6 @@ final class BindableBooleanColumn extends BooleanFunction implements BindableCol
     }
 
     @Override
-    public boolean isThreadSafe() {
-        return true;
-    }
-
-    @Override
     public void setColumnId(int columnId) {
         assert columnIndex == -1 && isOpen;
         this.columnId = columnId;

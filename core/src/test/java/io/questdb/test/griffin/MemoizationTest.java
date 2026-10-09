@@ -32,7 +32,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
-import io.questdb.griffin.SqlCodeGenerator;
+import io.questdb.griffin.codegen.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TextPlanSink;
@@ -267,13 +267,6 @@ public class MemoizationTest extends AbstractCairoTest {
         });
     }
 
-    private void assertRowsAndMemoizers(String sql, String expected, int memoizerCount) throws Exception {
-        try (RecordCursorFactory factory = select(sql)) {
-            assertMemoizerCount(factory, memoizerCount);
-            assertResult(factory, expected);
-        }
-    }
-
     private void assertMemoizerCount(RecordCursorFactory factory, int expected) {
         final TextPlanSink sink = new TextPlanSink();
         sink.of(factory, sqlExecutionContext);
@@ -287,6 +280,13 @@ public class MemoizationTest extends AbstractCairoTest {
 
     private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
         assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
+    }
+
+    private void assertRowsAndMemoizers(String sql, String expected, int memoizerCount) throws Exception {
+        try (RecordCursorFactory factory = select(sql)) {
+            assertMemoizerCount(factory, memoizerCount);
+            assertResult(factory, expected);
+        }
     }
 
     private void createRows() throws Exception {

@@ -120,7 +120,7 @@ public class WindowJoinParquetMasterTest extends AbstractCairoTest {
     @Test
     public void testConstFalseWindowJoinOverParquetMasterTopK() throws Exception {
         // End-to-end top-K consumer: ORDER BY + LIMIT keeps the splice as the page-frame leaf
-        // (canPeelForTopK does not peel it) and opens its page-frame cursor over the plain
+        // (the top-K builds no projection over itself) and opens its page-frame cursor over the plain
         // read-parquet base - the second production consumer of the same seam.
         assertMemoryLeak(() -> {
             createFixture();

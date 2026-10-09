@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExpressionNode;
@@ -51,7 +52,7 @@ public class FunctionBinderTextOperationsTest extends AbstractCairoTest {
     public void testVarcharBindsUnconstructedAndBuildsIndependentNativeBuffers() throws Exception {
         assertMemoryLeak(() -> {
             final ObjList<Function> constructed = new ObjList<>();
-            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache()) {
+            final FunctionParser parser = new FunctionParser(configuration, new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
                 @Override
                 public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
                                                ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
@@ -59,7 +60,7 @@ public class FunctionBinderTextOperationsTest extends AbstractCairoTest {
                     constructed.add(result);
                     return result;
                 }
-            };
+            });
             final OutputSchema original = new OutputSchema();
             for (int i = 0; i < 48; i++) {
                 original.add(i, "unused" + i, ColumnType.INT, true);

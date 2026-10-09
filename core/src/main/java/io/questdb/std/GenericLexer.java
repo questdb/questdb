@@ -161,13 +161,13 @@ public class GenericLexer implements ImmutableIterator<CharSequence>, Mutable {
         l.sort(COMPARATOR);
     }
 
+    public CharSequence getContent() {
+        return content;
+    }
+
     @TestOnly
     public int getPoolCapacity() {
         return csPool.getCapacity();
-    }
-
-    public CharSequence getContent() {
-        return content;
     }
 
     public int getPosition() {

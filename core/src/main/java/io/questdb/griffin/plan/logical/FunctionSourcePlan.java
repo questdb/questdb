@@ -36,8 +36,12 @@ public final class FunctionSourcePlan extends LogicalPlan {
     private final IntList sourceColumnIndexes = new IntList();
     private boolean hasExternalDataSource;
     private boolean isDeterministic;
+    private boolean isLongSequence;
+    private boolean isPageFrameSupported;
     private boolean isProjectable;
+    private boolean isRandomAccess;
     private CharSequence recordName;
+    private PhysicalProperties.ScanDirection scanDirection = PhysicalProperties.ScanDirection.UNKNOWN;
 
     @Override
     public void clear() {
@@ -46,8 +50,22 @@ public final class FunctionSourcePlan extends LogicalPlan {
         sourceColumnIndexes.clear();
         hasExternalDataSource = false;
         isDeterministic = false;
+        isLongSequence = false;
+        isPageFrameSupported = false;
         isProjectable = false;
+        isRandomAccess = false;
         recordName = null;
+        scanDirection = PhysicalProperties.ScanDirection.UNKNOWN;
+    }
+
+    /**
+     * Copies the physical properties of the source factory, which the table function builds once it is bound.
+     */
+    public void copyPhysicalProperties(FunctionSourcePlan source) {
+        isLongSequence = source.isLongSequence;
+        isPageFrameSupported = source.isPageFrameSupported;
+        isRandomAccess = source.isRandomAccess;
+        scanDirection = source.scanDirection;
     }
 
     /**
@@ -59,6 +77,13 @@ public final class FunctionSourcePlan extends LogicalPlan {
 
     public OutputSchema getRecordSchema() {
         return recordSchema;
+    }
+
+    /**
+     * The order the source factory emits its rows in.
+     */
+    public PhysicalProperties.ScanDirection getScanDirection() {
+        return scanDirection;
     }
 
     public IntList getSourceColumnIndexes() {
@@ -90,10 +115,31 @@ public final class FunctionSourcePlan extends LogicalPlan {
     }
 
     /**
+     * True when the source factory reads long_sequence().
+     */
+    public boolean isLongSequence() {
+        return isLongSequence;
+    }
+
+    /**
+     * True when the source factory supports page-frame cursors.
+     */
+    public boolean isPageFrameSupported() {
+        return isPageFrameSupported;
+    }
+
+    /**
      * True when the source reads only the columns its output keeps, so pruning saves work.
      */
     public boolean isProjectable() {
         return isProjectable;
+    }
+
+    /**
+     * True when the cursor of the source factory supports random access.
+     */
+    public boolean isRandomAccess() {
+        return isRandomAccess;
     }
 
     public FunctionSourcePlan of(int position) {
@@ -112,6 +158,17 @@ public final class FunctionSourcePlan extends LogicalPlan {
 
     public void setExternalDataSource(boolean hasExternalDataSource) {
         this.hasExternalDataSource = hasExternalDataSource;
+    }
+
+    /**
+     * Records the physical properties of the source factory.
+     */
+    public void setPhysicalProperties(boolean isRandomAccess, boolean isPageFrameSupported, PhysicalProperties.ScanDirection scanDirection,
+                                      boolean isLongSequence) {
+        this.isRandomAccess = isRandomAccess;
+        this.isPageFrameSupported = isPageFrameSupported;
+        this.scanDirection = scanDirection;
+        this.isLongSequence = isLongSequence;
     }
 
     public void setProjectable(boolean isProjectable) {

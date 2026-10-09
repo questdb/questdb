@@ -50,6 +50,25 @@ import org.junit.Test;
 
 public class TextPredicateOwnershipTest extends AbstractCairoTest {
     @Test
+    public void testDiscardedProbeCloseFailureIsNotRepeatedBySelectedConstruction() throws Exception {
+        assertMemoryLeak(() -> {
+            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
+            final ObjList<FunctionFactory> factories = factories();
+            for (int i = 0; i < factories.size(); i++) {
+                final FunctionFactory factory = factories.getQuick(i);
+                final CountingValue value = new CountingValue(true);
+                try (Function ignored = parser.getFunctionResolver().createFunction(new FunctionFactoryDescriptor(factory), 0, factory.getSignature(),
+                        args(factory, value, true), new IntList(), sqlExecutionContext)) {
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "discarded text probe");
+                }
+                Assert.assertEquals(1, value.closeCount);
+            }
+        });
+    }
+
+    @Test
     public void testEmptyMembershipAndNullOrEmptyLikePatternsCloseNativeProbe() throws Exception {
         assertMemoryLeak(() -> {
             final ObjList<FunctionFactory> factories = factories();
@@ -64,25 +83,6 @@ public class TextPredicateOwnershipTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals(1, value.closeCount);
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testDiscardedProbeCloseFailureIsNotRepeatedBySelectedConstruction() throws Exception {
-        assertMemoryLeak(() -> {
-            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-            final ObjList<FunctionFactory> factories = factories();
-            for (int i = 0; i < factories.size(); i++) {
-                final FunctionFactory factory = factories.getQuick(i);
-                final CountingValue value = new CountingValue(true);
-                try (Function ignored = parser.createFunction(new FunctionFactoryDescriptor(factory), 0, factory.getSignature(),
-                        args(factory, value, true), new IntList(), sqlExecutionContext)) {
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "discarded text probe");
-                }
-                Assert.assertEquals(1, value.closeCount);
             }
         });
     }

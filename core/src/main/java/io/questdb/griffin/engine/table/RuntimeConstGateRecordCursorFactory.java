@@ -171,17 +171,6 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
         return base.getScanDirection();
     }
 
-    // Closes everything but base factory and filter (interface contract): the steal consumer
-    // adopts base and filter, so only the gate's own wrappers are released here. base/filter
-    // stay referenced so a pre-adoption failure that closes this shell still frees them exactly
-    // once; after successful adoption the shell is abandoned unclosed, like the async filter
-    // factories after their halfClose().
-    @Override
-    public void halfClose() {
-        emptyPageFrameCursor = Misc.free(emptyPageFrameCursor);
-        emptyTablePageFrameCursor = Misc.free(emptyTablePageFrameCursor);
-    }
-
     @Override
     public TableToken getTableToken() {
         return base.getTableToken();

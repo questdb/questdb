@@ -47,7 +47,6 @@ public final class JoinGraph implements Mutable {
     private final ObjList<BoundExpression> residuals = new ObjList<>();
     private BoundExpression constantFilter;
     private int constantFilterPosition;
-    private boolean isFirstInputLeading;
 
     public void addResidual(BoundExpression residual, int origin) {
         residuals.add(residual);
@@ -72,7 +71,6 @@ public final class JoinGraph implements Mutable {
         residuals.clear();
         constantFilter = null;
         constantFilterPosition = -1;
-        isFirstInputLeading = false;
     }
 
     public BoundExpression getConstantFilter() {
@@ -111,24 +109,23 @@ public final class JoinGraph implements Mutable {
         return residuals;
     }
 
-    /**
-     * Whether the first input joins first, so that the join designates its timestamp; otherwise the order is free and
-     * the join designates none.
-     */
-    public boolean isFirstInputLeading() {
-        return isFirstInputLeading;
-    }
-
     public void setConstantFilter(BoundExpression constantFilter, int position) {
         this.constantFilter = constantFilter;
         this.constantFilterPosition = position;
     }
 
-    public void setFirstInputLeading(boolean isFirstInputLeading) {
-        this.isFirstInputLeading = isFirstInputLeading;
-    }
-
     private int residualOwnersLo(int residual) {
         return residual == 0 ? 0 : residualOwnerEnds.getQuick(residual - 1);
+    }
+
+    void visitReads(PlanExpressionVisitor visitor) {
+        PlanReads.expressions(residuals, visitor);
+        constantFilter = PlanReads.expression(constantFilter, visitor);
+        for (int i = 0, n = dependencies.size(); i < n; i++) {
+            final JoinDependency dependency = dependencies.getQuick(i);
+            if (dependency != null) {
+                dependency.visitReads(visitor);
+            }
+        }
     }
 }

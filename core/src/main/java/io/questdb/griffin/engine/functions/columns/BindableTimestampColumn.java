@@ -60,11 +60,6 @@ final class BindableTimestampColumn extends TimestampFunction implements Bindabl
     }
 
     @Override
-    public boolean isThreadSafe() {
-        return true;
-    }
-
-    @Override
     public void setColumnId(int columnId) {
         assert columnIndex == -1 && isOpen;
         this.columnId = columnId;

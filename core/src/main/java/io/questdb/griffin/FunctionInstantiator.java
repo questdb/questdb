@@ -35,8 +35,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
-import io.questdb.griffin.engine.functions.RuntimeConstFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryBoundRefFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
@@ -73,15 +71,16 @@ import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.ScalarTimestampBoundHolder;
 import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
+import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.griffin.plan.logical.TypeExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -95,6 +94,10 @@ import io.questdb.std.ObjectPool;
  * the rest from the selected overloads under the final input layout, and generates sub-queries on demand.
  */
 public final class FunctionInstantiator implements Mutable {
+    private static final ExpressionVisitor ARRAY_LAYOUT_SENSITIVE_CALLS = expression -> expression instanceof FunctionExpression call
+            && call.getOverload().isArrayColumnLayoutSensitive() ? TreeWalk.STOP : TreeWalk.CONTINUE;
+    private static final ExpressionVisitor UNRELOCATABLE_CALLS = expression -> expression instanceof FunctionExpression call
+            && !call.getOverload().isRelocatableScalar() && !call.getOverload().isArrayColumnLayoutSensitive() ? TreeWalk.STOP : TreeWalk.CONTINUE;
     private static final String NULL_PROBE_COLUMN = "null_probe";
     private final SubqueryCompiler compiler;
     private final ObjectPool<InstantiationArguments> instantiations;
@@ -104,28 +107,106 @@ public final class FunctionInstantiator implements Mutable {
     private final OutputSchema nullProbeSchema;
     private final ObjList<CursorExpression> parkedCursors = new ObjList<>();
     private final ObjList<Function> parkedSubqueries = new ObjList<>();
-    private final FunctionParser parser;
     private final PreparedFunctions prepared;
-    private final BindScopeStack scopes;
+    private final FunctionResolver resolver;
     private final ObjList<CursorExpression> sharedBoundCursors = new ObjList<>();
     private final ObjList<ScalarTimestampBoundHolder> sharedBoundHolders = new ObjList<>();
     private int bindingDepth;
+    private final ExpressionVisitor sharedBoundCursorReads = expression -> expression instanceof CursorExpression cursor
+            && sharedBoundCursors.indexOf(cursor) >= 0 ? TreeWalk.STOP : TreeWalk.CONTINUE;
     private int workerCloneDepth;
 
     /**
      * Instantiates for the compiler's binder, adopting from the statement's preparations; a query generates at the
      * nesting depth the scope stack enters. The NULL probe schema is borrowed for single calls only.
      */
-    FunctionInstantiator(SubqueryCompiler compiler, FunctionParser parser, PreparedFunctions prepared, OutputSchema nullProbeSchema,
-                         int maxRetainedInstantiations, BindScopeStack scopes) {
+    public FunctionInstantiator(SubqueryCompiler compiler, FunctionResolver resolver, PreparedFunctions prepared, OutputSchema nullProbeSchema,
+                                int maxRetainedInstantiations) {
         this.compiler = compiler;
-        this.scopes = scopes;
         this.instantiations = new ObjectPool<>(InstantiationArguments::new, 8, maxRetainedInstantiations);
-        this.parser = parser;
+        this.resolver = resolver;
         this.prepared = prepared;
         this.nullProbeSchema = nullProbeSchema;
         nullProbeConstants.add(null);
         this.nullProbeRecord = new VirtualRecord(nullProbeConstants);
+    }
+
+    /**
+     * The constant function the generator builds for a bound constant.
+     */
+    public static Function constantFunction(ConstantExpression constant) {
+        return switch (ColumnType.tagOf(constant.getDataType())) {
+            case ColumnType.TIMESTAMP -> TimestampConstant.newInstance(constant.getLongValue(), constant.getDataType());
+            case ColumnType.STRING -> StrConstant.fromValue(constant.getStrValue());
+            case ColumnType.SYMBOL -> SymbolConstant.fromValue(constant.getStrValue());
+            case ColumnType.VARCHAR -> VarcharConstant.fromValue(constant.getVarcharValue());
+            case ColumnType.BYTE -> ByteConstant.newInstance((byte) constant.getLongValue());
+            case ColumnType.SHORT -> ShortConstant.newInstance((short) constant.getLongValue());
+            case ColumnType.DATE -> DateConstant.newInstance(constant.getLongValue());
+            case ColumnType.IPv4 -> IPv4Constant.newInstance((int) constant.getLongValue());
+            case ColumnType.CHAR -> CharConstant.newInstance((char) constant.getLongValue());
+            case ColumnType.BOOLEAN -> BooleanConstant.of(constant.getLongValue() != 0);
+            case ColumnType.INT -> IntConstant.newInstance((int) constant.getLongValue());
+            case ColumnType.LONG -> LongConstant.newInstance(constant.getLongValue());
+            case ColumnType.LONG256 -> new Long256Constant(constant.getLong256Value());
+            case ColumnType.UUID -> new UuidConstant(constant.getLong128Lo(), constant.getLong128Hi());
+            case ColumnType.LONG128 -> new Long128Constant(constant.getLong128Lo(), constant.getLong128Hi());
+            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
+                    Constants.getGeoHashConstantWithType(constant.getLongValue(), constant.getDataType());
+            case ColumnType.FLOAT -> new FloatConstant(constant.getFloatValue());
+            case ColumnType.DOUBLE -> new DoubleConstant(constant.getDoubleValue());
+            case ColumnType.NULL -> NullConstant.NULL;
+            case ColumnType.DECIMAL8 -> new Decimal8Constant((byte) constant.getLongValue(), constant.getDataType());
+            case ColumnType.DECIMAL16 -> new Decimal16Constant((short) constant.getLongValue(), constant.getDataType());
+            case ColumnType.DECIMAL32 -> new Decimal32Constant((int) constant.getLongValue(), constant.getDataType());
+            case ColumnType.DECIMAL64 -> new Decimal64Constant(constant.getLongValue(), constant.getDataType());
+            case ColumnType.DECIMAL128 ->
+                    new Decimal128Constant(constant.getDecimalLh(), constant.getLongValue(), constant.getDataType());
+            case ColumnType.DECIMAL256 -> new Decimal256Constant(constant.getDecimalHh(), constant.getDecimalHl(),
+                    constant.getDecimalLh(), constant.getLongValue(), constant.getDataType());
+            case ColumnType.INTERVAL ->
+                    new IntervalConstant(constant.getLongValue(), constant.getIntervalHi(), constant.getDataType());
+            case ColumnType.BINARY -> NullBinConstant.INSTANCE;
+            default -> throw new IllegalStateException("unexpected constant type");
+        };
+    }
+
+    /**
+     * Consumes the input and returns its only owning root.
+     */
+    public static Function convertUpdateFunction(
+            FunctionResolver resolver,
+            Function function,
+            int targetType,
+            int position,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (targetType >= 0 && function.getType() != targetType && !ColumnType.isBuiltInWideningCast(function.getType(), targetType)) {
+            final Function cast = resolver.createImplicitCast(position, function, targetType, executionContext);
+            if (cast != null) {
+                function = cast;
+            }
+        }
+        return targetType == ColumnType.SYMBOL && function instanceof NullConstant ? SymbolConstant.NULL : function;
+    }
+
+    public static Function createColumnFunction(int position, int index, int type, OutputSchema input) throws SqlException {
+        if (ColumnType.tagOf(type) != ColumnType.RECORD) {
+            return FunctionResolver.createColumn(position, index, type, input.isSymbolTableStatic(index));
+        }
+        final OutputSchema record = input.getMetadata(index);
+        if (record == null) {
+            throw new IllegalStateException("record column has no metadata");
+        }
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        for (int i = 0, n = record.getColumnCount(); i < n; i++) {
+            metadata.add(new TableColumnMetadata(Chars.toString(record.getColumnName(i)), record.getColumnType(i)));
+        }
+        return new RecordColumn(index, metadata);
+    }
+
+    public void beginWorkerClones() {
+        workerCloneDepth++;
     }
 
     @Override
@@ -135,6 +216,17 @@ public final class FunctionInstantiator implements Mutable {
         instantiations.clear();
         sharedBoundCursors.clear();
         sharedBoundHolders.clear();
+    }
+
+    public void endWorkerClones() {
+        workerCloneDepth--;
+    }
+
+    /**
+     * An owned factory of the sub-query for a consumer that reads it directly.
+     */
+    public RecordCursorFactory generateSubquery(CursorExpression cursor, SqlExecutionContext executionContext) throws SqlException {
+        return compiler.generateSubquery(cursor.getSubquery(), executionContext);
     }
 
     /**
@@ -216,6 +308,22 @@ public final class FunctionInstantiator implements Mutable {
         }
     }
 
+    public Function instantiateUpdateAssignment(BoundExpression expression, int targetType, OutputSchema input,
+                                                RecordMetadata metadata, SqlExecutionContext executionContext) throws SqlException {
+        if (metadata.getColumnCount() != input.getColumnCount()) {
+            throw new IllegalStateException("bound function input metadata has changed");
+        }
+        final PreparedFunctions.Entry entry = prepared.findOwned(expression, targetType);
+        if (entry != null) {
+            if (isPreparationCompatible(entry, input, metadata)) {
+                return adoptPreparation(entry, input, metadata);
+            }
+            Misc.free(prepared.detach(entry));
+        }
+        return convertUpdateFunction(resolver, instantiate(expression, input, metadata, executionContext),
+                targetType, expression.getPosition(), executionContext);
+    }
+
     /**
      * Reconstructs a window under the caller's final WindowContext and physical
      * input layout. The returned window owns its arguments and partition functions.
@@ -243,33 +351,70 @@ public final class FunctionInstantiator implements Mutable {
         }
     }
 
-    private static boolean hasArrayColumnLayoutDependency(BoundExpression expression) {
-        if (expression instanceof FunctionExpression call) {
-            if (call.getOverload().isArrayColumnLayoutSensitive()) {
-                return true;
-            }
-            for (int i = 0; i < call.getArgumentCount(); i++) {
-                if (hasArrayColumnLayoutDependency(call.argumentAt(i))) {
-                    return true;
-                }
-            }
+    /**
+     * Evaluates a folded equality on the NULL its column takes when a join NULL-extends it.
+     */
+    public boolean isNullRejecting(FunctionExpression call, int columnArgument, SqlExecutionContext executionContext) {
+        if (!"=".equals(call.getName()) || !(call.argumentAt(1 - columnArgument) instanceof ConstantExpression)) {
+            return false;
         }
-        return false;
+        final ColumnExpression column = (ColumnExpression) call.argumentAt(columnArgument);
+        final int type = column.getDataType();
+        nullProbeSchema.clear();
+        nullProbeSchema.add(column.getColumnId(), NULL_PROBE_COLUMN, type, true);
+        if (nullProbeMetadata.getColumnCount() == 0 || nullProbeMetadata.getColumnType(0) != type) {
+            nullProbeMetadata.clear();
+            nullProbeMetadata.add(new TableColumnMetadata(NULL_PROBE_COLUMN, type, IndexType.NONE, 0, false, null));
+        }
+        Function function = null;
+        try {
+            nullProbeConstants.setQuick(0, Constants.getNullConstant(type));
+            function = instantiate(call, nullProbeSchema, nullProbeMetadata, executionContext);
+            return !function.getBool(nullProbeRecord);
+        } catch (CairoException | ImplicitCastException | SqlException | UnsupportedOperationException e) {
+            return false;
+        } finally {
+            Misc.free(function);
+            Misc.freeObjList(nullProbeConstants);
+        }
+    }
+
+    /**
+     * Builds a call the binder typed without constructing it, under the binding input, when a parent must be
+     * constructed while binding; its column leaves join {@code preparation} so the prepared root stays relocatable.
+     */
+    public Function realize(BoundExpression expression, OutputSchema input, PreparedFunctions.Entry preparation, SqlExecutionContext executionContext) throws SqlException {
+        final int mark = instantiations.getPos();
+        bindingDepth++;
+        try {
+            return instantiateNew(expression, input, null, executionContext, false, preparation);
+        } finally {
+            bindingDepth--;
+            instantiations.rewind(mark);
+        }
+    }
+
+    /**
+     * Builds an independent closure from the selected overloads, never adopting a prepared root; the
+     * binder rebuilds replacement arguments this way while it constructs their parent.
+     */
+    public Function rebuild(BoundExpression expression, OutputSchema input, SqlExecutionContext executionContext) throws SqlException {
+        final int mark = instantiations.getPos();
+        bindingDepth++;
+        try {
+            return instantiateNew(expression, input, null, executionContext, false, null);
+        } finally {
+            bindingDepth--;
+            instantiations.rewind(mark);
+        }
+    }
+
+    private static boolean hasArrayColumnLayoutDependency(BoundExpression expression) {
+        return !expression.walk(ARRAY_LAYOUT_SENSITIVE_CALLS);
     }
 
     private static boolean requiresReconstruction(BoundExpression expression) {
-        if (expression instanceof FunctionExpression call) {
-            final FunctionFactoryDescriptor overload = call.getOverload();
-            if (!overload.isRelocatableScalar() && !overload.isArrayColumnLayoutSensitive()) {
-                return true;
-            }
-            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                if (requiresReconstruction(call.argumentAt(i))) {
-                    return true;
-                }
-            }
-        }
-        return false;
+        return !expression.walk(UNRELOCATABLE_CALLS);
     }
 
     private Function adoptPreparation(PreparedFunctions.Entry entry, OutputSchema input, RecordMetadata metadata) {
@@ -314,20 +459,7 @@ public final class FunctionInstantiator implements Mutable {
     }
 
     private boolean hasSharedBound(BoundExpression expression) {
-        if (sharedBoundCursors.size() == 0) {
-            return false;
-        }
-        if (expression instanceof CursorExpression cursor) {
-            return sharedBoundCursors.indexOf(cursor) >= 0;
-        }
-        if (expression instanceof FunctionExpression call) {
-            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                if (hasSharedBound(call.argumentAt(i))) {
-                    return true;
-                }
-            }
-        }
-        return false;
+        return sharedBoundCursors.size() > 0 && !expression.walk(sharedBoundCursorReads);
     }
 
     private boolean hasSharedBoundArgument(FunctionExpression call) {
@@ -371,7 +503,7 @@ public final class FunctionInstantiator implements Mutable {
                 if (metadata.getColumnType(index) != column.getDataType()) {
                     throw new IllegalStateException("bound aggregate input type has changed");
                 }
-                return FunctionParser.createColumn(column.getPosition(), index, metadata);
+                return FunctionResolver.createColumn(column.getPosition(), index, metadata);
             }
             if (ColumnType.isArray(column.getDataType()) || !BindableColumn.isBindableType(column.getDataType())) {
                 if (preparation != null) {
@@ -393,44 +525,7 @@ public final class FunctionInstantiator implements Mutable {
             if (entry != null) {
                 return prepared.detach(entry);
             }
-            return switch (ColumnType.tagOf(constant.getDataType())) {
-                case ColumnType.TIMESTAMP ->
-                        TimestampConstant.newInstance(constant.getLongValue(), constant.getDataType());
-                case ColumnType.STRING -> StrConstant.fromValue(constant.getStrValue());
-                case ColumnType.SYMBOL -> SymbolConstant.fromValue(constant.getStrValue());
-                case ColumnType.VARCHAR -> VarcharConstant.fromValue(constant.getVarcharValue());
-                case ColumnType.BYTE -> ByteConstant.newInstance((byte) constant.getLongValue());
-                case ColumnType.SHORT -> ShortConstant.newInstance((short) constant.getLongValue());
-                case ColumnType.DATE -> DateConstant.newInstance(constant.getLongValue());
-                case ColumnType.IPv4 -> IPv4Constant.newInstance((int) constant.getLongValue());
-                case ColumnType.CHAR -> CharConstant.newInstance((char) constant.getLongValue());
-                case ColumnType.BOOLEAN -> BooleanConstant.of(constant.getLongValue() != 0);
-                case ColumnType.INT -> IntConstant.newInstance((int) constant.getLongValue());
-                case ColumnType.LONG -> LongConstant.newInstance(constant.getLongValue());
-                case ColumnType.LONG256 -> new Long256Constant(constant.getLong256Value());
-                case ColumnType.UUID -> new UuidConstant(constant.getLong128Lo(), constant.getLong128Hi());
-                case ColumnType.LONG128 -> new Long128Constant(constant.getLong128Lo(), constant.getLong128Hi());
-                case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
-                        Constants.getGeoHashConstantWithType(constant.getLongValue(), constant.getDataType());
-                case ColumnType.FLOAT -> new FloatConstant(constant.getFloatValue());
-                case ColumnType.DOUBLE -> new DoubleConstant(constant.getDoubleValue());
-                case ColumnType.NULL -> NullConstant.NULL;
-                case ColumnType.DECIMAL8 ->
-                        new Decimal8Constant((byte) constant.getLongValue(), constant.getDataType());
-                case ColumnType.DECIMAL16 ->
-                        new Decimal16Constant((short) constant.getLongValue(), constant.getDataType());
-                case ColumnType.DECIMAL32 ->
-                        new Decimal32Constant((int) constant.getLongValue(), constant.getDataType());
-                case ColumnType.DECIMAL64 -> new Decimal64Constant(constant.getLongValue(), constant.getDataType());
-                case ColumnType.DECIMAL128 ->
-                        new Decimal128Constant(constant.getDecimalLh(), constant.getLongValue(), constant.getDataType());
-                case ColumnType.DECIMAL256 -> new Decimal256Constant(constant.getDecimalHh(), constant.getDecimalHl(),
-                        constant.getDecimalLh(), constant.getLongValue(), constant.getDataType());
-                case ColumnType.INTERVAL ->
-                        new IntervalConstant(constant.getLongValue(), constant.getIntervalHi(), constant.getDataType());
-                case ColumnType.BINARY -> NullBinConstant.INSTANCE;
-                default -> throw new IllegalStateException("unexpected constant type");
-            };
+            return constantFunction(constant);
         }
         if (expression instanceof TypeExpression type) {
             final int dataType = type.getDataType();
@@ -451,8 +546,7 @@ public final class FunctionInstantiator implements Mutable {
             return cursor.isBoolean() ? BooleanSubQueryFunction.maybeWrap(function, cursor.getPosition()) : function;
         }
         if (expression instanceof BindVariableExpression parameter) {
-            final Function function = parser.createBindVariable(executionContext, parameter.getPosition(),
-                    parameter.getName(), ExpressionNode.BIND_VARIABLE);
+            final Function function = resolver.createBindVariable(parameter.getPosition(), parameter.getName(), executionContext);
             try {
                 if (function.isUndefined()) {
                     function.assignType(parameter.getDataType(), executionContext.getBindVariableService());
@@ -474,40 +568,26 @@ public final class FunctionInstantiator implements Mutable {
         frame.functions.setPos(count);
         frame.positions.setPos(count);
         try {
-            boolean allConstOrRuntimeConst = true;
-            boolean anyRuntimeConst = false;
             for (int i = 0; i < count; i++) {
                 // Reserve every slot before construction; each returned child is
                 // immediately owned by this frame until its factory consumes it.
                 final Function child = instantiateNew(call.argumentAt(i), input, metadata, executionContext, isAdoptionAllowed, preparation);
                 frame.functions.setQuick(i, child);
                 frame.positions.setQuick(i, call.getArgumentPosition(i));
-                final boolean isRuntimeConstant = child.isRuntimeConstant();
-                allConstOrRuntimeConst &= child.isConstant() || isRuntimeConstant;
-                anyRuntimeConst |= isRuntimeConstant;
             }
-            // Match FunctionParser's runtime-constant boundary treatment. These
-            // wrappers own the original child and preserve its semantic type.
-            if (!(allConstOrRuntimeConst && anyRuntimeConst)) {
-                for (int i = 0; i < count; i++) {
-                    final Function child = frame.functions.getQuick(i);
-                    if (RuntimeConstFunction.isFoldable(child)) {
-                        frame.functions.setQuick(i, RuntimeConstFunction.newInstance(child));
-                    }
-                }
-            }
+            FunctionResolver.wrapRuntimeConstants(frame.functions);
             FunctionFactoryDescriptor overload = call.getOverload();
             final boolean hasSharedBound = hasSharedBoundArgument(call);
             if (hasSharedBound) {
                 overload = sharedBoundOverload(overload);
             }
-            Function function = parser.createFunction(overload, call.getPosition(), overload.getName(),
+            Function function = resolver.createFunction(overload, call.getPosition(), overload.getName(),
                     count == 0 ? null : frame.functions, count == 0 ? null : frame.positions, executionContext);
             if (hasSharedBound) {
                 return function;
             }
             if (ColumnType.isArray(function.getType()) && function.isConstant()) {
-                function = parser.functionToConstant(function);
+                function = resolver.functionToConstant(function);
             }
             try {
                 // CAST can type an empty array without retaining a cast node.
@@ -519,7 +599,7 @@ public final class FunctionInstantiator implements Mutable {
                 // flags stay the conservative ones optimisations relied on.
                 final int flags = call.getFunctionFlags();
                 if (function.getType() != call.getDataType()
-                        || (FunctionBinder.functionFlags(function) & (flags | ~BoundExpression.STABLE_WITHIN_EXECUTION)) != flags) {
+                        || (BoundExpression.functionFlags(function) & (flags | ~BoundExpression.STABLE_WITHIN_EXECUTION)) != flags) {
                     throw new IllegalStateException("bound function semantics have changed");
                 }
                 return function;
@@ -559,7 +639,7 @@ public final class FunctionInstantiator implements Mutable {
 
     // A shared bound reads a TIMESTAMP value, so select the same operator's timestamp overload.
     private FunctionFactoryDescriptor sharedBoundOverload(FunctionFactoryDescriptor overload) {
-        final ObjList<FunctionFactoryDescriptor> candidates = parser.getFunctionFactoryCache().getOverloadList(overload.getName());
+        final ObjList<FunctionFactoryDescriptor> candidates = resolver.getFunctionFactoryCache().getOverloadList(overload.getName());
         final int count = overload.getSigArgCount();
         for (int i = 0, n = candidates.size(); i < n; i++) {
             final FunctionFactoryDescriptor candidate = candidates.getQuick(i);
@@ -579,64 +659,6 @@ public final class FunctionInstantiator implements Mutable {
         throw new IllegalStateException("shared scalar bound has no timestamp overload");
     }
 
-    /**
-     * Consumes the input and returns its only owning root.
-     */
-    static Function convertUpdateFunction(FunctionParser parser, Function function, int targetType, int position) throws SqlException {
-        if (targetType >= 0 && function.getType() != targetType && !ColumnType.isBuiltInWideningCast(function.getType(), targetType)) {
-            final Function cast = parser.createImplicitCast(position, function, targetType);
-            if (cast != null) {
-                function = cast;
-            }
-        }
-        return targetType == ColumnType.SYMBOL && function instanceof NullConstant ? SymbolConstant.NULL : function;
-    }
-
-    static Function createColumnFunction(int position, int index, int type, OutputSchema input) throws SqlException {
-        if (ColumnType.tagOf(type) != ColumnType.RECORD) {
-            return FunctionParser.createColumn(position, index, type, input.isSymbolTableStatic(index));
-        }
-        final OutputSchema record = input.getMetadata(index);
-        if (record == null) {
-            throw new IllegalStateException("record column has no metadata");
-        }
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        for (int i = 0, n = record.getColumnCount(); i < n; i++) {
-            metadata.add(new TableColumnMetadata(Chars.toString(record.getColumnName(i)), record.getColumnType(i)));
-        }
-        return new RecordColumn(index, metadata);
-    }
-
-    static int monotonicTimestampColumnId(Function function) {
-        while (function instanceof MonotonicTimestampFunction monotonic) {
-            function = monotonic.getTimestampArg();
-        }
-        return function instanceof BindableColumn column && ColumnType.isTimestamp(function.getType())
-                ? column.getColumnId() : -1;
-    }
-
-    void beginWorkerClones() {
-        workerCloneDepth++;
-    }
-
-    void endWorkerClones() {
-        workerCloneDepth--;
-    }
-
-    /**
-     * An owned factory of the sub-query for a consumer that reads it directly.
-     */
-    RecordCursorFactory generateSubquery(CursorExpression cursor, SqlExecutionContext executionContext) throws SqlException {
-        return compiler.generateSubquery(cursor.getSubquery(), executionContext);
-    }
-
-    /**
-     * The nesting depth of the query generating now.
-     */
-    int getDepth() {
-        return scopes.depth();
-    }
-
     Function instantiateSubquery(CursorExpression cursor, SqlExecutionContext executionContext) throws SqlException {
         final int parked = parkedCursors.indexOf(cursor);
         if (parked >= 0) {
@@ -653,50 +675,6 @@ public final class FunctionInstantiator implements Mutable {
         return new CursorFunction(generateSubquery(cursor, executionContext));
     }
 
-    Function instantiateUpdateAssignment(BoundExpression expression, int targetType, OutputSchema input,
-                                         RecordMetadata metadata, SqlExecutionContext executionContext) throws SqlException {
-        if (metadata.getColumnCount() != input.getColumnCount()) {
-            throw new IllegalStateException("bound function input metadata has changed");
-        }
-        final PreparedFunctions.Entry entry = prepared.findOwned(expression, targetType);
-        if (entry != null) {
-            if (isPreparationCompatible(entry, input, metadata)) {
-                return adoptPreparation(entry, input, metadata);
-            }
-            Misc.free(prepared.detach(entry));
-        }
-        return convertUpdateFunction(parser, instantiate(expression, input, metadata, executionContext),
-                targetType, expression.getPosition());
-    }
-
-    /**
-     * Evaluates a folded equality on the NULL its column takes when a join NULL-extends it.
-     */
-    boolean isNullRejecting(FunctionExpression call, int columnArgument, SqlExecutionContext executionContext) {
-        if (!"=".equals(call.getName()) || !(call.argumentAt(1 - columnArgument) instanceof ConstantExpression)) {
-            return false;
-        }
-        final ColumnExpression column = (ColumnExpression) call.argumentAt(columnArgument);
-        final int type = column.getDataType();
-        nullProbeSchema.clear();
-        nullProbeSchema.add(column.getColumnId(), NULL_PROBE_COLUMN, type, true);
-        if (nullProbeMetadata.getColumnCount() == 0 || nullProbeMetadata.getColumnType(0) != type) {
-            nullProbeMetadata.clear();
-            nullProbeMetadata.add(new TableColumnMetadata(NULL_PROBE_COLUMN, type, IndexType.NONE, 0, false, null));
-        }
-        Function function = null;
-        try {
-            nullProbeConstants.setQuick(0, Constants.getNullConstant(type));
-            function = instantiate(call, nullProbeSchema, nullProbeMetadata, executionContext);
-            return !function.getBool(nullProbeRecord);
-        } catch (CairoException | ImplicitCastException | SqlException | UnsupportedOperationException e) {
-            return false;
-        } finally {
-            Misc.free(function);
-            Misc.freeObjList(nullProbeConstants);
-        }
-    }
-
     /**
      * The next consumer of the cursor adopts this generated sub-query.
      */
@@ -708,36 +686,6 @@ public final class FunctionInstantiator implements Mutable {
         } else {
             Misc.free(parkedSubqueries.getQuick(index));
             parkedSubqueries.setQuick(index, subquery);
-        }
-    }
-
-    /**
-     * Builds a call the binder typed without constructing it, under the binding input, when a parent must be
-     * constructed while binding; its column leaves join {@code preparation} so the prepared root stays relocatable.
-     */
-    Function realize(BoundExpression expression, OutputSchema input, PreparedFunctions.Entry preparation, SqlExecutionContext executionContext) throws SqlException {
-        final int mark = instantiations.getPos();
-        bindingDepth++;
-        try {
-            return instantiateNew(expression, input, null, executionContext, false, preparation);
-        } finally {
-            bindingDepth--;
-            instantiations.rewind(mark);
-        }
-    }
-
-    /**
-     * Builds an independent closure from the selected overloads, never adopting a prepared root; the
-     * binder rebuilds replacement arguments this way while the parser constructs their parent.
-     */
-    Function rebuild(BoundExpression expression, OutputSchema input, SqlExecutionContext executionContext) throws SqlException {
-        final int mark = instantiations.getPos();
-        bindingDepth++;
-        try {
-            return instantiateNew(expression, input, null, executionContext, false, null);
-        } finally {
-            bindingDepth--;
-            instantiations.rewind(mark);
         }
     }
 

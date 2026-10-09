@@ -35,8 +35,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Misc;
@@ -48,7 +51,7 @@ import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
 
-public class ToUTCTimestampFunctionFactory implements FunctionFactory {
+public class ToUTCTimestampFunctionFactory implements FunctionFactory, MonotonicTimestampFunctionFactory {
     public static final String NAME = "to_utc";
 
     @Override
@@ -59,6 +62,22 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return NAME + "(NS)";
+    }
+
+    @Override
+    public int getTimestampArgumentIndex(FunctionExpression call, ConstantArguments arguments) {
+        return call.argumentAt(1) instanceof ConstantExpression ? 0 : -1;
+    }
+
+    @Override
+    public int invertTimestampInterval(FunctionExpression call, Interval io, boolean isTimestampArgMonotonic, ConstantArguments arguments) throws SqlException {
+        final int timestampType = call.getDataType();
+        final CharSequence tz = arguments.constant(call.argumentAt(1)).getStrA(null);
+        final TimeZoneRules rules = ToTimezoneTimestampFunctionFactory.constantZoneRules(tz, call.argumentAt(1).getPosition(), timestampType);
+        return rules != null
+                ? MonotonicTimestampFunction.invertZoneOffsetShift(io, rules, ColumnType.getTimestampDriver(timestampType), 1)
+                : MonotonicTimestampFunction.invertConstantShift(io, fixedOffset(tz, timestampType),
+                MonotonicTimestampFunction.shiftInputCeiling(isTimestampArgMonotonic, timestampType));
     }
 
     @Override
@@ -101,6 +120,10 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static long fixedOffset(CharSequence tz, int timestampType) {
+        return ColumnType.getTimestampDriver(timestampType).fromMinutes(-Numbers.decodeLowInt(Dates.parseOffset(tz, 0, tz.length())));
+    }
+
     @NotNull
     private static TimestampFunction toUTCConstFunction(
             Function timestampFunc,
@@ -113,11 +136,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
         if (rules != null) {
             return new ConstRulesFunc(timestampFunc, rules, timestampType);
         }
-        return new OffsetTimestampFunction(
-                timestampFunc,
-                ColumnType.getTimestampDriver(timestampType).fromMinutes(-Numbers.decodeLowInt(Dates.parseOffset(tz, 0, tz.length()))),
-                timestampType
-        );
+        return new OffsetTimestampFunction(timestampFunc, fixedOffset(tz, timestampType), timestampType);
     }
 
     private static class ConstRulesFunc extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {

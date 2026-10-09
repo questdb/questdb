@@ -154,12 +154,6 @@ abstract class TimestampFloorUtcBucketCachingFunction extends TimestampFunction 
         return result;
     }
 
-    @TestOnly
-    void toCacheState(CharSink<?> sink) {
-        sink.put(cachedLo).put(';').put(cachedHi).put(';').put(cachedResult).put(';').put(lastMissTimestamp).put(';')
-                .put(tzSegmentLo).put(';').put(tzSegmentHi).put(';').put(tzSegmentOffset);
-    }
-
     /**
      * Returns the width of the floor's buckets when all of them have the same width and
      * {@code add()} steps from one bucket boundary to the next one, zero otherwise. Calendar
@@ -217,4 +211,11 @@ abstract class TimestampFloorUtcBucketCachingFunction extends TimestampFunction 
         // a single comparison: the sign of the distance is a coin toss for unordered timestamps
         return Math.abs(distance) < nearMissDistance;
     }
+
+    @TestOnly
+    void toCacheState(CharSink<?> sink) {
+        sink.put(cachedLo).put(';').put(cachedHi).put(';').put(cachedResult).put(';').put(lastMissTimestamp).put(';')
+                .put(tzSegmentLo).put(';').put(tzSegmentHi).put(';').put(tzSegmentOffset);
+    }
+
 }

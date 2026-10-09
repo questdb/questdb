@@ -248,6 +248,16 @@ public class SortKeyEncoder implements QuietCloseable {
      * Checks whether all sort columns can be encoded into a byte-comparable
      * key. Every column type that ORDER BY accepts is encodable.
      */
+    /**
+     * Whether a sort key column of the type tag encodes into an encoded sort key.
+     */
+    public static boolean isEncodable(int columnType) {
+        return switch (columnType) {
+            case ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL -> true;
+            default -> fixedColumnByteWidth(columnType) >= 0;
+        };
+    }
+
     public static boolean isSupported(RecordMetadata metadata, IntList sortColumnFilter) {
         for (int i = 0, n = sortColumnFilter.size(); i < n; i++) {
             int encoded = sortColumnFilter.getQuick(i);
@@ -784,13 +794,6 @@ public class SortKeyEncoder implements QuietCloseable {
             return cmp < 0;
         }
         return Long.compareUnsigned(l0, Numbers.LONG_NULL) < 0;
-    }
-
-    private static boolean isEncodable(int columnType) {
-        return switch (columnType) {
-            case ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL -> true;
-            default -> fixedColumnByteWidth(columnType) >= 0;
-        };
     }
 
     private static boolean isUuidBelowNull(long hi, long lo) {

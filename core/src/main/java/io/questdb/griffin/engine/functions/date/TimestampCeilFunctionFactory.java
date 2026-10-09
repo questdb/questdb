@@ -35,15 +35,17 @@ import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.CommonUtils;
 
-public class TimestampCeilFunctionFactory implements FunctionFactory {
+public class TimestampCeilFunctionFactory implements FunctionFactory, MonotonicTimestampFunctionFactory {
     @Override
     public int getResultType(IntList argTypes) {
         return ResultTypes.timestampAtLeastMicros(argTypes.getQuick(1));
@@ -52,6 +54,16 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "timestamp_ceil(sN)";
+    }
+
+    @Override
+    public int getTimestampArgumentIndex(FunctionExpression call, ConstantArguments arguments) {
+        return 1;
+    }
+
+    @Override
+    public int invertTimestampInterval(FunctionExpression call, Interval io, boolean isTimestampArgMonotonic, ConstantArguments arguments) throws SqlException {
+        return TimestampCeilFunction.invert(io, TimestampCeilFunction.fixedSize(ColumnType.getTimestampDriver(call.getDataType()), arguments.constant(call.argumentAt(0)).getChar(null)));
     }
 
     @Override
@@ -104,7 +116,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
             this.symbol = symbol;
             // Only fixed-size, epoch-aligned units have boundaries at integer
             // multiples of the bucket size, which the arithmetic inverse needs.
-            this.fixedSize = CommonUtils.isFixedAlignedUnit(symbol) ? ceil.ceil(0) : 0;
+            this.fixedSize = fixedSize(timestampDriver, symbol);
         }
 
         @Override
@@ -125,6 +137,27 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
 
         @Override
         public int invertTimestampInterval(Interval io) {
+            return invert(io, fixedSize);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("timestamp_ceil('").val(symbol).val("',").val(arg).val(')');
+        }
+
+        private static boolean mulOverflows(long a, long b) {
+            if (a == 0) {
+                return false;
+            }
+            final long r = a * b;
+            return r / b != a;
+        }
+
+        static long fixedSize(TimestampDriver timestampDriver, char symbol) {
+            return CommonUtils.isFixedAlignedUnit(symbol) ? timestampDriver.getTimestampCeilMethod(symbol).ceil(0) : 0;
+        }
+
+        static int invert(Interval io, long fixedSize) {
             if (fixedSize <= 0) {
                 return NONE;
             }
@@ -155,19 +188,6 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
             hi = prod - 1;
             io.of(lo, hi);
             return EXACT;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val("timestamp_ceil('").val(symbol).val("',").val(arg).val(')');
-        }
-
-        private static boolean mulOverflows(long a, long b) {
-            if (a == 0) {
-                return false;
-            }
-            final long r = a * b;
-            return r / b != a;
         }
     }
 }
