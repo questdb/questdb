@@ -77,10 +77,15 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     // Set by reserve(): a dedup merge can write more data than the reservation was sized for, see appendData.
     private boolean isDedup;
     private boolean isReadOnly;
+    // See ContiguousFileFixFrameColumn#setTrimOnClose.
+    private boolean isTrimOnClose;
     // See setReadWindow: the top getColumnTop() reports is capped here, while columnTop stays the file's own.
     private long logicalRowHi = Long.MAX_VALUE;
     private long mapRowHi;
     private RecycleBin<FrameColumn> recycleBin;
+    // See ContiguousFileFixFrameColumn#usedBytes, one per file.
+    private long usedAuxBytes;
+    private long usedDataBytes;
 
     public ContiguousFileVarFrameColumn(CairoConfiguration configuration) {
         this.ff = configuration.getFilesFacade();
@@ -150,7 +155,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                     dstAuxSize
             );
         }
-        markAuxWritten(commitMode);
+        markAuxWritten(commitMode, dstAuxOffset + dstAuxSize);
 
         this.appendOffsetRowCount = appendOffsetRowCount + (sourceHi - sourceLo);
         this.dataAppendOffsetBytes = targetDataOffset + srcDataSize;
@@ -201,7 +206,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             final long dstDataAddress = mapDataWritable(targetDataOffset + srcDataSize) + targetDataOffset;
             Vect.memcpy(dstDataAddress, srcDataAddress, srcDataSize);
         }
-        markDataWritten(commitMode);
+        markDataWritten(commitMode, targetDataOffset + srcDataSize);
     }
 
     @Override
@@ -216,7 +221,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                 // Set nulls in variable file
                 final long targetDataMemAddr = mapDataWritable(targetDataOffset + srcDataSize) + targetDataOffset;
                 columnTypeDriver.setDataVectorEntriesToNull(targetDataMemAddr, sourceColumnTop);
-                markDataWritten(commitMode);
+                markDataWritten(commitMode, targetDataOffset + srcDataSize);
 
                 // Cache the new data append offset
                 this.appendOffsetRowCount = rowCount + sourceColumnTop;
@@ -236,7 +241,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                     targetDataOffset + columnTypeDriver.getDataVectorMinEntrySize(),
                     sourceColumnTop
             );
-            markAuxWritten(commitMode);
+            markAuxWritten(commitMode, dstAuxOffset + srcAuxSize);
         }
     }
 
@@ -259,13 +264,21 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             }
 
             if (auxFd != -1) {
+                if (isTrimOnClose) {
+                    // After the munmaps above; see ContiguousFileFixFrameColumn#close.
+                    ContiguousFileFixFrameColumn.trimUnused(ff, auxFd, allocatedAuxBytes, usedAuxBytes, columnIndex);
+                }
                 ff.close(auxFd);
                 auxFd = -1;
             }
             if (dataFd != -1) {
+                if (isTrimOnClose) {
+                    ContiguousFileFixFrameColumn.trimUnused(ff, dataFd, allocatedDataBytes, usedDataBytes, columnIndex);
+                }
                 ff.close(dataFd);
                 dataFd = -1;
             }
+            isTrimOnClose = false;
             writeBuffer.close();
             closed = true;
 
@@ -429,9 +442,9 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             );
         }
 
-        markAuxWritten(commitMode);
+        markAuxWritten(commitMode, dstAuxOffset + dstAuxSize);
         if (dstDataAddr != 0) {
-            markDataWritten(commitMode);
+            markDataWritten(commitMode, targetDataOffset + dataSize);
         }
 
         this.appendOffsetRowCount = appendOffsetRowCount + mergeIndexRows;
@@ -478,6 +491,8 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         isAllocatedAuxBytesKnown = false;
         isAllocatedDataBytesKnown = false;
         isDedup = false;
+        usedAuxBytes = 0;
+        usedDataBytes = 0;
 
         try {
             // Negative col top means column does not exist in the partition.
@@ -540,6 +555,11 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     }
 
     @Override
+    public void setTrimOnClose(boolean isTrimOnClose) {
+        this.isTrimOnClose = isTrimOnClose && !isReadOnly;
+    }
+
+    @Override
     public void sync() {
         // See ContiguousFileFixFrameColumn#sync.
         if (isDataSyncPending) {
@@ -589,7 +609,9 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     private void ensureAuxAllocated(long size) {
         if (size > allocatedAuxBytes) {
             if (!isAllocatedAuxBytesKnown) {
-                allocatedAuxBytes = Math.max(allocatedAuxBytes, ff.length(auxFd));
+                final long fileLength = ff.length(auxFd);
+                allocatedAuxBytes = Math.max(allocatedAuxBytes, fileLength);
+                usedAuxBytes = Math.max(usedAuxBytes, fileLength);
                 isAllocatedAuxBytesKnown = true;
             }
             if (size > allocatedAuxBytes) {
@@ -604,7 +626,9 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     private void ensureDataAllocated(long size) {
         if (size > allocatedDataBytes) {
             if (!isAllocatedDataBytesKnown) {
-                allocatedDataBytes = Math.max(allocatedDataBytes, ff.length(dataFd));
+                final long fileLength = ff.length(dataFd);
+                allocatedDataBytes = Math.max(allocatedDataBytes, fileLength);
+                usedDataBytes = Math.max(usedDataBytes, fileLength);
                 isAllocatedDataBytesKnown = true;
                 if (size <= allocatedDataBytes) {
                     return;
@@ -711,13 +735,15 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     /**
      * See ContiguousFileFixFrameColumn#markWritten.
      */
-    private void markAuxWritten(int commitMode) {
+    private void markAuxWritten(int commitMode, long writeHi) {
+        usedAuxBytes = Math.max(usedAuxBytes, writeHi);
         if (commitMode == CommitMode.SYNC) {
             isAuxSyncPending = true;
         }
     }
 
-    private void markDataWritten(int commitMode) {
+    private void markDataWritten(int commitMode, long writeHi) {
+        usedDataBytes = Math.max(usedDataBytes, writeHi);
         if (commitMode == CommitMode.SYNC) {
             isDataSyncPending = true;
         }

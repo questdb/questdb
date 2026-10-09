@@ -64,6 +64,8 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     // Set by a write under CommitMode.SYNC, cleared by sync(): the file owes an fsync. Every other commit mode leaves
     // the file to the kernel's writeback, see markWritten.
     private boolean isSyncPending;
+    // See setTrimOnClose.
+    private boolean isTrimOnClose;
     // See setReadWindow: the top getColumnTop() reports is capped here, while columnTop stays the file's own.
     private long logicalRowHi = Long.MAX_VALUE;
     // One mapping of the file from its byte 0. Read-only columns map the rows they are asked for; writable ones map
@@ -74,6 +76,9 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     private long mapSize;
     private RecycleBin<FrameColumn> recycleBin;
     private int shl;
+    // The bytes a close has to leave the file: its length when this open learnt it, raised to the end of every write
+    // since. What allocatedBytes holds above it, a page rounded, is reservation no write used.
+    private long usedBytes;
 
     public ContiguousFileFixFrameColumn(CairoConfiguration configuration) {
         this.ff = configuration.getFilesFacade();
@@ -129,7 +134,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             } else {
                 ColumnWriteBuffer.write(ff, fd, sourceColumn.getContiguousDataAddr(sourceHi) + srcOffset, size, dstOffset);
             }
-            markWritten(commitMode);
+            markWritten(commitMode, dstOffset + size);
             return;
         }
 
@@ -148,7 +153,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                     : sourceColumn.getContiguousDataAddr(sourceHi);
             Vect.memcpy(dstAddress, srcAddress + srcOffset, size);
         }
-        markWritten(commitMode);
+        markWritten(commitMode, dstOffset + size);
     }
 
     @Override
@@ -212,7 +217,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             } else {
                 mergeShuffle(src1Address, src2Address, dstAddress, mergeIndexAddr, mergeIndexRows, shl);
             }
-            markWritten(commitMode);
+            markWritten(commitMode, (appendOffsetRowCount << shl) + size);
         } finally {
             if (nullValueAddress != 0) {
                 Unsafe.free(nullValueAddress, 1L << shl, MemoryTag.NATIVE_O3);
@@ -281,7 +286,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         if (sourceColumnTop > 0) {
             final long mappedAddress = mapWritable((rowCount + sourceColumnTop) << shl) + (rowCount << shl);
             TableUtils.setNull(columnType, mappedAddress, sourceColumnTop);
-            markWritten(commitMode);
+            markWritten(commitMode, (rowCount + sourceColumnTop) << shl);
         }
     }
 
@@ -297,9 +302,14 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                 mapSize = 0;
             }
             if (fd > -1) {
+                if (isTrimOnClose) {
+                    // After the munmap above: Windows refuses to shorten a file while a view of it is mapped.
+                    trimUnused(ff, fd, allocatedBytes, usedBytes, columnIndex);
+                }
                 ff.close(fd);
                 fd = -1;
             }
+            isTrimOnClose = false;
             writeBuffer.close();
             closed = true;
 
@@ -389,6 +399,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         int plen = partitionPath.size();
         allocatedBytes = 0;
         isAllocatedBytesKnown = false;
+        usedBytes = 0;
 
         try {
             // Negative col top means column does not exist in the partition.
@@ -430,6 +441,11 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     public void setRecycleBin(RecycleBin<FrameColumn> recycleBin) {
         assert this.recycleBin == null;
         this.recycleBin = recycleBin;
+    }
+
+    @Override
+    public void setTrimOnClose(boolean isTrimOnClose) {
+        this.isTrimOnClose = isTrimOnClose && !isReadOnly;
     }
 
     @Override
@@ -486,7 +502,9 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         if (size > allocatedBytes) {
             if (!isAllocatedBytesKnown) {
                 // Positioned writes may have grown the file past what was asked for so far.
-                allocatedBytes = Math.max(allocatedBytes, ff.length(fd));
+                final long fileLength = ff.length(fd);
+                allocatedBytes = Math.max(allocatedBytes, fileLength);
+                usedBytes = Math.max(usedBytes, fileLength);
                 isAllocatedBytesKnown = true;
                 if (size <= allocatedBytes) {
                     return;
@@ -547,13 +565,36 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     }
 
     /**
-     * Records a write for {@link #sync()}. Only {@link CommitMode#SYNC} asks for a flush: {@link CommitMode#ASYNC} is
-     * treated as {@link CommitMode#NOSYNC}, leaving the dirty pages to the kernel's writeback, which is all the
-     * {@code msync(MS_ASYNC)} it stands for does on Linux.
+     * Records a write ending at file offset {@code writeHi}: for {@link #sync()}, and as bytes a close must not trim.
+     * Only {@link CommitMode#SYNC} asks for a flush: {@link CommitMode#ASYNC} is treated as {@link CommitMode#NOSYNC},
+     * leaving the dirty pages to the kernel's writeback, which is all the {@code msync(MS_ASYNC)} it stands for does
+     * on Linux.
      */
-    private void markWritten(int commitMode) {
+    private void markWritten(int commitMode, long writeHi) {
+        usedBytes = Math.max(usedBytes, writeHi);
         if (commitMode == CommitMode.SYNC) {
             isSyncPending = true;
+        }
+    }
+
+    /**
+     * Shortens a file this open grew to {@code usedBytes}, page rounded, when it was grown past that - and makes no
+     * call at all otherwise: an exact reservation is page aligned at the same length, and a file this open never grew
+     * has {@code allocatedBytes} at most its own length. Never below {@code usedBytes}, which is no shorter than the
+     * length the file had when this open first looked, so nothing written before this open is touched. Best-effort:
+     * Windows refuses while any view of the file is mapped, a reader's included, and the bytes then stay, which only
+     * means the next open writes into them instead of allocating.
+     */
+    static void trimUnused(FilesFacade ff, long fd, long allocatedBytes, long usedBytes, int columnIndex) {
+        final long size = Files.ceilPageSize(usedBytes);
+        if (allocatedBytes > size && !ff.truncate(fd, size)) {
+            final int errno = ff.errno();
+            LOG.debug().$("could not trim unused reservation [fd=").$(fd)
+                    .$(", columnIndex=").$(columnIndex)
+                    .$(", allocated=").$(allocatedBytes)
+                    .$(", used=").$(usedBytes)
+                    .$(", errno=").$(errno)
+                    .I$();
         }
     }
 

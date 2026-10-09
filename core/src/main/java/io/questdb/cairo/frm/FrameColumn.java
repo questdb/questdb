@@ -138,6 +138,16 @@ public interface FrameColumn extends Closeable {
     void setRecycleBin(RecycleBin<FrameColumn> pool);
 
     /**
+     * Writable file columns only, a no-op for every other kind. Has {@link #close()} give back what this open grew the
+     * column's files by and no write used: {@link #reserve} sizes a plan by an upper bound, which a dedup merge that
+     * drops rows does not reach. Only for a column that lives through the reservation and every write it was for - a
+     * column kept open for a whole plan. A column closed after each operation must not: its reservation serves the
+     * opens after it.
+     */
+    default void setTrimOnClose(boolean isTrimOnClose) {
+    }
+
+    /**
      * Posting-index hook: tag chain entries published during the next
      * {@link #append} or {@link #appendNulls} with the supplied upcoming
      * {@code _txn}. A value below 0 means "unwired" and the column falls

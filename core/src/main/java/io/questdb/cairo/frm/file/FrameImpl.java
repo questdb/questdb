@@ -348,6 +348,9 @@ public class FrameImpl implements Frame {
             column = keptColumns.getQuiet(columnIndex);
             if (column == null) {
                 column = createColumn(columnIndex);
+                // Kept for the whole plan, so it sees the reservation and every write it was for, and closes only
+                // when nothing more is going to be written: what it reserved and did not write is unused for good.
+                column.setTrimOnClose(canWrite);
                 keptColumns.extendAndSet(columnIndex, column);
             }
         } else {

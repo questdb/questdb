@@ -241,8 +241,10 @@ public class CompositeFrameCache implements QuietCloseable {
                         .$(", nameTxn=").$(nameTxn)
                         .I$();
             }
-            target = Misc.free(target);
+            // The source first: it maps the files the target trims as it closes, and Windows refuses to shorten a
+            // file while a view of it is mapped.
             source = Misc.free(source);
+            target = Misc.free(target);
             partitionTimestamp = Long.MIN_VALUE;
             nameTxn = -1;
             metadataVersion = -1;
