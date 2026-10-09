@@ -12974,16 +12974,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             for (long i = 0, n = columnFdAndDataSize.size() / 3; i < n; i++) {
                 final long dstAuxFd = columnFdAndDataSize.get(3L * i);
                 final long dstDataFd = columnFdAndDataSize.get(3L * i + 1);
-                // Destination-column fsync of the parquet->native conversion result, under SYNC only.
-                // Under ADAPTIVE this rebuilt native partition is a cache of the durable WAL (the
-                // convert-partition command is itself WAL-replayed), so it is left non-durable here
-                // (lazy) and made crash-safe by the epoch + recovery roll-forward; ASYNC promises
-                // nothing on power loss. The partition DIRECTORY entry below is durable under SYNC and
-                // ADAPTIVE (structural).
-                // CLEANUP COMPLETES: these fsyncs are durability barriers on a CLEANUP path, so a failure
-                // here (a genuine EIO, or the crash harness's Error) must not skip the frees below -- the
-                // fd closes, the decoder close and the parquet munmap. Capture and rethrow after everything
-                // is released; fail-stop is preserved, the leak is not.
+                // Under SYNC the destination columns of the conversion are fsynced here. Under ADAPTIVE the
+                // rebuilt partition is a cache of the WAL (the convert command replays from it), which the
+                // save point and recovery make crash-safe; ASYNC promises nothing on a power loss. The
+                // partition directory entry below is durable under SYNC and ADAPTIVE.
+                // These fsyncs run on a cleanup path: a failure must not skip the fd closes, the decoder close
+                // and the parquet munmap, so it is kept and rethrown once everything is released.
                 try {
                     if (effectiveCommitMode == CommitMode.SYNC) {
                         if (dstDataFd != -1) {
@@ -13021,8 +13017,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                     LOG.error().$("could not fsync native partition dir [path=").$(other).$(", errno=").$(ex.getErrno()).I$();
                 } catch (Throwable th) {
-                    // Not a CairoException (the crash harness raises an Error): still must not skip the
-                    // decoder close and munmap below.
+                    // Not a CairoException, such as an Error: it must not skip the decoder close and munmap
+                    // below either.
                     if (cleanupError == null) {
                         cleanupError = th;
                     }
