@@ -717,17 +717,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     /**
-     * Attaching a parquet partition whose {@code _pm} metadata file is absent must regenerate it,
-     * durably, and the rows must come back.
-     * <p>
-     * This is the success path of the block the sibling test below enters only to fail. The block runs
-     * only when the partition has {@code data.parquet} but no {@code _pm}; a normally converted
-     * partition already carries {@code _pm}, so the test removes it first.
-     * <p>
-     * Both of the block's durability gates, the {@code _pm} fsync after
-     * {@code ParquetMetadataWriter.generate} and the partition-directory fsync, are guarded by
-     * {@code effectiveCommitMode != CommitMode.NOSYNC}. Attach is one-shot structural work that no
-     * durable epoch re-derives later, so it stays eager under adaptive too.
+     * Attaching a parquet partition whose {@code _pm} metadata file is absent regenerates it durably, and the
+     * rows come back. A converted partition already carries {@code _pm}, so the test removes it first. Both
+     * fsyncs on this path ({@code _pm} after {@code ParquetMetadataWriter.generate}, then the partition
+     * directory) stay eager under adaptive too, because no durable epoch re-derives an attach.
      */
     @Test
     public void testCanAttachParquetPartitionMissingMetadataFile() throws Exception {
