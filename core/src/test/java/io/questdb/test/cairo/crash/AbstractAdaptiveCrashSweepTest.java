@@ -277,6 +277,64 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
     }
 
     /**
+     * Sweep a process kill across every kill point of {@code workload}'s commit phase (see
+     * {@link CrashFaultFilesFacade#armKillAt}). A kill keeps the page cache, so this sees what the
+     * power-loss sweep cannot: bytes rewritten in place after their last flush.
+     * <ol>
+     *   <li><b>Count pass:</b> run the commit phase with no kill armed; {@code N} = kill points it passed.</li>
+     *   <li><b>Sweep:</b> for {@code k = 1..N}: fresh identical setup, arm the kill just before the k-th
+     *       kill point of the phase, run the whole phase (the engine is not interrupted), restore the kill
+     *       image, run the recovery triple and the workload's oracle for {@code k}. Point {@code N + 1}
+     *       kills after the phase has finished.</li>
+     * </ol>
+     * Every point is swept, without a cap: a workload that uses this keeps its commit phase small.
+     */
+    protected SweepResult forEachKillPoint(AdaptiveCrashWorkload workload) throws Exception {
+        if (crashFf == null) {
+            throw new IllegalStateException("call runWithCrashFacade(...) first");
+        }
+        final java.util.Set<Long> nonCacheFdBaseline = new java.util.HashSet<>(crashFf.noCacheOpenFdsSnapshot());
+
+        workload.setup(0);
+        final int pointsBeforeCommit = crashFf.killPointCount();
+        workload.commit();
+        final int n = crashFf.killPointCount() - pointsBeforeCommit;
+        workload.teardown();
+        releaseEngineHandles();
+        reclaimLingeringNonCacheFds(nonCacheFdBaseline);
+        Assert.assertTrue("workload commit phase must pass >= 1 kill point (N=" + n + ")", n > 0);
+        LOG.info().$("[forEachKillPoint] N=").$(n).$(" -> sweeping kill points 1..").$(n + 1).I$();
+
+        final int[] recoveredByK = new int[n + 2];
+        for (int k = 1; k <= n + 1; k++) {
+            final TableToken[] tokens = workload.setup(k);
+            final CharSequence dbRoot = engine.getConfiguration().getDbRoot();
+            if (k <= n) {
+                crashFf.armKillAt(crashFf.killPointCount() + k, dbRoot);
+            }
+            workload.commit();
+            if (k > n) {
+                crashFf.takeKillImage(dbRoot);
+            }
+            if (!crashFf.isKillImageTaken()) {
+                crashFf.armKillAt(-1, null);
+                workload.teardown();
+                releaseEngineHandles();
+                reclaimLingeringNonCacheFds(nonCacheFdBaseline);
+                Assert.fail("kill point k=" + k + " was never reached: the commit phase's kill-point count is not "
+                        + "stable across passes (N=" + n + ")");
+            }
+            recoverAfterCrash(tokens);
+            recoveredByK[k] = workload.oracle(k, n + 1);
+            workload.teardown();
+            releaseEngineHandles();
+            reclaimLingeringNonCacheFds(nonCacheFdBaseline);
+        }
+        Files.getMmapCache().asyncMunmap();
+        return new SweepResult(n, n, n + 1, n + 1, false, recoveredByK);
+    }
+
+    /**
      * Reason the first suspended table gives, or null when none is suspended.
      */
     protected String firstSuspendReason(TableToken... tokens) {
