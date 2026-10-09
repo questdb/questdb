@@ -141,20 +141,17 @@ public class TableConverter {
                                     txWriter = new TxWriter(ff, configuration);
                                 }
                                 txWriter.ofRW(path.trimTo(rootLen).concat(dirNameSink).concat(TXN_FILE_NAME).$());
-                                // Structural one-shot conversion, outside any table writer and outside the
-                                // adaptive epoch's coverage: take the SYNC grade under ADAPTIVE.
+                                // A one-shot structural conversion, outside any table writer and any save
+                                // point: under adaptive it takes the sync grade.
                                 txWriter.setCommitMode(CommitMode.structuralCommitMode(configuration.getCommitMode()));
 
-                                // A type conversion RESETS this table's WAL lineage: resetLagValuesUnsafe()
+                                // A type conversion resets the table's WAL lineage: resetLagValuesUnsafe()
                                 // below zeroes _txn.seqTxn, and the WAL branch re-seeds txn_seq from txn 0.
-                                // Every durable-epoch artifact in this directory anchors the lineage that ends
-                                // here, so it must go -- the rule every other rewinding path already obeys
-                                // (TableSnapshotRestore on checkpoint restore, and the REBASE WAL staging
-                                // clone, which excludes the source anchor and publishes its own). Left behind,
-                                // the stale anchor post-dates the reset live _txn and startup recovery refuses
-                                // to bring the instance up. A crash after the removal leaves a table without a
-                                // save point, which is not enrolled; _convert survives and the conversion runs
-                                // again on the next boot.
+                                // The save point files belong to the lineage that ends here, so they go, as on
+                                // every other path that rewinds a table. A stale save point would post-date the
+                                // reset _txn, and startup recovery would refuse to bring the instance up. A crash
+                                // after the removal leaves the table without a save point, so not enrolled, and
+                                // _convert runs the conversion again on the next boot.
                                 path.trimTo(rootLen).concat(dirNameSink);
                                 RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, path, path.size());
 
@@ -192,9 +189,9 @@ public class TableConverter {
                                 }
                                 metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
 
-                                // The converted table is a fresh WAL lineage sitting at seqTxn 0, so give it
-                                // its own generation-zero anchor here, the way the REBASE WAL clone does. A
-                                // non-adaptive instance publishes nothing.
+                                // The converted table is a fresh WAL lineage at seqTxn 0, so give it its own
+                                // generation-zero save point here, as the REBASE WAL clone does. A non-adaptive
+                                // instance publishes nothing.
                                 path.trimTo(rootLen).concat(dirNameSink);
                                 if (walEnabled && configuration.getCommitMode() == CommitMode.ADAPTIVE) {
                                     final long baselineTxn = DurableEpochManifest.publishInitialAt(
@@ -301,7 +298,7 @@ public class TableConverter {
     }
 
     // The seqTxn in the table's _txn file. Returns Long.MAX_VALUE when the file does not load, so that the
-    // caller skips the replay and the table converts as it did before the replay existed.
+    // caller skips the replay and converts the table without it.
     private static long readSeqTxn(FilesFacade ff, Path path, int tableRootLen) {
         path.trimTo(tableRootLen).concat(TXN_FILE_NAME);
         try (TxReader txReader = new TxReader(ff)) {
