@@ -75,6 +75,9 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     private static final UnorderedPageFrameReducer AGGREGATE = AsyncGroupByNotKeyedRecordCursorFactory::aggregate;
     private static final UnorderedPageFrameReducer AGGREGATE_VECT = AsyncGroupByNotKeyedRecordCursorFactory::aggregateVect;
     private static final UnorderedPageFrameReducer FILTER_AND_AGGREGATE = AsyncGroupByNotKeyedRecordCursorFactory::filterAndAggregate;
+    // rows an index gather task reads per batch, see gatherAndAggregate()
+    private static final int GATHER_BATCH_ROWS = 65_536;
+    private static final UnorderedPageFrameReducer GATHER_AND_AGGREGATE = AsyncGroupByNotKeyedRecordCursorFactory::gatherAndAggregate;
 
     private RecordCursorFactory base;
     private AsyncGroupByNotKeyedRecordCursor cursor;
@@ -84,6 +87,8 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     private final boolean vectorized;
     private final int workerCount;
     private ObjList<AsyncGroupByNotKeyedSharedCursor> sharedCursors;
+    // the base reads its rows through a posting index, see IndexGatherRecordCursorFactory
+    private final boolean indexGather;
 
     public AsyncGroupByNotKeyedRecordCursorFactory(
             @NotNull CairoEngine engine,
@@ -125,7 +130,9 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             // skip the per-frame column scan. Per-frame data is sorted ASC by the
             // designated timestamp, so the first row is the frame minimum and the last
             // row is the frame maximum.
-            final int designatedTsIndex = baseMetadata.getTimestampIndex();
+            this.indexGather = base.supportsIndexGatherFrames();
+            // An index gather reads a frame's rows key by key, not in timestamp order.
+            final int designatedTsIndex = indexGather ? -1 : baseMetadata.getTimestampIndex();
             if (designatedTsIndex >= 0) {
                 for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                     if (batchColumnIndexes[i] != designatedTsIndex) {
@@ -176,7 +183,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                     reducer,
                     workerCount
             );
-            this.cursor = new AsyncGroupByNotKeyedRecordCursor(groupByFunctions);
+            this.cursor = new AsyncGroupByNotKeyedRecordCursor(groupByFunctions, indexGather ? GATHER_AND_AGGREGATE : null, base);
             this.workerCount = workerCount;
         } catch (Throwable e) {
             Misc.free(this, e);
@@ -193,6 +200,14 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
+    }
+
+    /**
+     * How many times an index gather of this factory fell back to its serial pass.
+     */
+    @TestOnly
+    public long getSerialRetries() {
+        return cursor.getSerialRetries();
     }
 
     // Stable iff every aggregate (which may evaluate arbitrary argument expressions, for example
@@ -297,13 +312,15 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
 
     @Override
     public void toPlan(PlanSink sink) {
-        if (usesCompiledFilter()) {
+        if (indexGather) {
+            sink.type("Async Index Group By");
+        } else if (usesCompiledFilter()) {
             sink.type("Async JIT Group By");
         } else {
             sink.type("Async Group By");
         }
         sink.meta("workers").val(workerCount);
-        sink.attr("vectorized").val(vectorized);
+        sink.attr("vectorized").val(vectorized && !indexGather);
         sink.optAttr("values", groupByFunctions, true);
         if (frameSequence.getAtom().getBatchKernels(-1) != null) {
             sink.attr("batchKernels").val(true);
@@ -679,6 +696,70 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                     kernels.countRowPathFrame();
                 }
                 aggregateFiltered(record, rows, baseRowId, value, functionUpdater);
+            }
+        } finally {
+            try {
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
+        }
+    }
+
+    /**
+     * Aggregates one task of an index gather, see
+     * {@code AsyncGroupByRecordCursorFactory.gatherAndAggregate()}: the task's rows, a frame at a
+     * time, filtered by the rest of the filter, then aggregated as filtered rows.
+     */
+    private static void gatherAndAggregate(
+            int workerId,
+            @NotNull PageFrameMemoryRecord record,
+            int taskIndex,
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
+            @NotNull UnorderedPageFrameSequence<?> frameSequence,
+            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
+    ) {
+        @SuppressWarnings("unchecked") final AsyncGroupByNotKeyedAtom atom = ((UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom>) frameSequence).getAtom();
+        final IndexGatherPageFrameCursor gatherCursor = (IndexGatherPageFrameCursor) frameSequence.getPageFrameCursor();
+
+        final boolean owner = stealingFrameSequence == frameSequence;
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+        final AsyncFilterContext filterCtx = atom.getFilterContext();
+        final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
+        final DirectLongList rows = filterCtx.getFilteredRows(slotId);
+        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+        final SimpleMapValue value = atom.getMapValue(slotId);
+        final Function filter = filterCtx.getFilter(slotId);
+        final IndexGatherPageFrameCursor.TaskReader taskReader = gatherCursor.getTaskReader(slotId);
+        // navigateTo() can throw; it must sit inside the try that releases the slot. See
+        // aggregate() for why a leaked slot is permanent.
+        try {
+            taskReader.of(taskIndex);
+            int frameIndex = -1;
+            if (gatherCursor.getTaskKind(taskIndex) == IndexGatherPageFrameCursor.TASK_SCAN) {
+                // a scan task reads the key column of its frame to pick the rows
+                frameIndex = taskReader.peekFrameIndex();
+                record.init(frameMemoryPool.navigateTo(frameIndex));
+            }
+            final GroupByBatchKernels kernels = atom.getBatchKernels(slotId);
+            while (taskReader.next(rows, GATHER_BATCH_ROWS, record)) {
+                final int rowsFrameIndex = taskReader.getFrameIndex();
+                if (rowsFrameIndex != frameIndex) {
+                    frameIndex = rowsFrameIndex;
+                    record.init(frameMemoryPool.navigateTo(frameIndex));
+                }
+                if (filter != null) {
+                    IndexGatherPageFrameCursor.filterRows(filter, rows, record);
+                }
+                if (rows.size() > 0) {
+                    final long baseRowId = Rows.toRowID(frameIndex, 0);
+                    if (kernels != null) {
+                        aggregateWithKernels(record, rows.getAddress(), rows.size(), baseRowId, value, atom, slotId, kernels);
+                    } else {
+                        aggregateFiltered(record, rows, baseRowId, value, functionUpdater);
+                    }
+                }
+                circuitBreaker.statefulThrowExceptionIfTripped();
             }
         } finally {
             try {

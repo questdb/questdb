@@ -96,6 +96,8 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
     // Null when no per-query limit applies. Workers and operator code feed it to
     // tracker-aware Unsafe overloads to charge allocations to the active workload.
     private MemoryTracker memoryTracker;
+    // the GROUP BY keys are the index key column of an index gather, and nothing else
+    private boolean isGroupedByGatherKey;
     // Initialized lazily.
     private DirectLongLongSortedList ownerLongTopKList;
 
@@ -481,8 +483,20 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
         initPerWorkerFunctions(perWorkerGroupByFunctions, ownerGroupByFunctions, symbolTableSource, executionContext);
     }
 
+    /**
+     * Whether the grouping is exactly the key column of an index gather's scan: then every run of
+     * a key's rows is one group, which the batched probe looks up once per run.
+     */
+    public boolean isGroupedByGatherKey() {
+        return isGroupedByGatherKey;
+    }
+
     public boolean isSharded() {
         return shardingCtx.isSharded();
+    }
+
+    public void setGroupedByGatherKey(boolean groupedByGatherKey) {
+        isGroupedByGatherKey = groupedByGatherKey;
     }
 
     /**

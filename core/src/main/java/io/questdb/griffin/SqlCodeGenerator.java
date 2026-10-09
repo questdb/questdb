@@ -317,6 +317,7 @@ import io.questdb.griffin.engine.table.ExtraNullColumnCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnExcludedValuesRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnSubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnValuesRecordCursorFactory;
+import io.questdb.griffin.engine.table.IndexGatherRecordCursorFactory;
 import io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory;
@@ -600,6 +601,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private boolean fullFatJoins = false;
     // the base model of the GROUP BY being generated, see generateGroupByBase()
     private IQueryModel groupByBaseModel;
+    // whether the GROUP BY whose base is being generated may read it through an index gather
+    private boolean groupByBaseGatherAllowed;
     // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
     // Tracks the last model with non-empty ORDER BY as we descend through nested models
     // the PARTITION BY of a worker's copy compiled without it, see compileStreamingWindowCopy()
@@ -11762,6 +11765,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateSelectGroupBy(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        final RecordCursorFactory factory = generateSelectGroupBy0(model, executionContext);
+        if (factory.getBaseFactory() instanceof IndexGatherRecordCursorFactory gather) {
+            // its expression nodes go back to the pool with this compilation
+            gather.releaseStealFilterExpr();
+        }
+        return factory;
+    }
+
+    private RecordCursorFactory generateSelectGroupBy0(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         RecordCursorFactory fused = generateHashJoinGroupBy(model, executionContext);
         if (fused != null) {
             return fused;
@@ -11798,7 +11810,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final RecordMetadata metadata = isCountKeyword(columnName)
                             ? CountRecordCursorFactory.DEFAULT_COUNT_METADATA :
                             new GenericRecordMetadata().add(new TableColumnMetadata(SqlUtil.toColumnName(columnName), LONG));
-                    return new CountRecordCursorFactory(metadata, generateGroupByBase(model, executionContext));
+                    return new CountRecordCursorFactory(metadata, generateGroupByBase(model, executionContext, false));
                 }
             }
 
@@ -11969,7 +11981,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (hourIndex != -1) {
-                factory = generateGroupByBase(model, executionContext);
+                factory = generateGroupByBase(model, executionContext, true);
                 pageFramingSupported = factory.supportsPageFrameCursor();
                 if (pageFramingSupported) {
                     columnExpr = columns.getQuick(hourIndex).getAst();
@@ -11989,7 +12001,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (hourIndex != -1) {
                     IQueryModel.restoreWhereClause(expressionNodePool, model);
                 }
-                factory = generateGroupByBase(model, executionContext);
+                factory = generateGroupByBase(model, executionContext, true);
                 pageFramingSupported = factory.supportsPageFrameCursor();
             }
 
@@ -12137,7 +12149,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 factory = Misc.free(factory);
                 // create factory on top level model
                 IQueryModel.restoreWhereClause(expressionNodePool, model);
-                factory = generateGroupByBase(model, executionContext);
+                factory = generateGroupByBase(model, executionContext, true);
                 // and reset baseMetadata
                 baseMetadata = factory.getMetadata();
             }
@@ -12256,6 +12268,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     filterUsedColumnIndexes = new IntHashSet();
                     collectColumnIndexes(sqlNodeStack, factory.getMetadata(), filterExpr, filterUsedColumnIndexes);
                     filterFactory.halfClose();
+                }
+                // A symbol list a POSTING index serves: the workers gather the list's rows through
+                // the index. The base keeps applying the rest of the filter on its serial path, so
+                // the GROUP BY compiles its own copy of it for its tasks.
+                if (!supportsParallelism
+                        && factory instanceof IndexGatherRecordCursorFactory gather
+                        && configuration.isSqlParallelIndexGroupByEnabled()
+                        && gather.acceptsKeyMajorRows(GroupByUtils.hasOrderSensitiveFunctions(groupByFunctions), keyTypes.getColumnCount() > 0 ? listColumnFilterA : null)) {
+                    filterExpr = gather.getStealFilterExpr();
+                    if (filterExpr != null) {
+                        filter = compileBooleanFilter(filterExpr, factory.getMetadata(), executionContext);
+                        filterUsedColumnIndexes = new IntHashSet();
+                        collectColumnIndexes(sqlNodeStack, factory.getMetadata(), filterExpr, filterUsedColumnIndexes);
+                    }
+                    supportsParallelism = true;
                 }
 
                 if (supportsParallelism) {
@@ -15854,13 +15881,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * ORDER BY advice still reaches the base's table scan; remembering the base lets the index scan
      * skip the key-major path there, which would replace no sort and only rule out other scans.
      */
-    private RecordCursorFactory generateGroupByBase(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
+    private RecordCursorFactory generateGroupByBase(IQueryModel model, SqlExecutionContext executionContext, boolean gatherAllowed) throws SqlException {
         final IQueryModel prevGroupByBaseModel = groupByBaseModel;
+        final boolean prevGatherAllowed = groupByBaseGatherAllowed;
         groupByBaseModel = model.getNestedModel();
+        groupByBaseGatherAllowed = gatherAllowed;
         try {
             return generateSubQuery(model, executionContext);
         } finally {
             groupByBaseModel = prevGroupByBaseModel;
+            groupByBaseGatherAllowed = prevGatherAllowed;
         }
     }
 
@@ -15968,6 +15998,53 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // Measured: the crossover does not move between one and four aggregates here, and moves
         // ~4x there.
         return base.tryDisableTimestampOrdering(orderSensitive, groupByKeyColumns, 1);
+    }
+
+    /**
+     * Whether the base of the GROUP BY being generated, a symbol {@code IN}/{@code =} filter served
+     * by a POSTING index, is read through an {@link IndexGatherRecordCursorFactory}: so that the
+     * GROUP BY can gather its rows on the workers. The scan runs forward over native or Parquet
+     * partitions of a plain table.
+     */
+    private boolean isIndexGatherCandidate(
+            IQueryModel model,
+            TableReader reader,
+            int readerKeyColumnIndex,
+            int order,
+            int indexDirection,
+            boolean orderFollowed,
+            SqlExecutionContext executionContext
+    ) {
+        return model == groupByBaseModel
+                && groupByBaseGatherAllowed
+                && configuration.isSqlParallelIndexGroupByEnabled()
+                && executionContext.isParallelGroupByEnabled()
+                && order == ORDER_ASC
+                && indexDirection == IndexReader.DIR_FORWARD
+                && !orderFollowed
+                && !model.isUpdate()
+                && !executionContext.isLiveViewCompile()
+                && !reader.getTableToken().isLiveView()
+                && IndexType.isPosting(reader.getMetadata().getColumnIndexType(readerKeyColumnIndex));
+    }
+
+    private RecordCursorFactory newIndexGather(
+            FilterOnValuesRecordCursorFactory filterOnValues,
+            @Nullable ExpressionNode filterExpr,
+            SqlExecutionContext executionContext
+    ) {
+        try {
+            return new IndexGatherRecordCursorFactory(
+                    filterOnValues,
+                    filterExpr != null ? deepClone(expressionNodePool, filterExpr) : null,
+                    configuration.getSqlParallelIndexGroupByFrameRows(),
+                    configuration.getSqlParallelIndexGroupByTaskRows(),
+                    executionContext.getSharedQueryWorkerCount()
+            );
+        } catch (Throwable th) {
+            Misc.free(filterOnValues);
+            throw th;
+        }
     }
 
     private RecordCursorFactory generateTableQuery0(
@@ -16492,6 +16569,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
                                 }
 
+                                if (isIndexGatherCandidate(model, reader, columnIndexes.getQuick(keyColumnIndex), order, indexDirection, orderByKeyColumn || orderByTimestamp, executionContext)) {
+                                    // the single key reads as a list of one, see IndexGatherRecordCursorFactory
+                                    final FilterOnValuesRecordCursorFactory filterOnValues = new FilterOnValuesRecordCursorFactory(
+                                            configuration,
+                                            queryMeta,
+                                            dfcFactory,
+                                            intrinsicModel.keyValueFuncs,
+                                            keyColumnIndex,
+                                            reader,
+                                            filter,
+                                            model.getOrderByAdviceMnemonic(),
+                                            false,
+                                            false,
+                                            getOrderByDirectionOrDefault(model, 0),
+                                            indexDirection,
+                                            columnIndexes,
+                                            columnSizeShifts
+                                    );
+                                    // the factory owns the key function and the partition frames now
+                                    symbolFunc = null;
+                                    dfcFactory = null;
+                                    return newIndexGather(filterOnValues, intrinsicModel.filter, executionContext);
+                                }
+
                                 if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                                     if (filter == null) {
                                         rcf = new DeferredSymbolIndexRowCursorFactory(
@@ -16673,7 +16774,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             queryMeta.setTimestampIndex(-1);
                         }
 
-                        return new FilterOnValuesRecordCursorFactory(
+                        final FilterOnValuesRecordCursorFactory filterOnValues = new FilterOnValuesRecordCursorFactory(
                                 configuration,
                                 queryMeta,
                                 dfcFactory,
@@ -16689,6 +16790,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 columnIndexes,
                                 columnSizeShifts
                         );
+                        if (isIndexGatherCandidate(model, reader, columnIndexes.getQuick(keyColumnIndex), order, indexDirection, orderByKeyColumn || orderByTimestamp, executionContext)) {
+                            // the factory owns the partition frames now
+                            dfcFactory = null;
+                            return newIndexGather(filterOnValues, intrinsicModel.filter, executionContext);
+                        }
+                        return filterOnValues;
                     } else if (nKeyExcludedValues > 0) {
                         if (reader.getSymbolMapReader(columnIndexes.getQuick(keyColumnIndex)).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount()) {
                             Function filter = compileFilter(intrinsicModel, queryMeta, executionContext);

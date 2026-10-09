@@ -34,6 +34,7 @@ import io.questdb.PropServerConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
@@ -1926,6 +1927,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelGroupByBatchKernelsEnabled() {
+        return true;
+    }
+
+    @Override
+    public int getSqlParallelIndexGroupByFrameRows() {
+        return Map.BATCH_ROW_INDEX_MASK + 1;
+    }
+
+    @Override
+    public long getSqlParallelIndexGroupByTaskRows() {
+        return 65_536;
+    }
+
+    @Override
+    public boolean isSqlParallelIndexGroupByEnabled() {
         return true;
     }
 

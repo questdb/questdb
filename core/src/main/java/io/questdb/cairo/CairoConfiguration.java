@@ -1501,6 +1501,28 @@ public interface CairoConfiguration {
     boolean isSqlParallelGroupByBatchKernelsEnabled();
 
     /**
+     * Rows of the posting index that one task of an index-driven parallel GROUP BY gathers, see
+     * {@link #isSqlParallelIndexGroupByEnabled()}. Keys with fewer rows share a task; a key with
+     * more is split by row range.
+     */
+    long getSqlParallelIndexGroupByTaskRows();
+
+    /**
+     * Rows of the page frames an index-driven parallel GROUP BY reads a partition through, see
+     * {@link #isSqlParallelIndexGroupByEnabled()}. Its tasks gather rows across frames, so large
+     * frames keep a key's rows of a frame in few batches. At most 16777216, the row index range of
+     * a batched GROUP BY entry.
+     */
+    int getSqlParallelIndexGroupByFrameRows();
+
+    /**
+     * Whether a GROUP BY over a symbol {@code IN}/{@code =} filter that a POSTING index serves runs
+     * on the shared query workers: they read the keys' row ids from the index, gather the columns
+     * of those rows only and aggregate them. Read when the query is compiled.
+     */
+    boolean isSqlParallelIndexGroupByEnabled();
+
+    /**
      * When true, a group by sub-query whose rows reach a consumer that only needs their distinct values
      * (a DISTINCT, or a GROUP BY without aggregates) and that reads only some of its keys groups by those
      * keys alone. For example, {@code SELECT DISTINCT sym FROM (SELECT ts_bucket, sym, avg(x) ... )} groups

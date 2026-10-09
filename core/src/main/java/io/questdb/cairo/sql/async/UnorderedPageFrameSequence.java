@@ -258,6 +258,35 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         endRound();
     }
 
+    /**
+     * Runs a round of tasks, see {@link #dispatchRound}, on the calling thread only, as the owner,
+     * one task after another. It is for a caller that must not use the workers, such as one that
+     * falls back to a serial pass after a parallel one hit the query's memory limit. Throws the
+     * first error a task raised, or the cancellation.
+     */
+    public void runRoundLocally(UnorderedPageFrameReducer roundReducer, LongList taskRowCounts) {
+        assert this.roundReducer == null && (queuedCount == 0 || doneLatch.done(queuedCount));
+        // a parallel attempt that failed left its error and cancellation behind
+        errorState.clear();
+        resetCancellation();
+        this.roundReducer = roundReducer;
+        this.roundTaskRowCounts = taskRowCounts;
+        try {
+            workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+            for (int i = 0, n = taskRowCounts.size(); i < n && isActive(); i++) {
+                reduceLocally(i);
+            }
+            if (errorState.hasError()) {
+                throw buildError();
+            }
+            if (!isActive() && getCancelReason() != SqlExecutionCircuitBreaker.STATE_OK) {
+                throw buildInterruptionException();
+            }
+        } finally {
+            endRound();
+        }
+    }
+
     private void abandonRound(Throwable th) {
         // The dispatch loop can throw with tasks still queued; they must not outlive the round.
         try {
@@ -488,6 +517,13 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
 
     public PageFrameAddressCache getPageFrameAddressCache() {
         return frameAddressCache;
+    }
+
+    /**
+     * The page frame cursor the frames come from, or null for a sequence of rounds only.
+     */
+    public PageFrameCursor getPageFrameCursor() {
+        return frameCursor;
     }
 
     public AtomicInteger getReduceStartedCounter() {

@@ -1,0 +1,582 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.griffin.engine.groupby;
+
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.IndexGatherPageFrameCursor;
+import io.questdb.griffin.engine.table.IndexGatherRecordCursorFactory;
+import io.questdb.mp.WorkerPool;
+import io.questdb.std.Misc;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
+import org.junit.Assert;
+import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicLong;
+
+/**
+ * The index-driven parallel GROUP BY ({@code cairo.sql.parallel.index.groupby.enabled}, the plan
+ * {@code Async Index Group By}) against the same queries compiled with it off: a serial GROUP BY
+ * over the index scan.
+ * <p>
+ * <b>Tolerance.</b> Without a worker pool the query's thread runs every task, and a group that
+ * draws from one key sees its rows in table order, as the serial plan does: such results must be
+ * identical. A group that draws from several keys (grouped by another column, or not keyed) adds
+ * its keys' rows key by key rather than in table order, and with a worker pool partial results
+ * merge in an order that changes from run to run, as for any parallel GROUP BY: floating sums,
+ * averages and the Welford/Chan states are then compared within 1e-9 relative, everything else
+ * exactly.
+ */
+public class IndexGatherGroupByTest extends AbstractCairoTest {
+    // symbols of every frequency: S0 is in about a third of the rows, S1..S9 are mid, R0..R49 are
+    // rare, P0..P9 are in some partitions only, and every 23rd row is NULL
+    private static final String AGGREGATES = "count() n, sum(x) sx, avg(x) ax, min(y) mny, max(y) mxy, sum(z) sz, " +
+            "weighted_avg(x, y) wa, stddev_samp(x) sd, corr(x, f) cr, min(f) mnf, max(ts) mxt, count(y) cy";
+    private static final int ROWS = 30_000;
+
+    @Override
+    public void setUp() {
+        super.setUp();
+        // frames, tasks and batches smaller than the data, so a key's rows cross frames and tasks
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_INDEX_GROUPBY_FRAME_ROWS, 1024);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_INDEX_GROUPBY_TASK_ROWS, 300);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, 61);
+        // maps past a few hundred groups shard, unless the grouping includes the key column
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 300);
+    }
+
+    @Test
+    public void testAbsentAndDuplicateKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext, "t", ROWS, 3);
+            assertSameAsSerial("select sym, " + AGGREGATES + " from t where sym in ('S1', 'NOPE', 'S1', 'R3', 'R3') order by sym", true);
+            assertSameAsSerial("select sym, " + AGGREGATES + " from t where sym in ('NOPE', 'NADA') order by sym", true);
+            assertSameAsSerial("select " + AGGREGATES + " from t where sym in ('NOPE', 'NADA')", true);
+            assertSameAsSerial("select " + AGGREGATES + " from t where sym = 'NOPE'", true);
+            // keys of some partitions only
+            assertSameAsSerial("select sym, " + AGGREGATES + " from t where sym in ('P0', 'P3', 'P7', 'R1') order by sym", true);
+        });
+    }
+
+    @Test
+    public void testBindVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext, "t", ROWS, 5);
+            final String sql = "select sym, " + AGGREGATES + " from t where sym in ($1, $2, $3) order by sym";
+            final String[][] binds = {{"S1", "R2", "P1"}, {"S0", null, "S2"}, {"NOPE", "R9", "R9"}, {null, null, null}};
+            for (String[] values : binds) {
+                bindVariableService.clear();
+                for (int i = 0; i < values.length; i++) {
+                    bindVariableService.setStr(i, values[i]);
+                }
+                assertSameAsSerial(sql, true);
+            }
+            final String single = "select sym, " + AGGREGATES + " from t where sym = $1 order by sym";
+            for (String value : new String[]{"S3", null, "R7", "NOPE"}) {
+                bindVariableService.clear();
+                bindVariableService.setStr(0, value);
+                assertSameAsSerial(single, true);
+            }
+        });
+    }
+
+    @Test
+    public void testCachedFactoryReruns() throws Exception {
+        // one factory, three executions, with rows committed between them: the readers it froze
+        // are unfrozen, so the next execution sees the new rows
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext, "t", ROWS, 7);
+            final String sql = "select sym, " + AGGREGATES + " from t where sym in ('S1', 'R4', 'P2') order by sym";
+            setFeatures(true);
+            try (RecordCursorFactory factory = select(sql)) {
+                for (int round = 0; round < 3; round++) {
+                    final String actual = print(factory);
+                    setFeatures(false);
+                    final String expected = runToString(engine, sqlExecutionContext, sql);
+                    setFeatures(true);
+                    TestUtils.assertEquals(sql, expected, actual);
+                    final IndexGatherPageFrameCursor cursor = findGather(factory).getPageFrameCursorForTesting();
+                    Assert.assertEquals(0, cursor.getFrozenReaderCount());
+                    Assert.assertTrue(cursor.getTaskCounts()[0] > 0);
+                    execute("insert into t select rnd_symbol('S1', 'R4', 'P2'), rnd_double(), rnd_int(0, 1000, 5), rnd_long(), rnd_float(), rnd_symbol('a', 'b', ''), " +
+                            "'1970-01-0" + (3 + round) + "'::timestamp + x * 1_000_000L from long_sequence(500)");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCancellation() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicLong ticks = new AtomicLong();
+            final long[] tripAfter = {Long.MAX_VALUE};
+            final DefaultSqlExecutionCircuitBreakerConfiguration cbConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                @Override
+                @NotNull
+                public MillisecondClock getClock() {
+                    return () -> ticks.incrementAndGet() < tripAfter[0] ? 0 : Long.MAX_VALUE;
+                }
+
+                @Override
+                public long getQueryTimeout() {
+                    return 1;
+                }
+            };
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, context) -> {
+                final io.questdb.griffin.SqlExecutionContextImpl ctx = (io.questdb.griffin.SqlExecutionContextImpl) context;
+                createTable(engine, ctx, "t", 100_000, 9);
+                final String[] queries = {
+                        "select sym, " + AGGREGATES + " from t where sym in ('S0', 'S1', 'S2') order by sym",
+                        "select " + AGGREGATES + " from t where sym in ('S0', 'S1', 'S2')",
+                };
+                setFeatures(true);
+                for (String sql : queries) {
+                    final NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, cbConfiguration);
+                    try {
+                        ctx.with(ctx.getSecurityContext(), ctx.getBindVariableService(), ctx.getRandom(), ctx.getRequestFd(), circuitBreaker);
+                        tripAfter[0] = Long.MAX_VALUE;
+                        try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
+                            Assert.assertNotNull(sql, findGather(factory));
+                            ticks.set(0);
+                            tripAfter[0] = 5;
+                            circuitBreaker.resetTimer();
+                            try (RecordCursor cursor = factory.getCursor(ctx)) {
+                                //noinspection StatementWithEmptyBody
+                                while (cursor.hasNext()) {
+                                    // drain
+                                }
+                                Assert.fail("expected a timeout: " + sql);
+                            } catch (Throwable e) {
+                                TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
+                            }
+                            // the readers are unfrozen
+                            Assert.assertEquals(0, findGather(factory).getPageFrameCursorForTesting().getFrozenReaderCount());
+                        }
+                    } finally {
+                        Misc.free(circuitBreaker);
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testColumnTops() throws Exception {
+        // the symbol and an aggregated column added after the first partitions: rows before the
+        // tops are NULL, and partitions without the symbol column have no posting reader
+        assertMemoryLeak(() -> {
+            execute("create table t (x double, ts timestamp) timestamp(ts) partition by day bypass wal");
+            execute("insert into t select rnd_double(), timestamp_sequence(0, 20_000_000L) from long_sequence(8000)");
+            execute("alter table t add column sym symbol index type posting");
+            execute("alter table t add column y int");
+            execute("insert into t (x, ts, sym, y) select rnd_double(), '1970-01-01T12'::timestamp + x * 10_000_000L, " +
+                    "rnd_symbol('A', 'B', 'C', null), rnd_int(0, 100, 3) from long_sequence(12_000)");
+            final String[] lists = {"('A', 'B')", "('A', null)", "(null)", "('C')"};
+            for (String list : lists) {
+                assertSameAsSerial("select sym, count() n, sum(x) sx, min(y) mn, max(y) mx, count(y) cy from t where sym in " + list + " order by sym", true);
+                assertSameAsSerial("select count() n, sum(x) sx, min(y) mn, count(y) cy from t where sym in " + list, false);
+            }
+            assertSameAsSerial("select sym, count() n, sum(x) sx from t where sym = null order by sym", true);
+            assertSameAsSerial("select count() n, sum(x) sx from t where sym is null", true);
+        });
+    }
+
+    @Test
+    public void testExplain() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext, "t", 1000, 11);
+            setFeatures(true);
+            assertPlan(
+                    "select sym, sum(x) from t where sym in ('S1', 'S2') order by sym",
+                    "Encode sort light\n" +
+                            "  keys: [sym]\n" +
+                            "    Async Index Group By workers: 1\n" +
+                            "      keys: [sym]\n" +
+                            "      values: [sum(x)]\n" +
+                            "      filter: null\n" +
+                            "        FilterOnValues symbolOrder: desc\n" +
+                            "            Cursor-order scan\n" +
+                            "                Index forward scan on: sym deferred: true\n" +
+                            "                  filter: sym='S1'\n" +
+                            "                Index forward scan on: sym deferred: true\n" +
+                            "                  filter: sym='S2'\n" +
+                            "            Frame forward scan on: t\n"
+            );
+            // the hint keeps the scan
+            assertPlan(
+                    "select /*+ no_index */ sum(x) from t where sym = 'S1'",
+                    "Async JIT Group By workers: 1\n" +
+                            "  vectorized: false\n" +
+                            "  values: [sum(x)]\n" +
+                            "  filter: sym='S1'\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: t\n"
+            );
+        });
+    }
+
+    @Test
+    public void testIntervalFilters() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext, "t", ROWS, 13);
+            final String[] filters = {
+                    "ts in '1970-01-02'",
+                    "ts between '1970-01-01T13:00' and '1970-01-03T07:30'",
+                    "ts > '1970-01-02T11:11:11' and ts < '1970-01-02T11:12:00'",
+                    "ts < '1970-01-01'",
+            };
+            for (String interval : filters) {
+                assertSameAsSerial("select sym, " + AGGREGATES + " from t where sym in ('S0', 'S4', 'R5', 'P4') and " + interval + " order by sym", true);
+                assertSameAsSerial("select " + AGGREGATES + " from t where sym = 'S2' and " + interval, true);
+            }
+        });
+    }
+
+    @Test
+    public void testKeyedByOtherColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext, "t", ROWS, 17);
+            // groups within one key: the same order of rows as the serial plan
+            assertSameAsSerial("select sym, timestamp_floor('1h', ts) h, " + AGGREGATES + " from t where sym in ('S0', 'S5', 'R8') order by sym, h", true);
+            assertSameAsSerial("select sym, s2, " + AGGREGATES + " from t where sym in ('S0', 'S5', 'R8', null) order by sym, s2", true);
+            // groups across keys
+            assertSameAsSerial("select s2, " + AGGREGATES + " from t where sym in ('S0', 'S5', 'R8') order by s2", false);
+            assertSameAsSerial("select y % 7 k, count() n, sum(z) sz, min(x) mn, max(x) mx from t where sym in ('S1', 'S2', 'S3') order by k", true);
+            // a single key, grouped by another column, is in table order
+            assertSameAsSerial("select timestamp_floor('10m', ts) m, s2, avg(x) a, sum(y) s from t where sym = 'S0' order by m, s2", true);
+        });
+    }
+
+    @Test
+    public void testKeyedBySymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext, "t", ROWS, 19);
+            assertSameAsSerial("select sym, " + AGGREGATES + " from t where sym in ('S0', 'S1', 'S2', 'R0', 'R1', 'R2', 'P1', null) order by sym", true);
+            assertSameAsSerial("select sym, " + AGGREGATES + " from t where sym = 'S0' order by sym", true);
+            assertSameAsSerial("select sym, " + AGGREGATES + " from t where sym in ('R10', 'R11', 'R12', 'R13', 'R14', 'R15', 'R16', 'R17', 'R18', 'R19', 'R20', 'R21') order by sym", true);
+            // order-sensitive aggregates, every group within one key
+            assertSameAsSerial("select sym, first(x) fx, last(x) lx, first(ts) ft, last(y) ly from t where sym in ('S0', 'S6', 'R3', null) order by sym", true);
+            assertSameAsSerial("select sym, timestamp_floor('5m', ts) m, first(x) o, max(x) h, min(x) l, last(x) c from t where sym in ('S1', 'R4') order by sym, m", true);
+        });
+    }
+
+    @Test
+    public void testLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext, "t", ROWS, 23);
+            assertSameAsSerial("select sym, " + AGGREGATES + " from t where sym in ('S0', 'S1', 'S2', 'S3', 'R1') order by sym limit 2", true);
+            assertSameAsSerial("select sym, " + AGGREGATES + " from t where sym in ('S0', 'S1', 'S2', 'S3', 'R1') order by sym desc limit 3", true);
+            assertSameAsSerial("select sym, sum(x) s from t where sym in ('S0', 'S1', 'S2', 'S3', 'R1') order by s limit -2", true);
+        });
+    }
+
+    @Test
+    public void testMemoryLimitFallsBackToOneMap() throws Exception {
+        // a query whose per-worker maps break the limit while one map fits completes with the
+        // same rows on the query's thread
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                engine.execute("create table m (sym symbol index type posting, k varchar, v long, ts timestamp) timestamp(ts) partition by day bypass wal", ctx);
+                engine.execute("insert into m select rnd_symbol('A', 'B', 'C', 'D'), (x % 40_000)::varchar, x, timestamp_sequence(0, 1_000_000L) from long_sequence(200_000)", ctx);
+                final String sql = "select k, count() n, sum(v) s from m where sym in ('A', 'B', 'C') order by k";
+                setFeatures(false);
+                final String expected = runToString(engine, ctx, sql);
+                boolean gatherRetried = false;
+                for (long limit = 2L << 20; limit <= 48L << 20; limit += 1L << 20) {
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
+                    setFeatures(false);
+                    final String serial;
+                    try {
+                        serial = runToString(engine, ctx, sql);
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.isOutOfMemory());
+                        continue;
+                    }
+                    TestUtils.assertEquals(expected, serial);
+                    setFeatures(true);
+                    try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
+                        TestUtils.assertEquals("limit " + limit, expected, print(factory, ctx));
+                        final AsyncGroupByRecordCursorFactory async = findAsyncGather(factory);
+                        Assert.assertNotNull(async);
+                        gatherRetried |= async.getSerialRetries() > 0;
+                    }
+                }
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                Assert.assertTrue("no limit made the index gather retry serially", gatherRetried);
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testNotKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext, "t", ROWS, 29);
+            assertSameAsSerial("select " + AGGREGATES + " from t where sym in ('S0', 'S1', 'R2', 'P5', null)", false);
+            assertSameAsSerial("select " + AGGREGATES + " from t where sym = 'S3'", true);
+            assertSameAsSerial("select " + AGGREGATES + " from t where sym = 'R3'", true);
+            // a single key is in table order, also for order-sensitive aggregates
+            assertSameAsSerial("select first(x) fx, last(x) lx, first(ts) ft from t where sym = 'S2'", true);
+        });
+    }
+
+    @Test
+    public void testOrderSensitiveAcrossKeysStaysSerial() throws Exception {
+        // first() of a group that spans keys depends on the table order across keys, which only
+        // the serial index scan returns
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext, "t", ROWS, 31);
+            final String[] queries = {
+                    "select first(x) fx, last(y) ly from t where sym in ('S1', 'S2')",
+                    "select s2, first(x) fx, last(ts) lt from t where sym in ('S1', 'R2') order by s2",
+            };
+            for (String sql : queries) {
+                setFeatures(true);
+                final StringSink plan = new StringSink();
+                printSql("explain " + sql, plan);
+                Assert.assertFalse(sql + "\n" + plan, plan.toString().contains("Async Index Group By"));
+                assertSameAsSerial(sql, true, false);
+            }
+        });
+    }
+
+    @Test
+    public void testParquetPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext, "t", ROWS, 37);
+            execute("alter table t convert partition to parquet where ts < '1970-01-02'");
+            assertSameAsSerial("select sym, " + AGGREGATES + " from t where sym in ('S0', 'S7', 'R6', 'P0', null) order by sym", true);
+            assertSameAsSerial("select sym, " + AGGREGATES + " from t where sym in ('S0', 'S7') and y > 300 order by sym", true);
+            assertSameAsSerial("select " + AGGREGATES + " from t where sym = 'S7'", true);
+            final String sql = "select sym, count() n from t where sym in ('S0', 'S7') order by sym";
+            setFeatures(true);
+            try (RecordCursorFactory factory = select(sql)) {
+                print(factory);
+                final long[] counts = findGather(factory).getPageFrameCursorForTesting().getTaskCounts();
+                Assert.assertTrue(counts[0] > 0);
+                Assert.assertTrue(counts[1] > 0);
+            }
+        });
+    }
+
+    @Test
+    public void testResidualFilters() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext, "t", ROWS, 43);
+            assertSameAsSerial("select sym, " + AGGREGATES + " from t where sym in ('S0', 'S1', 'R0') and s2 is not null and s2 != '' order by sym", true);
+            assertSameAsSerial("select sym, " + AGGREGATES + " from t where sym in ('S0', 'S1', 'R0') and y > 500 and x < 0.7 order by sym", true);
+            assertSameAsSerial("select " + AGGREGATES + " from t where sym = 'S0' and (y % 3 = 0 or s2 = 'a')", true);
+            assertSameAsSerial("select sym, timestamp_floor('5m', ts) m, first(x) o, last(x) c, sum(z) s from t where sym in ('S1', 'R2') and s2 is not null and s2 != '' order by sym, m", true);
+        });
+    }
+
+    @Test
+    public void testWorkerPool() throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                createTable(engine, ctx, "t", 200_000, 47);
+                final String[] queries = {
+                        "select sym, " + AGGREGATES + " from t where sym in ('S0', 'S1', 'S2', 'R0', 'R1', 'P1', null) order by sym",
+                        "select sym, timestamp_floor('1h', ts) h, " + AGGREGATES + " from t where sym in ('S0', 'S5', 'R8') order by sym, h",
+                        "select " + AGGREGATES + " from t where sym in ('S0', 'S1', 'R2')",
+                        "select sym, first(x) fx, last(x) lx from t where sym in ('S0', 'S3', 'R3') order by sym",
+                        "select s2, " + AGGREGATES + " from t where sym in ('S0', 'S5', 'R8') and y > 100 order by s2",
+                        // many groups: the maps shard
+                        "select z % 20_000 k, count() n, sum(x) s from t where sym in ('S0', 'S1') order by k",
+                };
+                long workerTasks = 0;
+                for (String sql : queries) {
+                    setFeatures(false);
+                    final String expected = runToString(engine, ctx, sql);
+                    setFeatures(true);
+                    for (int run = 0; run < 3; run++) {
+                        try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
+                            final IndexGatherRecordCursorFactory gather = findGather(factory);
+                            Assert.assertNotNull(sql, gather);
+                            assertWithinTolerance(sql, expected, print(factory, ctx));
+                            workerTasks += gather.getPageFrameCursorForTesting().getTaskCounts()[2];
+                        }
+                    }
+                    setFeatures(true);
+                    assertWithinTolerance(sql, expected, runToString(engine, ctx, sql));
+                }
+                Assert.assertTrue("no worker took a task", workerTasks > 0);
+            }, configuration, LOG);
+        });
+    }
+
+    private static void assertWithinTolerance(String sql, String expected, String actual) {
+        final String[] e = expected.split("\n");
+        final String[] a = actual.split("\n");
+        Assert.assertEquals(sql + "\n" + expected + "\n" + actual, e.length, a.length);
+        for (int r = 0; r < e.length; r++) {
+            final String[] ec = e[r].split("\t", -1);
+            final String[] ac = a[r].split("\t", -1);
+            Assert.assertEquals(sql, ec.length, ac.length);
+            for (int c = 0; c < ec.length; c++) {
+                if (ec[c].equals(ac[c])) {
+                    continue;
+                }
+                final double x;
+                final double y;
+                try {
+                    x = Double.parseDouble(ec[c]);
+                    y = Double.parseDouble(ac[c]);
+                } catch (NumberFormatException ex) {
+                    Assert.fail(sql + ": row " + r + " col " + c + ": " + ec[c] + " vs " + ac[c]);
+                    return;
+                }
+                final double diff = Math.abs(x - y);
+                Assert.assertTrue(
+                        sql + ": row " + r + " col " + c + ": " + ec[c] + " vs " + ac[c],
+                        diff <= 1e-9 || diff <= 1e-9 * Math.max(Math.abs(x), Math.abs(y))
+                );
+            }
+        }
+    }
+
+    private static void createTable(CairoEngine engine, SqlExecutionContext ctx, String name, int rows, long seed) throws SqlException {
+        engine.execute(
+                "create table " + name + " (sym symbol index type posting, x double, y int, z long, f float, s2 symbol, ts timestamp)" +
+                        " timestamp(ts) partition by day bypass wal",
+                ctx
+        );
+        // 4 days; P<n> only on day n % 4; NULL every 23rd row
+        engine.execute(
+                "insert into " + name + " select " +
+                        "case when x % 23 = 0 then null " +
+                        "when x % 3 = 0 then 'S0' " +
+                        "when x % 3 = 1 and x % 5 != 0 then 'S' || (1 + (x * " + seed + ") % 9) " +
+                        "when x % 7 = 0 then 'P' || (((x * 4) / " + rows + ") * 3 + x % 3) " +
+                        "else 'R' || ((x * " + (seed + 2) + ") % 50) end, " +
+                        "case when x % 11 = 0 then null else rnd_double() end, " +
+                        "rnd_int(0, 1000, 7), rnd_long(-1000, 1000, 9), rnd_float(), rnd_symbol('a', 'b', '', null), " +
+                        "(x * (4 * 86_400_000_000L / " + rows + "))::timestamp " +
+                        "from long_sequence(" + rows + ")",
+                ctx
+        );
+    }
+
+    private static AsyncGroupByRecordCursorFactory findAsyncGather(RecordCursorFactory factory) {
+        RecordCursorFactory f = factory;
+        for (int i = 0; f != null && i < 6; i++) {
+            if (f instanceof AsyncGroupByRecordCursorFactory async && async.getBaseFactory() instanceof IndexGatherRecordCursorFactory) {
+                return async;
+            }
+            f = f.getBaseFactory();
+        }
+        return null;
+    }
+
+    private static IndexGatherRecordCursorFactory findGather(RecordCursorFactory factory) {
+        RecordCursorFactory f = factory;
+        for (int i = 0; f != null && i < 6; i++) {
+            if (f instanceof IndexGatherRecordCursorFactory gather) {
+                return gather;
+            }
+            if ((f instanceof AsyncGroupByRecordCursorFactory || f instanceof AsyncGroupByNotKeyedRecordCursorFactory)
+                    && f.getBaseFactory() instanceof IndexGatherRecordCursorFactory gather) {
+                return gather;
+            }
+            f = f.getBaseFactory();
+        }
+        return null;
+    }
+
+    private static String print(RecordCursorFactory factory, SqlExecutionContext ctx) throws SqlException {
+        final StringSink sink = new StringSink();
+        try (RecordCursor cursor = factory.getCursor(ctx)) {
+            io.questdb.cairo.sql.RecordMetadata metadata = factory.getMetadata();
+            io.questdb.cairo.CursorPrinter.println(cursor, metadata, sink);
+        }
+        return sink.toString();
+    }
+
+    private static String runToString(CairoEngine engine, SqlExecutionContext ctx, String sql) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler();
+             RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
+            return print(factory, ctx);
+        }
+    }
+
+    private static void setFeatures(boolean gather) {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_INDEX_GROUPBY_ENABLED, String.valueOf(gather));
+    }
+
+    private void assertSameAsSerial(String sql, boolean exact) throws Exception {
+        assertSameAsSerial(sql, exact, true);
+    }
+
+    /**
+     * Runs the query serially (the feature off) and with the index gather, and compares; with
+     * {@code expectGather}, the gather plan must be the one compiled.
+     */
+    private void assertSameAsSerial(String sql, boolean exact, boolean expectGather) throws Exception {
+        setFeatures(false);
+        final String expected = runToString(engine, sqlExecutionContext, sql);
+        final StringSink plan = new StringSink();
+        printSql("explain " + sql, plan);
+        Assert.assertFalse(sql, plan.toString().contains("Async Index Group By"));
+
+        setFeatures(true);
+        plan.clear();
+        printSql("explain " + sql, plan);
+        Assert.assertEquals(sql + "\n" + plan, expectGather, plan.toString().contains("Async Index Group By"));
+        final String gathered = runToString(engine, sqlExecutionContext, sql);
+        if (exact) {
+            TestUtils.assertEquals(sql, expected, gathered);
+        } else {
+            assertWithinTolerance(sql, expected, gathered);
+        }
+    }
+
+    private void assertPlan(String sql, String expected) throws Exception {
+        final StringSink sink = new StringSink();
+        printSql("explain " + sql, sink);
+        TestUtils.assertEquals(sql, "QUERY PLAN\n" + expected, sink);
+    }
+
+    private String print(RecordCursorFactory factory) throws SqlException {
+        return print(factory, sqlExecutionContext);
+    }
+}

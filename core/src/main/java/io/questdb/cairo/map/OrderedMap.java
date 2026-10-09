@@ -485,6 +485,50 @@ public class OrderedMap implements Map, Reopenable {
         return probeBatchFilteredVarSize(record, mapSink, rowIdsAddr, batchStart, batchEnd, batchAddr);
     }
 
+    @Override
+    public long probeBatchFilteredRepeatingKeys(
+            PageFrameMemoryRecord record,
+            RecordSink mapSink,
+            long rowIdsAddr,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        if (keySize == -1) {
+            return probeBatchFilteredVarSize(record, mapSink, rowIdsAddr, batchStart, batchEnd, batchAddr);
+        }
+        final long alignedEntrySize = Bytes.align8b(keySize + valueSize);
+        final long requiredBytes = (batchEnd - batchStart) * alignedEntrySize;
+        if (kPos + requiredBytes > heapLimit) {
+            resize(requiredBytes, kPos);
+        }
+
+        final Key k = key;
+        // the value offset of the previous row's entry, whose key the entry holds right before it
+        long prevValueOffset = -1;
+        for (long p = batchStart; p < batchEnd; p++) {
+            final long r = Unsafe.getLong(rowIdsAddr + (p << 3));
+            record.setRowIndex(r);
+            k.startAddr = kPos;
+            k.appendAddr = kPos;
+            mapSink.copy(record, k);
+            final long encoded;
+            if (prevValueOffset != -1 && keyEquals(kPos, heapAddr + prevValueOffset - keySize, keySize)) {
+                encoded = Map.encodeBatchEntry(r, prevValueOffset, false);
+            } else {
+                final FlyweightPackedMapValue v = (FlyweightPackedMapValue) k.createValue();
+                if (v.isNew() && batchEmptyValueStart != 0) {
+                    v.copyRawValue(batchEmptyValueStart);
+                }
+                prevValueOffset = v.getValueAddress() - heapAddr;
+                encoded = Map.encodeBatchEntry(r, prevValueOffset, v.isNew());
+            }
+            Unsafe.putLong(batchAddr, encoded);
+            batchAddr += Long.BYTES;
+        }
+        return heapAddr;
+    }
+
     /**
      * Reads a hash table slot as the single 64-bit value the probe loops see: the compressed offset
      * in the low int, the hash code in the high int. An empty slot reads back as 0.
@@ -817,6 +861,26 @@ public class OrderedMap implements Map, Reopenable {
             rawOffset = Numbers.decodeLowInt(slotValue);
         }
         return asNew(keyWriter, index, hashCodeLo, value);
+    }
+
+    private static boolean keyEquals(long a, long b, long size) {
+        long i = 0;
+        for (; i + Long.BYTES <= size; i += Long.BYTES) {
+            if (Unsafe.getLong(a + i) != Unsafe.getLong(b + i)) {
+                return false;
+            }
+        }
+        for (; i + Integer.BYTES <= size; i += Integer.BYTES) {
+            if (Unsafe.getInt(a + i) != Unsafe.getInt(b + i)) {
+                return false;
+            }
+        }
+        for (; i < size; i++) {
+            if (Unsafe.getByte(a + i) != Unsafe.getByte(b + i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private long probeBatchFilteredFixedSize(

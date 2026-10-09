@@ -804,6 +804,53 @@ public class MapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProbeBatchFilteredRepeatingKeysMatchesProbeBatchFiltered() throws Exception {
+        // runs of equal keys, a key coming back after another, and rows the filter skips: the
+        // repeating-key probe writes the very entries the per-row probe writes
+        TestUtils.assertMemoryLeak(() -> {
+            final int[] logicalKeys = {5, 5, 5, 9, 9, 5, 5, 3, 3, 3, 3, 9, 1, 1, 5, 5};
+            final long[] selectedRowIds = {0, 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 15};
+            final int batchRows = selectedRowIds.length;
+            try (
+                    Map expectedMap = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG), 64, 0.8, 24);
+                    Map actualMap = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG), 64, 0.8, 24);
+                    DirectLongList rowIds = new DirectLongList(batchRows, MemoryTag.NATIVE_DEFAULT);
+                    DirectLongList expected = new DirectLongList(batchRows, MemoryTag.NATIVE_DEFAULT);
+                    DirectLongList actual = new DirectLongList(batchRows, MemoryTag.NATIVE_DEFAULT);
+                    TestPageFrameRecord testRecord = new TestPageFrameRecord(mapType, logicalKeys)
+            ) {
+                for (long rowId : selectedRowIds) {
+                    rowIds.add(rowId);
+                }
+                expected.setPos(batchRows);
+                actual.setPos(batchRows);
+                final RecordSink sink = new TestRecordSink(columnTypeForMapType(), -1);
+                // two batches, the second continuing keys of the first
+                for (int b = 0; b < 2; b++) {
+                    final long lo = b == 0 ? 0 : 6;
+                    final long hi = b == 0 ? 6 : batchRows;
+                    expectedMap.reserveCapacity(hi - lo);
+                    actualMap.reserveCapacity(hi - lo);
+                    final long expectedBase = expectedMap.probeBatchFiltered(testRecord, sink, rowIds.getAddress(), lo, hi, expected.getAddress() + (lo << 3));
+                    final long actualBase = actualMap.probeBatchFilteredRepeatingKeys(testRecord, sink, rowIds.getAddress(), lo, hi, actual.getAddress() + (lo << 3));
+                    for (long i = lo; i < hi; i++) {
+                        final long e = expected.get(i);
+                        final long a = actual.get(i);
+                        Assert.assertEquals("row " + i, Map.decodeBatchRowIndex(e), Map.decodeBatchRowIndex(a));
+                        Assert.assertEquals("row " + i, Map.isNewBatchEntry(e), Map.isNewBatchEntry(a));
+                        Assert.assertEquals("row " + i, Map.decodeBatchOffset(e), Map.decodeBatchOffset(a));
+                        Assert.assertNotNull(actualMap.valueAt(actualBase + Map.decodeBatchOffset(a)));
+                        Assert.assertNotNull(expectedMap.valueAt(expectedBase + Map.decodeBatchOffset(e)));
+                    }
+                }
+                Assert.assertEquals(4, actualMap.size());
+                Assert.assertEquals(expectedMap.size(), actualMap.size());
+                assertMapContainsKeys(actualMap, new int[]{1, 3, 5, 9});
+            }
+        });
+    }
+
+    @Test
     public void testProbeBatchFilteredWithDirectColumnIndex() throws Exception {
         // Exercises the direct-column fast path in Unordered4Map/Unordered8Map/UnorderedVarcharMap.
         Assume.assumeTrue(mapType != MapType.ORDERED_MAP);

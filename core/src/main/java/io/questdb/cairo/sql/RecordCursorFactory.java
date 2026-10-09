@@ -552,6 +552,16 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Whether {@link #getPageFrameCursor} returns an index-gather cursor
+     * ({@code IndexGatherPageFrameCursor}): page frames that hold every row of the scan, and tasks
+     * that read the rows a symbol list selects through a posting index. Only a consumer that reads
+     * rows through those tasks may open it; see {@code IndexGatherRecordCursorFactory}.
+     */
+    default boolean supportsIndexGatherFrames() {
+        return false;
+    }
+
+    /**
      * Returns true if the factory supports page frame cursor.
      *
      * @return true if page frame cursor is supported

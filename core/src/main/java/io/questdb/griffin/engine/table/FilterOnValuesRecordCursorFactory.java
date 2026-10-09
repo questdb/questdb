@@ -139,6 +139,23 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         return isOrderByAdviceFollowed;
     }
 
+    /**
+     * The index of the key column in this factory's metadata.
+     */
+    public int getKeyColumnIndex() {
+        return columnIndex;
+    }
+
+    /**
+     * Adds the functions of the list's values to the sink, duplicates included, in no particular
+     * order. They stay owned by this factory.
+     */
+    public void getKeyFunctions(ObjList<Function> sink) {
+        for (int i = 0, n = cursorFactories.size(); i < n; i++) {
+            sink.add(cursorFactories.getQuick(i).getFunction());
+        }
+    }
+
     @Override
     public int getKeyMajorColumnIndex() {
         return cursor instanceof KeyMajorPageFrameRecordCursor ? columnIndex : -1;

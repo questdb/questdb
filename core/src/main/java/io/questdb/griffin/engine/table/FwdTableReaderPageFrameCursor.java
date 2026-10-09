@@ -72,6 +72,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     // Track the lowest partition index that has not been released yet
     private int lowestOpenPartitionIndex = 0;
     private int pageFrameMaxRows;
+    // when > 0, the frame size this cursor uses instead of the execution context's, see setPageFrameRows()
+    private int pageFrameMaxRowsOverride;
     private int pageFrameMinRows;
     private PartitionFrameCursor partitionFrameCursor;
     private TableReader reader;
@@ -216,8 +218,13 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         this.partitionFrameCursor = partitionFrameCursor;
         this.reader = partitionFrameCursor.getTableReader();
         TablePageFrameCursor.buildColumnMapping(columnMapping, columnIndexes, reader.getMetadata());
-        this.pageFrameMinRows = executionContext.getPageFrameMinRows();
-        this.pageFrameMaxRows = executionContext.getPageFrameMaxRows();
+        if (pageFrameMaxRowsOverride > 0) {
+            this.pageFrameMinRows = pageFrameMaxRowsOverride;
+            this.pageFrameMaxRows = pageFrameMaxRowsOverride;
+        } else {
+            this.pageFrameMinRows = executionContext.getPageFrameMinRows();
+            this.pageFrameMaxRows = executionContext.getPageFrameMaxRows();
+        }
         if (pushdownFilterConditions != null) {
             for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
@@ -238,6 +245,16 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             reader.closePartitionByIndex(i);
         }
         lowestOpenPartitionIndex = reenterPartitionIndex;
+    }
+
+    /**
+     * Makes the native frames of the next {@link #of} up to {@code rows} rows each, whatever the
+     * execution context's page frame sizes and the worker count; frames still split at column
+     * tops. Zero restores the context's sizes.
+     */
+    public void setPageFrameRows(int rows) {
+        assert rows >= 0;
+        this.pageFrameMaxRowsOverride = rows;
     }
 
     @Override
@@ -453,7 +470,9 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         assert format == PartitionFormat.NATIVE;
         reenterParquetDecoder = null;
-        reenterPageFrameRowLimit = calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
+        reenterPageFrameRowLimit = pageFrameMaxRowsOverride > 0
+                ? pageFrameMaxRowsOverride
+                : calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
         return computeNativeFrame(lo, hi);
     }
 
