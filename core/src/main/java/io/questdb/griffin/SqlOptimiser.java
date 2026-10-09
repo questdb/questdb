@@ -719,9 +719,12 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Returns true for the join model that LateralJoinRewriter adds to a LATERAL body for the
-     * distinct outer values. The model stands for "once per outer value" and is no table of the
-     * body's FROM clause, so {@link #constrainRightAndFullJoinOrder} keeps it out of the SQL prefix.
+     * Returns true for a join model whose alias starts with the prefix that LateralJoinRewriter gives
+     * the join model it adds to a LATERAL body for the distinct outer values. That model stands for
+     * "once per outer value" and is no table of the body's FROM clause, so
+     * {@link #constrainRightAndFullJoinOrder} keeps it out of the SQL prefix. The test reads the alias
+     * only, so a table that a query aliases with this prefix passes it as well. The rewriter's
+     * count-driver model carries another prefix and keeps its prefix edges.
      */
     private static boolean isLateralOuterRefModel(IQueryModel model) {
         final ExpressionNode alias = model.getAlias();
@@ -3193,9 +3196,10 @@ public class SqlOptimiser implements Mutable {
      * <p>
      * The join model that LateralJoinRewriter adds to a LATERAL body for the distinct outer values
      * is not part of the SQL prefix, see {@link #isLateralOuterRefModel}. The rewriter inserts it at
-     * join index 1, and doReorderTables() runs it after the body's joins when no join depends on it,
-     * so the body's WHERE clause tests each joined row against each outer value. A prefix edge would
-     * run it inside the outer join's master, where the outer join NULL-extends it for its unmatched
+     * join index 1, or appends its clone to a set-operation branch, and doReorderTables() runs it
+     * after the body's joins when it has no join context and no join depends on it, so the body's
+     * correlated conditions test each joined row against each outer value. A prefix edge would run
+     * it inside the outer join's master, where the outer join NULL-extends it for its unmatched
      * rows, which then reach no outer row.
      */
     private void constrainRightAndFullJoinOrder(IQueryModel parent) {

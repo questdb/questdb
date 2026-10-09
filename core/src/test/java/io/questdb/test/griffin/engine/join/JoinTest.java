@@ -8538,10 +8538,10 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testLateralBodyFullJoinThenCorrelatedInnerJoin() throws Exception {
-        // The LATERAL body runs a FULL join and then INNER-joins a sub-query that reads the outer row
-        // through a non-equality. Keeping RIGHT and FULL joins at their SQL position must leave this
-        // shape working: the rewriter adds a join to the distinct outer values to the body, and the
-        // join order decides whether that join runs before or after the FULL join.
+        // A FULL join followed by an INNER join to a sub-query that reads the outer row through a
+        // non-equality. The sub-query shares the source of distinct outer values with the join that
+        // the rewriter adds for them, and that join has to come first: a shared cursor that code
+        // generation meets before its owner reads a source that nothing opens.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE o (id INT, x INT)");
             execute("CREATE TABLE a (id INT, k INT)");
@@ -8583,11 +8583,8 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testLateralBodyFullJoinWithGreaterThanCorrelationInWhere() throws Exception {
-        // The body's WHERE reads the outer row through an inequality, so the rewriter keeps its join
-        // to the distinct outer values in the body, and no join of the body reads that join. Keeping
-        // RIGHT and FULL joins at their SQL position must not move it before the FULL join: there the
-        // FULL join NULL-extends the outer value of b's unmatched row 14, and the inequality then
-        // rejects the row for every outer row.
+        // c.x > o.x keeps b's unmatched row 14 for the outer row with x = 5 only when the join to the
+        // outer values runs after the FULL join, see createLateralBodyTables().
         assertMemoryLeak(() -> {
             createLateralBodyTables();
 
@@ -8620,11 +8617,8 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testLateralBodyFullJoinWithOrCorrelationInWhere() throws Exception {
-        // The body's WHERE reads the outer row on both sides of an OR, so the rewriter keeps its join
-        // to the distinct outer values in the body, and no join of the body reads that join. Keeping
-        // RIGHT and FULL joins at their SQL position must not move it before the FULL join: there the
-        // FULL join NULL-extends the outer value of b's unmatched row 14, and c.k = o.id then
-        // compares with NULL.
+        // a.k = o.id OR c.k = o.id keeps b's unmatched row 14 for o.id = 3 only when the join to the
+        // outer values runs after the FULL join, see createLateralBodyTables().
         assertMemoryLeak(() -> {
             createLateralBodyTables();
 
@@ -8657,15 +8651,12 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testLateralBodyRightJoinThenAsOfJoinWithNotEqualCorrelationInWhere() throws Exception {
-        // The body's WHERE reads the outer row through !=, so the rewriter keeps its join to the
-        // distinct outer values in the body, and no join of the body reads that join. The ASOF join
-        // follows a non-equi RIGHT join, whose output has no designated timestamp, so it runs before
-        // the RIGHT join, on the RIGHT join's SQL prefix. That prefix must not include the join to the
-        // outer values: it would then run inside the RIGHT join's master, the RIGHT join would
-        // NULL-extend the outer value of b's unmatched row 11, and the row would belong to no outer
-        // row. The inner join to d separates the RIGHT join from the join to the outer values, which
-        // the rewriter puts first: a non-equi ON clause makes the RIGHT join depend on the join
-        // before it.
+        // The ASOF join follows a non-equi RIGHT join, whose output has no designated timestamp, so it
+        // runs before the RIGHT join, on that join's SQL prefix. The prefix must not include the
+        // rewriter's join to the distinct outer values, or the RIGHT join NULL-extends the outer value
+        // of b's unmatched row 11 and the row belongs to no outer row. The inner join to d keeps that
+        // join apart from the RIGHT join: a non-equi ON clause makes the RIGHT join depend on the
+        // join before it.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE o (id INT, x INT)");
             execute("CREATE TABLE a (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -8715,11 +8706,8 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testLateralBodyRightJoinWithNotEqualCorrelationInWhere() throws Exception {
-        // The body's WHERE reads the outer row through !=, so the rewriter keeps its join to the
-        // distinct outer values in the body, and no join of the body reads that join. Keeping RIGHT
-        // and FULL joins at their SQL position must not move it before the RIGHT join: there the
-        // RIGHT join NULL-extends the outer value of b's unmatched row 14, and the row then belongs
-        // to no outer row.
+        // c.x != o.x keeps b's unmatched row 14 for every outer row only when the join to the outer
+        // values runs after the RIGHT join, see createLateralBodyTables().
         assertMemoryLeak(() -> {
             createLateralBodyTables();
 
@@ -14985,8 +14973,12 @@ public class JoinTest extends AbstractCairoTest {
                 """);
     }
 
-    // Tables of testLateralBody*CorrelationInWhere(). a's row 3 has no b row and b's row 14 has no a row,
-    // so a RIGHT or FULL join of a and b NULL-extends a row on either side.
+    // Tables of testLateralBodyFullJoinWith*() and testLateralBodyRightJoinWith*(). a's row 3 has no
+    // b row and b's row 14 has no a row, so a RIGHT or FULL join of a and b NULL-extends a row on
+    // either side. The WHERE clause of each body reads the outer row through a condition that is no
+    // plain equality, so the rewriter keeps its join to the distinct outer values in the body, and no
+    // join of the body reads that join. It has to run after the RIGHT or FULL join: before it, the
+    // join NULL-extends the outer value of its unmatched rows, and they reach no outer row.
     private void createLateralBodyTables() throws SqlException {
         execute("CREATE TABLE o (id INT, x INT)");
         execute("CREATE TABLE a (id INT, k INT)");

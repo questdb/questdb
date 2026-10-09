@@ -269,7 +269,9 @@ public class MapMemoryTrackerTest extends AbstractCairoTest {
             sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
             try {
                 final String sql = "SELECT count(*) FROM (SELECT master.k, slave.v FROM master JOIN slave ON k)";
-                assertUsesFactory(sql, HashJoinLightRecordCursorFactory.class);
+                try (RecordCursorFactory factory = select(sql)) {
+                    TestUtils.assertFactoryInTree(factory, HashJoinLightRecordCursorFactory.class);
+                }
                 assertQuery(sql)
                         .noLeakCheck()
                         .noRandomAccess()
@@ -305,15 +307,6 @@ public class MapMemoryTrackerTest extends AbstractCairoTest {
                 }
             }
         });
-    }
-
-    private void assertUsesFactory(String sql, Class<?> factoryClass) throws Exception {
-        try (SqlCompiler compiler = engine.getSqlCompiler();
-             RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-            if (!isFactoryInChain(factory, factoryClass)) {
-                Assert.fail("expected " + factoryClass.getSimpleName() + " in base chain of " + factory.getClass().getSimpleName());
-            }
-        }
     }
 
     private boolean isFactoryInChain(RecordCursorFactory factory, Class<?> factoryClass) {
