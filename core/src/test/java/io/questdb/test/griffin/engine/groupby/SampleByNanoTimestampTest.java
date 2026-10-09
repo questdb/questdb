@@ -16831,6 +16831,12 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
         final int headerLength = withoutNulls.indexOf('\n') + 1;
         Assert.assertTrue("the source without the NULL rows has buckets", withoutNulls.length() > headerLength);
         final String expected = withoutNulls.substring(0, headerLength) + expectedNullBucket + withoutNulls.substring(headerLength);
+        // When the statement has a timestamp, the chain below spends the first execution of its factory on a pass
+        // that reads the timestamps alone, and compares the rows from the second execution on. So this pair
+        // compiles a factory of its own and compares the rows of the first execution; the chain adds the second
+        // pass, the calculateSize() check and the factory properties.
+        printSql(statement);
+        TestUtils.assertEquals(expected, sink);
         assertQuery(statement)
                 .noLeakCheck()
                 .timestamp(select.startsWith("SELECT ts") ? "ts" : null)
@@ -16846,10 +16852,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             printSql(groupByStatement);
             final String expectedOrdered = sink.toString();
             final String orderedStatement = "SELECT * FROM (" + statement + ") ORDER BY " + orderBy;
-            // When the statement has a timestamp, the chain below spends the first execution of its factory on a pass
-            // that reads the timestamps alone, and compares the rows from the second execution on. So this pair
-            // compiles a factory of its own and compares the rows of the first execution; the chain adds the second
-            // pass, the calculateSize() check and the factory properties.
+            // the same pair ahead of the chain, for the first execution of the ordered statement
             printSql(orderedStatement);
             TestUtils.assertEquals(expectedOrdered, sink);
             // ORDER BY ts alone follows the order of the cursor and adds no sort. Every other ORDER BY sorts a copy of
