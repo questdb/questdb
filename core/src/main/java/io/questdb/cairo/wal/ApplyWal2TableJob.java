@@ -41,6 +41,7 @@ import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
@@ -892,6 +893,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 final long latency = microClock.getTicks() - start;
                 long totalPhysicalRowCount = writer.getPhysicallyWrittenRowsSinceLastCommit();
                 long lastCommittedSeqTxn = writer.getAppliedSeqTxn();
+                // a writer that dropped its WAL lag applies the lag's transactions again; their rows left the
+                // pending WAL row count when they first entered the lag
+                final RecentWriteTracker.WriteStats writeStats = engine.getRecentWriteTracker().getWriteStats(tableToken);
+                final long pendingFloorSeqTxn = writeStats != null ? writeStats.getFloorSeqTxn() : 0;
+                long pendingRowsProcessed = 0;
                 lastCommittedRows = 0;
                 for (long s = seqTxn; s <= lastCommittedSeqTxn; s++) {
                     long walRowCount = txnDetails.getSegmentRowHi(s) - txnDetails.getSegmentRowLo(s);
@@ -899,11 +905,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     metrics.addApplyRowsWritten(walRowCount, commitPhRowCount, latency);
                     walTelemetryFacade.store(WAL_TXN_DATA_APPLIED, writer.getTableToken(), walId, s, walRowCount, commitPhRowCount, latency, txnDetails.getMinTimestamp(s), txnDetails.getMaxTimestamp(s));
                     lastCommittedRows += walRowCount;
+                    if (s > pendingFloorSeqTxn) {
+                        pendingRowsProcessed += walRowCount;
+                    }
                 }
 
                 // Decrement pending WAL row count and track dedup after successful processing
                 final long dedupRowsRemoved = writer.getDedupRowsRemovedSinceLastCommit();
-                engine.getRecentWriteTracker().recordWalProcessed(writer.getTableToken(), lastCommittedSeqTxn, lastCommittedRows, dedupRowsRemoved);
+                engine.getRecentWriteTracker().recordWalProcessed(writer.getTableToken(), lastCommittedSeqTxn, pendingRowsProcessed, dedupRowsRemoved);
                 // Dedup-base signal: a DATA batch matches its raw WAL stream only if it skipped
                 // nothing (a skipped DATA commit's rows never materialise), deduped nothing
                 // (a dedup replaced/removed a row the raw append would keep) and expired nothing
