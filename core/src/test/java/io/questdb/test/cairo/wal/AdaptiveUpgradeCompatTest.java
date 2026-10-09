@@ -54,34 +54,29 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * SP-E — Upgrade &amp; mixed-version compatibility for adaptive commit mode.
+ * Upgrade and mixed-version compatibility for adaptive commit mode. Adaptive ({@link CommitMode#ADAPTIVE}) adds
+ * new on-disk artifacts to a table directory. These tests prove in-process that each artifact is inert to a reader
+ * that does not know about it, which is the forward-compatibility, rolling-upgrade and downgrade contract. A matrix
+ * against old binaries cannot run in-process.
  * <p>
- * Adaptive ({@link CommitMode#ADAPTIVE}) adds NEW on-disk artifacts to a table dir. These tests prove
- * each new artifact is <b>inert</b> to a reader that does not know about it — the in-process proof of the
- * forward-compat / rolling-upgrade / downgrade contract. See
- * {@code docs/superpowers/specs/2026-07-17-adaptive-sp-e-upgrade-compat-design.md} for the full artifact
- * inventory, the gate behind each, and the external {old-binary} matrix that cannot run in-process.
- * <p>
- * Coverage split (only the GAPS are added here; the rest is cited, not duplicated):
+ * Coverage:
  * <ul>
- *   <li><b>downgrade</b> &mdash; {@link #testDowngradeFromAdaptiveDrainsCleanlyAndArtifactsAreInert} +
- *       {@link #testDowngradeThenRebootPreservesDataAndIgnoresStaleEpoch} (NEW).</li>
- *   <li><b>re-enabling adaptive after a downgrade</b> &mdash;
- *       {@link #testReEnablingAdaptiveKeepsRowsWrittenUnderNosync} (NEW).</li>
- *   <li><b>{@code _txn} body checksum</b> &mdash; zero-sentinel; cited:
- *       {@code TxnTest.testOpenOldFormatTxn_noBodyChecksum}.</li>
- *   <li><b>{@code _cv} body checksum</b> &mdash; magic-gated; cited:
+ *   <li>downgrade: {@link #testDowngradeFromAdaptiveDrainsCleanlyAndArtifactsAreInert} and
+ *       {@link #testDowngradeThenRebootPreservesDataAndIgnoresStaleEpoch};</li>
+ *   <li>re-enabling adaptive after a downgrade: {@link #testReEnablingAdaptiveKeepsRowsWrittenUnderNosync};</li>
+ *   <li>the {@code _txn} body checksum of an old file (zero sentinel):
+ *       {@code TxnTest.testOpenOldFormatTxn_noBodyChecksum};</li>
+ *   <li>the {@code _cv} body checksum of an old file (magic-gated):
  *       {@code ColumnVersionWriterTest.testCvChecksumAbsent*}.</li>
  * </ul>
- * These are read-compat assertions only; no behavior is weakened.
  */
 public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
 
     /**
      * A table directory as a released version leaves it: {@code _txn} areas without checksum stamps, {@code _meta}
-     * below the enrolment format, no save point. Its files read as unverified, never torn: an ADAPTIVE start enrols
-     * the table at its live cut with a valid save point, a NOSYNC start opens it as it is, and both read every row
-     * and take writes.
+     * at the released format minor version, no save point. Its files read as unverified, never torn: an ADAPTIVE
+     * start enrols the table at its live cut with a valid save point, a NOSYNC start opens it as it is, and both
+     * read every row and take writes.
      */
     @Test
     public void testReleasedTableDirectoryReadsUnverifiedInEveryMode() throws Exception {
@@ -219,14 +214,10 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
         });
     }
 
-    // ------------------------------------------------------------------------------------------------
-    // Downgrade: turning adaptive off must drain cleanly and leave the epoch artifacts inert.
-    // ------------------------------------------------------------------------------------------------
-
     /**
      * Downgrade: an adaptive table that has taken a durable epoch is restarted on an instance configured
      * {@code cairo.commit.mode=nosync}. The commit mode is instance-wide and fixed for the life of a
-     * process, so a downgrade is exactly this — a restart under the new mode. The start makes the table
+     * process, so a downgrade is exactly this: a restart under the new mode. The start makes the table
      * durable and removes its save point, and the table keeps applying WAL cleanly (no suspend, no corruption).
      */
     @Test
@@ -240,7 +231,7 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
             drainWalQueue();
             final TableToken tt = engine.verifyTableName("d");
 
-            // Adaptive took a durable epoch: the trio is on disk.
+            // Adaptive took a durable epoch: the save point holds copies of _txn and _cv.
             assertArtifactExists(tt, DurableEpochManifest.FILE_NAME + ".0");
             assertCurrentEpochArtifactExists(tt, TableUtils.TXN_FILE_NAME);
             assertCurrentEpochArtifactExists(tt, TableUtils.COLUMN_VERSION_FILE_NAME);
@@ -266,8 +257,8 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
 
     /**
      * Downgrade + reboot: the hard case. After a downgrade (a restart under {@code nosync}) the WAL purge
-     * floor drops from the durable epoch to the applied seqTxn (the epoch floor applies ONLY under
-     * ADAPTIVE — {@code WalPurgeJob}), so WAL segments above the epoch become purgeable. A save point left
+     * floor drops from the durable epoch to the applied seqTxn ({@code WalPurgeJob} applies the epoch floor only
+     * under ADAPTIVE), so WAL segments above the epoch become purgeable. A save point left
      * behind would rewind the table onto purged WAL at the next start. The downgrade start removes it, so
      * every row survives the purge and the next restart.
      */
@@ -285,7 +276,7 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
             Assert.assertTrue("adaptive must have recorded a durable epoch", readMarkerEpochSeqTxn(tt) > 0);
 
             // Downgrade the instance and reboot on it: the start makes the table durable and removes its save
-            // point. Then apply MORE rows so the live seqTxn advances past the old save point.
+            // point. Then apply more rows so the live seqTxn advances past the old save point.
             releaseHandles();
             final CairoConfiguration nosyncConfiguration = nosyncConfiguration();
             final long epochSeqTxn = readMarkerEpochSeqTxn(tt);
@@ -301,8 +292,8 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
                 Assert.assertTrue("live seqTxn (" + liveSeqTxn + ") must be ahead of the old save point ("
                         + epochSeqTxn + ")", liveSeqTxn > epochSeqTxn);
 
-                // Force a WAL purge under the (now nosync) floor: segments below the applied txn become
-                // purgeable — exactly the condition that would make a rollback to the stale epoch lossy.
+                // Force a WAL purge under the nosync floor: segments below the applied txn become purgeable,
+                // which would make a rollback to the stale epoch lossy.
                 forceWalPurge(downgraded);
             }
 
@@ -371,10 +362,6 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
             }
         });
     }
-
-    // ------------------------------------------------------------------------------------------------
-    // helpers
-    // ------------------------------------------------------------------------------------------------
 
     private boolean hasSavePoint(TableToken tt) {
         try (Path p = new Path()) {
