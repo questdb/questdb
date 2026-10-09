@@ -110,7 +110,7 @@ import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.cairo.wal.seq.TableSequencer.FENCE_REJECTED;
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 
-public class WalWriter extends WalWriterBase implements TableWriterAPI {
+public class WalWriter extends WalWriterBase implements TableWriterAPI, WalColumnSink {
     private static final long COLUMN_DELETED_NULL_FLAG = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(WalWriter.class);
     private static final int MEM_TAG = MemoryTag.MMAP_TABLE_WAL_WRITER;
@@ -366,6 +366,25 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         //   versions of each table involved in the join when running the SQL.
     }
 
+    /**
+     * Opens a block of column writes. A commit or a structure change can leave a segment
+     * roll pending, and addColumn() defers opening a new column's files until that roll,
+     * so this method rolls first. A failed roll latches the writer distressed.
+     */
+    @Override
+    public void beginColumnarWrite() {
+        checkDistressed();
+        try {
+            if (rollSegmentOnNextRow) {
+                rollSegment();
+                rollSegmentOnNextRow = false;
+            }
+        } catch (Throwable e) {
+            distressed = true;
+            throw e;
+        }
+    }
+
     @Override
     public void close() {
         if (isOpen()) {
@@ -521,7 +540,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     /**
      * Returns the data memory for a column. Used by columnar appender.
      */
-    MemoryMA getDataColumn(int column) {
+    @Override
+    public MemoryMA getDataColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getDataColumnOffset(column));
     }
@@ -539,6 +559,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     /**
      * Returns the current row count in this segment.
      */
+    @Override
     public long getSegmentRowCount() {
         return segmentRowCount;
     }
@@ -553,6 +574,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         return initialSymbolCounts.get(columnIndex);
     }
 
+    @Override
     public SymbolMapReader getSymbolMapReader(int columnIndex) {
         return symbolMapReaders.getQuick(columnIndex);
     }
@@ -779,6 +801,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * Marks a column as having been written up to the specified row.
      * Used by columnar appender.
      */
+    @Override
     public void setRowValueNotNullColumnar(int columnIndex, long lastWrittenRow) {
         rowValueIsNotNull.setQuick(columnIndex, lastWrittenRow);
     }
@@ -805,7 +828,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * columnar appender carries, and keeps the driver's message. The try/catch adds nothing to
      * the accepting path.
      */
-    void validateDesignatedTimestampBounds(long timestamp) {
+    @Override
+    public void validateDesignatedTimestampBounds(long timestamp) {
         try {
             timestampDriver.validateBounds(timestamp);
         } catch (CairoException e) {
@@ -1187,7 +1211,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         return tally > threshold;
     }
 
-    void checkDistressed() {
+    @Override
+    public void checkDistressed() {
         if (sequencer.isDurabilityFailed()) {
             distressed = true;
             throw new CairoError("engine is poisoned by a failed durability barrier");
@@ -2827,16 +2852,18 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
-     * Cancels a columnar write operation. Package-private for columnar appender.
+     * Cancels a columnar write operation.
      */
-    void cancelColumnarWrite(long startRowId) {
+    @Override
+    public void cancelColumnarWrite(long startRowId) {
         setAppendPosition(startRowId);
     }
 
     /**
-     * Finishes a columnar write operation. Package-private for columnar appender.
+     * Finishes a columnar write operation.
      */
-    void finishColumnarWrite(int rowCount, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
+    @Override
+    public void finishColumnarWrite(int rowCount, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
         // Fill in nulls for any columns that weren't written
         long lastExpectedRow = segmentRowCount + rowCount - 1;
         for (int i = 0; i < columnCount; i++) {
@@ -2878,16 +2905,18 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     /**
      * Returns the aux memory for a column. Used by columnar appender.
      */
-    MemoryMA getAuxColumn(int column) {
+    @Override
+    public MemoryMA getAuxColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getAuxColumnOffset(column));
     }
 
     /**
-     * Marks a symbol column as containing a NULL value. Package-private for
-     * columnar appender so the WAL event includes the null flag change.
+     * Marks a symbol column as containing a NULL value, so that the WAL event
+     * includes the null flag change.
      */
-    void markSymbolMapNull(int columnIndex) {
+    @Override
+    public void markSymbolMapNull(int columnIndex) {
         if (!symbolMapNullFlags.get(columnIndex)) {
             symbolMapNullFlags.set(columnIndex, true);
             symbolMapNullFlagsChanged.set(columnIndex, true);
@@ -2895,14 +2924,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
-     * Resolves a symbol value to its key. Package-private for columnar appender.
+     * Resolves a symbol value to its key.
      *
      * @param columnIndex     the column index
      * @param symbolValue     the symbol value to resolve
      * @param symbolMapReader the symbol map reader
      * @return the symbol key
      */
-    int resolveSymbol(int columnIndex, CharSequence symbolValue, SymbolMapReader symbolMapReader) {
+    @Override
+    public int resolveSymbol(int columnIndex, CharSequence symbolValue, SymbolMapReader symbolMapReader) {
         if (symbolValue == null) {
             markSymbolMapNull(columnIndex);
             return SymbolTable.VALUE_IS_NULL;
