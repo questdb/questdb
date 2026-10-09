@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlOptimiser;
+import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
@@ -43,6 +44,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
+
+import java.util.Arrays;
 
 public class LateralJoinTest extends AbstractCairoTest {
 
@@ -2322,6 +2325,85 @@ public class LateralJoinTest extends AbstractCairoTest {
                     k
                     2
                     """);
+        });
+    }
+
+    // test_fault() in the projection makes the plan below the NULL check throw on close. The
+    // NULL check still closes its own copy of the scalar sub-query, and close() reports the
+    // failure of the plan.
+    @Test
+    public void testLateralNullCheckClosesChecksWhenBaseCloseFails() throws Exception {
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE trades (id INT, x INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE refunds (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            final String sql = """
+                    SELECT l.tid, test_fault() f
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.id tid
+                        FROM trades t
+                        RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k
+                        WHERE t.id >= (SELECT min(id) FROM trades)
+                    ) l
+                    """;
+            TestFaultFunctionFactory.armCloseFailures();
+            try {
+                final RecordCursorFactory factory = select(sql);
+                try {
+                    factory.close();
+                    Assert.fail("injected close failure expected");
+                } catch (RuntimeException e) {
+                    Assert.assertSame(TestFaultFunctionFactory.closeFailure(0), e);
+                }
+            } finally {
+                TestFaultFunctionFactory.disarm();
+            }
+        });
+    }
+
+    // The first NULL check holds a test_fault() that throws on close, and the second one fails
+    // to compile. The code generator still frees the plan and the first check, and reports the
+    // compile failure instead of the close failure.
+    @Test
+    public void testLateralNullCheckCompileFailureFreesPlan() throws Exception {
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE trades (id INT, x INT, y INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE refunds (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            // each lateral sub-query gets its own NULL check
+            final String sql = """
+                    SELECT l1.tid, l2.tid
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.id tid
+                        FROM trades t
+                        RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k
+                        WHERE t.id >= (SELECT CASE WHEN test_fault() THEN 0 END FROM long_sequence(1))
+                    ) l1
+                    JOIN LATERAL (
+                        SELECT t.id tid
+                        FROM trades t
+                        RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k
+                        WHERE t.y >= (SELECT CASE WHEN test_fault() THEN 1 END FROM long_sequence(1))
+                    ) l2
+                    """;
+            TestFaultFunctionFactory.armCloseFailures();
+            // the filters create test_fault() instances 0 and 1, then the checks create 2 and 3
+            TestFaultFunctionFactory.armToFailAfterCompiles(3);
+            try {
+                select(sql).close();
+                Assert.fail("injected compile failure expected");
+            } catch (SqlException e) {
+                Assert.assertSame(TestFaultFunctionFactory.lastCompileFailure(), e);
+                // the close failure of instance 2 shows that the first check was built
+                Assert.assertTrue(Arrays.asList(e.getSuppressed()).contains(TestFaultFunctionFactory.closeFailure(2)));
+                Assert.assertEquals(TestFaultFunctionFactory.created(), TestFaultFunctionFactory.closeCalls());
+            } finally {
+                TestFaultFunctionFactory.disarm();
+            }
         });
     }
 

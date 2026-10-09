@@ -2112,9 +2112,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             return new LateralNullCheckRecordCursorFactory(factory, checks, nullRecords, positions, metadata, receivers, receiverChecks);
         } catch (Throwable th) {
-            Misc.freeObjList(checks);
-            Misc.freeObjListIfCloseable(nullRecords);
-            Misc.free(factory);
+            // the frees attach any close failure to th instead of throwing it
+            Misc.freeObjList(checks, th);
+            Misc.freeObjListIfCloseableBestEffort(th, nullRecords);
+            Misc.free(factory, th);
             throw th;
         } finally {
             lateralNullChecks.clear();

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -65,7 +66,7 @@ import io.questdb.std.ObjList;
 public class LateralNullCheckRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final String NULL_VALUE_ERROR = "outer column reference in an ON clause at or before a RIGHT or FULL join " +
             "is not supported in a correlated lateral sub-query when this value is NULL";
-    private final RecordCursorFactory base;
+    private RecordCursorFactory base;
     private final ObjList<Function> checks;
     private final ObjList<Record> nullRecords;
     private final IntList positions;
@@ -211,9 +212,13 @@ public class LateralNullCheckRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     protected void _close() {
-        // the base frees the receivers
-        Misc.free(base);
-        Misc.freeObjList(checks);
-        Misc.freeObjListIfCloseable(nullRecords);
+        // _close() runs at most once, so it detaches the base, attempts every close and
+        // rethrows the first failure. The base frees the receivers.
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeObjListBestEffort(failure, checks);
+        failure = Misc.freeObjListIfCloseableBestEffort(failure, nullRecords);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }
