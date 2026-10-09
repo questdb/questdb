@@ -595,10 +595,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         // anchor and replays the WAL from there, and nothing downloads WAL again, so keep that WAL for as
         // long as the anchor exists. The marker is read AFTER _txn: an anchor published after the read
         // names a cut at or above the seqTxn read, so it never needs WAL this sweep deletes.
+        // In any mode, a table that holds a save point pin keeps the WAL from its save point: on a start outside
+        // adaptive that is a refused conversion to non-WAL, which keeps its save point for the next start.
         final int commitMode = engine.getConfiguration().getCommitMode();
         final int purgeFloorMode = LocalDurabilityPolicy.resolveCommitMode(commitMode, engine.getLocalDurabilityPolicy());
-        if (purgeFloorMode == CommitMode.ADAPTIVE) {
-            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        if (purgeFloorMode == CommitMode.ADAPTIVE || tracker.getPinnedEpochTxn() > -1) {
             safeToPurgeTxn = Math.min(safeToPurgeTxn, tracker.getDurableEpochSeqTxn());
         } else if (commitMode == CommitMode.ADAPTIVE && !tableToken.isView()) {
             // Views are skipped, as recovery skips them.
