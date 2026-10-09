@@ -189,6 +189,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long cairoCommitLatency;
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
     private final boolean cairoGroupByBatchKernelsEnabled;
+    private final double cairoIndexScanChoiceMaxSelectivity;
+    private final boolean cairoIndexScanChoiceEnabled;
     private final boolean cairoParallelIndexGroupByEnabled;
     private final int cairoParallelIndexGroupByFrameRows;
     private final long cairoParallelIndexGroupByTaskRows;
@@ -2438,6 +2440,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.cairoParallelIndexGroupByFrameRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_INDEX_GROUPBY_FRAME_ROWS, io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1);
             validatePageFrameRows(PropertyKey.CAIRO_SQL_PARALLEL_INDEX_GROUPBY_FRAME_ROWS, cairoParallelIndexGroupByFrameRows);
+            this.cairoIndexScanChoiceEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_ENABLED, true);
+            this.cairoIndexScanChoiceMaxSelectivity = getDouble(properties, env, PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_MAX_SELECTIVITY, "0.05");
+            if (!(cairoIndexScanChoiceMaxSelectivity >= 0 && cairoIndexScanChoiceMaxSelectivity <= 1)) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_MAX_SELECTIVITY.getPropertyPath() + " must be between 0 and 1");
+            }
             this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.vectorAggregateQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByTopKQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_QUEUE_CAPACITY, defaultReduceQueueCapacity));
@@ -6031,6 +6038,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public double getSqlIndexScanChoiceMaxSelectivity() {
+            return cairoIndexScanChoiceMaxSelectivity;
+        }
+
+        @Override
         public int getSqlParallelIndexGroupByFrameRows() {
             return cairoParallelIndexGroupByFrameRows;
         }
@@ -6038,6 +6050,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSqlParallelIndexGroupByTaskRows() {
             return cairoParallelIndexGroupByTaskRows;
+        }
+
+        @Override
+        public boolean isSqlIndexScanChoiceEnabled() {
+            return cairoIndexScanChoiceEnabled;
         }
 
         @Override

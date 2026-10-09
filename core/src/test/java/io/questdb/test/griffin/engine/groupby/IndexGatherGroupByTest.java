@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.IndexGatherPageFrameCursor;
 import io.questdb.griffin.engine.table.IndexGatherRecordCursorFactory;
+import io.questdb.griffin.engine.table.IndexScanChoiceRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -53,8 +54,9 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * The index-driven parallel GROUP BY ({@code cairo.sql.parallel.index.groupby.enabled}, the plan
- * {@code Async Index Group By}) against the same queries compiled with it off: a serial GROUP BY
- * over the index scan.
+ * {@code Async Index Group By}) and the choice between an index plan and a scan
+ * ({@code cairo.sql.index.scan.choice.enabled}, the plan {@code Index Or Scan}), against the same
+ * queries compiled with both off: a serial GROUP BY over the index scan.
  * <p>
  * <b>Tolerance.</b> Without a worker pool the query's thread runs every task, and a group that
  * draws from one key sees its rows in table order, as the serial plan does: such results must be
@@ -124,13 +126,13 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable(engine, sqlExecutionContext, "t", ROWS, 7);
             final String sql = "select sym, " + AGGREGATES + " from t where sym in ('S1', 'R4', 'P2') order by sym";
-            setFeatures(true);
+            setFeatures(true, false);
             try (RecordCursorFactory factory = select(sql)) {
                 for (int round = 0; round < 3; round++) {
                     final String actual = print(factory);
-                    setFeatures(false);
+                    setFeatures(false, false);
                     final String expected = runToString(engine, sqlExecutionContext, sql);
-                    setFeatures(true);
+                    setFeatures(true, false);
                     TestUtils.assertEquals(sql, expected, actual);
                     final IndexGatherPageFrameCursor cursor = findGather(factory).getPageFrameCursorForTesting();
                     Assert.assertEquals(0, cursor.getFrozenReaderCount());
@@ -167,7 +169,7 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
                         "select sym, " + AGGREGATES + " from t where sym in ('S0', 'S1', 'S2') order by sym",
                         "select " + AGGREGATES + " from t where sym in ('S0', 'S1', 'S2')",
                 };
-                setFeatures(true);
+                setFeatures(true, false);
                 for (String sql : queries) {
                     final NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, cbConfiguration);
                     try {
@@ -223,7 +225,7 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
     public void testExplain() throws Exception {
         assertMemoryLeak(() -> {
             createTable(engine, sqlExecutionContext, "t", 1000, 11);
-            setFeatures(true);
+            setFeatures(true, false);
             assertPlan(
                     "select sym, sum(x) from t where sym in ('S1', 'S2') order by sym",
                     "Encode sort light\n" +
@@ -240,7 +242,30 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
                             "                  filter: sym='S2'\n" +
                             "            Frame forward scan on: t\n"
             );
-            // the hint keeps the scan
+            setFeatures(true, true);
+            assertPlan(
+                    "select sum(x) from t where sym = 'S1' and y > 10",
+                    "Index Or Scan\n" +
+                            "  maxSelectivity: 0.05\n" +
+                            "    Async Index Group By workers: 1\n" +
+                            "      vectorized: false\n" +
+                            "      values: [sum(x)]\n" +
+                            "      filter: 10<y\n" +
+                            "        FilterOnValues symbolOrder: desc\n" +
+                            "            Cursor-order scan\n" +
+                            "                Index forward scan on: sym deferred: true\n" +
+                            "                  symbolFilter: sym='S1'\n" +
+                            "                  filter: 10<y\n" +
+                            "            Frame forward scan on: t\n" +
+                            "    Async JIT Group By workers: 1\n" +
+                            "      vectorized: false\n" +
+                            "      values: [sum(x)]\n" +
+                            "      filter: (sym='S1' and 10<y)\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n"
+            );
+            // the hints take one plan
             assertPlan(
                     "select /*+ no_index */ sum(x) from t where sym = 'S1'",
                     "Async JIT Group By workers: 1\n" +
@@ -251,6 +276,10 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
             );
+            final StringSink sink = new StringSink();
+            printSql("explain select /*+ use_index */ sum(x) from t where sym = 'S1'", sink);
+            TestUtils.assertContains(sink, "Async Index Group By");
+            Assert.assertFalse(sink.toString().contains("Index Or Scan"));
         });
     }
 
@@ -319,12 +348,13 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
                 engine.execute("create table m (sym symbol index type posting, k varchar, v long, ts timestamp) timestamp(ts) partition by day bypass wal", ctx);
                 engine.execute("insert into m select rnd_symbol('A', 'B', 'C', 'D'), (x % 40_000)::varchar, x, timestamp_sequence(0, 1_000_000L) from long_sequence(200_000)", ctx);
                 final String sql = "select k, count() n, sum(v) s from m where sym in ('A', 'B', 'C') order by k";
-                setFeatures(false);
+                setFeatures(false, false);
                 final String expected = runToString(engine, ctx, sql);
                 boolean gatherRetried = false;
+                boolean choiceFellBack = false;
                 for (long limit = 2L << 20; limit <= 48L << 20; limit += 1L << 20) {
                     setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
-                    setFeatures(false);
+                    setFeatures(false, false);
                     final String serial;
                     try {
                         serial = runToString(engine, ctx, sql);
@@ -333,16 +363,27 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
                         continue;
                     }
                     TestUtils.assertEquals(expected, serial);
-                    setFeatures(true);
-                    try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
-                        TestUtils.assertEquals("limit " + limit, expected, print(factory, ctx));
-                        final AsyncGroupByRecordCursorFactory async = findAsyncGather(factory);
-                        Assert.assertNotNull(async);
-                        gatherRetried |= async.getSerialRetries() > 0;
+                    for (boolean choice : new boolean[]{false, true}) {
+                        setFeatures(true, choice);
+                        try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
+                            TestUtils.assertEquals("limit " + limit, expected, print(factory, ctx));
+                            if (choice) {
+                                final IndexScanChoiceRecordCursorFactory chooser = findChoice(factory);
+                                Assert.assertNotNull(chooser);
+                                choiceFellBack |= chooser.getMemoryLimitFallbacks() > 0;
+                            } else {
+                                final AsyncGroupByRecordCursorFactory async = findAsyncGather(factory);
+                                Assert.assertNotNull(async);
+                                gatherRetried |= async.getSerialRetries() > 0;
+                            }
+                        }
                     }
                 }
                 setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                // the limits must have reached both fallbacks: the scan plan's, which opens the
+                // index plan, and the index gather's own, which runs its tasks on one map
                 Assert.assertTrue("no limit made the index gather retry serially", gatherRetried);
+                Assert.assertTrue("no limit made the scan plan fall back", choiceFellBack);
             }, configuration, LOG);
         });
     }
@@ -370,7 +411,7 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
                     "select s2, first(x) fx, last(ts) lt from t where sym in ('S1', 'R2') order by s2",
             };
             for (String sql : queries) {
-                setFeatures(true);
+                setFeatures(true, false);
                 final StringSink plan = new StringSink();
                 printSql("explain " + sql, plan);
                 Assert.assertFalse(sql + "\n" + plan, plan.toString().contains("Async Index Group By"));
@@ -388,12 +429,44 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
             assertSameAsSerial("select sym, " + AGGREGATES + " from t where sym in ('S0', 'S7') and y > 300 order by sym", true);
             assertSameAsSerial("select " + AGGREGATES + " from t where sym = 'S7'", true);
             final String sql = "select sym, count() n from t where sym in ('S0', 'S7') order by sym";
-            setFeatures(true);
+            setFeatures(true, false);
             try (RecordCursorFactory factory = select(sql)) {
                 print(factory);
                 final long[] counts = findGather(factory).getPageFrameCursorForTesting().getTaskCounts();
                 Assert.assertTrue(counts[0] > 0);
                 Assert.assertTrue(counts[1] > 0);
+            }
+        });
+    }
+
+    @Test
+    public void testPlanChoiceFollowsSelectivity() throws Exception {
+        // one cached factory takes the index for a list that selects few rows and the scan for one
+        // that selects most of them, as the bind variables change
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext, "t", ROWS, 41);
+            setFeatures(true, true);
+            final String sql = "select sym, count() n, sum(x) s from t where sym in ($1, $2) order by sym";
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "R1");
+            bindVariableService.setStr(1, "R2");
+            try (RecordCursorFactory factory = select(sql)) {
+                final IndexScanChoiceRecordCursorFactory chooser = findChoice(factory);
+                Assert.assertNotNull(chooser);
+                final String[][] lists = {{"R1", "R2"}, {"S0", "S1"}, {"R3", null}, {"S0", "S2"}, {"NOPE", "NADA"}};
+                final boolean[] index = {true, false, true, false, true};
+                for (int i = 0; i < lists.length; i++) {
+                    bindVariableService.setStr(0, lists[i][0]);
+                    bindVariableService.setStr(1, lists[i][1]);
+                    final long indexOpens = chooser.getIndexPlanOpens();
+                    final String actual = print(factory);
+                    Assert.assertEquals(lists[i][0] + "," + lists[i][1] + " selected " + chooser.getLastSelected() + " of " + chooser.getLastScanned(),
+                            index[i], chooser.getIndexPlanOpens() > indexOpens);
+                    setFeatures(false, false);
+                    TestUtils.assertEquals(sql, runToString(engine, sqlExecutionContext, sql), actual);
+                    setFeatures(true, true);
+                }
+                Assert.assertTrue(chooser.getScanPlanOpens() > 0);
             }
         });
     }
@@ -426,9 +499,9 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
                 };
                 long workerTasks = 0;
                 for (String sql : queries) {
-                    setFeatures(false);
+                    setFeatures(false, false);
                     final String expected = runToString(engine, ctx, sql);
-                    setFeatures(true);
+                    setFeatures(true, false);
                     for (int run = 0; run < 3; run++) {
                         try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
                             final IndexGatherRecordCursorFactory gather = findGather(factory);
@@ -437,7 +510,7 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
                             workerTasks += gather.getPageFrameCursorForTesting().getTaskCounts()[2];
                         }
                     }
-                    setFeatures(true);
+                    setFeatures(true, true);
                     assertWithinTolerance(sql, expected, runToString(engine, ctx, sql));
                 }
                 Assert.assertTrue("no worker took a task", workerTasks > 0);
@@ -503,6 +576,17 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
             if (f instanceof AsyncGroupByRecordCursorFactory async && async.getBaseFactory() instanceof IndexGatherRecordCursorFactory) {
                 return async;
             }
+            f = f instanceof IndexScanChoiceRecordCursorFactory choice ? choice.getIndexPlan() : f.getBaseFactory();
+        }
+        return null;
+    }
+
+    private static IndexScanChoiceRecordCursorFactory findChoice(RecordCursorFactory factory) {
+        RecordCursorFactory f = factory;
+        for (int i = 0; f != null && i < 6; i++) {
+            if (f instanceof IndexScanChoiceRecordCursorFactory choice) {
+                return choice;
+            }
             f = f.getBaseFactory();
         }
         return null;
@@ -513,6 +597,10 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
         for (int i = 0; f != null && i < 6; i++) {
             if (f instanceof IndexGatherRecordCursorFactory gather) {
                 return gather;
+            }
+            if (f instanceof IndexScanChoiceRecordCursorFactory choice) {
+                f = choice.getIndexPlan();
+                continue;
             }
             if ((f instanceof AsyncGroupByRecordCursorFactory || f instanceof AsyncGroupByNotKeyedRecordCursorFactory)
                     && f.getBaseFactory() instanceof IndexGatherRecordCursorFactory gather) {
@@ -539,8 +627,9 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
         }
     }
 
-    private static void setFeatures(boolean gather) {
+    private static void setFeatures(boolean gather, boolean choice) {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_INDEX_GROUPBY_ENABLED, String.valueOf(gather));
+        setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_ENABLED, String.valueOf(choice));
     }
 
     private void assertSameAsSerial(String sql, boolean exact) throws Exception {
@@ -548,17 +637,18 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
     }
 
     /**
-     * Runs the query serially (the feature off) and with the index gather, and compares; with
-     * {@code expectGather}, the gather plan must be the one compiled.
+     * Runs the query serially (both features off), with the index gather, and with the choice,
+     * and compares; with {@code expectGather}, the gather plan must be the one compiled.
      */
     private void assertSameAsSerial(String sql, boolean exact, boolean expectGather) throws Exception {
-        setFeatures(false);
+        setFeatures(false, false);
         final String expected = runToString(engine, sqlExecutionContext, sql);
         final StringSink plan = new StringSink();
         printSql("explain " + sql, plan);
         Assert.assertFalse(sql, plan.toString().contains("Async Index Group By"));
+        Assert.assertFalse(sql, plan.toString().contains("Index Or Scan"));
 
-        setFeatures(true);
+        setFeatures(true, false);
         plan.clear();
         printSql("explain " + sql, plan);
         Assert.assertEquals(sql + "\n" + plan, expectGather, plan.toString().contains("Async Index Group By"));
@@ -568,6 +658,14 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
         } else {
             assertWithinTolerance(sql, expected, gathered);
         }
+
+        // the choice: whichever plan it opens returns the same rows
+        setFeatures(true, true);
+        final String chosen = runToString(engine, sqlExecutionContext, sql);
+        assertWithinTolerance(sql, expected, chosen);
+        // the choice without the gather picks between the serial index plan and the scan
+        setFeatures(false, true);
+        assertWithinTolerance(sql, expected, runToString(engine, sqlExecutionContext, sql));
     }
 
     private void assertPlan(String sql, String expected) throws Exception {

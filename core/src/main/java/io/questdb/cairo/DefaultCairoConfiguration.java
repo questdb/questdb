@@ -1931,6 +1931,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public double getSqlIndexScanChoiceMaxSelectivity() {
+        return 0.05;
+    }
+
+    @Override
     public int getSqlParallelIndexGroupByFrameRows() {
         return Map.BATCH_ROW_INDEX_MASK + 1;
     }
@@ -1938,6 +1943,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getSqlParallelIndexGroupByTaskRows() {
         return 65_536;
+    }
+
+    @Override
+    public boolean isSqlIndexScanChoiceEnabled() {
+        return true;
     }
 
     @Override

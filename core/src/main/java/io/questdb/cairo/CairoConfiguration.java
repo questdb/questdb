@@ -1501,6 +1501,14 @@ public interface CairoConfiguration {
     boolean isSqlParallelGroupByBatchKernelsEnabled();
 
     /**
+     * The share of the scanned rows, between 0 and 1, that a symbol {@code IN}/{@code =} filter
+     * over a POSTING index may select for a GROUP BY to read through the index rather than scan.
+     * The share is estimated from the index's per-key row counts when the cursor opens, see
+     * {@link #isSqlIndexScanChoiceEnabled()}.
+     */
+    double getSqlIndexScanChoiceMaxSelectivity();
+
+    /**
      * Rows of the posting index that one task of an index-driven parallel GROUP BY gathers, see
      * {@link #isSqlParallelIndexGroupByEnabled()}. Keys with fewer rows share a task; a key with
      * more is split by row range.
@@ -1514,6 +1522,14 @@ public interface CairoConfiguration {
      * a batched GROUP BY entry.
      */
     int getSqlParallelIndexGroupByFrameRows();
+
+    /**
+     * Whether a GROUP BY over a symbol {@code IN}/{@code =} filter that a POSTING index serves
+     * compiles both an index plan and a scan plan, and chooses between them each time the cursor
+     * opens, from the index's per-key row counts. Read when the query is compiled. The
+     * {@code no_index} and {@code use_index} hints take one plan only.
+     */
+    boolean isSqlIndexScanChoiceEnabled();
 
     /**
      * Whether a GROUP BY over a symbol {@code IN}/{@code =} filter that a POSTING index serves runs
