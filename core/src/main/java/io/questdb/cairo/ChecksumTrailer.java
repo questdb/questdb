@@ -25,26 +25,19 @@
 package io.questdb.cairo;
 
 /**
- * The one way this codebase expresses "checksummed area present / absent / torn".
+ * Classifies a 16-byte checksum trailer (a magic, then a checksum) as present and matching, absent, or
+ * torn. The {@code _cv} file keeps one after each area.
  * <p>
- * Three hand-rolled variants of this existed: {@code _cv} and the save point marker gate presence on
- * a 64-bit MAGIC, and {@code _txn} on a bare {@code stored == 0} sentinel. The bare sentinel is the weak one: it cannot tell a legacy
- * record from one whose checksum slot was zeroed by a torn write, which is exactly the state a
- * partial page write leaves behind.
+ * Presence is decided by a 64-bit magic rather than a zero check or an end-of-file guard: a page-rounded
+ * file written by a released version often holds non-zero data where the trailer would be (see
+ * {@link TableUtils#CV_CHECKSUM_MAGIC}).
  * <p>
- * Presence is gated on a MAGIC rather than on a zero check or an EOF guard because a legacy
- * page-rounded file frequently has NON-ZERO adjacent data sitting where the trailer would be -- see
- * the reasoning on {@link TableUtils#CV_CHECKSUM_MAGIC}. A 64-bit magic makes a false "present"
- * ~2^-64.
+ * A file-level watermark does not tell a missing trailer from one that should have been written: an older
+ * binary can neither see nor withdraw such a promise, so a table it writes to would read back as damaged.
+ * Where the distinction is needed, it is made per record by stamping the checksum with the record it
+ * describes (see {@link TableUtils#TX_OFFSET_BODY_CHECKSUM_STAMP_32}).
  * <p>
- * Telling "no trailer here" from "no trailer here and there should have been" is deliberately NOT done
- * with a file-level watermark. Such a watermark is a promise an older binary can neither see nor
- * withdraw, so a table it writes to reads back as damaged and will not open -- {@code _txn} and the V2
- * sequencer log both carried that fault. Where the distinction is genuinely needed it is made per
- * record instead, by stamping the checksum with the record it describes; see
- * {@link TableUtils#TX_OFFSET_BODY_CHECKSUM_STAMP_32}.
- * <p>
- * Pure functions only: no I/O and no state, so every classification is unit-testable without a file.
+ * Pure functions only: no I/O and no state.
  */
 public final class ChecksumTrailer {
 
@@ -53,16 +46,16 @@ public final class ChecksumTrailer {
      */
     public static final int PRESENT_OK = 0;
     /**
-     * No trailer here. Legacy unless a capability says otherwise.
+     * No trailer here: the area is unverified.
      */
     public static final int ABSENT = 1;
     /**
-     * A trailer is present and does not match, or was guaranteed and is missing. Torn.
+     * A trailer is present and does not match the area: torn.
      */
     public static final int MISMATCH = 2;
 
     /**
-     * On-disk size of the trailer: 8-byte MAGIC + 8-byte checksum.
+     * On-disk size of the trailer: 8-byte magic + 8-byte checksum.
      */
     public static final int TRAILER_SIZE = TableUtils.CV_CHECKSUM_TRAILER_SIZE;
 
@@ -82,8 +75,7 @@ public final class ChecksumTrailer {
             long expectedMagic
     ) {
         if (storedMagic != expectedMagic) {
-            // No magic => no trailer was written here. Whatever these bytes are, they are not a
-            // checksum, so this is never evidence of corruption on its own.
+            // No magic: no trailer was written here, and these bytes are not evidence of corruption.
             return ABSENT;
         }
         return storedChecksum == TableUtils.calculateCvAreaChecksum(areaBaseAddr, areaSize)
