@@ -2182,11 +2182,16 @@ public class CheckpointTest extends AbstractCairoTest {
             Assert.assertFalse(
                     "checkpoint recover must remove the stale save point before publishing a fresh baseline",
                     staleSavePointExists(token));
-            try (Path markerPath = new Path()) {
-                markerPath.of(configuration.getDbRoot()).concat(token);
-                Assert.assertTrue(
-                        "runtime checkpoint recovery must publish a valid replacement baseline before cleanup",
-                        DurableEpochManifest.loadCandidates(ff, markerPath, markerPath.size(), token.getTableId()).length > 0);
+            // The table's first writer enrols it again at the restored cut, so any save point names the live cut.
+            try (Path path = new Path(); TxReader txReader = new TxReader(ff)) {
+                final int rootLen = path.of(configuration.getDbRoot()).concat(token).size();
+                final DurableEpochManifest.Candidate[] savePoints = DurableEpochManifest.loadCandidates(ff, path, rootLen, token.getTableId());
+                if (savePoints.length > 0) {
+                    txReader.ofRO(path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+                    Assert.assertTrue(txReader.unsafeLoadAll());
+                    Assert.assertEquals("a save point must name the restored cut", txReader.getSeqTxn(), savePoints[0].epochSeqTxn);
+                    Assert.assertEquals("a save point must name the restored cut", txReader.getTxn(), savePoints[0].epochTxn);
+                }
             }
         });
     }
