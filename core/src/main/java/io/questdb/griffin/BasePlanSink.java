@@ -248,6 +248,22 @@ public abstract class BasePlanSink implements PlanSink {
         return this;
     }
 
+    // Renders a child of the current plan node. A child factory names its own columns, also when it
+    // is the scalar sub-query of a function that the enclosing factory renders under the metadata
+    // of another record, see setMetadata().
+    protected void childToPlan(Plannable p) {
+        if (p instanceof RecordCursorFactory factory) {
+            final RecordMetadata enclosingMetadata = metadata;
+            metadata = null;
+            factoryStack.push(factory);
+            factory.toPlan(this);
+            factoryStack.pop();
+            metadata = enclosingMetadata;
+        } else {
+            p.toPlan(this);
+        }
+    }
+
     protected static class EscapingStringSink extends StringSink {
 
         @Override

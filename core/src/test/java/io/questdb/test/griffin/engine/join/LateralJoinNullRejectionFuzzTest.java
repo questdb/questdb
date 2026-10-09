@@ -41,9 +41,9 @@ import java.util.List;
 /**
  * Fuzzes the filters after a RIGHT or FULL join in a correlated LATERAL body, see
  * {@link LateralJoinNullRejectionTest}, on random data: NULL and duplicate outer keys, random
- * typed values, random combinations of filters, and random bind variable values. Each query must
- * return the rows that the body returns per outer row, or fail with the LateralJoinRewriter error
- * that rejects the filter.
+ * typed values, random combinations of filters, random bind variable values, and scalar
+ * sub-queries with a WHERE of their own. Each query must return the rows that the body returns per
+ * outer row, or fail with the LateralJoinRewriter error that rejects the filter.
  */
 public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     private static final String ERROR_SUFFIX = "is not supported in a correlated lateral sub-query";
@@ -118,6 +118,21 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
 
     private static String randomKey(Rnd rnd, double nullRate) {
         return rnd.nextDouble() < nullRate ? "NULL" : Integer.toString(rnd.nextInt(4));
+    }
+
+    // A scalar sub-query that reads the column, which the plan runs once per execution. The code
+    // generator generates it for the filter and again for the NULL check of the filter, and both
+    // must read the value that the sub-query returns on its own: with its WHERE, its LIMIT, its
+    // LATEST ON and the WHERE of a nested sub-query.
+    private static String randomScalarSubQuery(Rnd rnd, FuzzColumn column) {
+        final String key = Integer.toString(rnd.nextInt(4));
+        return switch (rnd.nextInt(5)) {
+            case 0 -> "(SELECT " + column.name + " FROM trades WHERE id = " + (10 + rnd.nextInt(10)) + " LIMIT 1)";
+            case 1 -> "(SELECT " + column.name + " FROM trades WHERE x = " + key + " ORDER BY ts DESC LIMIT 1)";
+            case 2 -> "(SELECT max(" + column.name + ") FROM trades WHERE x = " + key + ")";
+            case 3 -> "(SELECT " + column.name + " FROM trades WHERE x = " + key + " LATEST ON ts PARTITION BY x)";
+            default -> "(SELECT " + column.name + " FROM trades WHERE id = (SELECT max(id) FROM trades WHERE x = " + key + "))";
+        };
     }
 
     private static String randomTable(Rnd rnd) {
@@ -319,6 +334,8 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
                     bind.type = column.bindType;
                     bind.value = column.bindValues[rnd.nextInt(column.bindValues.length)];
                     operand = "$1";
+                } else if (rnd.nextInt(4) == 0) {
+                    operand = randomScalarSubQuery(rnd, column);
                 }
                 final String op = COMPARISONS[rnd.nextInt(COMPARISONS.length)];
                 return rnd.nextBoolean() ? ref + ' ' + op + ' ' + operand : operand + ' ' + op + ' ' + ref;

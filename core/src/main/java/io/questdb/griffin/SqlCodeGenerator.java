@@ -2078,7 +2078,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // the plan evaluates them once per execution on the NULL record of the type, and fails the query
     // when one is true, as the filter would then keep the rows that a RIGHT or FULL join NULL-extends.
     // A check over a scalar sub-query owns the value of the sub-query: the filter functions over the
-    // same sub-query reuse it, so the filter never reads a value that the check has not seen.
+    // same sub-query reuse it, so the filter never reads a value that the check has not seen. The
+    // check generates the sub-query again, after the filter, and generationState gives it the state
+    // of the sub-query model that the filter generation consumed.
     // Takes ownership of the factory.
     private RecordCursorFactory applyLateralNullChecks(RecordCursorFactory factory, SqlExecutionContext executionContext) throws SqlException {
         final ObjList<Function> checks = new ObjList<>();

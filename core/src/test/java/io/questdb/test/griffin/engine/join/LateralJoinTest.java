@@ -1275,6 +1275,27 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // The sub-query picks trade 20, the only one with id > 10. xs matches order 1 only, so per
+    // outer row trades 10 and 20 join refunds 100 and 101 for order 1, and t.id >= 20 keeps
+    // trade 20 with refund 101. The RIGHT or FULL join NULL-extends both refunds for order 2,
+    // and the filter drops them.
+    @Test
+    public void testLateralCorrelatedInnerOnBeforeOuterJoinWithScalarSubQueryWhereFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            execute("INSERT INTO trades VALUES (20, 2, 2::timestamp)");
+            for (String join : new String[]{"RIGHT", "FULL"}) {
+                assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t JOIN xs x ON x.k = o.k " + join + " JOIN refunds r ON r.k = t.x WHERE t.id >= (SELECT id FROM trades WHERE id > 10 LIMIT 1)) l ORDER BY 1, 2, 3")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\ttid\trid
+                                1\t20\t101
+                                """);
+            }
+        });
+    }
+
     // In the rows that the RIGHT join NULL-extends, the INT id that the sub-query passes through holds
     // NULL, which IN (10, 15) drops, and the computed SHORT id holds 0, which IN (0, 10) keeps.
     @Test
@@ -1826,6 +1847,157 @@ public class LateralJoinTest extends AbstractCairoTest {
             createCorrelatedRightJoinTables();
             assertScalarSubQueryFilterNeverEmpty("t.id >= (SELECT CASE WHEN rnd_int(0, 1, 0) = 0 THEN NULL::int ELSE 0 END FROM long_sequence(1))");
             assertScalarSubQueryFilterNeverEmpty("t.ts >= (SELECT CASE WHEN rnd_int(0, 1, 0) = 0 THEN NULL::timestamp ELSE 0::timestamp END FROM long_sequence(1))");
+        });
+    }
+
+    // LATEST ON keeps the last quote of each k: 20 for b and 10 for a. Per outer row, t.id = 20
+    // keeps trade 20 with refund 101 for order 2, and t.id = 10 keeps trade 10 with refund 100
+    // for order 1. Without LATEST ON, the sub-query would read every quote of b, or 5 as the
+    // smallest one.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithScalarSubQueryLatestByFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            execute("INSERT INTO trades VALUES (20, 2, 2::timestamp)");
+            execute("CREATE TABLE quotes (id INT, k SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO quotes VALUES (5, 'b', 1::timestamp), (20, 'b', 2::timestamp), (7, 'a', 3::timestamp), (10, 'a', 4::timestamp)");
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id = (SELECT id FROM quotes WHERE k = 'b' LATEST ON ts PARTITION BY k)) l ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid
+                            2\t20\t101
+                            """);
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id = (SELECT min(id) FROM (SELECT id FROM quotes LATEST ON ts PARTITION BY k))) l ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid
+                            1\t10\t100
+                            """);
+        });
+    }
+
+    // The sub-query picks trade 20, the only one with id > 10. Per outer row, t.id = 20 and
+    // t.id >= 20 keep trade 20 with refund 101 for order 2. The NULL check of the sub-query must
+    // read the value that the sub-query returns with its WHERE, as the filter reads that value.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithScalarSubQueryWhereFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            execute("INSERT INTO trades VALUES (20, 2, 2::timestamp)");
+            for (String operator : new String[]{"=", ">="}) {
+                assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id " + operator + " (SELECT id FROM trades WHERE id > 10 LIMIT 1)) l ORDER BY 1, 2, 3")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\ttid\trid
+                                2\t20\t101
+                                """);
+            }
+        });
+    }
+
+    // The latest trade with x = 1 is trade 10, which refund 100 matches for order 1 only. Trade
+    // 20, the latest of all trades, is the value of the sub-query without its WHERE.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithScalarSubQueryWhereFilterLatestValue() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            execute("INSERT INTO trades VALUES (20, 2, 2::timestamp)");
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id = (SELECT id FROM trades WHERE x = 1 ORDER BY ts DESC LIMIT 1)) l ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid
+                            1\t10\t100
+                            """);
+        });
+    }
+
+    // min(id) over the trades with x >= 2 is 20, with the WHERE in a sub-query under the
+    // aggregate. Per outer row, trade 20 matches refund 101 for order 2 only.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithScalarSubQueryWhereFilterNestedLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            execute("INSERT INTO trades VALUES (20, 2, 2::timestamp)");
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id = (SELECT min(id) FROM (SELECT id FROM trades WHERE x >= 2 LIMIT 5))) l ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid
+                            2\t20\t101
+                            """);
+        });
+    }
+
+    // Refund 101, the only one with id > 100, has k = 2, so the sub-query picks trade 20, which
+    // matches refund 101 for order 2 only. The inner sub-query has a WHERE of its own.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithScalarSubQueryWhereFilterNestedSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            execute("INSERT INTO trades VALUES (20, 2, 2::timestamp)");
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id = (SELECT id FROM trades WHERE x = (SELECT k FROM refunds WHERE id > 100 LIMIT 1) LIMIT 1)) l ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid
+                            2\t20\t101
+                            """);
+        });
+    }
+
+    // Only trade 20 has id > 10, so the sub-query returns one row without a LIMIT, and trade 20
+    // matches refund 101 for order 2 only.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithScalarSubQueryWhereFilterNoLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            execute("INSERT INTO trades VALUES (20, 2, 2::timestamp)");
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id = (SELECT id FROM trades WHERE id > 10)) l ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid
+                            2\t20\t101
+                            """);
+        });
+    }
+
+    // No trade has id > 1000, so the sub-query is NULL, and the execution fails as it does for
+    // max(id) over no row. Trade 10, the value of the sub-query without its WHERE, must not pass
+    // the check.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithScalarSubQueryWhereFilterNull() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            execute("INSERT INTO trades VALUES (20, 2, 2::timestamp)");
+            final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id >= (SELECT id FROM trades WHERE id > 1000 LIMIT 1)) l";
+            assertQuery(sql)
+                    .fails(sql.indexOf("SELECT id FROM trades WHERE id > 1000"), "is not supported in a correlated lateral sub-query when this value is NULL");
+        });
+    }
+
+    // The plan of the NULL check shows the sub-query with its WHERE, as the filter runs it, and
+    // names the column that the WHERE reads: x is the second column of trades, while the check
+    // itself reads only the probe column. EXPLAIN runs the check, so trade 20 keeps the value
+    // from being NULL.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithScalarSubQueryWhereFilterPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            execute("INSERT INTO trades VALUES (20, 2, 2::timestamp)");
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id = (SELECT id FROM trades WHERE x > 1 LIMIT 1)) l")
+                    .noLeakCheck()
+                    .assertsPlanContaining("""
+                                      limit: 1
+                                      filter: 1<x
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades [state-shared]]
+                            """);
         });
     }
 

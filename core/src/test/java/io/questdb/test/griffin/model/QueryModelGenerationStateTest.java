@@ -23,7 +23,9 @@
  ******************************************************************************/
 package io.questdb.test.griffin.model;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.LateralNullRejection;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.QueryModelGenerationState;
 import io.questdb.griffin.model.QueryModelWrapper;
@@ -142,6 +144,62 @@ public class QueryModelGenerationStateTest {
         state.begin(root, pool);
         Assert.assertEquals("new attempt", child.getWhereClause().token);
         state.clear();
+    }
+
+    // SqlCodeGenerator compiles a lateral NULL check after the filter that the check copies, so it
+    // generates the sub-query of the check a second time, which must find its predicate again.
+    // The sub-query is reachable only through the check, which the rewriter keeps on the model
+    // or, for the code generator to decide on, on the join.
+    @Test
+    public void testLateralNullCheckSubQueryRestoresPredicate() {
+        for (boolean isDecidedByCodeGenerator : new boolean[]{false, true}) {
+            QueryModel root = model();
+            QueryModel child = model();
+            ExpressionNode predicate = node("predicate");
+            child.setWhereClause(predicate);
+            ExpressionNode query = node("query");
+            query.queryModel = child;
+            ExpressionNode check = lateralNullCheck(query);
+            if (isDecidedByCodeGenerator) {
+                LateralNullRejection rejection = new LateralNullRejection();
+                rejection.add("t.id", null, check);
+                root.setLateralNullRejection(rejection);
+            } else {
+                root.addLateralNullCheck(check, ColumnType.INT);
+            }
+            QueryModelGenerationState state = new QueryModelGenerationState();
+            ObjectPool<ExpressionNode> pool = pool();
+            state.begin(root, pool);
+            Assert.assertNotSame(predicate, child.getWhereClause());
+            state.enterModel(root);
+            for (int i = 0; i < 2; i++) {
+                child.setWhereClause(null);
+                Assert.assertTrue(state.enterRegion(child, pool));
+                Assert.assertEquals("predicate", child.getWhereClause().token);
+                state.exitRegion(true);
+            }
+            state.exitModel(root);
+            state.clear();
+            Assert.assertEquals(0, state.getRetainedNodeCount());
+        }
+    }
+
+    @Test
+    public void testLateralNullCheckWithoutSubQueryDoesNotSnapshotPredicates() {
+        QueryModel root = model();
+        ExpressionNode predicate = node("predicate");
+        root.setWhereClause(predicate);
+        ExpressionNode check = lateralNullCheck(node("$1"));
+        root.addLateralNullCheck(check, ColumnType.INT);
+        LateralNullRejection rejection = new LateralNullRejection();
+        rejection.add("t.id", null, check);
+        root.setLateralNullRejection(rejection);
+        QueryModelGenerationState state = new QueryModelGenerationState();
+        state.begin(root, pool());
+        Assert.assertSame(predicate, root.getWhereClause());
+        Assert.assertEquals(0, state.getWorkingCopyCount());
+        Assert.assertEquals(0, state.getPreparationCount());
+        Assert.assertEquals(0, state.getRetainedNodeCount());
     }
 
     @Test
@@ -357,6 +415,15 @@ public class QueryModelGenerationStateTest {
         Assert.assertEquals(0, state.getWorkingCopyCount());
         Assert.assertEquals(0, state.getPreparationCount());
         Assert.assertEquals(0, state.getRetainedNodeCount());
+    }
+
+    // __qdb_null_probe >= value, as LateralJoinRewriter builds a check
+    private static ExpressionNode lateralNullCheck(ExpressionNode value) {
+        ExpressionNode check = node(">=");
+        check.lhs = node("__qdb_null_probe");
+        check.rhs = value;
+        check.paramCount = 2;
+        return check;
     }
 
     private static QueryModel model() {
