@@ -268,6 +268,16 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
+    public void testSyncConvertToNativeNonWalFailedTxnMsyncThenCrashReadsTable() throws Exception {
+        assertSyncConvertTxnMsyncFailureKeepsTable(true, true);
+    }
+
+    @Test
+    public void testSyncConvertToNativeNonWalFailedTxnMsyncThenRestartReadsTable() throws Exception {
+        assertSyncConvertTxnMsyncFailureKeepsTable(true, false);
+    }
+
+    @Test
     public void testSyncConvertToNativeNonWalSurvivesCrash() throws Exception {
         assertSyncSchemaChangeSurvivesCrash(false, true, "ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2024-01-01'", this::assertAllColumns);
     }
@@ -310,6 +320,16 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testSyncConvertToParquetNonWalFailedTxnMsyncIsFailStop() throws Exception {
         assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("commitTxWriter", 0, true));
+    }
+
+    @Test
+    public void testSyncConvertToParquetNonWalFailedTxnMsyncThenCrashReadsTable() throws Exception {
+        assertSyncConvertTxnMsyncFailureKeepsTable(false, true);
+    }
+
+    @Test
+    public void testSyncConvertToParquetNonWalFailedTxnMsyncThenRestartReadsTable() throws Exception {
+        assertSyncConvertTxnMsyncFailureKeepsTable(false, false);
     }
 
     @Test
@@ -696,6 +716,83 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
                 "produceNativeFromParquet",
                 0
         );
+    }
+
+    /**
+     * Under SYNC, the commit of a partition conversion fails its {@code _txn} msync after the new {@code _txn} is
+     * written through the mapping, and the engine must be poisoned. A restart without a power loss then reads the
+     * {@code _txn} the page cache holds, which names the converted partition; after a power loss the durable, old
+     * {@code _txn} comes back and names the old version of the partition. Either way that directory must be there
+     * and the table must read every row.
+     *
+     * @param toNative    converts the first partition from parquet back to native; otherwise to parquet
+     * @param isPowerLoss the power fails after the stop; otherwise the process restarts without a power loss
+     */
+    private void assertSyncConvertTxnMsyncFailureKeepsTable(boolean toNative, boolean isPowerLoss) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        final var ff = new CrashFaultFilesFacade() {
+            int failureCount;
+            boolean isArmed;
+
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                if (isArmed && !async && isCalledFrom("commitTxWriter")) {
+                    isArmed = false;
+                    failureCount++;
+                    // nothing of the new _txn reaches the device
+                    throw CairoException.dataSyncFailure(5, "msync").put("injected msync failure");
+                }
+                super.msync(addr, len, async);
+            }
+        };
+        runWithFacade(ff, () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, s SYMBOL INDEX, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'a', 1.0),
+                        ('2024-01-02T00:00:00.000000Z', 'b', 2.0),
+                        ('2024-01-03T00:00:00.000000Z', 'a', 3.0)
+                    """);
+            if (toNative) {
+                convertFirstPartitionToParquet();
+            }
+            markDurableBaseline();
+            Throwable failure = null;
+            ff.isArmed = true;
+            try {
+                execute("ALTER TABLE x CONVERT PARTITION TO " + (toNative ? "NATIVE" : "PARQUET") + " LIST '2024-01-01'");
+            } catch (Throwable th) {
+                failure = th;
+            } finally {
+                ff.isArmed = false;
+            }
+            final boolean isPoisoned = engine.isDurabilityFailed();
+            engine.resetDurabilityFailure();
+            if (isPowerLoss) {
+                crashAndReopen();
+            } else {
+                releaseEngineHandles();
+            }
+            Assert.assertEquals("the injected failure must have been reached", 1, ff.failureCount);
+            Assert.assertTrue("a failed _txn msync must poison the engine, failure: " + failure, isPoisoned);
+            Throwable readFailure = null;
+            try {
+                try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                    Assert.assertEquals(
+                            "the partition must be in the format the _txn names",
+                            toNative == isPowerLoss,
+                            reader.getTxFile().isPartitionParquet(0)
+                    );
+                }
+                assertAllColumns();
+            } catch (Throwable th) {
+                readFailure = th;
+            }
+            releaseEngineHandles();
+            if (readFailure != null) {
+                throw new AssertionError("the table must read back", readFailure);
+            }
+        });
     }
 
     /**
