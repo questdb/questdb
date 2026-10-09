@@ -335,8 +335,7 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         });
     }
 
-    // Every partition directory holds one .pv of each POSTING column of the three-day table, and every cover file of a
-    // column belongs to its .pv.
+    // Every partition directory holds the save point generations of each POSTING column of the three-day table.
     private static void assertOneGenerationPerPartitionAndColumn(String tableDir, String where) {
         final Map<String, List<String>> byPartitionAndColumn = new TreeMap<>();
         final List<String> files = sealedFiles(tableDir, SEALED_FILE_S_K);
@@ -348,21 +347,11 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         }
         Assert.assertEquals(where + ": partitions and columns with sealed files " + byPartitionAndColumn.keySet(), 6, byPartitionAndColumn.size());
         for (Map.Entry<String, List<String>> e : byPartitionAndColumn.entrySet()) {
-            String sealTxn = null;
-            for (String name : e.getValue()) {
-                if (name.contains(".pv.")) {
-                    Assert.assertNull(where + ": more than one .pv in " + e.getKey() + ": " + e.getValue(), sealTxn);
-                    sealTxn = name.substring(name.lastIndexOf('.'));
-                }
-            }
-            Assert.assertNotNull(where + ": no .pv in " + e.getKey() + ": " + e.getValue(), sealTxn);
-            for (String name : e.getValue()) {
-                Assert.assertTrue(where + ": a cover of another generation in " + e.getKey() + ": " + e.getValue(), name.endsWith(sealTxn));
-            }
+            assertSavePointGenerations(where, e.getKey(), e.getValue());
         }
     }
 
-    // Every partition directory holds one .pv of column s, and every cover file of s belongs to it.
+    // Every partition directory holds the save point generations of column s.
     private static void assertOnePostingGenerationPerPartition(String tableDir, String where) {
         final Map<String, List<String>> byPartition = new TreeMap<>();
         final List<String> files = sealedFiles(tableDir);
@@ -372,17 +361,24 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         }
         Assert.assertFalse(where + ": no sealed files", byPartition.isEmpty());
         for (Map.Entry<String, List<String>> e : byPartition.entrySet()) {
-            String sealTxn = null;
-            for (String name : e.getValue()) {
-                if (name.startsWith("s.pv.")) {
-                    Assert.assertNull(where + ": more than one .pv in " + e.getKey() + ": " + e.getValue(), sealTxn);
-                    sealTxn = name.substring(name.lastIndexOf('.'));
-                }
+            assertSavePointGenerations(where, e.getKey(), e.getValue());
+        }
+    }
+
+    // At most two generations: the one the restored save point names, and the one the older save point names, which
+    // recovery falls back to if the restored one is damaged and so stays until the next save point. Every cover file
+    // belongs to one of them.
+    private static void assertSavePointGenerations(String where, String key, List<String> names) {
+        final List<String> sealTxns = new ArrayList<>();
+        for (String name : names) {
+            if (name.contains(".pv.")) {
+                sealTxns.add(name.substring(name.lastIndexOf('.')));
             }
-            Assert.assertNotNull(where + ": no .pv in " + e.getKey() + ": " + e.getValue(), sealTxn);
-            for (String name : e.getValue()) {
-                Assert.assertTrue(where + ": a cover of another generation in " + e.getKey() + ": " + e.getValue(), name.endsWith(sealTxn));
-            }
+        }
+        Assert.assertFalse(where + ": no .pv in " + key + ": " + names, sealTxns.isEmpty());
+        Assert.assertTrue(where + ": more than two .pv in " + key + ": " + names, sealTxns.size() <= 2);
+        for (String name : names) {
+            Assert.assertTrue(where + ": a cover of another generation in " + key + ": " + names, sealTxns.contains(name.substring(name.lastIndexOf('.'))));
         }
     }
 

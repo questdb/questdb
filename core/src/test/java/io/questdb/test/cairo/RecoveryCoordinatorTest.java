@@ -438,6 +438,8 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 Assert.assertEquals("the conversion re-seeds the lineage at seqTxn 0", 0L, readTxnSeqTxn(tt));
                 copyEpochArtifacts(tt, true);
 
+                // A restart: a fresh scoreboard and tracker, so the conversion's baseline pin is gone.
+                engine.getTxnScoreboardPool().remove(tt);
                 engine.getTableSequencerAPI().resetForReboot(tt);
                 new RecoveryCoordinator(engine).recover();
                 Assert.assertEquals("the discarded save point must not rewind the live cut", 0L, readTxnSeqTxn(tt));
@@ -2082,6 +2084,8 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 // Replant the pre-conversion anchor in full: the state an upgraded database arrives in.
                 copyEpochArtifacts(tt, true);
 
+                // A restart: a fresh scoreboard and tracker, so the conversion's baseline pin is gone.
+                engine.getTxnScoreboardPool().remove(tt);
                 engine.getTableSequencerAPI().resetForReboot(tt);
                 new RecoveryCoordinator(engine).recover();
 

@@ -16523,8 +16523,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         // Step 4: the prior save point becomes the other generation, which recovery falls back to when this one is
-        // damaged, so it keeps its pin until the next save point overwrites it.
-        tracker.setPinnedEpoch(epochTxn, newSlotA, priorEpochTxn);
+        // damaged, so it keeps its pin until the next save point overwrites it. A prior pin no generation on disk
+        // names any more (a restore removed the save point) protects nothing and goes.
+        boolean priorOnDisk = false;
+        for (int i = 0; i < saved.length; i++) {
+            priorOnDisk |= saved[i].generation != epochGeneration && saved[i].epochTxn == priorEpochTxn;
+        }
+        if (priorEpochTxn >= 0 && !priorOnDisk) {
+            txnScoreboard.releaseTxn(priorSlotA ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B, priorEpochTxn);
+        }
+        tracker.setPinnedEpoch(epochTxn, newSlotA, priorOnDisk ? priorEpochTxn : -1);
 
         // Step 5: publish the durable frontier + cadence timestamp, LAST. The WAL purge also keeps the WAL from
         // the other generation (WalPurgeJob reads the lowest save point).
