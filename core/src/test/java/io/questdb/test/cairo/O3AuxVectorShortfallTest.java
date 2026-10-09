@@ -42,20 +42,16 @@ import org.junit.Before;
 import org.junit.Test;
 
 /**
- * An O3 append into an existing partition reads that partition's last aux entry to find where the
- * data vector ends. It trusts the aux file to already hold an entry for every row {@code _txn}/{@code _cv}
- * claim; the read is taken through a mapping that has just been extended to the NEW row count, so a
- * short file is not a read error — the missing tail simply reads back as zeros.
+ * An O3 append into an existing partition reads that partition's last aux entry to find where the data
+ * vector ends. It trusts the aux file to hold an entry for every row {@code _txn}/{@code _cv} claim; the
+ * read goes through a mapping just extended to the new row count, so a short file is not a read error:
+ * the missing tail reads back as zeros.
  *
- * <p>Those zeros used to travel: under {@code -ea} a zero varchar header trips an assertion deep in the
+ * <p>Unchecked, those zeros travel: under {@code -ea} a zero varchar header trips an assertion deep in the
  * type driver, with no column, partition or size in the message; with assertions off it yields a data
- * vector size of 0, and the damage is only noticed later and elsewhere, when some reader opens the
- * partition and reports {@code Invalid column size}. This asserts the shortfall is named where it is
- * detectable — at the append, with the file length, the length required, and the column top.
- *
- * <p>Seen in the wild on PR #7411 CI: {@code WalWriterFuzzTest#testCreateTableAsParquet} died on the
- * assertion during an O3 apply, and the follow-up query then reported {@code Invalid column size} for a
- * different column of the same partition — two unrelated-looking failures, one short aux vector.
+ * vector size of 0, and a reader later reports {@code Invalid column size} for the partition. This test
+ * asserts that the append names the shortfall where it is detectable, with the file length, the length
+ * required and the column top.
  */
 public class O3AuxVectorShortfallTest extends AbstractCairoTest {
     private static final LogCapture capture = new LogCapture();
@@ -76,23 +72,20 @@ public class O3AuxVectorShortfallTest extends AbstractCairoTest {
 
     @Test
     public void testO3AppendNamesShortAuxVectorInsteadOfReadingZeros() throws Exception {
-        // POSIX-only. The staged shortfall cannot be produced on Windows: the truncated aux file must
-        // STAY short until the O3 append's length check reads it, but Windows will not shrink a file
-        // while any mapped section of it is live, and the engine's mapping machinery grows a file to
-        // match a larger mapping request -- so by the time the check runs the file is back at (or was
-        // never below) the required length, the zeros the diagnostic exists to name are real bytes, and
-        // the "aux vector is shorter" log line legitimately never appears (observed on windows-other-2
-        // across consecutive CI runs). The diagnostic itself is platform-neutral and stays covered by
-        // the Linux and macOS legs.
+        // POSIX only. The staged shortfall cannot be produced on Windows: the truncated aux file must
+        // stay short until the O3 append's length check reads it, but Windows does not shrink a file
+        // while any mapped section of it is live, and the engine's mapping code grows a file to match a
+        // larger mapping request. By the time the check runs the file is at the required length, so the
+        // "aux vector is shorter" log line never appears. The diagnostic itself is platform-neutral.
         org.junit.Assume.assumeFalse(
                 "Windows cannot keep a mapped aux file truncated; the staged shortfall never holds",
                 io.questdb.std.Os.isWindows()
         );
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute("CREATE TABLE t (v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            // Two rows in 2024-06-10, then a later partition so 2024-06-10 is no longer the active
-            // one: its column files are closed, and an O3 row landing in it takes the append-mid-
-            // partition path that maps the aux file fresh.
+            // Two rows in 2024-06-10, then a later partition, so 2024-06-10 is not the active one: its
+            // column files are closed, and an O3 row landing in it takes the append-mid-partition path
+            // that maps the aux file fresh.
             execute("INSERT INTO t VALUES" +
                     "('aaaaaaaaaaaaaaaaaaaaaaaa','2024-06-10T01:00:00.000000Z')," +
                     "('bbbbbbbbbbbbbbbbbbbbbbbb','2024-06-10T02:00:00.000000Z')," +
@@ -104,14 +97,12 @@ public class O3AuxVectorShortfallTest extends AbstractCairoTest {
 
             try {
                 // O3: before the table's max timestamp, after 2024-06-10's own max, so it appends to
-                // the tail of that partition and reads the entry that is no longer there.
+                // the tail of that partition and reads the dropped entry.
                 execute("INSERT INTO t VALUES('dddddddddddddddddddddddd','2024-06-10T03:00:00.000000Z')");
                 Assert.fail("expected the short aux vector to be reported");
             } catch (CairoException e) {
-                // The caller only ever sees the O3 wrapper -- processO3Block rethrows a generic message
-                // once a worker has set o3ErrorCount, which is exactly why the detail has to reach the
-                // LOG at the origin. This is the shape the CI failure had, with a bare AssertionError
-                // in place of the message asserted below.
+                // The caller sees only the O3 wrapper: processO3Block rethrows a generic message once a
+                // worker has set o3ErrorCount, so the detail has to reach the log at the origin.
                 TestUtils.assertContains(e.getFlyweightMessage(), "bulk update failed and will be rolled back");
             }
 
