@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DurableEpochManifest;
+import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -44,6 +45,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -616,10 +618,24 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
     }
 
     // DETACH and CONVERT remove the partition directories they supersede before the statement returns, after
-    // its save point.
+    // its save point. In ADAPTIVE the older save point, which recovery falls back to, may still name the version a
+    // CONVERT supersedes, so the purge the statement schedules removes it once the next save point moves past it.
     private void assertSupersededDirsRemoved(CairoEngine e, long supersededBefore) throws Exception {
         switch (operation) {
-            case CONVERT_LIST_SECOND_FAILS, CONVERT_TO_NATIVE, CONVERT_TO_PARQUET, DETACH, DETACH_LIST_SECOND_FAILS -> {
+            case CONVERT_LIST_SECOND_FAILS, CONVERT_TO_NATIVE, CONVERT_TO_PARQUET -> {
+                if (!history.failsSavePoint()) {
+                    if (history != History.NOSYNC) {
+                        takeSavePoint(e);
+                        try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(e, 1)) {
+                            while (purgeJob.run()) {
+                                Os.pause();
+                            }
+                        }
+                    }
+                    Assert.assertTrue("superseded partition directories left behind", supersededPartitionDirs(e) <= supersededBefore);
+                }
+            }
+            case DETACH, DETACH_LIST_SECOND_FAILS -> {
                 if (!history.failsSavePoint()) {
                     Assert.assertTrue("superseded partition directories left behind", supersededPartitionDirs(e) <= supersededBefore);
                 }
