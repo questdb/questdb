@@ -34,6 +34,7 @@ import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider;
+import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
@@ -813,6 +814,15 @@ public interface CairoConfiguration {
      */
     default int getQwpEgressForcedZstdLevel() {
         return 0;
+    }
+
+    /**
+     * QWP egress maps a SYMBOL column's native symbol keys below this to connection dictionary ids
+     * with an array (4 bytes per key, sized to the largest key the query sends), and the other keys
+     * with a hash map. 0 uses the hash map for every key. The wire bytes are the same either way.
+     */
+    default int getQwpEgressSymbolDenseMaxKeys() {
+        return QwpResultBatchBuffer.DEFAULT_SYMBOL_DENSE_MAX_KEYS;
     }
 
     /**

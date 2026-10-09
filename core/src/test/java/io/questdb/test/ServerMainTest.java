@@ -1594,6 +1594,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 "query.timeout.sec\tQDB_QUERY_TIMEOUT_SEC\t60\tdefault\tfalse\tfalse\n" +
                 "qwp.browser.tls.termination.enabled\tQDB_QWP_BROWSER_TLS_TERMINATION_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                 "qwp.egress.compression.force.level\tQDB_QWP_EGRESS_COMPRESSION_FORCE_LEVEL\t0\tdefault\tfalse\ttrue\n" +
+                "qwp.egress.symbol.dense.max.keys\tQDB_QWP_EGRESS_SYMBOL_DENSE_MAX_KEYS\t262144\tdefault\tfalse\tfalse\n" +
                 "qwp.max.rows.per.table\tQDB_QWP_MAX_ROWS_PER_TABLE\t1000000\tdefault\tfalse\tfalse\n" +
                 "qwp.max.tables.per.connection\tQDB_QWP_MAX_TABLES_PER_CONNECTION\t10000\tdefault\tfalse\tfalse\n" +
                 "qwp.max.uncommitted.rows\tQDB_QWP_MAX_UNCOMMITTED_ROWS\t1000000\tdefault\tfalse\tfalse\n" +

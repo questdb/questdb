@@ -687,6 +687,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     POSTHOG_ENABLED("posthog.enabled"),
     QWP_BROWSER_TLS_TERMINATION_ENABLED("qwp.browser.tls.termination.enabled"),
     QWP_EGRESS_COMPRESSION_FORCE_LEVEL("qwp.egress.compression.force.level"),
+    QWP_EGRESS_SYMBOL_DENSE_MAX_KEYS("qwp.egress.symbol.dense.max.keys"),
     QWP_MAX_ROWS_PER_TABLE("qwp.max.rows.per.table"),
     QWP_MAX_TABLES_PER_CONNECTION("qwp.max.tables.per.connection"),
     QWP_MAX_UNCOMMITTED_ROWS("qwp.max.uncommitted.rows"),

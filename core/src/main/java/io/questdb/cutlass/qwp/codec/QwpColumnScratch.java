@@ -29,7 +29,6 @@ import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
-import io.questdb.std.IntIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
@@ -71,9 +70,9 @@ final class QwpColumnScratch implements QuietCloseable {
     private static final int SHRINK_TRIGGER_FACTOR = 4;
     // Dedup by native symbol-table key -> connection-scoped dict id. Persists across
     // batches on this connection for the lifetime of a single query. Reset via
-    // {@link #resetConnSymbolMap} when a new query begins so that native keys from
+    // {@link #clearConnKeyMap} when a new query begins so that native keys from
     // a different cursor/table don't reuse stale mappings.
-    final IntIntHashMap connKeyToConnId = new IntIntHashMap();
+    final QwpSymbolKeyMap connKeyToConnId;
     final Decimal128 decimal128Sink = new Decimal128();
     final Decimal256 decimal256Sink = new Decimal256();
     long arrayHeapAddr;
@@ -124,6 +123,10 @@ final class QwpColumnScratch implements QuietCloseable {
     long valuesAddr;
     int valuesCapacity;          // bytes
     int valuesPos;               // bytes written
+
+    QwpColumnScratch(int symbolDenseMaxKeys) {
+        this.connKeyToConnId = new QwpSymbolKeyMap(symbolDenseMaxKeys);
+    }
 
     @Override
     public void close() {
@@ -743,7 +746,7 @@ final class QwpColumnScratch implements QuietCloseable {
             symbolBytesCumCapacity = newCap;
         }
         int cum = nonNullCount == 0 ? 0 : Unsafe.getInt(symbolBytesCumAddr + 4L * nonNullCount);
-        IntIntHashMap k2c = connKeyToConnId;
+        final QwpSymbolKeyMap k2c = connKeyToConnId;
         int nonNullWritten = 0;
         for (int i = 0; i < n; i++) {
             int key = Unsafe.getInt(srcAddr + i * 4L);
@@ -751,13 +754,10 @@ final class QwpColumnScratch implements QuietCloseable {
                 setNullBit(startRow + i);
                 nullCount++;
             } else {
-                int mapIdx = k2c.keyIndex(key);
-                int connId;
-                if (mapIdx < 0) {
-                    connId = k2c.valueAt(mapIdx);
-                } else {
+                int connId = k2c.get(key);
+                if (connId == QwpSymbolKeyMap.NO_ID) {
                     connId = dict.addEntry(st.valueOf(key));
-                    k2c.putAt(mapIdx, key, connId);
+                    k2c.put(key, connId);
                 }
                 int slot = nonNullCount + nonNullWritten;
                 Unsafe.putInt(symbolIdsAddr + 4L * slot, connId);

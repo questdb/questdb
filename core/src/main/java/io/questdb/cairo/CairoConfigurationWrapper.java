@@ -990,6 +990,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getQwpEgressSymbolDenseMaxKeys() {
+        return getDelegate().getQwpEgressSymbolDenseMaxKeys();
+    }
+
+    @Override
     public @NotNull QwpServerInfoProvider getQwpServerInfoProvider() {
         return getDelegate().getQwpServerInfoProvider();
     }

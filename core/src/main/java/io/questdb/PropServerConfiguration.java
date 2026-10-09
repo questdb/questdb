@@ -53,6 +53,7 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
@@ -482,6 +483,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean queryWithinLatestByOptimisationEnabled;
     private final boolean qwpBrowserTlsTerminationEnabled;
     private final int qwpEgressForcedZstdLevel;
+    private final int qwpEgressSymbolDenseMaxKeys;
     private final int qwpMaxRowsPerTable;
     private final int qwpMaxTablesPerConnection;
     private final long qwpMaxUncommittedRows;
@@ -2102,6 +2104,17 @@ public class PropServerConfiguration implements ServerConfiguration {
                                 + " must be 0 (off) or in ["
                                 + QwpConstants.COMPRESSION_ZSTD_MIN_LEVEL + ", "
                                 + QwpConstants.COMPRESSION_ZSTD_MAX_LEVEL + "]"
+                );
+            }
+            this.qwpEgressSymbolDenseMaxKeys = getInt(
+                    properties,
+                    env,
+                    PropertyKey.QWP_EGRESS_SYMBOL_DENSE_MAX_KEYS,
+                    QwpResultBatchBuffer.DEFAULT_SYMBOL_DENSE_MAX_KEYS
+            );
+            if (qwpEgressSymbolDenseMaxKeys < 0) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_EGRESS_SYMBOL_DENSE_MAX_KEYS.getPropertyPath() + " must be 0 (off) or positive"
                 );
             }
             this.qwpMaxRowsPerTable = getInt(properties, env, PropertyKey.QWP_MAX_ROWS_PER_TABLE, QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
@@ -5095,6 +5108,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQwpEgressForcedZstdLevel() {
             return qwpEgressForcedZstdLevel;
+        }
+
+        @Override
+        public int getQwpEgressSymbolDenseMaxKeys() {
+            return qwpEgressSymbolDenseMaxKeys;
         }
 
         @Override

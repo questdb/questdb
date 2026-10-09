@@ -315,6 +315,7 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelTopKEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowJoinEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelAsOfJoinEnabled());
+        Assert.assertEquals(262144, configuration.getCairoConfiguration().getQwpEgressSymbolDenseMaxKeys());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowMinMaxRewriteEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowKeyRunsEnabled());
@@ -596,6 +597,22 @@ public class PropServerConfigurationTest {
             try (java.io.BufferedReader reader = java.nio.file.Files.newBufferedReader(path, java.nio.charset.StandardCharsets.UTF_8)) {
                 validateConfigKeys(reader, configFile, properties, validator);
             }
+        }
+    }
+
+    @Test
+    public void testQwpEgressSymbolDenseMaxKeys() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_EGRESS_SYMBOL_DENSE_MAX_KEYS.getPropertyPath(), "1000");
+        Assert.assertEquals(1000, newPropServerConfiguration(properties).getCairoConfiguration().getQwpEgressSymbolDenseMaxKeys());
+        properties.setProperty(PropertyKey.QWP_EGRESS_SYMBOL_DENSE_MAX_KEYS.getPropertyPath(), "0");
+        Assert.assertEquals(0, newPropServerConfiguration(properties).getCairoConfiguration().getQwpEgressSymbolDenseMaxKeys());
+        properties.setProperty(PropertyKey.QWP_EGRESS_SYMBOL_DENSE_MAX_KEYS.getPropertyPath(), "-1");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "qwp.egress.symbol.dense.max.keys must be 0 (off) or positive");
         }
     }
 
@@ -3407,6 +3424,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isSqlParallelTopKEnabled());
         Assert.assertFalse(configuration.isSqlParallelWindowJoinEnabled());
         Assert.assertFalse(configuration.isSqlParallelAsOfJoinEnabled());
+        Assert.assertEquals(0, configuration.getQwpEgressSymbolDenseMaxKeys());
         Assert.assertFalse(configuration.isSqlParallelWindowKeyRunsEnabled());
         Assert.assertFalse(configuration.isSqlParallelWindowChainEnabled());
         Assert.assertFalse(configuration.isSqlParallelWindowShardEnabled());

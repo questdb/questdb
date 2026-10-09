@@ -29,6 +29,7 @@ import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressMetrics;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressProcessorState;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.std.Chars;
@@ -105,6 +106,7 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
     @After
     public void resetBlockFill() {
         QwpEgressUpgradeProcessor.DEBUG_DISABLE_BLOCK_FILL = false;
+        QwpEgressProcessorState.symbolDenseMaxKeysOverrideForTest = -1;
         errorExpected = false;
     }
 
@@ -466,6 +468,60 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
                 };
                 assertBlockFillMatchesRowFill(sqls, "?qwp_max_batch_rows=1000", 0, -1);
                 assertBlockFillMatchesRowFill(sqls, "", 0, -1);
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolDenseKeyMapIsByteIdentical() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // a small send buffer, so that new symbols split batches on the dictionary budget
+            try (TestServerMain serverMain = start(
+                    "QDB_HTTP_SEND_BUFFER_SIZE", "163840",
+                    PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS.getEnvVarName(), "1000",
+                    PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS.getEnvVarName(), "64",
+                    PropertyKey.SHARED_QUERY_WORKER_COUNT.getEnvVarName(), "2")) {
+                // a: 5,000 keys in a scattered order, NULLs; b: 7 keys; c: keys 0..1999 in order,
+                // then scattered, so that past row 2,000 a large key arrives before smaller new ones
+                serverMain.execute("create table sd (a symbol capacity 8192, b symbol, c symbol capacity 4096, n long, d double, ts timestamp) " +
+                        "timestamp(ts) partition by DAY BYPASS WAL");
+                serverMain.execute("insert into sd select " +
+                        "case when x % 17 = 0 then null else rpad('a' || ((x * 7919) % 5000), 60, '.') end, " +
+                        "'b' || (x % 7), " +
+                        "case when x <= 2000 then 'c' || x else 'c' || ((x * 104729) % 2000 + 1) end, " +
+                        "x, x * 0.5, (x * 1000000)::timestamp from long_sequence(40000)");
+                final String[] sqls = {
+                        "select * from sd",
+                        // one SYMBOL column, over a filter's gathered rows: its own loop
+                        "select c, n from sd where n > 2000",
+                        "select a, n from sd",
+                        "select b, a, c, d from sd where n % 3 <> 1",
+                        // no blocks: row by row
+                        "select a, c, n from sd order by n desc limit 20000",
+                        "select c, count() from sd group by c order by c",
+                };
+                // the reference: the hash map for every key, row fill
+                QwpEgressProcessorState.symbolDenseMaxKeysOverrideForTest = 0;
+                QwpEgressUpgradeProcessor.DEBUG_DISABLE_BLOCK_FILL = true;
+                final List<byte[]> reference = exchange(sqls, "", 0, -1);
+                Assert.assertTrue(reference.size() > 2 * sqls.length);
+                final long blockRowsBefore = metrics.blockFillRowsCount();
+                // caps that put no key, a few keys, some keys and every key in the array
+                for (int cap : new int[]{0, 1, 64, 1000, 2001, 262144}) {
+                    for (boolean blockFill : new boolean[]{false, true}) {
+                        QwpEgressProcessorState.symbolDenseMaxKeysOverrideForTest = cap;
+                        QwpEgressUpgradeProcessor.DEBUG_DISABLE_BLOCK_FILL = !blockFill;
+                        final List<byte[]> frames = exchange(sqls, "", 0, -1);
+                        for (int i = 0, n = Math.min(reference.size(), frames.size()); i < n; i++) {
+                            if (!Arrays.equals(reference.get(i), frames.get(i))) {
+                                Assert.fail("cap " + cap + ", block fill " + blockFill + ": " + describe(frames, i) + " differs from "
+                                        + describe(reference, i) + ", first differing byte " + Arrays.mismatch(reference.get(i), frames.get(i)));
+                            }
+                        }
+                        Assert.assertEquals("cap " + cap + ", block fill " + blockFill + ": frame count", reference.size(), frames.size());
+                    }
+                }
+                Assert.assertTrue("the block fill must have run", metrics.blockFillRowsCount() > blockRowsBefore);
             }
         });
     }
