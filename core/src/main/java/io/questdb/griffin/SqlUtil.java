@@ -1119,6 +1119,9 @@ public class SqlUtil {
         return implicitCastAsInt((long) value, ColumnType.LONG);
     }
 
+    // Double representation of 2^63 (exclusive upper bound for LONG).
+    // Long.MAX_VALUE (9223372036854775807L) converted to double rounds up to 2^63 (9223372036854775808.0).
+    // Using '<' against 2^63 ensures boundary values just above LONG range fail with inconvertibleValue.
     @SuppressWarnings("unused")
     // used by the row copier
     public static long implicitCastDoubleAsLong(double value) {
