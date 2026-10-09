@@ -26,6 +26,7 @@ package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.RecoveryCoordinator;
@@ -192,10 +193,11 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         assertOnePostingGenerationAfterCrashes(true);
     }
 
-    // The instance runs each mode after the kill (ADAPTIVE is the control), for two starts with no write between.
-    // The first start recovers and pins the table, and the pin holds the rows that end above the save point; the WAL
-    // apply in another mode leaves adaptive and drops the pin. The held rows stay in the purge log, so the second
-    // start replays them again, now with no pin, also when that second start runs in ADAPTIVE.
+    // The instance restarts in each mode after the kill (ADAPTIVE is the control), for two starts with no write
+    // between. Every first start restores the save point. An adaptive start keeps it and pins the table, and the pin
+    // holds the rows that end above the save point. A start in another mode then leaves adaptive: it makes the table
+    // durable, removes the save point and drops the pin. The held rows stay in the purge log, so that start replays
+    // them with no pin, and so does the second start, also when that one runs in ADAPTIVE.
     @Test
     public void testPurgeLogReplayAfterKillKeepsReadersOpen() throws Exception {
         setUpAdaptive();
@@ -233,40 +235,28 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                         Assert.assertEquals("purge rows open at the kill", 4, job.getOutstandingPurgeTasks());
                     }
                 }
-                kill(token);
-                // Recovery follows the table's enrolment, not the instance mode, so the mode can change after it.
-                setCommitMode(modes[0]);
+                // Only the control keeps the save point through the first start, so only it is pinned at either start.
+                final boolean control = "adaptive".equals(modes[0]);
                 for (int start = 1; start <= 2; start++) {
-                    if (start == 2) {
-                        setCommitMode(modes[1]);
-                        kill(token);
-                        // Only the control stays adaptive through the first start, so only it is pinned again.
-                        final boolean control = "adaptive".equals(modes[0]);
-                        Assert.assertEquals(name + ": pinned at start 2", control,
-                                engine.getTableSequencerAPI().getTxnTracker(token).getPinnedEpochTxn() > -1);
-                    }
+                    setCommitMode(modes[start - 1]);
+                    kill(token);
+                    Assert.assertEquals(name + ": pinned at start " + start, control,
+                            engine.getTableSequencerAPI().getTxnTracker(token).getPinnedEpochTxn() > -1);
+                    Assert.assertEquals(name + ": save point at start " + start, control, hasSavePoint(token));
                     Assert.assertEquals(name, CommitMode.fromString(modes[start - 1]), engine.getConfiguration().getCommitMode());
                     // A start builds the purge job, which replays the open rows of its log, before any WAL apply.
                     try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                        // The purge can also run before the WAL apply, as on a server. The first start has restored
+                        // the save point's two rows; at the second the live state holds all seven.
+                        runPurgeJob(job);
+                        assertSymbolRowsThroughIndex(table, start == 1 ? 2 : 7);
                         engine.notifyWalTxnRepublisher(token);
                         drainWalQueue();
                         runPurgeJob(job);
                         // The job stays up, as on a server, and keeps its writer of the purge log.
                         assertQuery("SELECT count(), sum(v) FROM " + table).noLeakCheck().noRandomAccess().expectSize()
                                 .returns("count\tsum\n7\t21\n");
-                        for (int k = 0; k < SYMBOLS; k++) {
-                            long count = 0;
-                            long sum = 0;
-                            for (int v = k; v < 7; v += SYMBOLS) {
-                                count++;
-                                sum += v;
-                            }
-                            assertQuery("SELECT count(), sum(v) FROM " + table + " WHERE s = '" + (char) ('a' + k) + "'")
-                                    .noLeakCheck()
-                                    .noRandomAccess()
-                                    .expectSize()
-                                    .returns("count\tsum\n" + count + "\t" + sum + "\n");
-                        }
+                        assertSymbolRowsThroughIndex(table, 7);
                     } catch (Throwable th) {
                         failures.append(name).append(", start ").append(start).append(": ").append(th.getMessage()).append('\n');
                         break;
@@ -422,6 +412,13 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
             });
         } catch (IOException e) {
             throw new UncheckedIOException(e);
+        }
+    }
+
+    private static boolean hasSavePoint(TableToken token) {
+        try (Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(token);
+            return DurableEpochManifest.exists(engine.getConfiguration().getFilesFacade(), path, path.size());
         }
     }
 
@@ -650,6 +647,23 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
 
     // The count and sum of every symbol of both POSTING columns through their index, against the rows of passes 0 to
     // lastPass of the three-day table.
+    // Reads the table's first rows through the posting index, one symbol at a time.
+    private void assertSymbolRowsThroughIndex(String table, int rows) throws Exception {
+        for (int k = 0; k < SYMBOLS; k++) {
+            long count = 0;
+            long sum = 0;
+            for (int v = k; v < rows; v += SYMBOLS) {
+                count++;
+                sum += v;
+            }
+            assertQuery("SELECT count(), sum(v) FROM " + table + " WHERE s = '" + (char) ('a' + k) + "'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tsum\n" + count + "\t" + (count == 0 ? "null" : sum) + "\n");
+        }
+    }
+
     private void assertThreeDayRowsThroughIndex(String table, int lastPass) throws Exception {
         final long[] count = new long[SYMBOLS + 3];
         final long[] sum = new long[SYMBOLS + 3];
