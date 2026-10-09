@@ -1171,7 +1171,7 @@ public class SqlUtil {
     @SuppressWarnings("unused")
     // used by the row copier
     public static int implicitCastFloatAsInt(float value) {
-        if (value > Integer.MIN_VALUE && value <= Integer.MAX_VALUE) {
+        if (value > Integer.MIN_VALUE && value < INT_MAX_EXCLUSIVE_FLOAT) {
             return (int) value;
         }
 
