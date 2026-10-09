@@ -137,7 +137,7 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
         // Neither of these happens on a healthy writer, and both write a partition-table byte of an area whose
         // hash is cached: a fast-path commit given more symbol counts than the record holds, and an in-place
         // transient symbol count one past the record's symbols. Whatever lands there, the stored checksum must
-        // stay the one a full recomputation over the bytes gives, as it was before the cache existed.
+        // stay the one a full recomputation over the bytes gives.
         assertMemoryLeak(() -> {
             final TableToken token = createHourTable("overrun");
             final ObjList<SymbolCountProvider> symbols = new ObjList<>();
@@ -163,8 +163,8 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
                 assertAreasVerify(path.$());
 
                 // This one changes a covered byte of the published live record, whose own checksum then
-                // mismatches until its area is republished two commits later -- as it did before the cache. The
-                // republishing commit must hash the bytes now there rather than reuse the entry from before.
+                // mismatches until its area is republished two commits later. The republishing commit must hash
+                // the bytes in place rather than reuse the entry cached before the change.
                 final long hashes = writer.getPartitionTableHashCount();
                 writer.collectValueCount(symbols.size(), 0x3c3c3c3c);
                 appendAndCommit(writer, symbols);
@@ -474,8 +474,8 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
     @Test
     public void testTornPartitionTableUnderFastPathRecordIsDetected() throws Exception {
         // The fast path republishes an area whose partition table was written earlier and, under NOSYNC or
-        // ADAPTIVE, not flushed. Its checksum is now assembled from the cached partition-table hash, yet it is
-        // the same number a full recomputation gives, so flipping ANY covered byte of that record -- header or
+        // ADAPTIVE, not flushed. Its checksum is assembled from the cached partition-table hash, yet it is
+        // the same number a full recomputation gives, so flipping any covered byte of that record -- header or
         // partition table, including the partition-table length and the trailing half-word term -- must still
         // read as torn and send readers to the previous area.
         assertMemoryLeak(() -> {
