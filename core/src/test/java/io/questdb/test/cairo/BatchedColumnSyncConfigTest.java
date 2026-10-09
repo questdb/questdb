@@ -31,13 +31,13 @@ import org.junit.Test;
 
 /**
  * Verifies the {@code cairo.adaptive.epoch.column.sync.batched} operator override drives
- * {@link io.questdb.cairo.CairoConfiguration#isAdaptiveEpochColumnSyncBatched()} — the gate
- * {@code TableWriter.syncColumns} consults to choose the batched SYNC flush vs the proven per-file
+ * {@link io.questdb.cairo.CairoConfiguration#isAdaptiveEpochColumnSyncBatched()}, the gate
+ * {@code TableWriter.syncColumns} consults to choose the batched SYNC flush or the per-file
  * {@code msync(MS_SYNC)} fallback.
  *
- * <p>The test harness builds its config with fast_commit detection OFF (the production
+ * <p>The test harness builds its config with fast_commit detection off (the production
  * {@code loadAdditionalConfigurations} flag is false under tests), so the getter returns exactly the
- * property value here — deterministic regardless of the CI machine's filesystem. The
+ * property value here, whatever the machine's filesystem. The
  * {@code propertyEnabled AND FastCommitCheck != ENABLED} composition that the production config layers
  * on top is covered by {@code FastCommitCheckTest} (the detection half) and asserted structurally in
  * {@code PropServerConfigurationTest}.
@@ -62,7 +62,7 @@ public class BatchedColumnSyncConfigTest extends AbstractCairoTest {
 
     @Test
     public void testOperatorCanForceDisable() {
-        // The safety valve: an operator can force the batched path OFF even when detection is UNKNOWN.
+        // The safety valve: an operator can force the batched path off even when detection is UNKNOWN.
         try {
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, "false");
             Assert.assertFalse(engine.getConfiguration().isAdaptiveEpochColumnSyncBatched());
