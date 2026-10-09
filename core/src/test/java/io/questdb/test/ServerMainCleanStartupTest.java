@@ -73,13 +73,10 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                                 true
                                 """);
 
-                // ensure transactions. Project only the MODE-INDEPENDENT columns: under ADAPTIVE a real
+                // ensure transactions. Project only the mode-independent columns: under ADAPTIVE a real
                 // ServerMain fires durable epochs on a wall-clock schedule, so durableEpochSeqTxn/lastEpochTs
-                // are timing-dependent (lastEpochTs is a wall-clock instant), and localDurableSeqTxn is
-                // adaptive-only too -- WalWriter only calls setLocalDurableSeqTxn under ADAPTIVE, so it stays
-                // at its -1 initial value in every other mode. Keeping it here pinned this smoke test to the
-                // suite default. The epoch columns are covered deterministically by the adaptive-epoch
-                // suites; this clean-start check asserts the stable frontier instead.
+                // are timing-dependent, and localDurableSeqTxn advances only under ADAPTIVE and SYNC, so it
+                // would tie this test to one commit mode.
                 new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
                 }, "select name, suspended, writerTxn, bufferedTxnSize, sequencerTxn, errorTag, errorMessage, memoryPressure, recoveryIncarnation from wal_tables order by 1")
                         .noLeakCheck()
@@ -90,10 +87,10 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                                 """);
 
 
-                // Under the default ADAPTIVE commit mode the background apply job holds y's
-                // writer through the durable-epoch advance a beat longer than NOSYNC did, so
-                // right after apply the pooled ownership_reason is briefly "WAL Data
-                // Application". Poll until the writer settles back into the pool (released).
+                // Under ADAPTIVE the background apply job holds y's writer through the
+                // durable-epoch advance, so right after apply the pooled ownership_reason is
+                // briefly "WAL Data Application". Poll until the writer settles back into the
+                // pool (released).
                 TestUtils.assertEventually(() ->
                         new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
                         }, "select table_name, ownership_reason from writer_pool where table_name in ('x','y') order by 1")
@@ -115,11 +112,9 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
 
                 // ADAPTIVE restart recovery rolls the WAL tail forward (y's last commit is
                 // past its last durable epoch), which opens y's writer and returns it to the
-                // pool released. So y legitimately appears pooled-but-unowned after restart,
-                // unlike NOSYNC where restart touched nothing. The invariant that still holds
-                // -- and that this check verifies -- is that the restart leaves no writer
-                // PERSISTENTLY OWNED; filter to owned rows and poll until the roll-forward
-                // writer settles back to released.
+                // pool released, so y can appear pooled but unowned after restart. The check
+                // is that the restart leaves no writer persistently owned: filter to owned
+                // rows and poll until the roll-forward writer settles back to released.
                 TestUtils.assertEventually(() ->
                         new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
                         }, "select table_name, ownership_reason from writer_pool where table_name in ('x','y') and ownership_reason is not null and ownership_reason != '' order by 1")
