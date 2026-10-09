@@ -38,19 +38,15 @@ import org.junit.Test;
  * A {@code _txn} that names more symbol columns than {@code _meta} declares must fail with something that
  * says so, naming the table and both counts.
  * <p>
- * The two are views of the same list -- {@code _txn}'s symbol area is written FROM
+ * The two are views of the same list: {@code _txn}'s symbol area is written from
  * {@code denseSymbolMapWriters}, and that list is rebuilt from {@code _meta}'s live symbol columns on every
- * open -- so they can only disagree if the two files were not captured from the same table shape. Recovery
- * restoring a durable epoch is the way that happened in practice.
+ * open. They disagree only when the two files come from different table shapes, as after recovery restores a
+ * durable epoch. Without the guard the {@code TableWriter} constructor (initLastPartition -> performRecovery
+ * -> rollbackSymbolTables) throws a bare {@code "Array index out of range: N"} from {@code ObjList.get},
+ * naming neither the table nor the mismatch.
  * <p>
- * Untended, it surfaced as a bare {@code "Array index out of range: N"} from {@code ObjList.get}, thrown from
- * inside the {@code TableWriter} CONSTRUCTOR (initLastPartition -> performRecovery -> rollbackSymbolTables),
- * naming neither the table nor the mismatch. Tracing one back to its cause took a long time, which is the
- * whole reason the guard exists.
- * <p>
- * The mismatch is built here by putting a genuine earlier {@code _meta} -- one that predates a symbol column
- * -- back over the live one, with its metadataVersion re-stamped so nothing rejects it for the wrong reason.
- * That is exactly the shape recovery produced.
+ * The test builds the mismatch by putting an earlier {@code _meta}, one that predates a symbol column, back
+ * over the live one, with its metadataVersion re-stamped so nothing rejects it for another reason.
  */
 public class TableWriterSymbolCountMismatchTest extends AbstractCairoTest {
 
@@ -69,14 +65,13 @@ public class TableWriterSymbolCountMismatchTest extends AbstractCairoTest {
             engine.releaseAllWriters();
             engine.releaseAllReaders();
 
-            // Re-stamp the stale _meta to the live metadataVersion so the mismatch under test is the ONLY
+            // Re-stamp the stale _meta to the live metadataVersion so the mismatch under test is the only
             // thing wrong with it, then put it back in place: _meta says 1 symbol column, _txn says 2.
             alignMetadataVersion(tt, staleMeta);
             restoreOver(tt, staleMeta);
 
-            // performRecovery is armed by a leftover table lock file -- a writer that died without releasing
-            // it. That is the only path on which rollbackSymbolTables runs at open, and it is exactly the
-            // situation the crash-fuzz was in when this surfaced.
+            // A leftover table lock file, left by a writer that died without releasing it, arms
+            // performRecovery. That is the only path on which rollbackSymbolTables runs at open.
             armStaleLock(tt);
 
             Throwable failure = null;
