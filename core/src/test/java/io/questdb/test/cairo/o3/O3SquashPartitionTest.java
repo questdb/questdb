@@ -1933,12 +1933,16 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
             engine.resetFrameFactory();
 
+            // The squash grows the target by the 200 inserted rows only, past the page-rounded length its files were
+            // truncated to on close. The wide pad column - 404 bytes a row - makes that growth outrun any page size,
+            // 64KiB on Windows included, so the squash has to allocate.
             execute(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
                             " -x j," +
                             " rnd_str(5,16,2) as str," +
+                            " rpad(x::string, 200, 'q') pad," +
                             " timestamp_sequence('2020-02-04T00', 60*1000000L)::" + timestampType.getTypeName() + " ts" +
                             " from long_sequence(60*36)" +
                             ") timestamp (ts) partition by DAY"
@@ -1950,6 +1954,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                                 " cast(x as int) * 1000000 i," +
                                 " -x - 1000000L as j," +
                                 " rnd_str(5,16,2) as str," +
+                                " rpad(x::string, 200, 'q') pad," +
                                 " timestamp_sequence('2020-02-04T20:01', 1000000L) ts" +
                                 " from long_sequence(200)"
                 );

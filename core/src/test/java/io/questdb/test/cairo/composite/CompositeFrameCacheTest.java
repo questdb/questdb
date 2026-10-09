@@ -241,8 +241,11 @@ public class CompositeFrameCacheTest extends AbstractCairoTest {
             assertReusable(1);
 
             final TableToken token = engine.verifyTableName("t");
+            // Enough rows to grow the column files past the page-rounded length the previous plan left them at,
+            // whatever the page size: 10,000 longs are 80,000 bytes, more than a 64KiB page on Windows. Armed after
+            // the WAL commit, so only the apply can trip on it.
+            execute("INSERT INTO t (ts, v, w, s) " + batch("T18:00:30", 30_000, 10_000));
             failAllocate.set(true);
-            execute("INSERT INTO t (ts, v, w, s) " + batch("T18:00:30", 30_000, 10));
             drainWalQueue();
             failAllocate.set(false);
             Assert.assertTrue("a failed allocation did not suspend the table", engine.getTableSequencerAPI().isSuspended(token));
@@ -252,7 +255,7 @@ public class CompositeFrameCacheTest extends AbstractCairoTest {
             execute("ALTER TABLE t RESUME WAL");
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
-            execute("INSERT INTO ref (ts, v, w, s) " + batch("T18:00:30", 30_000, 10));
+            execute("INSERT INTO ref (ts, v, w, s) " + batch("T18:00:30", 30_000, 10_000));
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "ref", "t", LOG);
             assertReusable(1);
         });
@@ -319,12 +322,13 @@ public class CompositeFrameCacheTest extends AbstractCairoTest {
             assertReusable(1);
 
             // Several clusters, so this is a plan of several MERGE and NEW_PIECE actions on the same files - and
-            // enough rows that every file has to grow past the page the previous commit left it rounded up to.
+            // enough rows that every file has to grow past the page the previous commit left it rounded up to, whatever
+            // the page size: 8,400 longs are 67,200 bytes, more than a 64KiB page on Windows.
             final String multi = "SELECT * FROM (" +
-                    batch("T01:00:30", 30_000, 600) +
-                    " UNION ALL " + batch("T06:03:15", 40_000, 600) +
-                    " UNION ALL " + batch("T18:00:30", 50_000, 600) +
-                    " UNION ALL " + batch("T23:40:00", 60_000, 600) +
+                    batch("T01:00:30", 30_000, 2_100) +
+                    " UNION ALL " + batch("T06:03:15", 40_000, 2_100) +
+                    " UNION ALL " + batch("T18:00:30", 50_000, 2_100) +
+                    " UNION ALL " + batch("T22:40:00", 60_000, 2_100) +
                     ")";
             armed.set(true);
             execute("INSERT INTO t (ts, v, w, s) " + multi);
