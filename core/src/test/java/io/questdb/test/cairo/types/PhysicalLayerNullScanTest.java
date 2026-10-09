@@ -42,7 +42,9 @@ import java.util.regex.Pattern;
  * cannot stop a class from naming a sentinel, so this test scans the source of the record-access
  * and page-frame classes whose sites key on the descriptor and fails when a class names more NULL
  * tokens than its recorded baseline. Every token in the baseline is a NULL decision that already
- * sits in physical code; a change may move one out, never add one.
+ * sits in physical code; a change may move one out, never add one. The exception is a type that
+ * keeps NULL in a validity bitmap: there NULL is physical, the record and map classes answer
+ * {@code isNull} from the bitmap, and that type's change raises their baselines with the reason.
  * <p>
  * The baseline covers the record-access layers, the page-frame classes and the codecs that key on
  * the descriptor.

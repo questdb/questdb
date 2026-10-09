@@ -421,6 +421,36 @@ Places outside the worklist that a type may still meet:
 - ILP has no unsigned form: the client sends a value in its family's form, so an unsigned INT's
   largest value goes out as -1. An unsigned type declares `ILP column kind` refused, which
   the kit and the coverage tests then accept, or adds its own ILP parsing.
+- Whole-type comparisons (`columnTypeA != columnTypeB`) name no type, so the audit lists none of
+  them. They are right for a type that stands apart, and wrong for a type meant to stand in for
+  another: a NOT NULL INT as a type of its own could not join INT keys (the join key checks in
+  `SqlCodeGenerator`), and UPDATE could not set its column from an INT value (UPDATE's exact-type
+  check in `SqlCompilerImpl`). Such a type needs a test of every operation it shares with the
+  other type.
+- Relations are declared by the source type: a type's implicit casts list the types it widens to.
+  A new type that existing values should widen into is added to their lists, which changes those
+  types' function resolution (BOOLEAN widening into a nullable BOOLEAN makes `count(boolean)`
+  resolve); `OverloadSoundnessTest` shows each such change.
+- A new column file, such as a validity bitmap beside the data, is not a type's decision, and no
+  place names it. It meets: `TableWriter`'s column setup, file opening, append position and row
+  append; `TableReader`'s mapping and reload; the out-of-order staging (sort, move of uncommitted
+  rows, lag shift), dispatch, append and new-partition jobs; `WalWriter`'s files and row append, the
+  WAL segment file cache, the WAL-to-partition copy and the lag merge; the page-frame readers
+  (`FwdTableReaderPageFrameCursor`, `BwdTableReaderPageFrameCursor`, `PageFrameAddressCache`,
+  `PageFrameMemoryPool`, `PageFrameMemoryRecord`); the Parquet conversion's column descriptor in
+  `TableUtils`; RENAME and DROP COLUMN, the column purge, partition squash
+  (`ContiguousFile*FrameColumn`), attach and detach, checkpoint and backup file lists; the covering
+  index's NULL fills; and, for a NULL kept outside the value, the records that reshape rows
+  (`VirtualRecord`, `JoinRecord`, `SelectedRecord`, `UnionRecord`, `UnionCastRecord`), the map key
+  layout (`OrderedMap`), the record chain, and the QWP columnar appender. Once built, later types
+  that keep NULL the same way reuse it unchanged. The `validity batch site` comments mark only
+  the bulk NULL fills among these.
+- What a column-top row reads is decided by the column's type alone: by accessor width in
+  `NullMemoryCMR`, by a frame address of 0 in the page-frame readers, by the type's NULL fill in
+  the out-of-order merge, and in `TableWriter.hasNullsInValues`,
+  `DedupColumnCommitAddresses.setColValues`, `TableWriter.produceNativeFromParquet` and
+  `PushdownFilterExtractor.isNullOpPushable`. A value chosen per column, such as a column default,
+  changes each of them.
 
 ## 9. Functions over new NULL kinds
 
