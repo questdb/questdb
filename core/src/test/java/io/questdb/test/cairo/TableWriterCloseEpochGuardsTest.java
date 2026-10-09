@@ -35,43 +35,31 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * A {@link TableWriter} whose CONSTRUCTOR fails must propagate the REAL open failure, and its
- * partially-built state must not be walked by any close-time action.
+ * The close-time durable-epoch flush of a {@link TableWriter} must neither hide a failed constructor's real
+ * exception nor swallow a data-sync failure.
  *
- * <p>{@code doClose()} is invoked from the constructor's own catch block, so at that point
- * {@code columns} / {@code denseSymbolMapWriters} / {@code denseIndexers} may be only partly populated —
- * while {@code effectiveCommitMode} was resolved much earlier and is already ADAPTIVE. The
- * graceful-close durable-epoch flush therefore passed all of its guards and walked those half-built
- * lists, dying with {@code AssertionError: index out of bounds}. That is neither a
- * {@code CairoException} nor a {@code CairoError}, so the block's "best effort" catch missed it: the
- * AssertionError escaped {@code doClose()} and REPLACED the constructor's real exception.
- *
- * <p>The consequence was not merely a confusing error. {@code ApplyWal2TableJob.purgeTableFiles} catches
- * only {@code CairoException} when it reopens a half-deleted table to release its files, so the
- * substituted AssertionError aborted the WAL drop-table retry chain and left the table's files —
- * {@code _txn} included — on disk permanently. That end-to-end symptom is
- * {@code WalTableSqlTest.testDropFailedWhileSymbolFileLocked}; this test pins the mechanism directly, so
- * a regression is diagnosed here rather than as a mystifying failure three layers away.
+ * <p>{@code doClose()} runs from the constructor's own catch block, when {@code columns},
+ * {@code denseSymbolMapWriters} and {@code denseIndexers} may be only partly built while
+ * {@code effectiveCommitMode} is already ADAPTIVE. An error from an epoch flush that walks those lists would
+ * replace the real one, and {@code ApplyWal2TableJob.purgeTableFiles} catches only {@code CairoException}
+ * when it reopens a half-deleted table, so the WAL drop-table retry would abort and leave the table's files
+ * on disk. {@code WalTableSqlTest.testDropFailedWhileSymbolFileLocked} covers that end to end; this class
+ * tests the mechanism directly.
  */
 public class TableWriterCloseEpochGuardsTest extends AbstractCairoTest {
 
     /**
-     * THE DURABILITY GUARANTEE. Widening the close-epoch's catch to {@code Throwable} must NOT soften the
-     * fail-stop contract: a genuine data-sync (fsync/msync) failure during that epoch is INDETERMINATE —
-     * the device may or may not hold the bytes — so it must still poison the engine and propagate as a
-     * {@code CairoError}, never be logged-and-swallowed as "best effort".
+     * A data-sync (fsync/msync) failure during the close epoch is indeterminate: the device may or may not
+     * hold the bytes. The broad catch around the close epoch must not soften that: the failure still poisons
+     * the engine and surfaces as a {@code CairoError}. The catch routes to
+     * {@code handleBestEffortDurableEpochFailure}, which hands anything {@code CairoException.isDataSyncFailure}
+     * recognises (it walks the whole cause chain) to {@code engine.handleDataSyncFailure}. Swallowing it would
+     * let a writer close cleanly after an epoch whose data never reached the device, and a later boot would
+     * trust that save point.
      *
-     * <p>That still holds because the catch routes to {@code handleBestEffortDurableEpochFailure}, which
-     * re-raises via {@code engine.handleDataSyncFailure} for anything
-     * {@code CairoException.isDataSyncFailure} recognises (it walks the whole cause chain). This test pins
-     * that rather than leaving it as an argument: swallowing here would let a writer close "cleanly" after
-     * an epoch whose payloads never reached the device, and a later boot would then trust a
-     * save point whose data is not actually durable.
-     *
-     * <p>Note the ordering that keeps this safe even so: {@code advanceDurableEpoch} writes into the
-     * INACTIVE ping-pong generation and writes its header LAST, after the payload fsyncs; the header
-     * publishes it. A failure part-way therefore leaves the previous generation authoritative — the epoch is
-     * skipped, never corrupted.
+     * <p>{@code advanceDurableEpoch} writes into the inactive {@code _epoch.manifest} generation and writes
+     * its header last, after the payload fsyncs. A failure part-way leaves the previous generation
+     * authoritative: the epoch is skipped, never corrupted.
      */
     @Test
     public void testCloseEpochDataSyncFailureRemainsFatal() throws Exception {
@@ -88,17 +76,16 @@ public class TableWriterCloseEpochGuardsTest extends AbstractCairoTest {
 
                 final TableToken tt = engine.verifyTableName("t2");
                 engine.releaseInactive();
-                // Same restart model as the test below: leaves an un-epoched tail so the close-epoch is
-                // eligible and actually reaches an fsync.
+                // Same restart model as the test below: leaves an un-epoched tail, so the close epoch is
+                // eligible and reaches an fsync.
                 engine.getTableSequencerAPI().purgeTxnTracker(tt.getDirName());
 
                 final java.util.concurrent.atomic.AtomicInteger fatalCalls =
                         new java.util.concurrent.atomic.AtomicInteger();
                 engine.setDurabilityFailureHandler(failure -> fatalCalls.incrementAndGet());
 
-                // Off-pool writer: a POOLED writer's close() only returns the tenant to the pool and never
-                // reaches doClose(), so the epoch would not run at all. Same pattern TableWriterTest uses
-                // for its fatal directory-fsync test.
+                // Off-pool writer: a pooled writer's close() only returns the tenant to the pool and never
+                // reaches doClose(), so the epoch would not run.
                 final TableWriter w = newOffPoolWriter("t2");
                 ff.failNext = true;
                 Throwable seen = null;
@@ -108,7 +95,7 @@ public class TableWriterCloseEpochGuardsTest extends AbstractCairoTest {
                     seen = t;
                 }
 
-                // FAIL-STOP: the failure must surface, as a data-sync CairoError.
+                // Fail-stop: the failure surfaces as a data-sync CairoError.
                 Assert.assertNotNull("a data-sync failure inside the close epoch must remain FATAL, not be "
                         + "swallowed as best-effort", seen);
                 Assert.assertTrue("the fatal signal must be a CairoError", seen instanceof CairoError);
@@ -120,12 +107,9 @@ public class TableWriterCloseEpochGuardsTest extends AbstractCairoTest {
                         1, fatalCalls.get());
                 Assert.assertTrue("the engine must be poisoned after an indeterminate writeback failure",
                         engine.isDurabilityFailed());
-                // ...AND the writer must still have released everything. Raising the fatal error from the
-                // point of failure would skip doClose()'s frees, leaking fds and native memory and
-                // stranding the table lock -- on the very path whose job is to release them. That half is
-                // enforced by the surrounding assertMemoryLeak()'s fd/allocation check, which failed
-                // loudly ("cached file descriptors: 7 ... actual: 19") until the rethrow was deferred to
-                // the end of doClose(). No explicit assert here: the harness IS the assert.
+                // The writer must still release everything: doClose() raises the fatal error only after its
+                // frees, so no fd, native memory or table lock leaks. The surrounding assertMemoryLeak()
+                // checks fds and allocations, so no explicit assert is needed here.
             });
         } finally {
             engine.resetDurabilityFailure();
@@ -133,15 +117,15 @@ public class TableWriterCloseEpochGuardsTest extends AbstractCairoTest {
     }
 
     /**
-     * Open a writer on a table whose symbol offset file has been removed underneath it (exactly the
-     * half-deleted state a failed WAL drop leaves). The constructor must fail with the real
+     * Open a writer on a table whose symbol offset file has been removed underneath it, the half-deleted
+     * state a failed WAL drop leaves. The constructor must fail with the real
      * {@code CairoException}, not with an {@code AssertionError} thrown by the close-time epoch flush.
      */
     @Test
     public void testFailedOpenPropagatesRealErrorUnderAdaptive() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        // Long interval so the cadence gate cannot fire an epoch of its own mid-test; the eligibility gap
-        // the bug needs is created deliberately below by discarding the in-memory tracker.
+        // A long interval, so the cadence gate cannot fire an epoch of its own mid-test; the test creates
+        // the eligibility gap below by discarding the in-memory tracker.
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "1h");
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, sym symbol, v long) timestamp(ts) partition by day wal");
@@ -152,19 +136,18 @@ public class TableWriterCloseEpochGuardsTest extends AbstractCairoTest {
 
             final TableToken tt = engine.verifyTableName("t");
 
-            // Drop every cached writer so the next open really re-reads from disk. NOTE this close is a
-            // HEALTHY one, so it fires the graceful-close epoch and drags durableEpochSeqTxn up to seqTxn.
+            // Drop every cached writer so the next open re-reads from disk. This close is a healthy one, so
+            // it fires the graceful-close epoch and moves durableEpochSeqTxn up to seqTxn.
             engine.releaseInactive();
 
-            // Model a RESTART: discard the in-memory tracker so a fresh one starts at durableEpochSeqTxn=0
-            // while _txn on disk is still at the applied seqTxn. That gap is what makes the close-epoch
-            // block eligible on the very next open -- the ordinary state after any process restart, and the
-            // state the failed-drop retry reopens into. Without it the block short-circuits on
-            // seqTxn == durableEpochSeqTxn and the bug is unreachable.
+            // Model a restart: discard the in-memory tracker, so a fresh one starts at durableEpochSeqTxn=0
+            // while _txn on disk is still at the applied seqTxn. That gap makes the close-epoch block
+            // eligible on the next open, as after any process restart and in the failed-drop retry. Without
+            // it the block short-circuits on seqTxn == durableEpochSeqTxn.
             engine.getTableSequencerAPI().purgeTxnTracker(tt.getDirName());
 
-            // Remove the symbol offset file: configureSymbolTable() will now fail mid-construction,
-            // leaving the column/symbol lists partly built exactly as the failed-drop path does.
+            // Remove the symbol offset file: configureSymbolTable() fails mid-construction, leaving the
+            // column and symbol lists partly built, as the failed-drop path does.
             try (Path p = new Path()) {
                 p.of(configuration.getDbRoot()).concat(tt).concat("sym.o");
                 Assert.assertTrue("test setup: sym.o must exist before removal",
@@ -181,11 +164,11 @@ public class TableWriterCloseEpochGuardsTest extends AbstractCairoTest {
             try (TableWriter ignored = getWriter(tt)) {
                 Assert.fail("opening a writer with sym.o missing must fail");
             } catch (CairoException e) {
-                // The REAL failure, surfaced intact.
+                // The real failure, surfaced intact.
                 io.questdb.test.tools.TestUtils.assertContains(e.getFlyweightMessage(), "SymbolMap does not exist");
             } catch (AssertionError e) {
-                // Exactly the regression: the best-effort close-epoch walked half-built state and its
-                // AssertionError replaced the constructor's CairoException.
+                // The best-effort close epoch walked half-built state and its AssertionError replaced the
+                // constructor's CairoException.
                 throw new AssertionError(
                         "the close-time durable-epoch flush ran on a PARTIALLY-CONSTRUCTED writer and its "
                                 + "error replaced the real open failure: " + e, e);
@@ -194,8 +177,8 @@ public class TableWriterCloseEpochGuardsTest extends AbstractCairoTest {
     }
 
     /**
-     * Fails exactly the NEXT {@code fsync} with a genuine data-sync failure, then behaves normally. One-shot
-     * so the failure lands inside the close epoch and nothing else in the test is disturbed.
+     * Fails the next {@code fsync} with a genuine data-sync failure, then behaves normally. One-shot, so the
+     * failure lands inside the close epoch and nothing else in the test is disturbed.
      */
     private static final class OneShotFsyncFailureFacade extends io.questdb.test.std.TestFilesFacadeImpl {
         boolean failNext;
