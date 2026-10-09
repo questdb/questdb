@@ -597,10 +597,15 @@ public class RecoveryCoordinator {
                     .put(" out of the table directory and start again");
         }
         if (selected == null) {
-            throw CairoException.critical(0)
+            final CairoException e = CairoException.critical(0)
                     .put("no trustworthy adaptive epoch generation; refusing unsafe live-state fallback [table=")
-                    .put(token.getTableName()).put(", dir=").put(token.getDirName())
-                    .put("]; after a clean stop or a process kill, move ").put(DurableEpochManifest.FILE_NAME).put(".0 and ")
+                    .put(token.getTableName()).put(", dir=").put(token.getDirName()).put(']');
+            // A generation restored before its content checks failed has replaced the live files, so moving the
+            // save point out would start the table from that generation.
+            if (restored) {
+                throw e.put("; recovery has rewritten the live table files, restore the table from a backup or a checkpoint");
+            }
+            throw e.put("; after a clean stop or a process kill, move ").put(DurableEpochManifest.FILE_NAME).put(".0 and ")
                     .put(DurableEpochManifest.FILE_NAME).put(".1 out of the table directory and start again;")
                     .put(" after a power loss, restore the table from a backup or a checkpoint");
         }
