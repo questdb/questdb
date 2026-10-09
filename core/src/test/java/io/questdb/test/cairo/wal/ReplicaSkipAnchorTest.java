@@ -130,7 +130,7 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
 
     @Test
     public void testCreateUnderReplicaSkipCrashAfterPurge() throws Exception {
-        // The reviewer's probe: a table created (Enterprise: registered by the downloader) while the node is a
+        // A table created (Enterprise: registered by the downloader) while the node is a
         // replica, applied in several batches with idle eviction, WAL purged, then a crash.
         run(() -> {
             setAdaptive(true);
