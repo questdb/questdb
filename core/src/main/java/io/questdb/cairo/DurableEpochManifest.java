@@ -12,6 +12,7 @@
  ******************************************************************************/
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
@@ -19,6 +20,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -501,6 +503,32 @@ public final class DurableEpochManifest {
                 ff.syncfs(fd);
             } finally {
                 ff.close(fd);
+            }
+        }
+    }
+
+    /**
+     * Makes the live files of the given tables durable, for a caller that keeps them while no save point protects
+     * them: a start that leaves adaptive commit mode, and an Enterprise promote, which inherits what the replica applied
+     * lazily. Where {@link FilesFacade#syncfs(long)} is filesystem-wide, one sync of the database root and of every
+     * volume a table links to covers every table; elsewhere each table is flushed file by file.
+     */
+    public static void fsyncTables(CairoEngine engine, ObjList<TableToken> tableTokens) {
+        if (tableTokens.size() == 0) {
+            return;
+        }
+        final CairoConfiguration configuration = engine.getConfiguration();
+        final FilesFacade ff = configuration.getFilesFacade();
+        if (ff.isSyncfsFileSystemWide()) {
+            try (Path path = new Path()) {
+                DatabaseCheckpointAgent.syncRestoredState(ff, path.of(configuration.getDbRoot()), true);
+            }
+            return;
+        }
+        for (int i = 0, n = tableTokens.size(); i < n; i++) {
+            final TableToken tableToken = tableTokens.getQuick(i);
+            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                fsyncTableFiles(configuration, tableToken, metadata.getTimestampType(), metadata.getPartitionBy());
             }
         }
     }
