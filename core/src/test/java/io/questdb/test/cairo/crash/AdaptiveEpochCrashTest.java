@@ -36,6 +36,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
@@ -334,35 +335,42 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * A power loss after every durability operation and after every deletion of a save-point removal: the exit a
-     * non-adaptive restart performs on a table with two save points, whose WAL below the newer one was purged
-     * under its floor.
+     * A power loss after every durability operation and after every deletion of a save-point removal on a table with
+     * two save points, whose WAL below the newer one was purged under its floor: the exit a non-adaptive restart
+     * performs, and the demote clear.
      */
     @Test
     public void testPowerLossAfterEveryDeletionOfSavePointRemoval() throws Exception {
         runWithFaultFacade(() -> {
             configureSavePoints();
-            for (String exitMode : new String[]{"sync", "nosync"}) {
+            for (String removal : new String[]{"sync exit", "nosync exit", "demote clear"}) {
+                final boolean demote = "demote clear".equals(removal);
                 for (int deletions = 0; deletions < 2; deletions++) {
                     for (int n = 1; n <= MAX_SWEEP; n++) {
                         setCommitMode("adaptive");
-                        final Scenario s = newScenario("x_" + exitMode + "_" + deletions + "_" + n);
+                        final Scenario s = newScenario("x_" + removal.charAt(0) + "_" + deletions + "_" + n);
                         insertRows(s, 0, 2);
                         drainWalQueue();
                         engine.releaseAllWalWriters();
                         publishSavePoint(s);
                         purgeWal();
                         markDurableBaseline();
-                        insertRows(s, 1, 2);
-                        drainWalQueue();
-                        cleanRestart(s, exitMode);
-                        final Action exit = () -> {
-                            try (TableWriter ignore = getWriter(s.token)) {
-                                Assert.assertNotNull(ignore);
-                            }
-                        };
-                        final boolean crashed = deletions == 0 ? crashAtOperation(s, n, exit) : crashAfterRemoval(s, n, exit);
-                        if (!crashed && "sync".equals(exitMode)) {
+                        final Action action;
+                        if (demote) {
+                            // A replica's applied state has NOSYNC grade, so no rows are applied after the save point.
+                            action = () -> reconcileSavePoint(s, LocalDurabilityPolicy.REPLICA_SKIP);
+                        } else {
+                            insertRows(s, 1, 2);
+                            drainWalQueue();
+                            cleanRestart(s, removal.substring(0, removal.indexOf(' ')));
+                            action = () -> {
+                                try (TableWriter ignore = getWriter(s.token)) {
+                                    Assert.assertNotNull(ignore);
+                                }
+                            };
+                        }
+                        final boolean crashed = deletions == 0 ? crashAtOperation(s, n, action) : crashAfterRemoval(s, n, action);
+                        if (!crashed && "sync exit".equals(removal)) {
                             // Not judged: the SYNC replay rewrites a partition directory the rewind left on disk
                             // and does not sync its entry, which the exit does not flush yet.
                             dropScenario(s);
@@ -370,9 +378,9 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                         }
                         final String label;
                         if (crashed) {
-                            label = exitMode + " exit, power loss after " + (deletions == 0 ? "durability operation " : "deletion ") + n;
+                            label = removal + ", power loss after " + (deletions == 0 ? "durability operation " : "deletion ") + n;
                         } else {
-                            label = exitMode + " exit completed, then rows and a WAL purge";
+                            label = removal + " completed, then rows and a WAL purge";
                             insertRows(s, 2, 2);
                             drainWalQueue();
                             purgeWal();
@@ -381,6 +389,57 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                         if (!crashed) {
                             break;
                         }
+                    }
+                }
+            }
+            assertNoRowFailures();
+        });
+    }
+
+    /**
+     * A power loss at every durability operation of the baseline a table marked for enrolment gets: at the start
+     * after a demote clear, at the writer's reconcile after a promote, and at the start after a restore of a table
+     * that was never enrolled. The last row of each sweep loses power after the baseline, more rows and a WAL purge.
+     */
+    @Test
+    public void testPowerLossAtEveryDurabilityOperationOfMarkedBaseline() throws Exception {
+        runWithFaultFacade(() -> {
+            configureSavePoints();
+            for (String baseline : new String[]{"demote clear, then a start", "demote clear, then a promote", "restore, then a start"}) {
+                final boolean restore = baseline.startsWith("restore");
+                final boolean promote = baseline.endsWith("promote");
+                for (int op = 1; op <= MAX_SWEEP; op++) {
+                    setCommitMode(restore ? "nosync" : "adaptive");
+                    final Scenario s = newScenario("m" + (restore ? 'r' : promote ? 'p' : 's') + op);
+                    insertRows(s, 0, 2);
+                    drainWalQueue();
+                    engine.releaseAllWalWriters();
+                    markDurableBaseline();
+                    s.markUnsyncedRowsDurable();
+                    if (restore) {
+                        try (Path p = new Path()) {
+                            final int rootLen = p.of(configuration.getDbRoot()).concat(s.token).size();
+                            RecoveryCoordinator.markRestoredForEnrolment(configuration.getFilesFacade(), p, rootLen);
+                            DurableEpochManifest.fsyncDirectory(configuration, p, rootLen);
+                        }
+                    } else {
+                        reconcileSavePoint(s, LocalDurabilityPolicy.REPLICA_SKIP);
+                    }
+                    assertFilePresent(s.token, RecoveryCoordinator.RESTORE_ENROL_FILE_NAME);
+                    Assert.assertEquals(0, savePointCount(s));
+                    final boolean crashed = crashAtOperation(s, op, promote
+                            ? () -> reconcileSavePoint(s, LocalDurabilityPolicy.ALWAYS_ON)
+                            : () -> cleanRestart(s, "adaptive"));
+                    if (!crashed) {
+                        insertRows(s, 2, 2);
+                        drainWalQueue();
+                        purgeWal();
+                    }
+                    powerLossAndCheck(s, crashed
+                            ? baseline + ", power loss after durability operation " + op
+                            : baseline + " completed, then rows and a WAL purge");
+                    if (!crashed) {
+                        break;
                     }
                 }
             }
@@ -559,7 +618,7 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     private void assertFilePresent(TableToken tt, String fileName) {
         try (Path p = new Path()) {
             p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(fileName);
-            Assert.assertTrue("creation baseline file must exist: " + fileName,
+            Assert.assertTrue(fileName + " must exist",
                     engine.getConfiguration().getFilesFacade().exists(p.$()));
         }
     }
@@ -763,6 +822,17 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         }
     }
 
+    // The writer brings its save point in line with the local durability policy: a replica swaps it for the enrolment
+    // marker, a primary publishes the baseline of a marked table.
+    private void reconcileSavePoint(Scenario s, LocalDurabilityPolicy policy) {
+        engine.setLocalDurabilityPolicy(policy);
+        try (TableWriter w = getWriter(s.token)) {
+            w.reconcileDurableEpochAnchor();
+        } finally {
+            engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+        }
+    }
+
     // Recovery must accept the state, a second recovery after a restart must change no file of the table, and the
     // table must then apply its WAL and read back every covered row.
     private String recoverAndCheck(Scenario s) {
@@ -866,6 +936,13 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         crashFf = faultFf;
         faultFf.setDbRoot(root);
         assertMemoryLeak(faultFf, body);
+    }
+
+    private int savePointCount(Scenario s) {
+        try (Path p = new Path()) {
+            p.of(configuration.getDbRoot()).concat(s.token);
+            return DurableEpochManifest.loadCandidates(configuration.getFilesFacade(), p, p.size(), s.token.getTableId()).length;
+        }
     }
 
     // Switches the instance mode and checks the configuration reports it. The test harness drops a pending

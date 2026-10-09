@@ -40,18 +40,26 @@ public final class DurableEpochManifest {
     public static final int FILE_SIZE = 120;
     private static final int BODY_SIZE = 104;
     private static final int FORMAT_VERSION = 3;
-    private static final Log LOG = LogFactory.getLog(DurableEpochManifest.class);
-    private static final int OFFSET_CV_SIZE = 64;
     private static final int HEADER_ABSENT = 0;
     private static final int HEADER_DAMAGED = 2;
     private static final int HEADER_UNPUBLISHED = 1;
     private static final int HEADER_VALID = 3;
+    private static final Log LOG = LogFactory.getLog(DurableEpochManifest.class);
+    private static final int OFFSET_CV_SIZE = 64;
     private static final int OFFSET_META_SIZE = 80;
     private static final int OFFSET_SEQ_TXN = 24;
     private static final int OFFSET_TXN = 32;
     private static final int OFFSET_TXN_SIZE = 48;
 
     private DurableEpochManifest() {
+    }
+
+    // Whether a save point file of either generation exists, published or not. Leaves the path at the table root.
+    public static boolean exists(FilesFacade ff, Path tablePath, int rootLen) {
+        final boolean exists = ff.exists(tablePath.trimTo(rootLen).concat(FILE_NAME).put(".0").$())
+                || ff.exists(tablePath.trimTo(rootLen).concat(FILE_NAME).put(".1").$());
+        tablePath.trimTo(rootLen);
+        return exists;
     }
 
     /**
@@ -729,6 +737,16 @@ public final class DurableEpochManifest {
         fsyncDirectory(configuration, dirPath, dirLen);
     }
 
+    // Whether the header at `addr` is whole and names this generation and table (any table for a tableId of -1).
+    private static boolean isHeaderValid(long addr, int generation, int tableId) {
+        return Unsafe.getUnsafe().getLong(addr) == TableUtils.SNAPSHOT_CHECKSUM_MAGIC
+                && Unsafe.getUnsafe().getInt(addr + 8) == FORMAT_VERSION
+                && Unsafe.getUnsafe().getInt(addr + 12) == generation
+                && (tableId == -1 || Unsafe.getUnsafe().getInt(addr + 16) == tableId)
+                && Unsafe.getUnsafe().getLong(addr + BODY_SIZE) == TableUtils.SNAPSHOT_CHECKSUM_MAGIC
+                && Unsafe.getUnsafe().getLong(addr + BODY_SIZE + 8) == TableUtils.calculateCvAreaChecksum(addr, BODY_SIZE);
+    }
+
     private static boolean liveFileEquals(FilesFacade ff, Path tablePath, int rootLen, String name, long sectionAddr, long sectionSize) {
         tablePath.trimTo(rootLen).concat(name);
         try {
@@ -771,14 +789,7 @@ public final class DurableEpochManifest {
                 || Unsafe.getUnsafe().getInt(scratch + 8) < FORMAT_VERSION) {
             return HEADER_UNPUBLISHED;
         }
-        if (Unsafe.getUnsafe().getInt(scratch + 8) != FORMAT_VERSION
-                || Unsafe.getUnsafe().getInt(scratch + 12) != generation
-                || (tableId != -1 && Unsafe.getUnsafe().getInt(scratch + 16) != tableId)
-                || Unsafe.getUnsafe().getLong(scratch + BODY_SIZE) != TableUtils.SNAPSHOT_CHECKSUM_MAGIC
-                || Unsafe.getUnsafe().getLong(scratch + BODY_SIZE + 8) != TableUtils.calculateCvAreaChecksum(scratch, BODY_SIZE)) {
-            return HEADER_DAMAGED;
-        }
-        return HEADER_VALID;
+        return isHeaderValid(scratch, generation, tableId) ? HEADER_VALID : HEADER_DAMAGED;
     }
 
     private static void restoreSection(
@@ -839,15 +850,10 @@ public final class DurableEpochManifest {
                 return false;
             }
             try (MemoryCMR mem = Vm.getCMRInstance(ff, tablePath.$(), fileSize, MemoryTag.MMAP_TABLE_READER)) {
-                if (mem.getLong(0) != TableUtils.SNAPSHOT_CHECKSUM_MAGIC
-                        || mem.getInt(8) != FORMAT_VERSION
-                        || mem.getInt(12) != generation
-                        || mem.getInt(16) != tableToken.getTableId()
-                        || mem.getLong(24) != seqTxn
-                        || mem.getLong(32) != txn
-                        || (checkVersions && (mem.getLong(40) != columnVersion || mem.getLong(96) != metadataVersion))
-                        || mem.getLong(BODY_SIZE) != TableUtils.SNAPSHOT_CHECKSUM_MAGIC
-                        || mem.getLong(BODY_SIZE + 8) != TableUtils.calculateCvAreaChecksum(mem.addressOf(0), BODY_SIZE)) {
+                if (!isHeaderValid(mem.addressOf(0), generation, tableToken.getTableId())
+                        || mem.getLong(OFFSET_SEQ_TXN) != seqTxn
+                        || mem.getLong(OFFSET_TXN) != txn
+                        || (checkVersions && (mem.getLong(40) != columnVersion || mem.getLong(96) != metadataVersion))) {
                     return false;
                 }
                 final long txnSize = mem.getLong(OFFSET_TXN_SIZE);

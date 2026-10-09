@@ -302,15 +302,8 @@ public class RecoveryCoordinator {
         }
     }
 
-    // Whether a save point file of either generation exists, published or not.
     private boolean hasAnchor(TableToken token, Path dir) {
-        for (int generation = 0; generation < 2; generation++) {
-            tablePath(dir, token).concat(DurableEpochManifest.FILE_NAME).put('.').put(generation);
-            if (ff.exists(dir.$())) {
-                return true;
-            }
-        }
-        return false;
+        return DurableEpochManifest.exists(ff, tablePath(dir, token), dir.size());
     }
 
     private boolean hasValidSavePoint(TableToken token, Path dir) {
@@ -701,6 +694,11 @@ public class RecoveryCoordinator {
         tablePath(dir, token);
         DurableEpochManifest.removeUnpublished(configuration, dir, dir.size(), token.getTableId());
         if (!hasAnchor(token, dir)) {
+            if (isRestoredWithoutAnchor(token, dir)) {
+                // A crash interrupted the baseline of a table marked for enrolment: publish it again.
+                enrollments.add(token);
+                return;
+            }
             throw CairoException.critical(0)
                     .put("adaptive save point is absent; refusing unsafe live-state fallback [table=")
                     .put(token.getTableName()).put(']');

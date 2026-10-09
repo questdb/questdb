@@ -3931,7 +3931,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private boolean replaceAnchorWithEnrolmentMarker() {
         try {
-            if (isDurableEpochAnchored()) {
+            if (DurableEpochManifest.exists(ff, path.trimTo(pathSize), pathSize)) {
                 RecoveryCoordinator.replaceAnchorWithEnrolmentMarker(configuration, path.trimTo(pathSize), pathSize);
                 LOG.info().$("replaced adaptive durable epoch anchor with the enrolment marker, local durability is disabled [table=")
                         .$(tableToken).I$();
@@ -8982,17 +8982,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean isColumnVersionServing(long columnVersion) {
         final long cvVersion = columnVersionWriter.getVersion();
         return (cvVersion == columnVersion || cvVersion - 1 == columnVersion) && columnVersionWriter.isAreaIntact(columnVersion);
-    }
-
-    // Whether a save point file of either generation exists, published or not.
-    private boolean isDurableEpochAnchored() {
-        for (int generation = 0; generation < 2; generation++) {
-            durableEpochSnapshotPath.of(path.trimTo(pathSize)).concat(DurableEpochManifest.FILE_NAME).put('.').put(generation);
-            if (ff.exists(durableEpochSnapshotPath.$())) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private boolean isEmptyTable() {
@@ -14905,7 +14894,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private void rollbackToPreviousTxn(boolean isTxnTorn) {
         final long txn = txWriter.getTornLiveVersion();
-        if (metadata.getEnrolledCommitMode() == CommitMode.ADAPTIVE && isDurableEpochAnchored()) {
+        if (metadata.getEnrolledCommitMode() == CommitMode.ADAPTIVE && DurableEpochManifest.exists(ff, path.trimTo(pathSize), pathSize)) {
             // Startup recovery restores an anchored table's _txn and _cv from its durable epoch before anything
             // opens the table, so it has no torn area to find; do not second-guess that cut from here. A table
             // enrolled without an anchor (a replica's, marked for enrolment) has no such cut: its live state is
