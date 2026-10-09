@@ -41,24 +41,20 @@ import java.util.Set;
 /**
  * Tests for {@link FastCommitCheck}.
  *
- * <p>The {@link FastCommitCheck#classify(CharSequence, CharSequence, CharSequence)} core is pure: all
- * cases inject the /proc/mounts text (to find + type the DB-root mount) plus the device's ext4
- * {@code options} pseudo-file content (to detect the {@code fast_commit} token), so they are fully
- * deterministic and require no real filesystem. The device-name mapping ({@link FastCommitCheck#resolveExt4DeviceName})
- * is exercised with a fake {@link FastCommitCheck.DeviceProbe}.
+ * <p>The {@link FastCommitCheck#classify(CharSequence, CharSequence, CharSequence)} core is pure: the
+ * cases inject the /proc/mounts text (to find the db root mount and its type) and the device's ext4
+ * {@code options} pseudo-file content (to detect the {@code fast_commit} token), so they need no real
+ * filesystem. A fake {@link FastCommitCheck.DeviceProbe} drives the device-name mapping
+ * ({@link FastCommitCheck#resolveExt4DeviceName}).
  */
 public class FastCommitCheckTest {
 
-    // A realistic ext4 options-file body WITHOUT the fast_commit token (shared journal / safe).
+    // A realistic ext4 options-file body without the fast_commit token (shared journal, safe).
     private static final String OPTIONS_NO_FC =
             "rw\nbsddf\nnogrpid\nblock_validity\ndelalloc\njournal_checksum\nbarrier\nuser_xattr\nacl\n" +
                     "noquota\nerrors=remount-ro\ncommit=5\ndata=ordered\ninode_readahead_blks=32\n";
-    // The same body WITH the fast_commit token the kernel emits when the feature is active.
+    // The same body with the fast_commit token the kernel emits when the feature is active.
     private static final String OPTIONS_WITH_FC = OPTIONS_NO_FC + "fast_commit\n";
-
-    // -----------------------------------------------------------------------
-    // classify(): ENABLED / NOT_DETECTED / UNKNOWN on injected signals
-    // -----------------------------------------------------------------------
 
     @Test
     public void testExt4FastCommitEnabled() {
@@ -97,10 +93,6 @@ public class FastCommitCheckTest {
                 FastCommitCheck.classify(mounts, "/data/qdb", "\u0000\u0001 random ;;; not-an-option \n\n"));
     }
 
-    // -----------------------------------------------------------------------
-    // classify(): non-ext4 filesystems are out of scope -> UNKNOWN
-    // -----------------------------------------------------------------------
-
     @Test
     public void testXfsIsUnknownEvenWithFcLikeOptions() {
         // xfs uses a shared journal; fast_commit is ext4-specific. Even if the (irrelevant) options blob
@@ -121,14 +113,10 @@ public class FastCommitCheckTest {
                 FastCommitCheck.classify(mounts, "/data/qdb", OPTIONS_WITH_FC));
     }
 
-    // -----------------------------------------------------------------------
-    // Longest-prefix mount selection (mirrors WriteBarrierCheckTest cases)
-    // -----------------------------------------------------------------------
-
     @Test
     public void testLongestPrefixWins_specificMountEnabled() {
-        // dbRoot=/data/qdb: root mount ext4 (no fc), /data mount ext4 WITH fc. The longer /data wins.
-        // Both ext4 here; the injected options correspond to the WINNING (/data) device.
+        // dbRoot=/data/qdb: root mount ext4 without fc, /data mount ext4 with fc. The longer /data wins,
+        // and the injected options describe the /data device.
         String mounts =
                 "/dev/sda1 / ext4 rw,relatime 0 0\n" +
                         "/dev/sdb1 /data ext4 rw,relatime 0 0\n";
@@ -147,11 +135,11 @@ public class FastCommitCheckTest {
 
     @Test
     public void testPathBoundaryNoFalsePrefix() {
-        // dbRoot=/database must NOT match the /data mount; it falls back to the root ext4 mount.
+        // dbRoot=/database must not match the /data mount; it falls back to the root ext4 mount.
         String mounts =
                 "/dev/sda1 / ext4 rw,relatime 0 0\n" +
                         "/dev/sdb1 /data ext4 rw,relatime 0 0\n";
-        // The matched mount is "/" (ext4); options here describe "/" and have NO fast_commit -> NOT_DETECTED.
+        // The matched mount is "/" (ext4); its options have no fast_commit -> NOT_DETECTED.
         Assert.assertEquals(FastCommitCheck.FAST_COMMIT_NOT_DETECTED,
                 FastCommitCheck.classify(mounts, "/database", OPTIONS_NO_FC));
     }
@@ -171,10 +159,6 @@ public class FastCommitCheckTest {
         Assert.assertEquals(FastCommitCheck.FAST_COMMIT_ENABLED,
                 FastCommitCheck.classify(mounts, "/data qdb", OPTIONS_WITH_FC));
     }
-
-    // -----------------------------------------------------------------------
-    // No matching mount / null inputs -> UNKNOWN
-    // -----------------------------------------------------------------------
 
     @Test
     public void testNoMatchingMount() {
@@ -211,10 +195,6 @@ public class FastCommitCheckTest {
                 FastCommitCheck.classify(mounts, "/var/qdb", OPTIONS_WITH_FC));
     }
 
-    // -----------------------------------------------------------------------
-    // hasFastCommitToken: exact-token matching, no false positives
-    // -----------------------------------------------------------------------
-
     @Test
     public void testHasFastCommitTokenForms() {
         Assert.assertTrue(FastCommitCheck.hasFastCommitToken("fast_commit"));
@@ -230,10 +210,6 @@ public class FastCommitCheckTest {
         Assert.assertFalse(FastCommitCheck.hasFastCommitToken("fast_commitment"));
     }
 
-    // -----------------------------------------------------------------------
-    // resolveExt4DeviceName: plain device + device-mapper (LVM) symlink deref
-    // -----------------------------------------------------------------------
-
     @Test
     public void testResolvePlainDevice() {
         // /dev/sda1 -> proc entry "sda1" exists directly, no symlink deref needed.
@@ -245,7 +221,7 @@ public class FastCommitCheckTest {
     @Test
     public void testResolveDeviceMapperSymlink() {
         // /dev/mapper/vg-root has no "vg-root" proc entry; it is a symlink to ../dm-0, whose basename
-        // "dm-0" DOES have a proc entry. This is the LVM/device-mapper case observed on real hosts.
+        // "dm-0" has a proc entry. This is the LVM/device-mapper case seen on real hosts.
         FakeDeviceProbe probe = new FakeDeviceProbe();
         probe.procEntries.add("dm-0");
         probe.symlinks.put("/dev/mapper/vg-root", "/dev/dm-0");
@@ -265,10 +241,6 @@ public class FastCommitCheckTest {
         Assert.assertNull(FastCommitCheck.resolveExt4DeviceName(null, probe));
         Assert.assertNull(FastCommitCheck.resolveExt4DeviceName("", probe));
     }
-
-    // -----------------------------------------------------------------------
-    // Live classifyDbRoot smoke: must never throw; result is one of the tri-state values.
-    // -----------------------------------------------------------------------
 
     @Test
     public void testClassifyDbRootSmokeNoException() {
@@ -311,17 +283,10 @@ public class FastCommitCheckTest {
     }
 
     /**
-     * Pseudo-files under /proc and /sys do not report a usable size, so the reader must size its read from
-     * its own cap rather than from {@code ff.length(fd)}. Measured on Linux 6.8: {@code /proc/mounts} and
-     * {@code /proc/fs/ext4/<dev>/options} both fstat as 0 while holding 2007 and 305 readable bytes
-     * respectively; sysfs files fstat as 4096 while holding a handful.
-     * <p>
-     * Sizing from fstat therefore read ZERO bytes and produced an empty string, which
-     * {@code findLongestPrefixMount} reads as "no mounts" -- so {@code classifyDbRoot} returned UNKNOWN,
-     * the caller treated fast_commit as absent, and batched syncfs stayed ENABLED on exactly the
-     * configuration this class exists to rule out. It survived because every existing test here drives the
-     * pure {@code classify}, and {@code classifyDbRoot} early-returns off Linux, so nothing exercised the
-     * reader on any platform.
+     * Pseudo-files under /proc and /sys do not report a usable size: /proc files fstat as 0 and sysfs files
+     * as 4096, whatever they hold. The reader must size its read from its own cap rather than from
+     * {@code ff.length(fd)}; a read sized from fstat returns an empty string, {@code classifyDbRoot} then
+     * sees no mounts and returns UNKNOWN, and batched syncfs stays enabled on a fast_commit device.
      */
     @Test
     public void testReadSmallFileIgnoresPseudoFileStatSize() {
@@ -339,16 +304,10 @@ public class FastCommitCheckTest {
         Assert.assertEquals("Apple Inc.\n", ProcFs.read(ff, "/sys/class/dmi/id/sys_vendor", 4096));
     }
 
-    // -----------------------------------------------------------------------
-    // logAdvisory(): the commit-mode gate and the message. A correct classify()
-    // is worthless if the advisory reaches the wrong operators.
-    // -----------------------------------------------------------------------
-
     @Test
     public void testAdvisoryAppliesToIsTheGateBothCallSitesTake() {
-        // checkAndReport takes this predicate for its cheap early-out and logAdvisory takes it for its own
-        // gate, so narrowing it narrows both; Bootstrap now holds no copy to narrow independently. The
-        // duplicated SYNC-only gate is what shipped the defect this suite exists to pin.
+        // checkAndReport takes this predicate for its early-out and logAdvisory takes it for its own gate,
+        // so this one predicate decides both.
         Assert.assertTrue(
                 "adaptive runs the durable-epoch cadence that drives the batched flush",
                 FastCommitCheck.advisoryAppliesTo(CommitMode.ADAPTIVE)
@@ -357,9 +316,9 @@ public class FastCommitCheckTest {
                 "sync reaches the batched flush through the adaptive-exit reconciliation",
                 FastCommitCheck.advisoryAppliesTo(CommitMode.SYNC)
         );
-        // NOSYNC and ASYNC reach the batched flush through that same exit reconciliation, but run no
-        // durable-epoch cadence; and NOSYNC is CommitMode.DEFAULT, so warning it would fire on every
-        // default install. Silence here is a deliberate signal-to-noise choice, not unreachability.
+        // NOSYNC and ASYNC reach the batched flush through the same exit reconciliation, but run no
+        // durable-epoch cadence, and NOSYNC is CommitMode.DEFAULT, so a warning would fire on every
+        // default install. The advisory stays silent for them to keep the signal clean.
         Assert.assertFalse(
                 "nosync is CommitMode.DEFAULT; the advisory is deliberately silent for it",
                 FastCommitCheck.advisoryAppliesTo(CommitMode.NOSYNC)
@@ -368,17 +327,17 @@ public class FastCommitCheckTest {
                 "async is deliberately not warned",
                 FastCommitCheck.advisoryAppliesTo(CommitMode.ASYNC)
         );
-        // Not configurable modes: UNSET is the _meta enrolment sentinel, UNKNOWN a rejected token.
+        // Not configurable modes: UNSET means no mode threaded in yet, UNKNOWN a rejected token.
         Assert.assertFalse(FastCommitCheck.advisoryAppliesTo(CommitMode.UNSET));
         Assert.assertFalse(FastCommitCheck.advisoryAppliesTo(CommitMode.UNKNOWN));
     }
 
     @Test
     public void testAdvisoryLoggedForAdaptive() {
-        // ADAPTIVE is the mode that actually runs the batched flush: syncColumnsBatchedSync() is reached
-        // only from TableWriter.fsyncMaterializedState, whose cadence call sites are all gated on
-        // getEffectiveCommitMode() == ADAPTIVE. So an adaptive operator is the one who loses the
-        // optimization when fast_commit disables it, and the one the advisory exists for.
+        // ADAPTIVE runs the batched flush: syncColumnsBatchedSync() is reached only from
+        // TableWriter.fsyncMaterializedState, whose cadence call sites are all gated on
+        // getEffectiveCommitMode() == ADAPTIVE, so an adaptive operator loses the optimization when
+        // fast_commit disables it.
         final DurabilityEnvironmentCheckTest.RecordingLog log = new DurabilityEnvironmentCheckTest.RecordingLog();
         Assert.assertTrue(
                 "adaptive is the mode that loses the batched flush and must be told",
@@ -389,10 +348,8 @@ public class FastCommitCheckTest {
 
     @Test
     public void testAdvisoryLoggedForSyncBecauseOfTheAdaptiveExitPath() {
-        // SYNC must stay in the gate: a table left enrolled ADAPTIVE and reopened under
-        // cairo.commit.mode=sync reconciles out of adaptive and runs one batched flush
-        // (see FastCommitCheck.advisoryAppliesTo). Narrowing this gate to ADAPTIVE would
-        // silently drop that operator's signal.
+        // SYNC stays in the gate: a table left in ADAPTIVE and reopened under cairo.commit.mode=sync
+        // reconciles out of adaptive and runs one batched flush (see FastCommitCheck.advisoryAppliesTo).
         final DurabilityEnvironmentCheckTest.RecordingLog log = new DurabilityEnvironmentCheckTest.RecordingLog();
         Assert.assertTrue(
                 "the adaptive-exit reconciliation reaches the batched flush under sync",
@@ -408,8 +365,7 @@ public class FastCommitCheckTest {
                 log, FastCommitCheck.FAST_COMMIT_ENABLED, CommitMode.ADAPTIVE, "/var/lib/questdb/db"));
         final String text = log.text();
         assertContains(text, "fast_commit");
-        // What was disabled belongs to the ADAPTIVE DURABLE EPOCH, not to ordinary sync commits. A
-        // rewording that drops this reintroduces the misattribution the old SYNC-only gate encoded.
+        // The disabled optimization belongs to the adaptive durable epoch, not to ordinary sync commits.
         assertContains(text, "adaptive durable epoch");
         assertContains(text, "DISABLED");
         // Which root is affected is the one thing the operator cannot infer.
@@ -418,9 +374,9 @@ public class FastCommitCheckTest {
 
     @Test
     public void testAdvisoryNotLoggedForModesWithNoEpochCadence() {
-        // These modes can still touch the batched flush once per table, through the same adaptive-exit
-        // reconciliation that keeps SYNC in the gate. They are excluded because they run no durable-epoch
-        // cadence and NOSYNC is CommitMode.DEFAULT, so the advisory would be noise on every default install.
+        // These modes can still reach the batched flush once per table, through the same adaptive-exit
+        // reconciliation that keeps SYNC in the gate. They run no durable-epoch cadence and NOSYNC is
+        // CommitMode.DEFAULT, so the advisory would be noise on every default install.
         for (int mode : new int[]{CommitMode.NOSYNC, CommitMode.ASYNC}) {
             final DurabilityEnvironmentCheckTest.RecordingLog log = new DurabilityEnvironmentCheckTest.RecordingLog();
             Assert.assertFalse(
@@ -447,9 +403,8 @@ public class FastCommitCheckTest {
 
     @Test
     public void testCheckAndReportDoesNotReadProcForModesThatNeverReport() {
-        // The early-out is what keeps /proc out of a NOSYNC or ASYNC start, so it is asserted by COUNTING
-        // opens rather than by reading the log: a gate applied after classifyDbRoot would still log nothing
-        // and would still look correct from the log alone, while having paid for the reads.
+        // The early-out keeps /proc out of a NOSYNC or ASYNC start, so the test counts opens rather than
+        // reading the log: a gate applied after classifyDbRoot would log nothing yet still pay for the reads.
         for (int mode : new int[]{CommitMode.NOSYNC, CommitMode.ASYNC}) {
             final ProcFsFacade ff = fastCommitProcFs();
             final DurabilityEnvironmentCheckTest.RecordingLog log = new DurabilityEnvironmentCheckTest.RecordingLog();
@@ -468,7 +423,7 @@ public class FastCommitCheckTest {
     @Test
     public void testCheckAndReportReadsProcAndLogsForReportingModes() {
         // classifyDbRoot early-returns UNKNOWN off Linux, so only there can an injected facade observe the
-        // /proc reads at all. The skip-/proc half above needs no such gate and runs everywhere.
+        // /proc reads.
         Assume.assumeTrue("classifyDbRoot reads /proc on Linux only", Os.isLinux());
         for (int mode : new int[]{CommitMode.SYNC, CommitMode.ADAPTIVE}) {
             final ProcFsFacade ff = fastCommitProcFs();
@@ -490,7 +445,7 @@ public class FastCommitCheckTest {
     }
 
     /**
-     * A fake {@code /proc} describing an ext4 db root mount whose device HAS fast_commit, so a reporting
+     * A fake {@code /proc} describing an ext4 db root mount whose device has fast_commit, so a reporting
      * commit mode reaches the advisory and a non-reporting one has something it could have read.
      */
     private static ProcFsFacade fastCommitProcFs() {
@@ -543,8 +498,7 @@ public class FastCommitCheckTest {
         @Override
         public long openRONoCache(io.questdb.std.str.LPSZ name) {
             openCount++;
-            // NOT name.toString(): an LPSZ renders as its identity hash, so string comparison silently
-            // never matches and the whole fake goes quiet.
+            // Not name.toString(): an LPSZ renders as its identity hash, so a string comparison never matches.
             final String content = files.get(pathOf(name));
             pending = content != null ? content.getBytes(java.nio.charset.StandardCharsets.UTF_8) : defaultBytes;
             return pending == null ? -1 : 4242; // any non-negative sentinel; this facade never touches a real fd
