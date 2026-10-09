@@ -60,17 +60,12 @@ import java.util.TreeMap;
 import java.util.zip.CRC32;
 
 /**
- * Power-loss sweep over the tail of the V1 sequencer txn log.
- * <p>
- * A real {@link TableTransactionLogV1} writes a window of commits. Before every durability call it makes
- * on {@code _txnlog}, and after every commit, the sweep builds every disk image a
- * power loss could leave at that moment: each 512-byte sector of each file holds the content it had at
- * its last durability call, or at any later moment the sweep sampled. That covers a page or a sector
- * persisted or not, a record that straddles a sector or a page boundary, and the header sector persisted
- * ahead of the record sectors. Each image is reopened, read back and appended to.
- * <p>
- * Recovery must return exactly the written records up to the first one that is not wholly on disk, keep
- * every acknowledged record, never hand out a torn record, never throw, and accept the next commit.
+ * Power-loss sweep over the tail of the V1 sequencer txn log. A real {@link TableTransactionLogV1} writes a window
+ * of commits. Before every durability call on {@code _txnlog} and after every commit, the sweep builds every disk
+ * image a power loss could leave: each 512-byte sector holds its content at its last durability call or at any
+ * later sampled moment. Each image is reopened, read back and appended to. Recovery must return exactly the
+ * written records up to the first one not wholly on disk, keep every acknowledged record, never hand out a torn
+ * record, never throw, and accept the next commit.
  */
 public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
     private static final int APPEND_FAILED = 5;
