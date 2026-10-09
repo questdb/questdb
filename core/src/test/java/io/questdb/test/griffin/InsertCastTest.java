@@ -2088,4 +2088,14 @@ public class InsertCastTest extends AbstractCairoTest {
             assertQuery("v\n100\n-100\n", "SELECT v FROM l", null, true);
         });
     }
+    @Test
+    public void testFloatAndDoubleMinBoundaryRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f (v FLOAT)");
+            execute("CREATE TABLE i (v INT)");
+            // -2147483647.0 as FLOAT rounds to -2147483648.0 (Integer.MIN_VALUE, QuestDB INT_NULL), must be refused
+            execute("INSERT INTO f VALUES (-2147483647.0)");
+            assertException("INSERT INTO i SELECT v FROM f", 0, "inconvertible value");
+        });
+    }
 }
