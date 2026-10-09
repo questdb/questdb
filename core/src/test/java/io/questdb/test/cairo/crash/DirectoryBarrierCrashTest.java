@@ -139,9 +139,25 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
+    public void testAsyncAddColumnFailedDirFsyncIsNotFailStop() throws Exception {
+        assertAddColumnDirFsyncFailureIsNotFailStop("async");
+    }
+
+    @Test
     public void testAsyncConvertToParquetNonWalFailedPmFsyncIsNotFailStop() throws Exception {
         // ASYNC fsyncs _pm and the partition directory but not data.parquet, so the first fsync is that of _pm
         assertConvertToParquetSyncFailure("async", false, new FsyncFailureFacade("produceParquetFromNative", 0, false));
+    }
+
+    @Test
+    public void testNoSyncAddColumnFailedDirFsyncIsNotFailStop() throws Exception {
+        assertAddColumnDirFsyncFailureIsNotFailStop("nosync");
+    }
+
+    @Test
+    public void testSyncAddColumnFailedDirFsyncIsFailStop() throws Exception {
+        // the _meta swap takes four fsyncs first
+        assertFsyncFailureIsFailStop("sync", false, null, () -> execute("ALTER TABLE x ADD COLUMN w INT"), "addColumn", 4);
     }
 
     @Test
@@ -556,6 +572,42 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
                         2024-01-03T00:00:00.000000Z\t3
                         """);
             }
+            releaseEngineHandles();
+        });
+    }
+
+    /**
+     * ADD COLUMN fsyncs the table directory once the column is added, in every mode. Under NOSYNC and ASYNC, which
+     * promise nothing on a power loss, a data-sync failure of that fsync is logged as non-critical: the column is
+     * added and the engine keeps taking writes. These modes take no other fsync in the statement.
+     */
+    private void assertAddColumnDirFsyncFailureIsNotFailStop(String commitMode) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        final FsyncFailureFacade ff = new FsyncFailureFacade("addColumn", 0, false);
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            Throwable failure = null;
+            ff.isArmed = true;
+            try {
+                execute("ALTER TABLE x ADD COLUMN w INT");
+            } catch (Throwable th) {
+                failure = th;
+            } finally {
+                ff.isArmed = false;
+            }
+            final boolean isPoisoned = engine.isDurabilityFailed();
+            engine.resetDurabilityFailure();
+            releaseEngineHandles();
+            Assert.assertEquals("the injected failure must have been reached", 1, ff.failureCount);
+            Assert.assertFalse("the engine must keep taking writes, failure: " + failure, isPoisoned);
+            Assert.assertNull("the column must be added", failure);
+            execute("INSERT INTO x VALUES ('2024-01-02T00:00:00.000000Z', 2, 2)");
+            assertQuery("SELECT ts, v, w FROM x").timestamp("ts").expectSize().returns("""
+                    ts\tv\tw
+                    2024-01-01T00:00:00.000000Z\t1\tnull
+                    2024-01-02T00:00:00.000000Z\t2\t2
+                    """);
             releaseEngineHandles();
         });
     }

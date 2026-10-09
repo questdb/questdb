@@ -908,7 +908,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 try {
                     ff.fsyncAndClose(openRO(ff, path.$(), LOG));
                 } catch (CairoException e) {
-                    if (e.isDataSyncFailure()) {
+                    // NOSYNC and ASYNC promise nothing on a power loss: a failure there is non-critical
+                    if (CommitMode.isPowerLossDurable(effectiveCommitMode) && e.isDataSyncFailure()) {
                         distressed = true;
                         engine.handleDataSyncFailure(e);
                     }
