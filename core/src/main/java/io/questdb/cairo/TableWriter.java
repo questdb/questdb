@@ -16414,6 +16414,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // per file, so the sweep alone suffices there and this call is redundant rather than
                 // load-bearing.
                 fsyncAttachedPartitionFiles();
+                // The entry of every partition directory, new or a new version of an old one, lives in the table
+                // directory, which the sweep does not reach. Linux gets it from syncfs. Every time, not only for
+                // a new save point file: the save point names these directories.
+                DurableEpochManifest.fsyncDirectory(configuration, path.trimTo(pathSize), pathSize);
                 fsyncMaterializedStateSyncFs();
             }
         }
