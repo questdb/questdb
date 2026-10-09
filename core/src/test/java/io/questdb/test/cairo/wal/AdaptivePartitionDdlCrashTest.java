@@ -56,10 +56,15 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
@@ -90,7 +95,39 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
             2024-02-02T00:00:00.000000Z,c3,103
             2024-02-03T00:00:00.000000Z,c4,104
             """;
+    // Part of the .detached name and of the temporary name a DETACH uses before it.
+    private static final String DETACHED_NAME = ".detach";
     private static final FilesFacade FF = new TestFilesFacadeImpl() {
+        @Override
+        public int copyRecursive(Path src, Path dst, int dirMode) {
+            return afterMove(super.copyRecursive(src, dst, dirMode), src.$(), dst.$());
+        }
+
+        @Override
+        public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
+            // A link out of a partition directory or an .attachable one crosses to another device; a link between
+            // two detached names stays on the device that holds them.
+            if (crossDevice && !Utf8s.containsAscii(src.$(), DETACHED_NAME)) {
+                return -1;
+            }
+            return afterMove(super.hardLinkDirRecursive(src, dst, dirMode), src.$(), dst.$());
+        }
+
+        @Override
+        public int hardLink(LPSZ src, LPSZ hardLink) {
+            final int result = super.hardLink(src, hardLink);
+            // The first file the DETACH links from its temporary name into .detached.
+            if (result == 0 && killInFinalLink && Utf8s.containsAscii(src, DETACHED_NAME) && Utf8s.containsAscii(hardLink, TableUtils.DETACHED_DIR_MARKER)) {
+                takeKillImage(tableDirOf(hardLink).getParent());
+            }
+            return result;
+        }
+
+        @Override
+        public boolean isCrossDeviceCopyError(int errno) {
+            return crossDevice || super.isCrossDeviceCopyError(errno);
+        }
+
         @Override
         public long openRW(LPSZ name, int opts) {
             if (Utf8s.containsAscii(name, DurableEpochManifest.FILE_NAME)) {
@@ -101,17 +138,44 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
             }
             return super.openRW(name, opts);
         }
+
+        @Override
+        public int rename(LPSZ from, LPSZ to) {
+            return afterMove(super.rename(from, to), from, to);
+        }
+
+        @Override
+        public int softLink(LPSZ src, LPSZ softLink) {
+            final int result = super.softLink(src, softLink);
+            if (result == 0 && killAfterMove) {
+                takeKillImage(tableDirOf(softLink));
+            }
+            return result;
+        }
     };
     private static final long NO_PERIODIC_SAVE_POINT_MS = 3_600_000L;
     private static final String PARTITION = "2024-01-02";
     private static final String THREE_PARTITIONS = "'2024-01-01', '2024-01-02', '2024-01-03'";
     // Every save point writes a manifest; counting its opens counts the save points.
     private static final AtomicInteger savePoints = new AtomicInteger();
+    // Links out of a partition directory fail as across devices, so the operation copies instead.
+    private static volatile boolean crossDevice;
     // The number of save points after which a save point fails with an I/O error; -1 never fails.
     private static volatile int failSavePointsAfter = -1;
+    // The process is killed right after the operation moves a partition directory.
+    private static volatile boolean killAfterMove;
+    // The process is killed in the middle of the link that gives a detached partition its final name.
+    private static volatile boolean killInFinalLink;
+    // What a process kill leaves of the table directory; the next restart puts it back.
+    private static java.nio.file.Path killImageRoot;
+    private static Map<java.nio.file.Path, byte[]> killImageFiles;
+    private static Map<java.nio.file.Path, java.nio.file.Path> killImageLinks;
+    private static List<java.nio.file.Path> killImageDirs;
     private final History history;
     private final Operation operation;
     private final OperationPath path;
+    // The table as the operation found it.
+    private String beforeOperation;
 
     public AdaptivePartitionDdlCrashTest(History history, Operation operation, OperationPath path) {
         this.history = history;
@@ -124,6 +188,13 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         final List<Object[]> params = new ArrayList<>();
         for (History history : History.values()) {
             for (Operation operation : Operation.values()) {
+                if (history.killed()) {
+                    if (operation.movesDirectory() && (history.killsAttach() || operation.detaches())) {
+                        params.add(new Object[]{history, operation, OperationPath.WAL});
+                        params.add(new Object[]{history, operation, OperationPath.SUSPENDED});
+                    }
+                    continue;
+                }
                 switch (operation) {
                     // TRUNCATE is not forced through on a suspended table.
                     case TRUNCATE -> params.add(new Object[]{history, operation, OperationPath.WAL});
@@ -132,6 +203,10 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                             params.add(new Object[]{history, operation, OperationPath.OWN});
                     // The statement-level save point after a part-way failure, through the WAL and directly.
                     case CONVERT_LIST_SECOND_FAILS, DETACH_LIST_SECOND_FAILS -> {
+                        params.add(new Object[]{history, operation, OperationPath.WAL});
+                        params.add(new Object[]{history, operation, OperationPath.SUSPENDED});
+                    }
+                    case ATTACH_CROSS_DEVICE, ATTACH_SOFT_LINK, DETACH_AFTER_O3, DETACH_CROSS_DEVICE -> {
                         params.add(new Object[]{history, operation, OperationPath.WAL});
                         params.add(new Object[]{history, operation, OperationPath.SUSPENDED});
                     }
@@ -155,12 +230,13 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
 
     @Test
     public void testCrashAfterOperation() throws Exception {
-        final boolean startsNosync = history == History.NOSYNC || history == History.ENROLLED_ON_WRITER_OPEN;
+        final boolean startsNosync = history == History.NOSYNC || history == History.ENROLLED_ON_WRITER_OPEN || history == History.KILLED_BEFORE_TXN_NOSYNC;
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, startsNosync ? "nosync" : "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, history.periodicOff() ? -1 : NO_PERIODIC_SAVE_POINT_MS);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, history.cleanRestart() ? "true" : "false");
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
         setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, "true");
+        killImageRoot = null;
         inputRoot = temp.newFolder().getAbsolutePath();
         inputWorkRoot = temp.newFolder().getAbsolutePath();
         java.nio.file.Files.writeString(java.nio.file.Path.of(inputRoot, "t.csv"), CSV, StandardCharsets.UTF_8);
@@ -191,16 +267,33 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                 if (operation == Operation.RESUME_WAL_FROM_TXN) {
                     Assert.assertFalse("the transaction must be skipped", snapshot(e).contains("skipped"));
                 }
-                if (!history.cleanRestart()) {
+                if (!history.cleanRestart() && !history.killed()) {
                     insertDay(e, "2024-01-05", 40);
                 }
-                final String expected = snapshot(e);
+                if (history.killed()) {
+                    Assert.assertNotNull("the kill must happen", killImageRoot);
+                }
+                if (history.cleanRestart()) {
+                    // The writer's close takes the save point the operation owes, and with it the moves that wait for
+                    // one: a DETACH takes its .detached name.
+                    e.releaseAllWriters();
+                }
+                // A kill before the save point undoes a change made outside the WAL, which nothing can redo; it must not
+                // lose the partition.
+                final String expected = history.killedBeforeSavePoint() && path != OperationPath.WAL ? beforeOperation : snapshot(e);
 
                 if (history == History.SAVE_POINT_FAILS_CLEAN_RESTART_INTO_NOSYNC) {
                     setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
                 }
                 e = restart(e);
+                if (e.getTableSequencerAPI().isSuspended(e.verifyTableName("t"))) {
+                    e.execute("ALTER TABLE t RESUME WAL");
+                }
                 TestUtils.drainWalQueue(e);
+                if (history.killed()) {
+                    // Writer open finishes what the kill interrupted, also when no WAL is left to apply.
+                    e.getWriter(e.verifyTableName("t"), "test").close();
+                }
                 Assert.assertEquals(expected, snapshot(e));
             } finally {
                 if (e != engine) {
@@ -208,6 +301,14 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private static int afterMove(int result, LPSZ src, LPSZ dst) {
+        if (result == 0 && killAfterMove && (Utf8s.endsWithAscii(src, TableUtils.ATTACHABLE_DIR_MARKER)
+                || (Utf8s.containsAscii(dst, DETACHED_NAME) && !Utf8s.containsAscii(src, DETACHED_NAME)))) {
+            takeKillImage(tableDirOf(dst));
+        }
+        return result;
     }
 
     private static void alter(CairoEngine e, String sql) throws SqlException {
@@ -238,16 +339,30 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         alter(e, sql.toString());
     }
 
+    // An .attachable next to an attached partition of the same name is a leftover the next save point deletes.
     private static String partitions(CairoEngine e) throws SqlException {
         final StringSink sink = new StringSink();
         e.print(
                 "SELECT name, minTimestamp, maxTimestamp, numRows, attached, detached, attachable, isParquet FROM table_partitions('t')",
                 sink
         );
-        return sink.toString();
+        final String suffix = e.getConfiguration().getAttachPartitionSuffix();
+        final String[] rows = sink.toString().split("\n");
+        final StringBuilder partitions = new StringBuilder();
+        for (String row : rows) {
+            final String[] fields = row.split("\t");
+            final boolean leftover = fields.length > 6 && fields[6].equals("true") && fields[0].endsWith(suffix)
+                    && Stream.of(rows).anyMatch(r -> r.startsWith(fields[0].substring(0, fields[0].length() - suffix.length()) + '\t')
+                    && r.split("\t")[4].equals("true"));
+            if (!leftover) {
+                partitions.append(row).append('\n');
+            }
+        }
+        return partitions.toString();
     }
 
-    // Startup in a fresh engine. Pooled writers close without a save point unless the history restarts cleanly.
+    // Startup in a fresh engine. Pooled writers close without a save point unless the history restarts cleanly. After
+    // a kill the table directory is put back as the kill left it.
     private static CairoEngine restart(CairoEngine e) {
         e.releaseAllReaders();
         e.releaseAllWriters();
@@ -255,7 +370,34 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         if (e != engine) {
             e.close();
         }
+        if (killImageRoot != null) {
+            restoreKillImage();
+        }
         return new CairoEngine(configuration);
+    }
+
+    private static void restoreKillImage() {
+        try {
+            try (Stream<java.nio.file.Path> paths = java.nio.file.Files.walk(killImageRoot)) {
+                for (java.nio.file.Path p : paths.sorted(Comparator.reverseOrder()).toList()) {
+                    if (!p.equals(killImageRoot)) {
+                        java.nio.file.Files.delete(p);
+                    }
+                }
+            }
+            for (java.nio.file.Path dir : killImageDirs) {
+                java.nio.file.Files.createDirectories(dir);
+            }
+            for (Map.Entry<java.nio.file.Path, java.nio.file.Path> link : killImageLinks.entrySet()) {
+                java.nio.file.Files.createSymbolicLink(link.getKey(), link.getValue());
+            }
+            for (Map.Entry<java.nio.file.Path, byte[]> file : killImageFiles.entrySet()) {
+                java.nio.file.Files.write(file.getKey(), file.getValue());
+            }
+        } catch (IOException ex) {
+            throw new UncheckedIOException(ex);
+        }
+        killImageRoot = null;
     }
 
     private static String snapshot(CairoEngine e) throws SqlException {
@@ -269,6 +411,14 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         return snapshot.toString();
     }
 
+    // The names of the directories of the test partition.
+    private static String supersededDirNames(CairoEngine e) throws IOException {
+        final java.nio.file.Path tableDir = java.nio.file.Path.of(e.getConfiguration().getDbRoot(), e.verifyTableName("t").getDirName());
+        try (Stream<java.nio.file.Path> dirs = java.nio.file.Files.list(tableDir)) {
+            return dirs.map(d -> d.getFileName().toString()).filter(n -> n.matches(PARTITION + "(\\.\\d+)?")).sorted().toList().toString();
+        }
+    }
+
     // Partition directories on disk beyond one per attached partition, not counting detached and attachable ones.
     private static long supersededPartitionDirs(CairoEngine e) throws Exception {
         final StringSink sink = new StringSink();
@@ -277,6 +427,37 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         try (Stream<java.nio.file.Path> dirs = java.nio.file.Files.list(tableDir)) {
             return dirs.filter(d -> d.getFileName().toString().matches("\\d{4}-\\d{2}-\\d{2}(\\.\\d+)?")).count()
                     - Long.parseLong(sink.toString().split("\n")[1]);
+        }
+    }
+
+    private static java.nio.file.Path tableDirOf(LPSZ inTableDir) {
+        final StringBuilder name = new StringBuilder();
+        for (int i = 0, n = inTableDir.size(); i < n; i++) {
+            name.append((char) inTableDir.byteAt(i));
+        }
+        return java.nio.file.Path.of(name.toString()).getParent();
+    }
+
+    // The bytes of every file and the tree of the table directory, as a process kill at this moment leaves them.
+    private static void takeKillImage(java.nio.file.Path tableDir) {
+        killAfterMove = false;
+        killInFinalLink = false;
+        killImageRoot = tableDir;
+        killImageFiles = new HashMap<>();
+        killImageLinks = new HashMap<>();
+        killImageDirs = new ArrayList<>();
+        try (Stream<java.nio.file.Path> paths = java.nio.file.Files.walk(killImageRoot)) {
+            for (java.nio.file.Path p : paths.toList()) {
+                if (java.nio.file.Files.isSymbolicLink(p)) {
+                    killImageLinks.put(p, java.nio.file.Files.readSymbolicLink(p));
+                } else if (java.nio.file.Files.isDirectory(p)) {
+                    killImageDirs.add(p);
+                } else {
+                    killImageFiles.put(p, java.nio.file.Files.readAllBytes(p));
+                }
+            }
+        } catch (IOException ex) {
+            throw new UncheckedIOException(ex);
         }
     }
 
@@ -332,7 +513,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                     }
                     alter(e, resume);
                 } finally {
-                    failSavePointsAfter = -1;
+                    endOperation();
                 }
                 return e;
             }
@@ -349,6 +530,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
 
     private void applySql(CairoEngine e, String sql) throws Exception {
         final long supersededBefore = supersededPartitionDirs(e);
+        beforeOperation = snapshot(e);
         if (path == OperationPath.WAL) {
             startOperation();
             try {
@@ -361,10 +543,15 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                     // A failing attach or detach fails in the apply job, which skips it.
                     alter(e, sql);
                 }
+                killAfterFailedSavePoint(e);
                 assertSavePointsOfOneStatement();
                 assertSupersededDirsRemoved(e, supersededBefore);
             } finally {
-                failSavePointsAfter = -1;
+                endOperation();
+            }
+            if (history == History.SAVE_POINT_FAILS_THEN_KILLED) {
+                // Without the kill, the next save point would finish what the failed one left.
+                takeSavePoint(e);
             }
             if (operation == Operation.CONVERT_LIST_SECOND_FAILS) {
                 alter(e, "ALTER TABLE t RESUME WAL");
@@ -407,13 +594,14 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                 }
                 default -> throw new AssertionError(path);
             }
+            killAfterFailedSavePoint(e);
             Assert.assertFalse("the statement must fail", operation.failsPartWay());
         } catch (CairoException | SqlException ex) {
             if (!operation.failsPartWay()) {
                 throw ex;
             }
         } finally {
-            failSavePointsAfter = -1;
+            endOperation();
         }
         assertSavePointsOfOneStatement();
         assertSupersededDirsRemoved(e, supersededBefore);
@@ -450,13 +638,20 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         return restarted;
     }
 
+    private void endOperation() {
+        failSavePointsAfter = -1;
+        crossDevice = false;
+        killAfterMove = false;
+        killInFinalLink = false;
+    }
+
     private void importCsv(CairoEngine e) throws Exception {
         startOperation();
         try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(e, 1)) {
             importer.of("t", "t.csv", 1, PartitionBy.DAY, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
             importer.process(AllowAllSecurityContext.INSTANCE);
         } finally {
-            failSavePointsAfter = -1;
+            endOperation();
         }
         // One save point per COPY statement, not one per imported partition. A table COPY creates has no
         // save point until the next restart: the importer's writer holds a non-WAL token, so it does not enrol it.
@@ -464,9 +659,16 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         Assert.assertEquals("save points during the COPY", expected, savePoints.get());
     }
 
+    private void killAfterFailedSavePoint(CairoEngine e) {
+        if (history == History.SAVE_POINT_FAILS_THEN_KILLED) {
+            takeKillImage(java.nio.file.Path.of(e.getConfiguration().getDbRoot(), e.verifyTableName("t").getDirName()));
+        }
+    }
+
     private void prepare(CairoEngine e) throws SqlException {
         switch (operation) {
-            case ATTACH_COPIED_DIR, ATTACH_LIST_SECOND_FAILS, ATTACH_MOVED_DIR, ATTACH_WITH_COPY_SETTING -> {
+            case ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_LIST_SECOND_FAILS, ATTACH_MOVED_DIR, ATTACH_SOFT_LINK,
+                 ATTACH_WITH_COPY_SETTING -> {
                 alter(e, "ALTER TABLE t DETACH PARTITION LIST '" + PARTITION + "'");
                 final FilesFacade ff = e.getConfiguration().getFilesFacade();
                 final TableToken token = e.verifyTableName("t");
@@ -474,8 +676,14 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                     detached.of(e.getConfiguration().getDbRoot()).concat(token).concat(PARTITION + TableUtils.DETACHED_DIR_MARKER);
                     attachable.of(e.getConfiguration().getDbRoot()).concat(token)
                             .concat(PARTITION + e.getConfiguration().getAttachPartitionSuffix());
-                    if (operation == Operation.ATTACH_COPIED_DIR) {
+                    if (operation == Operation.ATTACH_COPIED_DIR || operation == Operation.ATTACH_CROSS_DEVICE) {
                         Assert.assertEquals(0, ff.copyRecursive(detached, attachable, e.getConfiguration().getMkDirMode()));
+                    } else if (operation == Operation.ATTACH_SOFT_LINK) {
+                        try (Path target = new Path()) {
+                            target.of(inputWorkRoot).concat(PARTITION);
+                            Assert.assertEquals(0, ff.copyRecursive(detached, target, e.getConfiguration().getMkDirMode()));
+                            Assert.assertEquals(0, ff.softLink(target.$(), attachable.$()));
+                        }
                     } else {
                         Assert.assertEquals(Files.FILES_RENAME_OK, ff.rename(detached.$(), attachable.$()));
                     }
@@ -494,9 +702,9 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         }
     }
 
-    private String sql(CairoEngine e) throws SqlException {
+    private String sql(CairoEngine e) throws Exception {
         return switch (operation) {
-            case ATTACH_COPIED_DIR, ATTACH_MOVED_DIR, ATTACH_WITH_COPY_SETTING ->
+            case ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_MOVED_DIR, ATTACH_SOFT_LINK, ATTACH_WITH_COPY_SETTING ->
                     "ALTER TABLE t ATTACH PARTITION LIST '" + PARTITION + "'";
             case ATTACH_LIST_SECOND_FAILS -> "ALTER TABLE t ATTACH PARTITION LIST '" + PARTITION + "', '2024-01-01'";
             case CONVERT_LIST_SECOND_FAILS ->
@@ -507,7 +715,13 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                     ? "ALTER TABLE t CONVERT PARTITION TO NATIVE WHERE ts < '2024-01-04'"
                     : "ALTER TABLE t CONVERT PARTITION TO NATIVE LIST " + THREE_PARTITIONS;
             case CONVERT_TO_PARQUET -> "ALTER TABLE t CONVERT PARTITION TO PARQUET LIST " + THREE_PARTITIONS;
-            case DETACH -> "ALTER TABLE t DETACH PARTITION LIST " + THREE_PARTITIONS;
+            case DETACH, DETACH_CROSS_DEVICE -> "ALTER TABLE t DETACH PARTITION LIST " + THREE_PARTITIONS;
+            case DETACH_AFTER_O3 -> {
+                final String before = supersededDirNames(e);
+                alter(e, "INSERT INTO t VALUES ('" + PARTITION + "T00:30:00.000000Z', 's97', 97)");
+                Assert.assertNotEquals("the partition must be rewritten", before, supersededDirNames(e));
+                yield "ALTER TABLE t DETACH PARTITION LIST '" + PARTITION + "'";
+            }
             case DETACH_LIST_SECOND_FAILS -> "ALTER TABLE t DETACH PARTITION LIST '2024-01-01', '2024-01-09'";
             case DROP -> "ALTER TABLE t DROP PARTITION LIST '" + PARTITION + "'";
             case FORCE_DROP -> "ALTER TABLE t FORCE DROP PARTITION LIST '" + PARTITION + "'";
@@ -532,6 +746,9 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         if (history.failsSavePoint()) {
             failSavePointsAfter = 0;
         }
+        crossDevice = operation == Operation.ATTACH_CROSS_DEVICE || operation == Operation.DETACH_CROSS_DEVICE;
+        killAfterMove = history == History.KILLED_BEFORE_TXN || history == History.KILLED_BEFORE_TXN_NOSYNC;
+        killInFinalLink = history == History.KILLED_IN_DETACH_FINAL_LINK;
     }
 
     public enum History {
@@ -555,7 +772,15 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         // As SAVE_POINT_FAILS_CLEAN_RESTART_NO_PERIODIC, restarting in NOSYNC.
         SAVE_POINT_FAILS_CLEAN_RESTART_INTO_NOSYNC,
         // The control: nothing is rewound after a crash.
-        NOSYNC;
+        NOSYNC,
+        // The process is killed right after the operation moves a partition directory, before its _txn commit.
+        KILLED_BEFORE_TXN,
+        // The save point after the operation fails, and the process is killed right after the statement.
+        SAVE_POINT_FAILS_THEN_KILLED,
+        // The process is killed while a DETACH that its save point covers takes its final .detached name.
+        KILLED_IN_DETACH_FINAL_LINK,
+        // As KILLED_BEFORE_TXN on a NOSYNC instance.
+        KILLED_BEFORE_TXN_NOSYNC;
 
         boolean cleanRestart() {
             return switch (this) {
@@ -566,7 +791,21 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         }
 
         boolean failsSavePoint() {
-            return this == SAVE_POINT_FAILS || this == SAVE_POINT_FAILS_NO_PERIODIC || cleanRestart();
+            return this == SAVE_POINT_FAILS || this == SAVE_POINT_FAILS_NO_PERIODIC || this == SAVE_POINT_FAILS_THEN_KILLED || cleanRestart();
+        }
+
+        boolean killed() {
+            return killedBeforeSavePoint() || this == KILLED_IN_DETACH_FINAL_LINK;
+        }
+
+        boolean killedBeforeSavePoint() {
+            return this == KILLED_BEFORE_TXN || this == SAVE_POINT_FAILS_THEN_KILLED || this == KILLED_BEFORE_TXN_NOSYNC;
+        }
+
+        // The kill histories an ATTACH runs in: outside ADAPTIVE it still renames .attachable, so a kill before its _txn
+        // commit loses the partition (as on base), and it makes no final link to kill in.
+        boolean killsAttach() {
+            return this == KILLED_BEFORE_TXN || this == SAVE_POINT_FAILS_THEN_KILLED;
         }
 
         boolean periodicOff() {
@@ -581,10 +820,14 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
     public enum Operation {
         // The .attachable directory is a copy of .detached, renamed into place by the attach.
         ATTACH_COPIED_DIR,
+        // As ATTACH_COPIED_DIR, with the partition directory on another device, so the attach cannot link.
+        ATTACH_CROSS_DEVICE,
         // ATTACH of two partitions whose second is not attachable: the statement fails after attaching the first.
         ATTACH_LIST_SECOND_FAILS,
         // The .attachable directory is the moved .detached, so the attach consumes the only copy.
         ATTACH_MOVED_DIR,
+        // The .attachable is a soft link to a copy of .detached outside the table directory.
+        ATTACH_SOFT_LINK,
         // cairo.attach.partition.copy=true: the attach copies and leaves .attachable in place.
         ATTACH_WITH_COPY_SETTING,
         // CONVERT of two partitions whose second does not exist: the statement fails after converting the first.
@@ -596,6 +839,10 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         // COPY into a table the importer creates.
         COPY_INTO_NEW_TABLE,
         DETACH,
+        // An out-of-order row rewrites the partition into a new version after the last save point, then DETACH.
+        DETACH_AFTER_O3,
+        // As DETACH, with the detached directory on another device, so the detach copies.
+        DETACH_CROSS_DEVICE,
         // DETACH of two partitions whose second does not exist: the statement fails after detaching the first.
         DETACH_LIST_SECOND_FAILS,
         DROP,
@@ -606,9 +853,23 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         TRUNCATE,
         TTL;
 
+        boolean detaches() {
+            return this == DETACH || this == DETACH_AFTER_O3 || this == DETACH_CROSS_DEVICE;
+        }
+
         // The statement fails after it changed the table.
         boolean failsPartWay() {
             return this == ATTACH_LIST_SECOND_FAILS || this == CONVERT_LIST_SECOND_FAILS || this == DETACH_LIST_SECOND_FAILS;
+        }
+
+        // The operation moves a partition directory to or from a name the WAL replay needs to find as it was.
+        boolean movesDirectory() {
+            return switch (this) {
+                case ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_MOVED_DIR, ATTACH_SOFT_LINK, DETACH,
+                     DETACH_AFTER_O3,
+                     DETACH_CROSS_DEVICE -> true;
+                default -> false;
+            };
         }
     }
 

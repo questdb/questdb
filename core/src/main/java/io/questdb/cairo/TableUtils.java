@@ -110,6 +110,8 @@ public final class TableUtils {
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final String DETACHED_DIR_MARKER = ".detached";
+    // A DETACH's temporary name, <partition>.<txn of its commit>.detaching, until the commit is final.
+    public static final String DETACHING_DIR_MARKER = ".detaching";
     public static final long ESTIMATED_VAR_COL_SIZE = 28;
     public static final String FILE_SUFFIX_D = ".d";
     public static final String FILE_SUFFIX_I = ".i";

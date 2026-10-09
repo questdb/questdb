@@ -213,6 +213,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final AlterOperation alterOp = new AlterOperation();
     private final LongConsumer appendTimestampSetter;
     private final IntObjHashMap<AsyncWriterCommand> asyncCommandCache = new IntObjHashMap<>();
+    // Partitions whose ATTACH left .attachable in place; the next published save point covers them and deletes it.
+    private final LongList attachablesAfterSavePoint = new LongList();
     private final ColumnVersionWriter columnVersionWriter;
     private final MPSequence commandPubSeq;
     private final RingQueue<TableWriterTask> commandQueue;
@@ -238,6 +240,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ObjList<MapWriter> denseSymbolMapWriters;
     private final int detachedMkDirMode;
     private final DetachedPostingFileRemover detachedPostingFileRemover = new DetachedPostingFileRemover();
+    // Pairs of (partition timestamp, commit txn) of DETACHes under their temporary name until a save point covers them.
+    private final LongList detachesAfterSavePoint = new LongList();
     private final DirectUtf8String directUtf8String = new DirectUtf8String();
     private final CairoEngine engine;
     private final FilesFacade ff;
@@ -298,6 +302,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Object parquetSealPurgeLock = new Object();
     private final int partitionBy;
     private final DateFormat partitionDirFmt;
+    // What the last scan of the table directory found: (partition timestamp, -1) for each .attachable and
+    // (partition timestamp, commit txn) for each temporary DETACH name.
+    private final LongList partitionMovesFound = new LongList();
     // (timestamp, nameTxn) of partition directories the last durable epoch may still name; see
     // removePartitionDirAfterSavePoint().
     private final LongList partitionRemovalsAfterSavePoint = new LongList();
@@ -1158,6 +1165,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         boolean forceRenamePartitionDir = partitionSize < 0;
         boolean checkPassed = false;
         boolean isSoftLink;
+        boolean keepsAttachable = false;
         long parquetFileSize = -1L;
         try {
             if (ff.exists(detachedPath.$())) {
@@ -1202,6 +1210,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         LOG.error().$("could not copy [errno=").$(ff.errno()).$(", from=").$(detachedPath).$(", to=").$(path).I$();
                         return AttachDetachStatus.ATTACH_ERR_COPY;
                     }
+                } else if (enrolledAdaptive) {
+                    // A crash before a save point covers this attach rewinds below it, and the WAL replay must find
+                    // .attachable again, so it stays until then.
+                    if (!linkAttachable(detachedPath.trimTo(detachedRootLen), isSoftLink)) {
+                        LOG.error().$("could not link [errno=").$(ff.errno()).$(", from=").$(detachedPath).$(", to=").$(path).I$();
+                        ff.unlinkOrRemove(path, LOG);
+                        return AttachDetachStatus.ATTACH_ERR_COPY;
+                    }
+                    keepsAttachable = true;
+                    LOG.info().$("linked partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
                 } else {
                     if (ff.rename(detachedPath.trimTo(detachedRootLen).$(), path.$()) == FILES_RENAME_OK) {
                         LOG.info().$("renamed partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
@@ -1322,6 +1340,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             columnVersionWriter.commit();
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
             commitTxWriter();
+            if (keepsAttachable) {
+                attachablesAfterSavePoint.add(timestamp);
+            }
 
             if (parquetFileSize > -1) {
                 try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
@@ -2185,6 +2206,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         long minTimestamp = txWriter.getMinTimestamp();
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        final long detachTxn = getTxn() + 1;
         Path detachedPath = Path.PATH.get();
 
         try {
@@ -2217,10 +2239,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 setPathForNativePartition(detachedPath.trimTo(detachedRootLen), timestampType, partitionBy, timestamp, -1L);
                 detachedPath.put(DETACHED_DIR_MARKER);
-                detachedPathLen = detachedPath.size();
                 if (ff.exists(detachedPath.$())) {
                     LOG.error().$("detached partition folder already exist [path=").$(detachedPath).I$();
                     return AttachDetachStatus.DETACH_ERR_ALREADY_DETACHED;
+                }
+                // The partition takes its .detached name only once this commit is final; until then a temporary name
+                // that carries the commit's txn, which writer open removes when the commit did not survive.
+                setPathForNativePartition(detachedPath.trimTo(detachedRootLen), timestampType, partitionBy, timestamp, -1L);
+                detachedPath.put('.').put(detachTxn).put(DETACHING_DIR_MARKER);
+                detachedPathLen = detachedPath.size();
+                if (ff.exists(detachedPath.$())) {
+                    ff.rmdir(detachedPath);
                 }
 
                 // Hard link partition folder recursive to partition.detached
@@ -2272,6 +2301,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     .$(", from=").$(other)
                                     .$(", to=").$(detachedPath)
                                     .I$();
+                        } else if (CommitMode.isPowerLossDurable(effectiveCommitMode)) {
+                            // The copies, a partition copied across devices and the temporary name are durable before
+                            // _txn names them.
+                            try {
+                                DurableEpochManifest.fsyncDirectoryFiles(configuration, detachedPath.trimTo(detachedPathLen), detachedPathLen);
+                                TableUtils.fsyncDirDurable(ff, other.trimTo(pathSize).$());
+                            } catch (CairoException e) {
+                                attachDetachStatus = AttachDetachStatus.DETACH_ERR_COPY;
+                                LOG.critical().$("could not sync detached partition [path=").$(detachedPath).$(", e=").$((Throwable) e).I$();
+                                if (CairoException.isDataSyncFailure(e)) {
+                                    distressed = true;
+                                    engine.handleDataSyncFailure(e);
+                                }
+                            }
                         }
                     }
                 }
@@ -2299,6 +2342,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                     metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+                }
+                if (detachedPathLen > 0) {
+                    if (enrolledAdaptive) {
+                        detachesAfterSavePoint.add(timestamp, detachTxn);
+                    } else {
+                        finishDetach(timestamp, detachTxn);
+                    }
                 }
                 // return at the end of the method after removing partition directory
             } else {
@@ -8087,6 +8137,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         purgingOperator.clear();
     }
 
+    // Gives a DETACH whose commit is final its .detached name: a second link, synced, then the temporary name goes.
+    private void finishDetach(long timestamp, long detachTxn) {
+        try {
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, timestamp, -1L);
+            other.put('.').put(detachTxn).put(DETACHING_DIR_MARKER);
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, timestamp, -1L);
+            path.put(DETACHED_DIR_MARKER);
+            // A crash in the middle of the link leaves .detached without some files; the temporary name has them all.
+            if (ff.exists(path.$()) ? !linkMissingFiles(other, path) : !linkOrCopyDir(other, path, detachedMkDirMode)) {
+                LOG.critical().$("could not name detached partition, it stays under its temporary name [from=").$(other)
+                        .$(", to=").$(path).$(", errno=").$(ff.errno()).I$();
+                return;
+            }
+            if (CommitMode.isPowerLossDurable(effectiveCommitMode)) {
+                DurableEpochManifest.fsyncDirectoryFiles(configuration, path, path.size());
+                TableUtils.fsyncDirDurable(ff, path.trimTo(pathSize).$());
+            }
+            if (!ff.rmdir(other)) {
+                LOG.error().$("could not remove temporary detached partition name [path=").$(other).$(", errno=").$(ff.errno()).I$();
+            }
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+    }
+
     private void finishO3Append(long o3LagRowCount) {
         if (denseIndexers.size() == 0) {
             populateDenseIndexerList();
@@ -8160,6 +8236,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             o3FinishInFlight = false;
         }
+    }
+
+    // A published save point covers every committed attach and detach of this writer.
+    private void finishPartitionMovesAfterSavePoint() {
+        for (int i = 0, n = attachablesAfterSavePoint.size(); i < n; i++) {
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, attachablesAfterSavePoint.getQuick(i), -1L);
+            other.put(configuration.getAttachPartitionSuffix());
+            if (!ff.unlinkOrRemove(other, LOG)) {
+                LOG.critical().$("could not remove attached partition source, it shares files with the attached partition and is unsafe to attach again [path=")
+                        .$(other).$(", errno=").$(ff.errno()).I$();
+            }
+        }
+        attachablesAfterSavePoint.clear();
+        other.trimTo(pathSize);
+        for (int i = 0, n = detachesAfterSavePoint.size(); i < n; i += 2) {
+            finishDetach(detachesAfterSavePoint.getQuick(i), detachesAfterSavePoint.getQuick(i + 1));
+        }
+        detachesAfterSavePoint.clear();
     }
 
     private Utf8Sequence formatPartitionForTimestamp(long partitionTimestamp, long nameTxn) {
@@ -9028,6 +9122,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return io.questdb.cairo.idx.PostingIndexUtils.readSealTxnFromKeyFile(ff, keyFile) >= 0;
     }
 
+    // Puts .attachable into the partition directory at `path` and keeps it: hard links, a copy across devices, or a
+    // second soft link to the target of a soft-linked one.
+    private boolean linkAttachable(Path attachable, boolean isSoftLink) {
+        if (isSoftLink) {
+            try {
+                return ff.readLink(attachable, other.trimTo(0)) && ff.softLink(other.$(), path.$()) == 0;
+            } finally {
+                other.of(path).trimTo(pathSize);
+            }
+        }
+        return linkOrCopyDir(attachable, path, configuration.getMkDirMode());
+    }
+
     /**
      * Hard-links the index files for a single indexed-symbol column from the
      * source partition directory to the destination, dispatching on
@@ -9071,6 +9178,49 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (IndexType.isPosting(indexType)) {
             linkPostingIndexAuxFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, columnName, columnNameTxn, liveSealTxn);
         }
+    }
+
+    // Links, or copies across devices, each file of `from` that `to` lacks or holds shorter: `from` is whole until `to`
+    // is, so repeating this after a crash in the middle of it, or of the removal of `from`, leaves `to` whole.
+    private boolean linkMissingFiles(Path from, Path to) {
+        final int fromLen = from.size();
+        final int toLen = to.size();
+        final long findPtr = ff.findFirst(from.$());
+        if (findPtr <= 0) {
+            return false;
+        }
+        try {
+            do {
+                final long name = ff.findName(findPtr);
+                if (Files.notDots(name) && ff.findType(findPtr) == Files.DT_FILE) {
+                    to.trimTo(toLen).concat(name);
+                    from.trimTo(fromLen).concat(name);
+                    if (ff.length(to.$()) != ff.length(from.$())) {
+                        if (ff.exists(to.$()) && !ff.removeQuiet(to.$())) {
+                            return false;
+                        }
+                        if (ff.hardLink(from.$(), to.$()) != 0 && (!ff.isCrossDeviceCopyError(ff.errno()) || ff.copy(from.$(), to.$()) < 0)) {
+                            return false;
+                        }
+                    }
+                }
+            } while (ff.findNext(findPtr) > 0);
+            return true;
+        } finally {
+            ff.findClose(findPtr);
+            from.trimTo(fromLen);
+            to.trimTo(toLen);
+        }
+    }
+
+    // Hard links the directory `from` into `to`, or copies it on a cross-device error.
+    private boolean linkOrCopyDir(Path from, Path to, int mkDirMode) {
+        if (ff.hardLinkDirRecursive(from, to, mkDirMode) == 0) {
+            return true;
+        }
+        return ff.isCrossDeviceCopyError(ff.errno())
+                && (!ff.exists(to.$()) || ff.rmdir(to))
+                && ff.copyRecursive(from, to, mkDirMode) == 0;
     }
 
     private void linkPartitionIndexFiles(long partitionTimestamp, long partitionNameTxn, int partitionDirLen, int newPartitionDirLen) {
@@ -13271,8 +13421,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     txWriter.rewriteAndFsync();
                 }
                 processPartitionRemoveCandidates();
+                final boolean adaptive = effectiveCommitMode == CommitMode.ADAPTIVE && tableToken.isWal();
+                for (int i = 0, n = partitionMovesFound.size(); i < n; i += 2) {
+                    final long timestamp = partitionMovesFound.getQuick(i);
+                    final long detachTxn = partitionMovesFound.getQuick(i + 1);
+                    if (detachTxn < 0) {
+                        // An adaptive ATTACH links .attachable and deletes it after its save point; a crash in between
+                        // leaves it sharing files with the attached partition.
+                        if (adaptive && txWriter.attachedPartitionsContains(timestamp)) {
+                            LOG.advisory().$("partition source next to the attached partition may share its files, do not attach it again [table=")
+                                    .$(tableToken).$(", partition=").$ts(timestampDriver, timestamp).I$();
+                        }
+                    } else if (txWriter.getTxn() < detachTxn) {
+                        // The DETACH's commit did not survive: the partition is still attached, or the replay creates it.
+                        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, timestamp, -1L);
+                        other.put('.').put(detachTxn).put(DETACHING_DIR_MARKER);
+                        if (!ff.rmdir(other)) {
+                            LOG.error().$("could not remove temporary detached partition name [path=").$(other).$(", errno=").$(ff.errno()).I$();
+                        }
+                        other.trimTo(pathSize);
+                    } else if (adaptive && engine.getTableSequencerAPI().getTxnTracker(tableToken).getPinnedEpochTxn() < detachTxn) {
+                        detachesAfterSavePoint.add(timestamp, detachTxn);
+                    } else {
+                        finishDetach(timestamp, detachTxn);
+                    }
+                }
             } finally {
                 partitionRemoveCandidates.clear();
+                partitionMovesFound.clear();
                 path.trimTo(pathSize);
             }
         }
@@ -14092,6 +14268,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ff.iterateDir(path.$(), removePartitionDirsNotAttached);
             processPartitionRemoveCandidates();
         } finally {
+            partitionMovesFound.clear();
             path.trimTo(pathSize);
         }
     }
@@ -14111,6 +14288,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Do not remove detached partitions, they are probably about to be attached
         // Do not remove wal and sequencer directories either
         int checkedType = ff.typeDirOrSoftLinkDirNoDots(path, pathSize, pUtf8NameZ, type, utf8Sink);
+        if (checkedType != Files.DT_UNKNOWN && Utf8s.endsWithAscii(utf8Sink, configuration.getAttachPartitionSuffix())) {
+            try {
+                partitionMovesFound.add(partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, utf8Sink.size() - configuration.getAttachPartitionSuffix().length(), EN_LOCALE), -1L);
+            } catch (NumericException ignore) {
+                // not a partition name, leave it
+            }
+            return;
+        }
+        if (checkedType != Files.DT_UNKNOWN && Utf8s.endsWithAscii(utf8Sink, DETACHING_DIR_MARKER)) {
+            try {
+                final int txnSep = Utf8s.indexOfAscii(utf8Sink, '.');
+                final long detachTxn = Numbers.parseLong(utf8Sink, txnSep + 1, utf8Sink.size() - DETACHING_DIR_MARKER.length());
+                partitionMovesFound.add(partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, EN_LOCALE), detachTxn);
+            } catch (NumericException ignore) {
+                // not a name DETACH made, leave it
+            }
+            return;
+        }
         if (checkedType != Files.DT_UNKNOWN &&
                 !CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
                 !CairoKeywords.isWal(pUtf8NameZ) &&
@@ -16290,6 +16485,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.clearDirtyPartitions();
         columnVersionWriter.clearDirtyPartitions();
         epochWriteSetIncomplete = false;
+        finishPartitionMovesAfterSavePoint();
 
         LOG.info().$("adaptive durable epoch [table=").$(tableToken)
                 .$(", epochSeqTxn=").$(epochSeqTxn).$(", epochTxn=").$(epochTxn).I$();

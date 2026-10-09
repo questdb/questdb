@@ -519,7 +519,7 @@ public final class DurableEpochManifest {
         }
     }
 
-    private static void fsyncDirectoryFiles(CairoConfiguration configuration, Path dirPath, int dirLen) {
+    static void fsyncDirectoryFiles(CairoConfiguration configuration, Path dirPath, int dirLen) {
         final FilesFacade ff = configuration.getFilesFacade();
         final long findPtr = ff.findFirst(dirPath.trimTo(dirLen).$());
         if (findPtr <= 0) {
