@@ -1126,7 +1126,7 @@ public class SqlUtil {
     @SuppressWarnings("unused")
     // used by the row copier
     public static long implicitCastDoubleAsLong(double value) {
-        if (value > Long.MIN_VALUE && value <= Long.MAX_VALUE) {
+        if (value > Long.MIN_VALUE && value < LONG_MAX_EXCLUSIVE_DOUBLE) {
             return (long) value;
         }
 
