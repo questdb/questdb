@@ -40,8 +40,8 @@ public class AdaptiveEpochTriggerTest extends AbstractCairoTest {
         });
     }
 
-    // Long interval so, after the mandatory first-batch epoch, ONLY the row cap can fire within a
-    // sub-second test — independent of wall-clock advancement.
+    // A long interval, so after the mandatory first-batch epoch only the row cap can fire within a
+    // sub-second test, independent of the wall clock.
     private static final int LONG_INTERVAL_MS = 3_600_000;
 
     @Test
@@ -172,7 +172,7 @@ public class AdaptiveEpochTriggerTest extends AbstractCairoTest {
         });
     }
 
-    // cairo.adaptive.epoch.flush.on.close=false is the operator kill-switch: a clean close must NOT
+    // cairo.adaptive.epoch.flush.on.close=false is the operator kill-switch: a clean close does not
     // flush, leaving the tail for the next boot's WAL replay (durableEpoch stays behind the frontier).
     @Test
     public void testEpochFlushOnCloseDisabledLeavesTail() throws Exception {
