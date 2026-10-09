@@ -592,12 +592,17 @@ public class RecoveryCoordinator {
             }
             throw CairoException.critical(0)
                     .put("adaptive epoch post-dates live state; refusing wrong-lineage recovery [table=")
-                    .put(token.getTableName()).put(", epochSeqTxn=").put(epochSeqTxn).put(']');
+                    .put(token.getTableName()).put(", dir=").put(token.getDirName()).put(", epochSeqTxn=").put(epochSeqTxn)
+                    .put("]; move ").put(DurableEpochManifest.FILE_NAME).put('.').put(ahead.generation)
+                    .put(" out of the table directory and start again");
         }
         if (selected == null) {
             throw CairoException.critical(0)
                     .put("no trustworthy adaptive epoch generation; refusing unsafe live-state fallback [table=")
-                    .put(token.getTableName()).put(']');
+                    .put(token.getTableName()).put(", dir=").put(token.getDirName())
+                    .put("]; after a clean stop or a process kill, move ").put(DurableEpochManifest.FILE_NAME).put(".0 and ")
+                    .put(DurableEpochManifest.FILE_NAME).put(".1 out of the table directory and start again;")
+                    .put(" after a power loss, restore the table from a backup or a checkpoint");
         }
         if (rejected != null) {
             removeRejectedGeneration(token, dir, rejected);
