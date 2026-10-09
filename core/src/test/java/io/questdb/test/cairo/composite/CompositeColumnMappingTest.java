@@ -167,9 +167,6 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
     }
 
     /**
-     * Merge-append commits that add more BITMAP keys than the writer's own index writer cached when bound.
-     */
-    /**
      * ASYNC is treated as NOSYNC by frame writes: no flush at all.
      */
     @Test
@@ -177,6 +174,9 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
         Assert.assertEquals(0, countMergeAppendColumnFsyncs("async"));
     }
 
+    /**
+     * Merge-append commits that add more BITMAP keys than the writer's own index writer cached when bound.
+     */
     @Test
     public void testMergeAppendManyNewKeysKeepsBitmapIndexFiles() throws Exception {
         assertMemoryLeak(() -> {
@@ -199,9 +199,6 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * In-order rows into a non-WAL table whose last partition was left composite by its WAL days.
-     */
     @Test
     public void testMergeAppendNoSyncCommitDoesNotFsyncWrittenColumns() throws Exception {
         Assert.assertEquals(0, countMergeAppendColumnFsyncs("nosync"));
@@ -215,6 +212,9 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
         Assert.assertEquals(5, countMergeAppendColumnFsyncs("sync"));
     }
 
+    /**
+     * In-order rows into a non-WAL table whose last partition was left composite by its WAL days.
+     */
     @Test
     public void testNonWalInOrderRowAfterCompositeLastPartition() throws Exception {
         assertMemoryLeak(() -> {
