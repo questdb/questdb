@@ -518,7 +518,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testAddColumnActualDirectoryFsyncFailurePoisonsEngine() throws Exception {
         // TableWriter takes no table-directory fsync on Windows (there are no directory handles to
         // fsync), so the fault this facade arms is never reached there and addColumn succeeds.
-        // POSIX-only by the shape of the product code; covered by the Linux and macOS legs.
+        // The test is POSIX-only by the shape of the product code.
         org.junit.Assume.assumeFalse("table directory fsync seam is POSIX-only", Os.isWindows());
         try {
             assertMemoryLeak(() -> {
