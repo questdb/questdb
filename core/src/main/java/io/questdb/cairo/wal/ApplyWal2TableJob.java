@@ -1309,6 +1309,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         return;
                     }
                     applyOutstandingWalTransactions(tableToken, writer, engine, operationExecutor, tempPath, runStatus, pressureControl);
+                    // A role switch during the batch is reconciled before the writer goes back to the pool: the
+                    // table may get no next batch, and a notification dropped while the writer was busy is not
+                    // republished.
+                    writer.reconcileDurableEpochAnchor();
                     if (pressureControl.onEnoughMemory()) {
                         LOG.info().$("table writing memory pressure is easing up [table=").$(tableToken)
                                 .$(", parallelMemoryLimit=").$(pressureControl.getMemoryPressureRegulationValue())
