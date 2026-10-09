@@ -33,9 +33,9 @@ import org.jetbrains.annotations.Nullable;
  * Durability tiers for the QWP durable-ack, encoded as a bitmask so a
  * connection can be granted more than one independent ack stream:
  * <ul>
- *   <li>{@link #LOCAL} — the sequencer record is fdatasync-durable; the server
+ *   <li>{@link #LOCAL}: the sequencer record is fdatasync-durable; the server
  *       emits {@code STATUS_LOCAL_DURABLE_ACK} frames (power-loss-safe).</li>
- *   <li>{@link #REPLICATED} — the commit is uploaded to the replica store; the
+ *   <li>{@link #REPLICATED}: the commit is uploaded to the replica store; the
  *       server emits {@code STATUS_DURABLE_ACK} frames (failover-safe).</li>
  * </ul>
  * {@link #NONE} means durable-ack is off. {@link #LEGACY_TRUE} is a modifier
@@ -69,7 +69,7 @@ public final class DurabilityTier {
     /**
      * Parse the X-QWP-Request-Durable-Ack header value into a requested tier
      * set. Returns {@link #NONE} for an absent header and for any value that
-     * is not exactly one of the known tokens — an opted-in client then gets
+     * is not exactly one of the known tokens; an opted-in client then gets
      * no confirmation header and fails loudly at the handshake.
      */
     public static int fromHeaderValue(@Nullable Utf8Sequence v) {

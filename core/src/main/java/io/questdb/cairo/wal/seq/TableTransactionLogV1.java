@@ -76,7 +76,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
      * record may not be on disk: every record below it was covered by a completed flush. Negative after an
      * open that scanned records without flushing them (NOSYNC, ASYNC): a later open in such a mode trusts
      * the records below the absolute value, an open in a durable mode scans the whole log. Zero in a file
-     * this binary never wrote, whose records are then trusted as before. It shares the header's first
+     * written by a binary without the hint, whose records are then trusted. It shares the header's first
      * sector with {@code MAX_TXN_OFFSET_64}, so a power loss cannot persist one without the other.
      */
     public static final long UNSYNCED_FROM_TXN_OFFSET_64 = HEADER_SEQ_PART_SIZE_32 + Integer.BYTES + 2 * Long.BYTES;
@@ -342,7 +342,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     private long recoverTail(Path path, long publishedTxn) {
         final long unsyncedFrom = txnMem.getLong(UNSYNCED_FROM_TXN_OFFSET_64);
         final boolean isDurableMode = isDurableMode();
-        // A file this binary never wrote has no hint: its records are trusted, as before.
+        // A file written by a binary without the hint has none: its records are trusted.
         final long scanFrom;
         if (unsyncedFrom > 0 || (unsyncedFrom < 0 && !isDurableMode)) {
             scanFrom = Math.max(1, Math.min(Math.abs(unsyncedFrom), publishedTxn + 1));
@@ -378,14 +378,12 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     private void sync0() {
         int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
-            // Deferred 2 (group commit, W>0): push the V1 sequencer header to the page cache with
-            // msync(MS_ASYNC) — writeback-only, NO device flush — and DEFER the fdatasync to the batched
-            // flushPendingDurable (via fdatasyncTxnLog) as the final seq step. MS_SYNC here would device-flush
-            // every commit and defeat the window. Other modes (and ADAPTIVE W=0) keep their existing grade.
+            // With a group window, ADAPTIVE pushes the header to the page cache with MS_ASYNC and leaves the
+            // device flush to the batched flush (fdatasyncTxnLog). Other modes keep their own grade.
             final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE
                     && configuration.getAdaptiveCommitGroupWindowUs() > 0;
             txnMem.sync(commitMode == CommitMode.ASYNC || deferDeviceFlush);
-            // ADAPTIVE: make the V1 sequencer header durable (deferred to the batch under W>0).
+            // ADAPTIVE with no group window flushes the header to the device here.
             if (commitMode == CommitMode.ADAPTIVE && !deferDeviceFlush) {
                 ff.fdatasync(txnMem.getFd());
             }
