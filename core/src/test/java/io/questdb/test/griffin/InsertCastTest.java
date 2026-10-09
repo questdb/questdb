@@ -2063,4 +2063,14 @@ public class InsertCastTest extends AbstractCairoTest {
             assertException("INSERT INTO l SELECT v FROM f", 0, "inconvertible value");
         });
     }
+    @Test
+    public void testDoubleJustAboveLongRangeIsRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE d (v DOUBLE)");
+            execute("CREATE TABLE l (v LONG)");
+            // as a DOUBLE, 9223372036854775807.0 rounds up to 2^63, one above the largest LONG
+            execute("INSERT INTO d VALUES (9223372036854775807.0)");
+            assertException("INSERT INTO l SELECT v FROM d", 0, "inconvertible value");
+        });
+    }
 }
