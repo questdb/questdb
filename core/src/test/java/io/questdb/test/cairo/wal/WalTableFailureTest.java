@@ -29,14 +29,17 @@ import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolCountProvider;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.InsertMethod;
@@ -77,6 +80,9 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.File;
+import java.io.RandomAccessFile;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
@@ -737,7 +743,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
             // the committed day-2 row is dropped on purpose; the lag transaction and the out-of-order row
             // were not committed when the partition was dropped, so they must all be there
-            assertSavedLagRows("('2022-02-24', 1_000_000, 'c', 'c1')", true, null);
+            assertSavedLagRows("('2022-02-24', 1_000_000, 'c', 'c1')");
         });
     }
 
@@ -1767,24 +1773,12 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testWalTableResumeAfterFailedLagConsumingCommit() throws Exception {
-        final MsyncFailureAfterWalReadFacade ff = new MsyncFailureAfterWalReadFacade();
-        assertMemoryLeak(ff, () -> {
-            // commit00 msyncs the column files before it writes _txn in SYNC mode only
-            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
-            final TableToken token = saveWalLag("('2022-02-25', 1_000_000, 'c', 'c1')");
+        testWalTableResumeAfterFailedLagConsumingCommit0(false);
+    }
 
-            // the consuming commit appends the merged rows in place over the lag, then its msync fails
-            ff.arm(token);
-            drainWalQueue();
-            Assert.assertTrue("msync did not fail", ff.hasFailed);
-            Assert.assertTrue("the failed commit did not suspend the table", engine.getTableSequencerAPI().isSuspended(token));
-            Assert.assertEquals("the failed commit wrote _txn", 1_000, savedLagRows(token));
-
-            execute("ALTER TABLE x RESUME WAL");
-            drainWalQueue();
-            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
-            assertSavedLagRows("('2022-02-25', 1_000_000, 'c', 'c1')", true, null);
-        });
+    @Test
+    public void testWalTableResumeAfterFailedLagConsumingCommitNegativeLagChecksum() throws Exception {
+        testWalTableResumeAfterFailedLagConsumingCommit0(true);
     }
 
     @Test
@@ -1869,23 +1863,30 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWalTableResumeFromTxnWithSavedLag() throws Exception {
+    public void testWalTableRollbackDropsSavedLag() throws Exception {
         assertMemoryLeak(() -> {
             // seqTxn 1 the committed row, seqTxn 2 the lag, seqTxn 3 the out-of-order row
             final TableToken token = saveWalLag("('2022-02-25', 1_000_000, 'c', 'c1')");
-            // seqTxn 3 is the one to skip
-            engine.getTableSequencerAPI().suspendTable(token, ErrorTag.NONE, "seqTxn 3 failed");
-            execute("INSERT INTO x VALUES ('2022-02-25T03:00', 7, 'a', 'a')");
-            execute("INSERT INTO x VALUES ('2022-02-25T04:00', 11, 'b', 'b')");
-
-            execute("ALTER TABLE x RESUME WAL FROM TXN 4");
+            try (TableWriter writer = getWriter(token)) {
+                Assert.assertEquals("the pooled writer does not hold the lag", 2, writer.getAppliedSeqTxn());
+                // a commit that consumes the lag rewrites its bytes in place; model a failed one: zero the lag
+                // rows of column v, leave the writer in a transaction and roll it back
+                final File[] partitionDirs = new File(engine.getConfiguration().getDbRoot().toString(), token.getDirName())
+                        .listFiles((dir, name) -> name.startsWith("2022-02-25"));
+                Assert.assertNotNull(partitionDirs);
+                Arrays.sort(partitionDirs);
+                try (RandomAccessFile file = new RandomAccessFile(new File(partitionDirs[partitionDirs.length - 1], "v.d"), "rw")) {
+                    file.seek(Long.BYTES);
+                    file.write(new byte[1_000 * Long.BYTES]);
+                }
+                final TableWriter.Row row = writer.newRow(parseFloorPartialTimestamp("2022-02-25T23:00"));
+                row.putLong(1, 5);
+                row.append();
+                writer.rollback();
+            }
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
-            assertSavedLagRows(
-                    "('2022-02-25', 1_000_000, 'c', 'c1')",
-                    false,
-                    "('2022-02-25T03:00', 7, 'a', 'a'), ('2022-02-25T04:00', 11, 'b', 'b')"
-            );
+            assertSavedLagRows("('2022-02-25', 1_000_000, 'c', 'c1')");
         });
     }
 
@@ -2078,18 +2079,13 @@ public class WalTableFailureTest extends AbstractCairoTest {
         }
     }
 
-    // The table and the reference hold the same rows: the committed ones, the lag transaction's 1,000,
-    // the out-of-order row when it was applied, and any later ones.
-    private static void assertSavedLagRows(String committedValues, boolean outOfOrderRowApplied, String laterValues) throws Exception {
+    // The table and the reference hold the same rows: the committed ones, the lag transaction's 1,000
+    // and the out-of-order row.
+    private static void assertSavedLagRows(String committedValues) throws Exception {
         execute("CREATE TABLE x_expected (ts TIMESTAMP, v LONG, s SYMBOL, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
         execute("INSERT INTO x_expected VALUES " + committedValues);
         execute(String.format(SAVED_LAG_INSERT, "x_expected"));
-        if (outOfOrderRowApplied) {
-            execute("INSERT INTO x_expected VALUES ('2022-02-25T00:30', -1, 'neg', 'neg')");
-        }
-        if (laterValues != null) {
-            execute("INSERT INTO x_expected VALUES " + laterValues);
-        }
+        execute("INSERT INTO x_expected VALUES ('2022-02-25T00:30', -1, 'neg', 'neg')");
         assertSqlCursors("SELECT count(), sum(v) FROM x_expected", "SELECT count(), sum(v) FROM x");
         assertSqlCursors("x_expected", "x");
     }
@@ -2436,11 +2432,31 @@ public class WalTableFailureTest extends AbstractCairoTest {
     // out-of-order row goes through a second WAL, so no later transaction shares the lag transaction's WAL
     // segment; the WAL purge that runs after the lag is saved must not take that segment.
     private static TableToken saveWalLag(String committedValues) throws Exception {
+        return saveWalLag(committedValues, false);
+    }
+
+    private static TableToken saveWalLag(String committedValues, boolean negativeLagChecksum) throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
         execute("CREATE TABLE x (ts TIMESTAMP, v LONG, s SYMBOL, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL WITH maxUncommittedRows=50");
         final TableToken token = engine.verifyTableName("x");
         execute("INSERT INTO x VALUES " + committedValues);
         drainWalQueue();
+        if (negativeLagChecksum) {
+            // A table with many commits: the empty-lag checksum of every txn from 73,046 to 145,130 is negative.
+            engine.releaseInactive();
+            try (TxWriter txWriter = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
+                txWriter.ofRW(Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.TXN_FILE_NAME).$());
+                txWriter.setCommitMode(CommitMode.NOSYNC);
+                final ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+                for (int i = 0, n = txWriter.getSymbolColumnCount(); i < n; i++) {
+                    final int symbolCount = txWriter.getSymbolValueCount(i);
+                    symbolCounts.add(() -> symbolCount);
+                }
+                while (TableUtils.calculateTxnLagChecksum(txWriter.getTxn(), 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0) >= 0) {
+                    txWriter.commit(symbolCounts);
+                }
+            }
+        }
         execute(String.format(SAVED_LAG_INSERT, "x"));
         try (WalWriter ignore = engine.getWalWriter(token)) {
             execute("INSERT INTO x VALUES ('2022-02-25T00:30', -1, 'neg', 'neg')");
@@ -2510,6 +2526,28 @@ public class WalTableFailureTest extends AbstractCairoTest {
                             3\tab\t2022-02-25T00:00:00.000000Z\tabcd
                             3\tab\t2022-02-25T00:00:00.000000Z\tabcd
                             """);
+        });
+    }
+
+    private static void testWalTableResumeAfterFailedLagConsumingCommit0(boolean negativeLagChecksum) throws Exception {
+        final MsyncFailureAfterWalReadFacade ff = new MsyncFailureAfterWalReadFacade();
+        assertMemoryLeak(ff, () -> {
+            // commit00 msyncs the column files before it writes _txn in SYNC mode only
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+            // seqTxn 1 the committed row, seqTxn 2 the lag, seqTxn 3 the out-of-order row
+            final TableToken token = saveWalLag("('2022-02-25', 1_000_000, 'c', 'c1')", negativeLagChecksum);
+
+            // the consuming commit appends the merged rows in place over the lag, then its msync fails
+            ff.arm(token);
+            drainWalQueue();
+            Assert.assertTrue("msync did not fail", ff.hasFailed);
+            Assert.assertTrue("the failed commit did not suspend the table", engine.getTableSequencerAPI().isSuspended(token));
+            Assert.assertEquals("the failed commit wrote _txn", 1_000, savedLagRows(token));
+
+            execute("ALTER TABLE x RESUME WAL");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertSavedLagRows("('2022-02-25', 1_000_000, 'c', 'c1')");
         });
     }
 

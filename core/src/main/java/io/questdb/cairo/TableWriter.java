@@ -693,6 +693,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             configureColumnMemory();
             configureTimestampSetter();
             this.appendTimestampSetter = timestampSetter;
+            discardWalLag("open");
             configureAppendPosition();
             purgeUnusedPartitions();
             minSplitPartitionTimestamp = findMinSplitPartitionTimestamp();
@@ -1095,9 +1096,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Applies a command directly to this writer. On a WAL table this bypasses the WAL (a forced ALTER, a queued
      * command), so no WAL replay can redo the change, and an adaptive table takes a durable epoch after it,
      * unless one already names the current txn. Every direct path ends here: the dispatcher, a command run
-     * once the writer frees up, and the writer's command queue.
+     * once the writer frees up, and the writer's command queue. A WAL lag the writer holds is dropped first, so
+     * the command sees only committed rows and the apply job applies the lag's transactions again afterwards.
      */
     public long applyOutsideWal(AsyncWriterCommand command, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+        if (discardWalLag("change outside the WAL")) {
+            closeActivePartition(false);
+            configureAppendPosition();
+        }
         try {
             return command.apply(this, contextAllowsAnyStructureChanges);
         } finally {
@@ -3702,6 +3708,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 freeColumns(false);
                 txWriter.unsafeLoadAll();
+                discardWalLag("rollback");
                 rollbackIndexes();
                 rollbackSymbolTables(true);
                 columnVersionWriter.readUnsafe();
@@ -7535,6 +7542,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = deferredPostingSealPurges.size() - 1; i >= writePos; i--) {
             deferredPostingSealPurges.remove(i);
         }
+    }
+
+    // The rows of a WAL lag sit past the committed rows of the last partition, where the next commit writes in
+    // place, so a lag read back from _txn may name changed bytes. The writer drops it, in memory only (_txn and a
+    // save point keep their txn), and the apply job applies its transactions again from the WAL, which the WAL
+    // purge keeps from seqTxn on.
+    private boolean discardWalLag(String reason) {
+        final int lagTxnCount = txWriter.getLagTxnCount();
+        final int lagRowCount = txWriter.getLagRowCount();
+        if (lagTxnCount == 0 && lagRowCount == 0) {
+            return false;
+        }
+        LOG.info().$("discarded WAL lag, its transactions apply again from the WAL [table=").$(tableToken)
+                .$(", reason=").$(reason)
+                .$(", seqTxn=").$(txWriter.getSeqTxn())
+                .$(", lagTxnCount=").$(lagTxnCount)
+                .$(", lagRowCount=").$(lagRowCount)
+                .I$();
+        txWriter.setLagTxnCount(0);
+        txWriter.setLagRowCount(0);
+        txWriter.setLagOrdered(true);
+        txWriter.setLagMinTimestamp(Long.MAX_VALUE);
+        txWriter.setLagMaxTimestamp(Long.MIN_VALUE);
+        // the lookahead has counted the lag's transactions as applied; the next apply pass loads them again
+        walTxnDetails = Misc.free(walTxnDetails);
+        return true;
     }
 
     private void dispatchColumnTasks(
