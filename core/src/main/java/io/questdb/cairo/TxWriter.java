@@ -563,6 +563,20 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     /**
+     * Makes the {@code _txn} this writer reads durable, also when a failed writeback left its pages clean in the
+     * page cache with content the device never got: a sync skips clean pages, so the bytes are written over
+     * themselves first.
+     */
+    public void rewriteAndFsync() {
+        final long fd = txMemBase.getFd();
+        final long size = txMemBase.size();
+        if (ff.write(fd, txMemBase.addressOf(0), size, 0) != size) {
+            throw CairoException.critical(ff.errno()).put("could not rewrite _txn [fd=").put(fd).put(", size=").put(size).put(']');
+        }
+        ff.fsync(fd);
+    }
+
+    /**
      * Publishes the previous record that {@link #ofRW(LPSZ, boolean)} loaded in place of a torn live area, and
      * makes it durable whatever the commit mode.
      * <p>

@@ -333,12 +333,17 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testSyncConvertToNativeNonWalFailedTxnMsyncThenCrashReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(true, true);
+        assertSyncConvertTxnMsyncFailureKeepsTable(true, true, false);
     }
 
     @Test
     public void testSyncConvertToNativeNonWalFailedTxnMsyncThenRestartReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(true, false);
+        assertSyncConvertTxnMsyncFailureKeepsTable(true, false, false);
+    }
+
+    @Test
+    public void testSyncConvertToNativeNonWalFailedTxnMsyncThenWriterOpenThenCrashReadsTable() throws Exception {
+        assertSyncConvertTxnMsyncFailureKeepsTable(true, true, true);
     }
 
     @Test
@@ -388,12 +393,12 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testSyncConvertToParquetNonWalFailedTxnMsyncThenCrashReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(false, true);
+        assertSyncConvertTxnMsyncFailureKeepsTable(false, true, false);
     }
 
     @Test
     public void testSyncConvertToParquetNonWalFailedTxnMsyncThenRestartReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(false, false);
+        assertSyncConvertTxnMsyncFailureKeepsTable(false, false, false);
     }
 
     @Test
@@ -497,12 +502,17 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testSyncSwitchToParquetNonWalFailedTxnMsyncThenCrashReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, true);
+        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, true, false);
     }
 
     @Test
     public void testSyncSwitchToParquetNonWalFailedTxnMsyncThenRestartReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, false);
+        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, false, false);
+    }
+
+    @Test
+    public void testSyncSwitchToParquetNonWalFailedTxnMsyncThenWriterOpenThenCrashReadsTable() throws Exception {
+        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, true, true);
     }
 
     @Test
@@ -885,16 +895,18 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
      * {@code _txn} comes back and names the old version of the partition. Either way that directory must be there
      * and the table must read every row.
      *
-     * @param toNative    converts the first partition from parquet back to native; otherwise to parquet
-     * @param isPowerLoss the power fails after the stop; otherwise the process restarts without a power loss
+     * @param toNative            converts the first partition from parquet back to native; otherwise to parquet
+     * @param isPowerLoss         the power fails after the stop; otherwise the process restarts without a power loss
+     * @param isWriterOpenedFirst with a power loss: the process restarts first and a writer opens and closes the table
      */
-    private void assertSyncConvertTxnMsyncFailureKeepsTable(boolean toNative, boolean isPowerLoss) throws Exception {
+    private void assertSyncConvertTxnMsyncFailureKeepsTable(boolean toNative, boolean isPowerLoss, boolean isWriterOpenedFirst) throws Exception {
         assertSyncConvertTxnMsyncFailureKeepsTable(
                 toNative ? this::convertFirstPartitionToParquet : null,
                 () -> execute("ALTER TABLE x CONVERT PARTITION TO " + (toNative ? "NATIVE" : "PARQUET") + " LIST '2024-01-01'"),
                 toNative ? "convertPartitionParquetToNative" : "convertPartitionNativeToParquet",
                 !toNative,
-                isPowerLoss
+                isPowerLoss,
+                isWriterOpenedFirst
         );
     }
 
@@ -902,18 +914,25 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
      * A change of the first partition's format fails the msync of its {@code _txn} under SYNC, and nothing of the
      * new {@code _txn} reaches the device. The engine must stop and both versions of the partition must stay: a
      * restart without a power loss reads it in the new format, a restart after a power loss in the old one.
+     * <p>
+     * A restart without a power loss, a writer open, then a power loss: the open removes the partition version
+     * the page-cache {@code _txn} does not name, which the device's {@code _txn} may still name, so the open must
+     * make the page-cache {@code _txn} durable first and the table must read in the new format.
      *
-     * @param prepare        runs once the rows are inserted, before the durable baseline; null for none
-     * @param change         the change whose {@code _txn} msync fails
-     * @param operation      the {@code TableWriter} method of the change that commits the {@code _txn}
-     * @param isParquetAfter whether the change leaves the partition in parquet format
+     * @param prepare             runs once the rows are inserted, before the durable baseline; null for none
+     * @param change              the change whose {@code _txn} msync fails
+     * @param operation           the {@code TableWriter} method of the change that commits the {@code _txn}
+     * @param isParquetAfter      whether the change leaves the partition in parquet format
+     * @param isPowerLoss         the power fails after the stop; otherwise the process restarts without a power loss
+     * @param isWriterOpenedFirst with a power loss: the process restarts first and a writer opens and closes the table
      */
     private void assertSyncConvertTxnMsyncFailureKeepsTable(
             TestUtils.LeakProneCode prepare,
             TestUtils.LeakProneCode change,
             String operation,
             boolean isParquetAfter,
-            boolean isPowerLoss
+            boolean isPowerLoss,
+            boolean isWriterOpenedFirst
     ) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         final var ff = new CrashFaultFilesFacade() {
@@ -955,7 +974,21 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
             final boolean isPoisoned = engine.isDurabilityFailed();
             engine.resetDurabilityFailure();
             if (isPowerLoss) {
+                if (isWriterOpenedFirst) {
+                    releaseEngineHandles();
+                    try (TableWriter writer = getWriter("x")) {
+                        Assert.assertNotNull(writer);
+                    }
+                    releaseEngineHandles();
+                    // the filesystem journals the writer's directory changes on its own, as ext4 does within seconds
+                    try (Path path = new Path()) {
+                        path.of(root).concat(engine.verifyTableName("x").getDirName());
+                        ff.fsyncAndClose(ff.openRO(path.$()));
+                    }
+                }
                 crashAndReopen();
+                // a power loss ends the process, and the transaction scoreboard with it
+                engine.getTxnScoreboardPool().remove(engine.verifyTableName("x"));
             } else {
                 releaseEngineHandles();
             }
@@ -963,14 +996,14 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
             Assert.assertTrue("a failed _txn msync must poison the engine, failure: " + failure, isPoisoned);
             Throwable readFailure = null;
             try {
+                assertAllColumns();
                 try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
                     Assert.assertEquals(
                             "the partition must be in the format the _txn names",
-                            isParquetAfter != isPowerLoss,
+                            isParquetAfter != (isPowerLoss && !isWriterOpenedFirst),
                             reader.getTxFile().isPartitionParquet(0)
                     );
                 }
-                assertAllColumns();
             } catch (Throwable th) {
                 readFailure = th;
             }
