@@ -398,8 +398,8 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fdatasync0(JNIEnv *e, jclass cl
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncfs0(JNIEnv *e, jclass cl, jint fd) {
-    /* Windows has no syncfs (whole-filesystem flush bound to an fd); FlushFileBuffers on this fd is the
-     * closest single-file equivalent, same as fsync. The batched SYNC path is Linux-only anyway. */
+    /* Windows has no syncfs; FlushFileBuffers on this fd is the closest single-file equivalent. The
+     * batched flush is Linux-only. */
     if (FlushFileBuffers(FD_TO_HANDLE(fd))) {
         return 0;
     }
@@ -408,8 +408,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncfs0(JNIEnv *e, jclass cl, j
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncFileRange0(JNIEnv *e, jclass cl, jint fd, jlong offset, jlong nbytes, jint flags) {
-    /* Windows has no sync_file_range; return 0 (no-op). Java callers MUST fall back to a full
-     * fsync/fdatasync for durability rather than relying on this. */
+    /* Windows has no sync_file_range: a no-op returning 0. Callers must not rely on it for durability. */
     (void) e; (void) cl; (void) fd; (void) offset; (void) nbytes; (void) flags;
     return 0;
 }
@@ -1026,7 +1025,7 @@ static jint rename0(jlong lpszOld, jlong lpszNew, DWORD flags) {
             wchar_t buf2[len];
             MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszNew, -1, buf2, len);
 
-            /* Without MOVEFILE_REPLACE_EXISTING, MoveFileExW FAILS with ERROR_ALREADY_EXISTS when the destination
+            /* Without MOVEFILE_REPLACE_EXISTING, MoveFileExW fails with ERROR_ALREADY_EXISTS when the destination
              * is present, as MoveFileW does. Callers depend on that (see TableWriter's
              * Files.WINDOWS_ERROR_FILE_EXISTS branch), so the flag must never be added here. Unlike MoveFileW, it
              * does not copy and delete a file moved to another volume, as MOVEFILE_COPY_ALLOWED is not set: that
@@ -1044,12 +1043,10 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_rename(JNIEnv *e, jclass cl, jl
     return rename0(lpszOld, lpszNew, 0);
 }
 
-/* The durable publish-by-rename. POSIX makes a rename durable by fsync'ing the parent directory afterwards;
- * Windows has no directory handle to flush (FlushFileBuffers takes files only), so without this flag the
- * rename that PUBLISHES an already-fsynced file had no barrier at all -- a power cut could keep the _txn
- * commit that points at the new name while losing the name itself, inverting data-before-pointer.
- * MOVEFILE_WRITE_THROUGH is documented not to return until the move is flushed to disk, which is the
- * barrier the POSIX directory fsync buys. */
+/* The durable publish-by-rename. POSIX makes a rename durable by fsyncing the parent directory; Windows has
+ * no directory handle to flush (FlushFileBuffers takes files only), so a power cut could keep the _txn commit
+ * that names the new file while losing the name. MOVEFILE_WRITE_THROUGH does not return until the move is
+ * flushed to disk, the barrier the POSIX directory fsync buys. */
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_renameDurable0(JNIEnv *e, jclass cl, jlong lpszOld, jlong lpszNew) {
     return rename0(lpszOld, lpszNew, MOVEFILE_WRITE_THROUGH);
 }
