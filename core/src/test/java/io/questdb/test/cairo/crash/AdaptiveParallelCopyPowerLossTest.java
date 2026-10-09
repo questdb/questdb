@@ -53,8 +53,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * A parallel COPY that reported success on an adaptive instance must survive a power loss, into a new table as
  * well as into an existing empty one. The importer writes every partition outside the WAL, so nothing can redo
  * it after the crash: the import must be durable before COPY reports it done. Nothing is written back by the
- * kernel here: only the product's own barriers make bytes durable. Outside ADAPTIVE the import promises nothing
- * new, and the importer makes no extra flush there.
+ * kernel here: only the product's own barriers make bytes durable. Where syncfs is filesystem-wide one syncfs
+ * makes the import durable; elsewhere the importer flushes file by file. Outside ADAPTIVE the import promises
+ * nothing new, and the importer makes no extra flush there.
  */
 @RunWith(Parameterized.class)
 public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest {
@@ -227,7 +228,20 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
         inputWorkRoot = temp.newFolder().getAbsolutePath();
         Files.writeString(java.nio.file.Path.of(inputRoot, "t.csv"), CSV, StandardCharsets.UTF_8);
         final AtomicInteger syncfsCalls = new AtomicInteger();
+        final AtomicInteger columnFileFsyncs = new AtomicInteger();
         crashFf = new CrashFaultFilesFacade() {
+            @Override
+            public void fsync(long fd) {
+                countColumnFile(fd);
+                super.fsync(fd);
+            }
+
+            @Override
+            public void fsyncAndClose(long fd) {
+                countColumnFile(fd);
+                super.fsyncAndClose(fd);
+            }
+
             @Override
             public boolean isSyncfsFileSystemWide() {
                 return syncfsFileSystemWide;
@@ -238,6 +252,13 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
                 syncfsCalls.incrementAndGet();
                 super.syncfs(fd);
             }
+
+            private void countColumnFile(long fd) {
+                final String path = pathOf(fd);
+                if (path != null && path.endsWith(".d")) {
+                    columnFileFsyncs.incrementAndGet();
+                }
+            }
         };
         crashFf.setDbRoot(root);
         assertMemoryLeak(crashFf, () -> {
@@ -247,11 +268,20 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
             }
             markDurableBaseline();
             syncfsCalls.set(0);
+            columnFileFsyncs.set(0);
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 1)) {
                 importer.of("t", "t.csv", 1, PartitionBy.DAY, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 importer.process(AllowAllSecurityContext.INSTANCE);
             }
             final int importSyncfsCalls = syncfsCalls.get();
+            if ("adaptive".equals(commitMode) && newTable) {
+                if (syncfsFileSystemWide) {
+                    Assert.assertEquals("one syncfs makes the import durable", 1, importSyncfsCalls);
+                    Assert.assertEquals("no column file fsync where syncfs is filesystem-wide", 0, columnFileFsyncs.get());
+                } else {
+                    Assert.assertTrue("the import is flushed file by file", columnFileFsyncs.get() > 0);
+                }
+            }
             final String imported = rows(engine);
             Assert.assertEquals(IMPORTED, imported);
 

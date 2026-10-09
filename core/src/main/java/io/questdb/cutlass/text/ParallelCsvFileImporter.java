@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DatabaseCheckpointAgent;
 import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
@@ -849,8 +850,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void flushCreatedTable() {
         // The writer of a table this import created holds a non-WAL token, so it takes no save point. On an
         // adaptive instance the import must be durable before COPY reports it done; a failed flush drops the table.
+        // The table is never in a volume, so where syncfs is filesystem-wide one sync of the database root does.
         if (targetTableCreated && configuration.getCommitMode() == CommitMode.ADAPTIVE && writer.getMetadata().isWalEnabled()) {
-            DurableEpochManifest.fsyncTableFiles(configuration, tableToken, metadata.getTimestampType(), partitionBy);
+            if (ff.isSyncfsFileSystemWide()) {
+                DatabaseCheckpointAgent.syncRestoredState(ff, tmpPath.of(configuration.getDbRoot()), false);
+            } else {
+                DurableEpochManifest.fsyncTableFiles(configuration, tableToken, metadata.getTimestampType(), partitionBy);
+            }
         }
     }
 
