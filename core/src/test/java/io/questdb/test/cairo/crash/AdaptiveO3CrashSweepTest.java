@@ -550,13 +550,13 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
     /**
      * The saved-lag workload. Setup: the table's committed rows, then two WAL transactions: the first
      * holds exactly the table's lag limit of rows ({@code maxUncommittedRows} times the lag multiplier),
-     * the second one row out of order below them, written through a second WAL so the first sits in a
-     * segment of its own. One apply pass with a zero time quota applies the first transaction on its own,
-     * keeps its rows in WAL lag (the second sorts below them), stops on the quota and saves the lag in
-     * {@code _txn}; under ADAPTIVE a save point lands on it. Setup asserts {@code _txn} holds that lag, so a
-     * green result can never come from a workload that saved none, and then runs the WAL purge, which must
-     * not take the lag's WAL. Commit phase: the drain that consumes the lag. Oracle: every row of the table
-     * and of both transactions, by value.
+     * the second one row out of order below them, written through a second WAL so that no later
+     * transaction shares the first one's WAL segment. One apply pass with a zero time quota applies the
+     * first transaction on its own, keeps its rows in WAL lag (the second sorts below them), stops on the
+     * quota and saves the lag in {@code _txn}; under ADAPTIVE a save point lands on it. Setup asserts
+     * {@code _txn} holds that lag, so a green result can never come from a workload that saved none, and
+     * then runs the WAL purge, which must not take the lag's WAL segment. Commit phase: the drain that
+     * consumes the lag. Oracle: every row of the table and of both transactions, by value.
      */
     private static final class SavedLagWorkload implements AdaptiveCrashWorkload {
         private final boolean dedup;

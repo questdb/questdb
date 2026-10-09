@@ -2433,8 +2433,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
     // The lag transaction holds the table's lag limit of rows (maxUncommittedRows=50 times the lag
     // multiplier, 20) and the out-of-order row sorts below them, so one apply pass with a zero time quota
     // applies the lag transaction on its own, keeps its rows in WAL lag and saves the lag in _txn. The
-    // out-of-order row goes through a second WAL, so the lag transaction's WAL holds nothing else; the
-    // WAL purge that runs after the lag is saved must not take it.
+    // out-of-order row goes through a second WAL, so no later transaction shares the lag transaction's WAL
+    // segment; the WAL purge that runs after the lag is saved must not take that segment.
     private static TableToken saveWalLag(String committedValues) throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
         execute("CREATE TABLE x (ts TIMESTAMP, v LONG, s SYMBOL, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL WITH maxUncommittedRows=50");
