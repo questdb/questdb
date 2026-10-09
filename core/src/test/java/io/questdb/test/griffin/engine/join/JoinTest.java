@@ -51,6 +51,18 @@ import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class JoinTest extends AbstractCairoTest {
+    // joins after which reorderTables moves i.sym = t.sym onto trades and starts the cheapest order at
+    // params, see createTablesForTimeSeriesJoinAfterKeyMove()
+    private static final String KEY_MOVE_JOINS = "FROM trades t CROSS JOIN params p JOIN venues v ON v.id = p.venue"
+            + " JOIN instruments i ON i.venue = v.id AND i.sym = t.sym";
+    // the rows of a time-series join after KEY_MOVE_JOINS that matches each trade with the latest quote of
+    // its symbol before the trade
+    private static final String KEY_MOVE_ROWS = """
+            sym\tts\tbid
+            A\t2024-01-01T00:00:10.000000Z\t9.5
+            B\t2024-01-01T00:00:20.000000Z\t19.5
+            A\t2024-01-01T00:00:30.000000Z\t10.5
+            """;
 
     @Test
     public void test2686() throws Exception {
@@ -7513,6 +7525,53 @@ public class JoinTest extends AbstractCairoTest {
                             null\t2\t3\t2\tnull\tnull\tnull\t1
                             null\t2\t4\t3\tnull\tnull\tnull\t1
                             null\t2\t1\t4\tnull\tnull\tnull\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testJoinKeyMovedOntoFirstTableKeepsOrderWithoutTimeSeriesJoin() throws Exception {
+        // No join of the level reads the designated timestamp of the first table to run, so
+        // runFromModelFirst leaves the cheapest order, which starts at params, alone.
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, i.lot " + KEY_MOVE_JOINS + " ORDER BY t.ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
+                            Encode sort
+                              keys: [ts]
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: t.sym=i.sym
+                                      symbolKeyJoin: true
+                                        Hash Join Light
+                                          condition: i.venue=v.id
+                                          symbolKeyJoin: true
+                                            Hash Join Light
+                                              condition: v.id=p.venue
+                                              symbolKeyJoin: true
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: params
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: venues
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: instruments
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            sym\tts\tlot
+                            A\t2024-01-01T00:00:10.000000Z\t100
+                            B\t2024-01-01T00:00:20.000000Z\t200
+                            A\t2024-01-01T00:00:30.000000Z\t100
                             """);
         });
     }
@@ -15693,6 +15752,732 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimeSeriesJoinAfterKeyMoveDerivesConflictingKey() throws Exception {
+        // reorderTables moves a4.k = a0.k onto a0. runFromModelFirst places a0, a4, a3, a1 and a2 in that
+        // order and gives a2 both a2.s = a1.s and a2.s = a3.v. SqlCodeGenerator encodes them as STRING
+        // and VARCHAR keys and rejects a join that encodes one column in two types, so a2 keeps
+        // a2.s = a3.v, and a1 joins on a1.s = a3.v, which both keys imply. The derived key keeps the join
+        // on a1 as selective as in the query written in that order.
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinKeyClash();
+            assertQuery("""
+                    SELECT a0.k, a0.ts, a1.s, q.bid
+                    FROM trades a0
+                    CROSS JOIN books a1
+                    JOIN desks a2 ON a2.s = a1.s
+                    JOIN routes a3 ON a3.l = a1.l AND a3.v = a2.s
+                    JOIN accts a4 ON a4.s = a3.s AND a4.k = a0.k
+                    LT JOIN quotes q
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlanContaining("condition: a1.l=a3.l and a1.s=a3.v", "condition: a2.s=a3.v")
+                    .withPlanNotContaining("Filter", "Cross Join")
+                    .returns("""
+                            k\tts\ts\tbid
+                            1\t2024-01-01T00:00:10.000000Z\tS1\t9.5
+                            2\t2024-01-01T00:00:20.000000Z\tS2\t19.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveDerivesKeyOfUnknownType() throws Exception {
+        // As above, but a3.v is a computed column, whose type SqlOptimiser cannot read. The keys on
+        // a2.s may differ in type, so runFromModelFirst derives a1.s = a3.v for them too. Before it
+        // did, the query failed with "join column is compared with columns of different types".
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinKeyClash();
+            assertQuery("""
+                    SELECT a0.k, a0.ts, a1.s, q.bid
+                    FROM trades a0
+                    CROSS JOIN books a1
+                    JOIN desks a2 ON a2.s = a1.s
+                    JOIN (SELECT s, v::VARCHAR v, l, ts FROM routes) a3 ON a3.l = a1.l AND a3.v = a2.s
+                    JOIN accts a4 ON a4.s = a3.s AND a4.k = a0.k
+                    LT JOIN quotes q
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlanContaining("condition: a1.l=a3.l and a1.s=a3.v", "condition: a2.s=a3.v")
+                    .returns("""
+                            k\tts\ts\tbid
+                            1\t2024-01-01T00:00:10.000000Z\tS1\t9.5
+                            2\t2024-01-01T00:00:20.000000Z\tS2\t19.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveFiltersTimestampKeyOfTwoPrecisions() throws Exception {
+        // As in testTimeSeriesJoinAfterKeyMoveDerivesConflictingKey, a2 gets two keys on one column:
+        // a2.t = a1.t on microsecond timestamps and a2.t = a3.tn on a microsecond and a nanosecond one.
+        // The record copier turns a NULL microsecond timestamp into nanosecond 0, so a1.t = a3.tn would
+        // not agree with them, and a2.t = a1.t filters the join instead. The NULL and epoch rows of the
+        // third trade match nothing either way.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE accts (k INT, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE routes (s SYMBOL, tn TIMESTAMP_NS, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE books (t TIMESTAMP, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE desks (t TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:00:10.000000Z'),
+                    (2, '2024-01-01T00:00:20.000000Z'),
+                    (3, '2024-01-01T00:00:30.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                    (9.0, '2024-01-01T00:00:00.000000Z'),
+                    (9.5, '2024-01-01T00:00:09.000000Z'),
+                    (19.5, '2024-01-01T00:00:19.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO accts VALUES
+                    (1, 'S1', '2023-12-01T00:00:00.000000Z'),
+                    (2, 'S2', '2023-12-01T00:00:01.000000Z'),
+                    (3, 'S3', '2023-12-01T00:00:02.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO routes VALUES
+                    ('S1', '2020-01-01T00:00:00.000000000Z', 1, '2023-12-01T00:00:00.000000Z'),
+                    ('S2', '2020-01-02T00:00:00.000000000Z', 2, '2023-12-01T00:00:01.000000Z'),
+                    ('S3', NULL, 3, '2023-12-01T00:00:02.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO books VALUES
+                    ('2020-01-01T00:00:00.000000Z', 1, '2023-12-01T00:00:00.000000Z'),
+                    ('2020-01-02T00:00:00.000000Z', 2, '2023-12-01T00:00:01.000000Z'),
+                    (NULL, 3, '2023-12-01T00:00:02.000000Z'),
+                    ('1970-01-01T00:00:00.000000Z', 3, '2023-12-01T00:00:03.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO desks VALUES
+                    ('2020-01-01T00:00:00.000000Z', '2023-12-01T00:00:00.000000Z'),
+                    ('2020-01-02T00:00:00.000000Z', '2023-12-01T00:00:01.000000Z'),
+                    (NULL, '2023-12-01T00:00:02.000000Z'),
+                    ('1970-01-01T00:00:00.000000Z', '2023-12-01T00:00:03.000000Z')
+                    """);
+            assertQuery("""
+                    SELECT a0.k, a0.ts, a1.t, q.bid
+                    FROM trades a0
+                    CROSS JOIN books a1
+                    JOIN desks a2 ON a2.t = a1.t
+                    JOIN routes a3 ON a3.l = a1.l AND a3.tn = a2.t
+                    JOIN accts a4 ON a4.s = a3.s AND a4.k = a0.k
+                    LT JOIN quotes q
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlanContaining("Filter filter: a1.t=a2.t", "condition: a2.t=a3.tn")
+                    .returns("""
+                            k\tts\tt\tbid
+                            1\t2024-01-01T00:00:10.000000Z\t2020-01-01T00:00:00.000000Z\t9.5
+                            2\t2024-01-01T00:00:20.000000Z\t2020-01-02T00:00:00.000000Z\t19.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveFromSubQuery() throws Exception {
+        // the sub-query keeps the designated timestamp of trades without selecting it
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("""
+                    SELECT t.sym, q.bid
+                    FROM (SELECT sym FROM trades) t
+                    CROSS JOIN params p
+                    JOIN venues v ON v.id = p.venue
+                    JOIN instruments i ON i.venue = v.id AND i.sym = t.sym
+                    ASOF JOIN quotes q ON (sym)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            sym\tbid
+                            A\t9.5
+                            B\t19.5
+                            A\t10.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveFullFat() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (sym)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .expectSize()
+                    .fullFatJoins()
+                    .returns(KEY_MOVE_ROWS);
+            assertQuery("SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " LT JOIN quotes q ON (sym)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .expectSize()
+                    .fullFatJoins()
+                    .returns(KEY_MOVE_ROWS);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveIgnoresOtherTableTimestamps() throws Exception {
+        // the time-series join read params.ts when params ran first, so the quotes it matched moved with
+        // the timestamps of params
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            execute("TRUNCATE TABLE params");
+            execute("INSERT INTO params VALUES ('X', '2024-01-01T00:00:25.000000Z'), ('Y', '2024-01-01T00:00:35.000000Z')");
+            assertQuery("SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (sym)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(KEY_MOVE_ROWS);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveInCte() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("WITH x AS (SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (sym)) SELECT sym, ts, bid FROM x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(KEY_MOVE_ROWS);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveInSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT * FROM (SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (sym)) WHERE bid > 9.0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(KEY_MOVE_ROWS);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveKeepsSelectiveKeys() throws Exception {
+        // runFromModelFirst places trades, routes, books and desks in that order, as the query lists
+        // books before desks, and desks joins on both d.l = r.l and d.sym = b.sym. Reversing the order
+        // that reorderTables kept would put books last instead, and join desks on d.l = r.l only.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (sym SYMBOL, bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE routes (k INT, name SYMBOL, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE desks (sym SYMBOL, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE books (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO trades VALUES ('A', 1, '2024-01-01T00:00:10.000000Z'), ('B', 2, '2024-01-01T00:00:20.000000Z')");
+            execute("""
+                    INSERT INTO quotes VALUES
+                    ('A', 9.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 19.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 9.5, '2024-01-01T00:00:09.000000Z'),
+                    ('B', 19.5, '2024-01-01T00:00:19.000000Z')
+                    """);
+            execute("INSERT INTO routes VALUES (1, 'X', 7, '2023-12-01T00:00:00.000000Z'), (2, 'Y', 8, '2023-12-01T00:00:01.000000Z')");
+            execute("""
+                    INSERT INTO desks VALUES
+                    ('X', 7, '2023-12-01T00:00:00.000000Z'),
+                    ('Y', 7, '2023-12-01T00:00:01.000000Z'),
+                    ('Y', 8, '2023-12-01T00:00:02.000000Z')
+                    """);
+            execute("INSERT INTO books VALUES ('X', '2023-12-01T00:00:00.000000Z'), ('Y', '2023-12-01T00:00:01.000000Z')");
+            assertQuery("""
+                    SELECT t.sym, t.ts, b.sym book, q.bid
+                    FROM trades t
+                    CROSS JOIN books b
+                    JOIN desks d ON d.sym = b.sym
+                    JOIN routes r ON r.name = b.sym AND r.k = t.k AND r.l = d.l
+                    ASOF JOIN quotes q ON (sym)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlanContaining("condition: d.l=r.l and d.sym=b.sym", "condition: b.sym=r.name", "condition: r.k=t.k")
+                    .withPlanNotContaining("Cross Join")
+                    .returns("""
+                            sym\tts\tbook\tbid
+                            A\t2024-01-01T00:00:10.000000Z\tX\t9.5
+                            B\t2024-01-01T00:00:20.000000Z\tY\t19.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveKeylessAsOf() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, q.sym qsym, q.bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tts\tqsym\tbid
+                            A\t2024-01-01T00:00:10.000000Z\tA\t9.5
+                            B\t2024-01-01T00:00:20.000000Z\tB\t19.5
+                            A\t2024-01-01T00:00:30.000000Z\tA\t10.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveLeftJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, v2.name, q.bid " + KEY_MOVE_JOINS
+                    + " LEFT JOIN venues v2 ON v2.id = i.venue AND v2.name = 'ychg' ASOF JOIN quotes q ON (q.sym = t.sym)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tts\tname\tbid
+                            A\t2024-01-01T00:00:10.000000Z\t\t9.5
+                            B\t2024-01-01T00:00:20.000000Z\tychg\t19.5
+                            A\t2024-01-01T00:00:30.000000Z\t\t10.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveLongChain() throws Exception {
+        // reorderTables moves pos.sym = t.sym onto trades and starts the cheapest order at books.
+        // runFromModelFirst runs trades first and joins the chain back to books on the same keys.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (sym SYMBOL, bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE books (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE desks (id INT, book INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE teams (id INT, desk INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE traders (id INT, team INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE accounts (id INT, trader INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE positions (account INT, sym SYMBOL, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                    ('A', 10.0, '2024-01-01T00:00:10.000000Z'),
+                    ('B', 20.0, '2024-01-01T00:00:20.000000Z'),
+                    ('A', 11.0, '2024-01-01T00:00:30.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                    ('A', 9.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 19.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 9.5, '2024-01-01T00:00:09.000000Z'),
+                    ('B', 19.5, '2024-01-01T00:00:19.000000Z'),
+                    ('A', 10.5, '2024-01-01T00:00:25.000000Z')
+                    """);
+            execute("INSERT INTO books VALUES (1, '2024-01-01T00:00:01.000000Z'), (2, '2024-01-01T00:00:02.000000Z')");
+            execute("INSERT INTO desks VALUES (10, 1, '2024-01-01T00:00:01.000000Z'), (20, 2, '2024-01-01T00:00:02.000000Z')");
+            execute("INSERT INTO teams VALUES (100, 10, '2024-01-01T00:00:01.000000Z'), (200, 20, '2024-01-01T00:00:02.000000Z')");
+            execute("INSERT INTO traders VALUES (1000, 100, '2024-01-01T00:00:01.000000Z'), (2000, 200, '2024-01-01T00:00:02.000000Z')");
+            execute("INSERT INTO accounts VALUES (7, 1000, '2024-01-01T00:00:01.000000Z'), (8, 2000, '2024-01-01T00:00:02.000000Z')");
+            execute("INSERT INTO positions VALUES (7, 'A', 5, '2024-01-01T00:00:01.000000Z'), (8, 'B', 6, '2024-01-01T00:00:02.000000Z')");
+            assertQuery("""
+                    SELECT t.sym, t.ts, pos.qty, q.bid
+                    FROM trades t
+                    CROSS JOIN books b
+                    JOIN desks d ON d.book = b.id
+                    JOIN teams tm ON tm.desk = d.id
+                    JOIN traders tr ON tr.team = tm.id
+                    JOIN accounts a ON a.trader = tr.id
+                    JOIN positions pos ON pos.account = a.id AND pos.sym = t.sym
+                    ASOF JOIN quotes q ON (sym)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlan("""
+                            SelectedRecord
+                                AsOf Join Fast
+                                  condition: q.sym=t.sym
+                                    Hash Join Light
+                                      condition: b.id=d.book
+                                        Hash Join Light
+                                          condition: d.id=tm.desk
+                                            Hash Join Light
+                                              condition: tm.id=tr.team
+                                                Hash Join Light
+                                                  condition: tr.id=a.trader
+                                                    Hash Join Light
+                                                      condition: a.id=pos.account
+                                                        Hash Join Light
+                                                          condition: pos.sym=t.sym
+                                                          symbolKeyJoin: true
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: trades
+                                                            Hash
+                                                                PageFrame
+                                                                    Row forward scan
+                                                                    Frame forward scan on: positions
+                                                        Hash
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: accounts
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: traders
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: teams
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: desks
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: books
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: quotes
+                            """)
+                    .returns("""
+                            sym\tts\tqty\tbid
+                            A\t2024-01-01T00:00:10.000000Z\t5\t9.5
+                            B\t2024-01-01T00:00:20.000000Z\t6\t19.5
+                            A\t2024-01-01T00:00:30.000000Z\t5\t10.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveLtJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " LT JOIN quotes q ON (sym)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(KEY_MOVE_ROWS);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveOnRekeyedTable() throws Exception {
+        // the ASOF key reads instruments, which joins after trades again
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (q.sym = i.sym)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(KEY_MOVE_ROWS);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.ts, sum(q.bid) bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (sym) SAMPLE BY 20s")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tbid
+                            2024-01-01T00:00:00.000000Z\t9.5
+                            2024-01-01T00:00:20.000000Z\t30.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveSelectStar() throws Exception {
+        // SELECT * reads every key column, so this query ran on master too, with the timestamps of params
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT * " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (sym)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tpx\tts\tvenue\tts1\tid\tname\tts2\tsym1\tvenue1\tlot\tts3\tsym2\tbid\tts4
+                            A\t10.0\t2024-01-01T00:00:10.000000Z\tX\t2024-01-01T00:00:01.000000Z\tX\txchg\t2024-01-01T00:00:01.500000Z\tA\tX\t100\t2024-01-01T00:00:02.000000Z\tA\t9.5\t2024-01-01T00:00:09.000000Z
+                            B\t20.0\t2024-01-01T00:00:20.000000Z\tY\t2024-01-01T00:00:02.000000Z\tY\tychg\t2024-01-01T00:00:01.600000Z\tB\tY\t200\t2024-01-01T00:00:03.000000Z\tB\t19.5\t2024-01-01T00:00:19.000000Z
+                            A\t11.0\t2024-01-01T00:00:30.000000Z\tX\t2024-01-01T00:00:01.000000Z\tX\txchg\t2024-01-01T00:00:01.500000Z\tA\tX\t100\t2024-01-01T00:00:02.000000Z\tA\t10.5\t2024-01-01T00:00:25.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveSelfJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, t2.ts ts2, q.bid " + KEY_MOVE_JOINS
+                    + " JOIN trades t2 ON t2.sym = i.sym AND t2.px = t.px ASOF JOIN quotes q ON (q.sym = t.sym)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tts\tts2\tbid
+                            A\t2024-01-01T00:00:10.000000Z\t2024-01-01T00:00:10.000000Z\t9.5
+                            B\t2024-01-01T00:00:20.000000Z\t2024-01-01T00:00:20.000000Z\t19.5
+                            A\t2024-01-01T00:00:30.000000Z\t2024-01-01T00:00:30.000000Z\t10.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveSubQueryTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("""
+                    SELECT t.sym, t.ts, q.bid
+                    FROM trades t
+                    CROSS JOIN (SELECT venue, ts FROM params WHERE venue IN ('X', 'Y')) p
+                    JOIN venues v ON v.id = p.venue
+                    JOIN instruments i ON i.venue = v.id AND i.sym = t.sym
+                    ASOF JOIN quotes q ON (sym)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(KEY_MOVE_ROWS);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveTolerance() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (sym) TOLERANCE 5s")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(KEY_MOVE_ROWS);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveTrailingInnerJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, q.bid, i2.lot " + KEY_MOVE_JOINS
+                    + " ASOF JOIN quotes q ON (sym) JOIN instruments i2 ON i2.sym = q.sym AND i2.venue = v.id")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tts\tbid\tlot
+                            A\t2024-01-01T00:00:10.000000Z\t9.5\t100
+                            B\t2024-01-01T00:00:20.000000Z\t19.5\t200
+                            A\t2024-01-01T00:00:30.000000Z\t10.5\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveTwoTimeSeriesJoins() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, q.bid, q2.bid bid2 " + KEY_MOVE_JOINS
+                    + " ASOF JOIN quotes q ON (sym) LT JOIN quotes q2 ON (q2.sym = t.sym)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tts\tbid\tbid2
+                            A\t2024-01-01T00:00:10.000000Z\t9.5\t9.5
+                            B\t2024-01-01T00:00:20.000000Z\t19.5\t19.5
+                            A\t2024-01-01T00:00:30.000000Z\t10.5\t10.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveWhereClauseKeys() throws Exception {
+        // the keys come from WHERE instead of ON, and reorderTables moves i.sym = t.sym onto trades the same way
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            final String where = " WHERE v.id = p.venue AND i.venue = v.id AND i.sym = t.sym";
+            assertQuery("SELECT t.sym, t.ts, q.bid FROM trades t, params p, venues v, instruments i ASOF JOIN quotes q ON (q.sym = t.sym)" + where)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(KEY_MOVE_ROWS);
+            assertQuery("SELECT t.sym, t.ts, q.bid FROM trades t, params p, venues v, instruments i LT JOIN quotes q ON (q.sym = t.sym)" + where)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(KEY_MOVE_ROWS);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveWhereFilters() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            final String expected = """
+                    sym\tts\tbid
+                    B\t2024-01-01T00:00:20.000000Z\t19.5
+                    A\t2024-01-01T00:00:30.000000Z\t10.5
+                    """;
+            assertQuery("SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (sym) WHERE t.px > 10.5")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (sym) WHERE t.ts IN '2024-01-01T00:00:15;20s'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveWindowJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, avg(q.bid) bid " + KEY_MOVE_JOINS
+                    + " WINDOW JOIN quotes q ON (q.sym = t.sym) RANGE BETWEEN 2 SECONDS PRECEDING AND CURRENT ROW")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tts\tbid
+                            A\t2024-01-01T00:00:10.000000Z\t9.25
+                            B\t2024-01-01T00:00:20.000000Z\t19.25
+                            A\t2024-01-01T00:00:30.000000Z\t10.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinReadsFromTableTimestampAfterKeyMove() throws Exception {
+        // reorderTables moves i.sym = t.sym onto trades, the table that the query selects from, and its
+        // cheapest order then started at params. The ASOF join read the timestamp of that first table
+        // and matched each trade with the quotes at params.ts: 9.0 and 19.0 instead of 9.5 and 19.5.
+        // runFromModelFirst runs trades first again, and every join keeps its key.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE params (venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE venues (id SYMBOL, name VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE instruments (sym SYMBOL, venue SYMBOL, lot INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (sym SYMBOL, bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO trades VALUES ('A', 10.0, '2024-01-01T00:00:10.000000Z'), ('B', 20.0, '2024-01-01T00:00:20.000000Z')");
+            execute("INSERT INTO params VALUES ('X', '2024-01-01T00:00:01.000000Z')");
+            execute("INSERT INTO venues VALUES ('X', 'xchg', '2024-01-01T00:00:01.500000Z')");
+            execute("INSERT INTO instruments VALUES ('A', 'X', 100, '2024-01-01T00:00:02.000000Z'), ('B', 'X', 200, '2024-01-01T00:00:03.000000Z')");
+            execute("""
+                    INSERT INTO quotes VALUES
+                    ('A', 9.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 19.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 9.5, '2024-01-01T00:00:09.000000Z'),
+                    ('B', 19.5, '2024-01-01T00:00:19.000000Z')
+                    """);
+            assertQuery("SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (sym)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlan("""
+                            SelectedRecord
+                                AsOf Join Fast
+                                  condition: q.sym=t.sym
+                                    Hash Join Light
+                                      condition: p.venue=v.id
+                                      symbolKeyJoin: true
+                                        Hash Join Light
+                                          condition: v.id=i.venue
+                                          symbolKeyJoin: true
+                                            Hash Join Light
+                                              condition: i.sym=t.sym
+                                              symbolKeyJoin: true
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: trades
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: instruments
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: venues
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: params
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: quotes
+                            """)
+                    .returns("""
+                            sym\tts\tbid
+                            A\t2024-01-01T00:00:10.000000Z\t9.5
+                            B\t2024-01-01T00:00:20.000000Z\t19.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinWrittenFromTableFirstKeepsPlan() throws Exception {
+        // the trades-first form already runs trades first, so runFromModelFirst leaves its order alone
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("""
+                    SELECT t.sym, t.ts, q.bid
+                    FROM trades t
+                    JOIN instruments i ON i.sym = t.sym
+                    JOIN venues v ON v.id = i.venue
+                    JOIN params p ON p.venue = v.id
+                    ASOF JOIN quotes q ON (sym)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlan("""
+                            SelectedRecord
+                                AsOf Join Fast
+                                  condition: q.sym=t.sym
+                                    Hash Join Light
+                                      condition: p.venue=v.id
+                                      symbolKeyJoin: true
+                                        Hash Join Light
+                                          condition: v.id=i.venue
+                                          symbolKeyJoin: true
+                                            Hash Join Light
+                                              condition: i.sym=t.sym
+                                              symbolKeyJoin: true
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: trades
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: instruments
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: venues
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: params
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: quotes
+                            """)
+                    .returns(KEY_MOVE_ROWS);
+        });
+    }
+
+    @Test
     public void testTypeMismatch() throws Exception {
         testTypeMismatch0(false);
     }
@@ -16204,6 +16989,62 @@ public class JoinTest extends AbstractCairoTest {
             execute("CREATE TABLE t" + t + " (c" + t + " INT, k INT, v" + t + " DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t" + t + " SELECT (x + " + t + ") % 4, x % 3, x * 1.5, timestamp_sequence(" + (t * 1000) + ", 1000000) FROM long_sequence(4)");
         }
+    }
+
+    // reorderTables moves i.sym = t.sym of KEY_MOVE_JOINS onto trades and starts at params, whose rows
+    // are earlier than most quotes: a time-series join that reads params.ts matches 9.0 and 19.0
+    private void createTablesForTimeSeriesJoinAfterKeyMove() throws SqlException {
+        execute("CREATE TABLE trades (sym SYMBOL, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE params (venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE venues (id SYMBOL, name VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE instruments (sym SYMBOL, venue SYMBOL, lot INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE quotes (sym SYMBOL, bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        // trade C has no instrument, so the INNER joins drop it
+        execute("""
+                INSERT INTO trades VALUES
+                ('A', 10.0, '2024-01-01T00:00:10.000000Z'),
+                ('B', 20.0, '2024-01-01T00:00:20.000000Z'),
+                ('A', 11.0, '2024-01-01T00:00:30.000000Z'),
+                ('C', 30.0, '2024-01-01T00:00:40.000000Z')
+                """);
+        execute("INSERT INTO params VALUES ('X', '2024-01-01T00:00:01.000000Z'), ('Y', '2024-01-01T00:00:02.000000Z')");
+        execute("INSERT INTO venues VALUES ('X', 'xchg', '2024-01-01T00:00:01.500000Z'), ('Y', 'ychg', '2024-01-01T00:00:01.600000Z')");
+        execute("INSERT INTO instruments VALUES ('A', 'X', 100, '2024-01-01T00:00:02.000000Z'), ('B', 'Y', 200, '2024-01-01T00:00:03.000000Z')");
+        execute("""
+                INSERT INTO quotes VALUES
+                ('A', 9.0, '2024-01-01T00:00:00.000000Z'),
+                ('B', 19.0, '2024-01-01T00:00:00.000000Z'),
+                ('A', 9.5, '2024-01-01T00:00:09.000000Z'),
+                ('B', 19.5, '2024-01-01T00:00:19.000000Z'),
+                ('A', 10.5, '2024-01-01T00:00:25.000000Z'),
+                ('C', 29.0, '2024-01-01T00:00:35.000000Z')
+                """);
+    }
+
+    // a key clash after reorderTables moves a4.k = a0.k onto a0, see testTimeSeriesJoinAfterKeyMoveDerivesConflictingKey()
+    private void createTablesForTimeSeriesJoinKeyClash() throws SqlException {
+        execute("CREATE TABLE trades (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE quotes (bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE accts (k INT, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE routes (s SYMBOL, v VARCHAR, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE books (s SYMBOL, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE desks (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO trades VALUES (1, '2024-01-01T00:00:10.000000Z'), (2, '2024-01-01T00:00:20.000000Z')");
+        execute("""
+                INSERT INTO quotes VALUES
+                (9.0, '2024-01-01T00:00:00.000000Z'),
+                (9.5, '2024-01-01T00:00:09.000000Z'),
+                (19.5, '2024-01-01T00:00:19.000000Z')
+                """);
+        execute("INSERT INTO accts VALUES (1, 'S1', '2023-12-01T00:00:00.000000Z'), (2, 'S2', '2023-12-01T00:00:01.000000Z')");
+        execute("INSERT INTO routes VALUES ('S1', 'S1', 1, '2023-12-01T00:00:00.000000Z'), ('S2', 'S2', 2, '2023-12-01T00:00:01.000000Z')");
+        execute("""
+                INSERT INTO books VALUES
+                ('S1', 1, '2023-12-01T00:00:00.000000Z'),
+                ('S2', 2, '2023-12-01T00:00:01.000000Z'),
+                ('S1', 2, '2023-12-01T00:00:02.000000Z')
+                """);
+        execute("INSERT INTO desks VALUES ('S1', '2023-12-01T00:00:00.000000Z'), ('S2', '2023-12-01T00:00:01.000000Z')");
     }
 
     private void createTablesForTransitiveJoinKeys() throws SqlException {
