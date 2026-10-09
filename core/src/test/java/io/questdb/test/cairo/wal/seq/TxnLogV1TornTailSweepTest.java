@@ -727,8 +727,8 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
         }
     }
 
-    // Reports every durability call on a file this sweep models, and skips the real call: durability is
-    // modelled, not measured, here.
+    // Reports every durability call on a file this sweep models, and skips the real call: the sweep models
+    // durability instead of performing it.
     private static class SweepFacade extends TestFilesFacadeImpl {
         private final Map<Long, String> fdPaths = new HashMap<>();
         private final Map<Long, Long> mappings = new HashMap<>();
