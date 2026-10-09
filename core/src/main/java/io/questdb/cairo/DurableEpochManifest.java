@@ -169,12 +169,10 @@ public final class DurableEpochManifest {
 
     /**
      * {@link #publishInitial} for a table that is not at its final path yet: publishes the generation-zero
-     * baseline into {@code tableDirPath} — an {@code ALTER TABLE ... REBASE WAL} staging clone. The clone is a
-     * NEW table (its {@code _txn}/{@code _meta} are reset), so it needs its OWN anchor; publishing it into the
-     * staging dir means the atomic rename carries a table whose durable epoch is self-consistent from the
-     * first instant it is visible. Publishing after the rename instead would leave a window in which a boot
-     * can find, and adopt, a dir whose anchors it cannot validate — and an adaptive table with no trustworthy
-     * generation aborts startup rather than falling back to unverified live state.
+     * baseline into {@code tableDirPath}, the staging clone of an {@code ALTER TABLE ... REBASE WAL}. The clone is
+     * a new table (its {@code _txn} and {@code _meta} are reset), so it needs its own save point. Publishing before
+     * the rename makes the table carry a valid save point from the moment it is visible: a start that finds an
+     * adaptive table with no valid generation fails rather than trust its live files.
      *
      * @return the txn the baseline names, for the caller to pin
      */
@@ -405,9 +403,8 @@ public final class DurableEpochManifest {
         final FilesFacade ff = configuration.getFilesFacade();
         long fd = -1;
         long header = 0;
-        // Restored in the finally: this path belongs to the caller (TableWriter passes its own), and leaving it
-        // at _epoch.manifest.<generation> made the next concat build a nonexistent directory. See
-        // DurableEpochPathRestoreTest.
+        // The finally trims the path back to rootLen: it belongs to the caller (TableWriter passes its own),
+        // which concatenates onto it next.
         try {
             header = Unsafe.calloc(FILE_SIZE, MemoryTag.NATIVE_TABLE_WRITER);
             tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
@@ -457,13 +454,8 @@ public final class DurableEpochManifest {
 
     /**
      * Makes the table directory's entries durable, and hands the caller's path back at {@code rootLen}.
-     * <p>
-     * The trim is deliberately OUTSIDE the platform guard and in a {@code finally}. Restoring someone
-     * else's path is not a Windows concern, and when it was bracketed with the fsync inside
-     * {@code if (!Os.isWindows())} the Windows build silently lost the cleanup too: the caller kept a path
-     * still ending in {@code _epoch.manifest.<generation>}, concatenated onto it, and every structural DDL
-     * then failed trying to open {@code <table>/_epoch.manifest.1/_meta.swp}. A platform guard must never
-     * wrap a side effect that is not platform-specific. See {@code DurableEpochPathRestoreTest}.
+     * The trim sits in a {@code finally} outside the platform guard: Windows has no directory fsync, but its
+     * caller needs the path back as much as any other.
      */
     public static void fsyncDirectory(CairoConfiguration configuration, Path tablePath, int rootLen) {
         fsyncDirectory(configuration.getFilesFacade(), tablePath, rootLen);
@@ -640,14 +632,14 @@ public final class DurableEpochManifest {
     // one call after its sections are durable, so a file without magic, of an older format or shorter than a header
     // was never published, and one with magic that fails a check is damaged.
     private static int readHeader(FilesFacade ff, Path path, int tableId, int generation, long scratch) {
-        // Probe first: whether a failed open means "absent" must not depend on errno, which some facades report
-        // for every failure. A file that exists but cannot be opened still fails.
+        // Check existence first: whether a failed open means "absent" must not depend on errno, which some
+        // facades report for every failure. A file that exists but cannot be opened still fails.
         if (!ff.exists(path.$())) {
             return HEADER_ABSENT;
         }
         final long fd = ff.openRO(path.$());
         if (fd < 0) {
-            // Removed since the probe.
+            // Removed after the existence check.
             if (Files.isErrnoFileDoesNotExist(ff.errno())) {
                 return HEADER_ABSENT;
             }
