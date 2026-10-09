@@ -913,7 +913,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         pieceRangesScratch.clear();
         for (int i = 0; i < actionCount; i++) {
             final O3CompositeMergeStrategy.Action action = actions.getQuick(i);
-            switch (action.type) {
+            // A MERGE the dedup forecast found identical to its piece writes nothing below, just like a KEEP.
+            switch (action.isProjectedNoop ? O3CompositeMergeStrategy.ActionType.KEEP : action.type) {
                 case APPEND, NEW_PIECE -> {
                     eMax += action.getO3RowCount();
                     o3RangesScratch.add(action.o3Lo, action.o3Hi + 1);

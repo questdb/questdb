@@ -30,11 +30,19 @@ import io.questdb.cairo.O3CompositeMergeStrategy;
 import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * {@code TableWriter.wouldBreachCompactionThresholds} forecasts the shape the plan
@@ -236,6 +244,75 @@ public class CompositeAppendCompactionForecastTest extends AbstractCairoTest {
                     physicallyWrittenRows() - writtenBefore);
             assertQuery("SELECT count() c, sum(v) s FROM x WHERE ts IN '2024-01-01'")
                     .noRandomAccess().expectSize().returns("c\ts\n440\t99120\n");
+        });
+    }
+
+    /**
+     * A MERGE the dedup forecast projects as a no-op writes nothing, so the plan must not grow the partition's
+     * column files for it either: refusing that growth must not suspend an identical replay. 20,000 longs are
+     * 160,000 bytes, more than a 64KiB page on Windows, so a reservation for the no-op merge cannot hide in the
+     * page-rounded slack the previous plan left behind.
+     */
+    @Test
+    public void testIdenticalDedupReplayDoesNotGrowPartitionFiles() throws Exception {
+        final AtomicBoolean armed = new AtomicBoolean();
+        final AtomicBoolean refused = new AtomicBoolean();
+        final ConcurrentHashMap<Long, String> dayFiles = new ConcurrentHashMap<>();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean allocate(long fd, long size) {
+                if (armed.get() && dayFiles.containsKey(fd) && size > length(fd)) {
+                    refused.set(true);
+                    return false;
+                }
+                return super.allocate(fd, size);
+            }
+
+            @Override
+            public boolean close(long fd) {
+                dayFiles.remove(fd);
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (fd > -1 && Utf8s.containsAscii(name, Files.SEPARATOR + "2024-01-01")) {
+                    dayFiles.put(fd, Utf8s.stringFromUtf8Bytes(name));
+                }
+                return fd;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            // Pooled frame columns capture the FilesFacade they were built with; start from a fresh pool.
+            engine.resetFrameFactory();
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1G");
+            execute("CREATE TABLE x (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
+            execute("INSERT INTO x SELECT x, timestamp_sequence('2024-01-01', 1_000_000L) FROM long_sequence(40_000)");
+            execute("INSERT INTO x VALUES (0, '2024-01-03')");
+            drainWalQueue();
+            final String replay = "INSERT INTO x SELECT x + 100_000, timestamp_sequence('2024-01-01T01:00:00', 1_000_000L) FROM long_sequence(20_000)";
+            execute(replay);
+            drainWalQueue();
+            try (TableReader reader = engine.getReader("x")) {
+                // The fixture, not the fix: the replay below only plans a MERGE against a composite partition.
+                Assert.assertTrue(reader.getTxFile().isPartitionComposite(dayPartitionIndex(reader)));
+            }
+            final String expected = "c\ts\n40001\t2728020000\n";
+            assertQuery("SELECT count() c, sum(v) s FROM x").noRandomAccess().expectSize().returns(expected);
+
+            final long writtenBefore = physicallyWrittenRows();
+            execute(replay);
+            // Armed after the WAL commit, so only the apply can trip on it.
+            armed.set(true);
+            drainWalQueue();
+            armed.set(false);
+
+            Assert.assertFalse("the no-op merge grew a partition column file", refused.get());
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+            Assert.assertEquals(0, physicallyWrittenRows() - writtenBefore);
+            assertQuery("SELECT count() c, sum(v) s FROM x").noRandomAccess().expectSize().returns(expected);
         });
     }
 
