@@ -37,12 +37,15 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.crash.CrashFaultFilesFacade;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -53,6 +56,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 /**
@@ -321,6 +325,57 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
                 Assert.assertEquals("files not durable when the replica removed the save point",
                         "[]", removalFf.notDurableAtRemoval.toString());
                 Assert.assertEquals("the save point is gone", -1, readAnchorSeqTxn(tt));
+            } finally {
+                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchDuringBatchThatAppliesDrop() throws Exception {
+        // A DROP TABLE that reaches a running batch destroys the writer before the batch returns. A role switch
+        // during that batch, in either direction, must not make the after-batch reconcile touch that writer.
+        final AtomicReference<LocalDurabilityPolicy> switchTo = new AtomicReference<>();
+        final String[] dropped = new String[2];
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (dropped[1] != null && Utf8s.containsAscii(name, dropped[1]) && Utf8s.containsAscii(name, "2024-01-02")) {
+                    final LocalDurabilityPolicy policy = switchTo.getAndSet(null);
+                    if (policy != null) {
+                        try {
+                            execute("drop table " + dropped[0]);
+                        } catch (SqlException e) {
+                            throw new RuntimeException(e);
+                        }
+                        engine.setLocalDurabilityPolicy(policy);
+                    }
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        setAdaptive(true);
+        assertMemoryLeak(ff, () -> {
+            try {
+                for (boolean demote : new boolean[]{true, false}) {
+                    engine.setLocalDurabilityPolicy(demote ? LocalDurabilityPolicy.ALWAYS_ON : LocalDurabilityPolicy.REPLICA_SKIP);
+                    final String table = demote ? "drop_on_demote" : "drop_on_promote";
+                    execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal");
+                    final TableToken tt = engine.verifyTableName(table);
+                    execute("insert into " + table + " values ('2024-01-01T00:00:00.000000Z', 1)");
+                    drainWalQueue();
+                    // The batch that applies this row opens the new partition, takes the DROP and the role switch.
+                    execute("insert into " + table + " values ('2024-01-02T00:00:00.000000Z', 2)");
+                    dropped[0] = table;
+                    dropped[1] = tt.getDirName();
+                    switchTo.set(demote ? LocalDurabilityPolicy.REPLICA_SKIP : LocalDurabilityPolicy.ALWAYS_ON);
+                    drainWalQueue();
+                    Assert.assertNull("the DROP must reach the running batch", switchTo.get());
+                    Assert.assertTrue(engine.isTableDropped(tt));
+                    dropped[1] = null;
+                    drainWalQueue();
+                    drainPurgeJob();
+                }
             } finally {
                 engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
             }

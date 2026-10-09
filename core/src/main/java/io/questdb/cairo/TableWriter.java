@@ -3417,8 +3417,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * batch: applying lazily without an anchor would let a power loss tear transactions the WAL acknowledged.
      */
     public void reconcileDurableEpochAnchor() {
-        // Views are not rolled forward by recovery, so their anchors never matter.
-        if (effectiveCommitMode != CommitMode.ADAPTIVE || tableToken.isView()) {
+        // Views are not rolled forward by recovery, so their anchors never matter. A distressed writer, also one a
+        // DROP TABLE destroyed, never publishes or removes a save point.
+        if (distressed || effectiveCommitMode != CommitMode.ADAPTIVE || tableToken.isView()) {
             return;
         }
         // Version before policy; see CairoEngine.getLocalDurabilityPolicyVersion().
