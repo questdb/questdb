@@ -339,14 +339,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private ObjList<? extends MemoryA> activeColumns;
     private ObjList<Runnable> activeNullSetters;
     private ColumnVersionReader attachColumnVersionReader;
-    // The commit mode this writer applies under. Normally the instance-global cairo.commit.mode; it is
-    // held at SYNC while an ADAPTIVE instance has a table that is not yet ENROLLED, and becomes ADAPTIVE
-    // once the enrolment baseline is published. Every apply-path adaptive decision in this writer
-    // (syncColumns, applyColumnSyncMode, configureColumn's setApplyLazy, partition split/squash, parquet
-    // rebuild) uses THIS rather than configuration.getCommitMode(), so the enrolment window is honoured.
+    // The commit mode this writer applies under: the instance's cairo.commit.mode, except that a table of an
+    // ADAPTIVE instance applies under SYNC until its enrolment baseline is published. Every adaptive decision on
+    // the apply path reads this field, not configuration.getCommitMode().
     private int effectiveCommitMode = CommitMode.UNSET;
     // The instance runs ADAPTIVE but this table has no valid save point: it needs a durable baseline published
-    // at the LIVE cut before a single commit may be applied lazily.
+    // at the live cut before a single commit may be applied lazily.
     private boolean adaptiveEnrollmentPending;
     // The CairoEngine.getLocalDurabilityPolicyVersion() this writer last brought its table's durable-epoch
     // anchor in line with; -1 until it first does. See reconcileDurableEpochAnchor().
@@ -374,8 +372,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private Path dirFsyncPath;
     private boolean distressed = false;
     private DropIndexOperator dropIndexOperator;
-    // An enrolled adaptive WAL table, on the same terms as enrolment: recovery rewinds it to its last durable
-    // epoch, so a change no WAL replay can redo must be followed by one. Set once the constructor has settled
+    // An enrolled adaptive WAL table, on the same terms as enrolment: recovery rewinds it to its last save point,
+    // so a change no WAL replay can redo must be followed by a save point. Set once the constructor has settled
     // the commit mode; the table's WAL flag changes only across a restart.
     private boolean enrolledAdaptive;
     // Mirrors the hasParquetPartitions flag last published to the metadata cache, so
@@ -390,10 +388,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean hasTtlEvictedPartitionsSinceLastCommit;
     private int indexCount;
     private boolean isInCtorRecovery;
-    // False until the constructor's try block completes. doClose() is called from the constructor's own
-    // failure path, so every optional close-time action that walks writer state (columns, symbol maps,
-    // indexers) must check this first — on that path those lists are only PARTLY populated. See
-    // doClose()'s graceful-close epoch gate.
+    // False until the constructor's try block completes. The constructor's failure path calls doClose() with the
+    // columns, symbol maps and indexers only partly populated, so every optional close-time action that walks
+    // them checks this first.
     private boolean fullyConstructed;
     private int lastErrno;
     private boolean lastOpenPartitionIsReadOnly;
@@ -558,12 +555,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // A table is enrolled exactly when it has a valid save point. One without (created under another
             // mode, by an older build, or left without one by a restore or a lineage discard) gets one at its
             // live cut. A replica keeps none (see reconcileDurableEpochAnchor) and applies at its grade.
-            // A writer opened against a root other than the engine's dbRoot is a PRIVATE STAGING writer --
-            // CopyImportTask builds one per worker under the SQL COPY work directory, cloning the target
-            // table's metadata (so isWalEnabled() is true) but with no sequencer, no txn_seq and no durable
-            // WAL behind it. The adaptive lifecycle belongs to the real table these rows are merged into,
-            // not to the staging copy: attempting to enrol one fails with "could not publish adaptive
-            // enrollment baseline" and aborts the whole parallel import.
+            // A writer on a root other than the engine's dbRoot is a private staging writer: CopyImportTask
+            // builds one per worker under the COPY work directory, with the target table's metadata (so
+            // isWalEnabled() is true) but no sequencer and no WAL behind it. The real table the rows merge into
+            // owns the adaptive lifecycle, so a staging writer never enrols.
             // A writer holding a non-WAL token for a WAL table does not enrol it either: COPY into a new table
             // holds one until the next restart, and every write through it bypasses the WAL, so a rewind to an
             // anchor would lose those writes. The table enrols at the first open with its WAL token.
@@ -578,7 +573,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // published. Open/configure it with eager SYNC semantics, then enroll it at the end of
             // construction before publishing ADAPTIVE to the tracker.
             this.effectiveCommitMode = adaptiveEnrollmentPending ? CommitMode.SYNC : resolvedCommitMode;
-            // Publish the table's mode to the _txn writer as soon as it is known, BEFORE any commit can run.
+            // Publish the table's mode to the _txn writer as soon as it is known, before any commit can run.
             // TxWriter otherwise falls back to the instance-global mode (see TxWriter.resolveCommitMode).
             this.txWriter.setCommitMode(this.effectiveCommitMode);
             this.metadata.setTxReader(txWriter);
@@ -731,9 +726,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // table-local file because it could not reach the purge queue or the
             // shared purge-log writer. This is best-effort and never fails open.
             recoverSpilledPostingSealPurges();
-            // LAST statement of the try: from here on the writer's columns / symbol maps / indexers are
-            // fully populated, so close-time actions that walk them are safe. Anything that throws above
-            // reaches doClose(false) below with those lists only partly built.
+            // The last statement of the try: from here on the columns, symbol maps and indexers are fully
+            // populated. Anything that throws above reaches doClose(false) with them only partly built.
             this.fullyConstructed = true;
         } catch (Throwable e) {
             doClose(false);
@@ -9085,11 +9079,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * Whether the durable-epoch pin, as the table's tracker records it, falls in {@code [fromTxn, toTxn)}.
      * <p>
-     * The pooled scoreboard carries the same pin (the pool seeds every new scoreboard from the tracker), and
-     * the async purge jobs already consult both. The synchronous gates -- partition-version removal, the
-     * UPDATE and column-conversion purges, the squash overwrite -- consult both as well, so a scoreboard that
-     * loses the pin through some lifecycle gap still cannot turn into an inline delete or overwrite of files
-     * a restart rewinds to. Only these rare, already I/O-bound paths pay the tracker lookup.
+     * The pooled scoreboard carries the same pin. The synchronous gates (partition-version removal, the UPDATE
+     * and column-conversion purges, the squash overwrite) check the tracker as well as the scoreboard, as the
+     * async purge jobs do, so a scoreboard that lost the pin still cannot delete or overwrite files a restart
+     * rewinds to. Only these rare, I/O-bound paths pay the tracker lookup.
      */
     private boolean isEpochPinnedInRange(long fromTxn, long toTxn) {
         if (!tableToken.isWal()) {
@@ -15099,13 +15092,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * cannot serve. Either way a crash made part of the last commit durable and lost the rest.
      * {@link TxWriter} has already loaded the previous transaction and verified it.
      * <p>
-     * Rolling back leaves the table exactly as a crash that loses all of the last commit's {@code _txn} and
-     * {@code _cv} writes does, the ordinary NOSYNC outcome that the rest of this constructor already handles:
-     * {@code _cv} rolls back one version, directories the lost commit created are dropped as unattached, symbol
-     * and index files return to the previous counts, and WAL apply replays the lost transaction. A non-WAL table
-     * loses that commit for good. Only NOSYNC and ASYNC leave a commit unflushed; under SYNC, {@code _cv} is
-     * flushed before {@code _txn}, and a torn {@code _txn} means the commit's msync never returned, so no one
-     * was told it was durable.
+     * Rolling back leaves the table as a crash that loses all of the last commit's {@code _txn} and {@code _cv}
+     * writes does, the ordinary NOSYNC outcome that the rest of this constructor handles: {@code _cv} rolls back
+     * one version, the directories the lost commit created go as unattached, symbol and index files return to
+     * the previous counts, and WAL apply replays the lost transaction. A non-WAL table loses that commit. Under
+     * SYNC, {@code _cv} is flushed before {@code _txn}, so a torn {@code _txn} means the commit's msync never
+     * returned and no one heard that the commit is durable.
      * <p>
      * The previous transaction is safe only while the table's other files still match it, and the lost
      * commit may have made newer ones durable: a {@code _meta} or {@code _cv} it moved forward, or a purge
@@ -15116,8 +15108,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void rollbackToPreviousTxn(boolean isTxnTorn) {
         final long txn = txWriter.getTornLiveVersion();
         if (DurableEpochManifest.exists(ff, path.trimTo(pathSize), pathSize)) {
-            // Startup recovery restores an anchored table's _txn and _cv from its durable epoch before anything
-            // opens the table, so it has no torn area to find; do not second-guess that cut from here. A table
+            // Startup recovery restores an anchored table's _txn and _cv from its save point before anything
+            // opens the table, so it has no torn area to find, and the writer leaves that cut alone. A table
             // without an anchor (a replica's, or one written outside adaptive) has no such cut: its live state is
             // NOSYNC grade, and rolling back is the repair.
             throw previousTxnException(isTxnTorn, txn, "the table is enrolled in adaptive commit mode").put(']');
