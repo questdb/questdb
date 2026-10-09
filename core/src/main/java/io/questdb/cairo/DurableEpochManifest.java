@@ -327,6 +327,28 @@ public final class DurableEpochManifest {
     }
 
     /**
+     * Writes the header of generation {@code generation} over itself and syncs it to the device. A failed header
+     * sync stops the engine and leaves the header only in the page cache; a restart without a power loss then
+     * selects that save point, while the device still holds the older one. The write matters: a failed writeback
+     * leaves the page clean, and a bare sync would write nothing.
+     */
+    public static void rewriteHeader(FilesFacade ff, Path tablePath, int rootLen, int generation) {
+        tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
+        final long fd = TableUtils.openRW(ff, tablePath.$(), LOG, CairoConfiguration.O_NONE);
+        final long header = Unsafe.malloc(FILE_SIZE, MemoryTag.NATIVE_TABLE_WRITER);
+        try {
+            if (ff.read(fd, header, FILE_SIZE, 0) != FILE_SIZE || ff.write(fd, header, FILE_SIZE, 0) != FILE_SIZE) {
+                throw CairoException.critical(ff.errno()).put("could not rewrite adaptive save point header [path=").put(tablePath).put(']');
+            }
+            ff.fsyncDurable(fd);
+        } finally {
+            Unsafe.free(header, FILE_SIZE, MemoryTag.NATIVE_TABLE_WRITER);
+            ff.close(fd);
+            tablePath.trimTo(rootLen);
+        }
+    }
+
+    /**
      * Whether generation {@code generation} is a complete save point of this table at the given cut, and its
      * {@code _txn} section records the given column and metadata versions.
      */

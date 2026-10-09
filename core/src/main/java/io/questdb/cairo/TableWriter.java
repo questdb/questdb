@@ -1210,7 +1210,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         LOG.error().$("could not copy [errno=").$(ff.errno()).$(", from=").$(detachedPath).$(", to=").$(path).I$();
                         return AttachDetachStatus.ATTACH_ERR_COPY;
                     }
-                } else if (enrolledAdaptive) {
+                } else if (defersPartitionMoves()) {
                     // A crash before a save point covers this attach rewinds below it, and the WAL replay must find
                     // .attachable again, so it stays until then.
                     if (!linkAttachable(detachedPath.trimTo(detachedRootLen), isSoftLink)) {
@@ -2344,7 +2344,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
                 }
                 if (detachedPathLen > 0) {
-                    if (enrolledAdaptive) {
+                    if (defersPartitionMoves()) {
                         detachesAfterSavePoint.add(timestamp, detachTxn);
                     } else {
                         finishDetach(timestamp, detachTxn);
@@ -7532,6 +7532,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     currentTableTxn
             );
         }
+    }
+
+    // An ATTACH keeps its source and a DETACH its temporary name until a save point covers it. A replica keeps no
+    // save point and never rewinds, so there they finish at once.
+    private boolean defersPartitionMoves() {
+        return enrolledAdaptive && engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled();
     }
 
     private void discardAbandonedDeferredPostingSealPurges(long currentTableTxn) {
@@ -13419,19 +13425,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // A failed _txn flush that stopped the engine, then a restart without a power loss, leaves the page cache
     // holding a _txn the device never got, and the device's _txn may name a partition version this one does not.
     // Under SYNC the open therefore makes _txn durable before it removes any version. ADAPTIVE restores _txn from
-    // the save point recovery selected, so there the open makes that save point's header durable first. NOSYNC and
-    // ASYNC promise nothing on a power loss. From here on the versions on disk agree with a durable state, so the
-    // partition purge job may act on the table; a writer on a private root (COPY staging) does not vouch for it.
+    // the save point recovery selected, whose header recovery made durable. NOSYNC and ASYNC promise nothing on a
+    // power loss. From here on the versions on disk agree with a durable state, so the partition purge job may act
+    // on the table; a writer on a private root (COPY staging) does not vouch for it.
     private void purgeUnusedPartitionsAtOpen(boolean isPrivateRoot) {
         if (PartitionBy.isPartitioned(partitionBy)) {
             try {
                 ff.iterateDir(path.$(), removePartitionDirsNotAttached);
-                if (partitionRemoveCandidates.size() > 0) {
-                    if (effectiveCommitMode == CommitMode.SYNC) {
-                        txWriter.rewriteAndFsync();
-                    } else if (!isPrivateRoot && effectiveCommitMode == CommitMode.ADAPTIVE && tableToken.isWal() && metadata.isWalEnabled()) {
-                        rewriteSelectedSavePointHeader();
-                    }
+                if (partitionRemoveCandidates.size() > 0 && effectiveCommitMode == CommitMode.SYNC) {
+                    txWriter.rewriteAndFsync();
                 }
                 if (!isPrivateRoot && (effectiveCommitMode == CommitMode.SYNC || effectiveCommitMode == CommitMode.ADAPTIVE)) {
                     engine.markPartitionPurgeSafe(tableToken);
@@ -13456,7 +13458,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             LOG.error().$("could not remove temporary detached partition name [path=").$(other).$(", errno=").$(ff.errno()).I$();
                         }
                         other.trimTo(pathSize);
-                    } else if (adaptive && engine.getTableSequencerAPI().getTxnTracker(tableToken).getPinnedEpochTxn() < detachTxn) {
+                    } else if (adaptive
+                            && engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()
+                            && engine.getTableSequencerAPI().getTxnTracker(tableToken).getPinnedEpochTxn() < detachTxn) {
                         detachesAfterSavePoint.add(timestamp, detachTxn);
                     } else {
                         finishDetach(timestamp, detachTxn);
@@ -15010,39 +15014,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // truncate _meta file exactly, the file size never changes.
             // Metadata updates are written to a new file and then swapped by renaming.
             ddlMem.close(true, Vm.TRUNCATE_TO_POINTER);
-        }
-    }
-
-    // Writes the header of the save point this table stands on (the one its pin names) over itself and syncs it. A
-    // failed header sync leaves a save point only in the page cache; a restart without a power loss selects it, and
-    // a power loss then brings back the older save point, which may name a version the open is about to remove. The
-    // write matters: a failed writeback leaves the page clean, and a bare sync would write nothing.
-    private void rewriteSelectedSavePointHeader() {
-        final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(ff, path.trimTo(pathSize), pathSize, tableToken.getTableId());
-        if (saved.length == 0) {
-            return;
-        }
-        int generation = saved[0].generation;
-        final long pinnedEpochTxn = engine.getTableSequencerAPI().getTxnTracker(tableToken).getPinnedEpochTxn();
-        for (int i = 0; i < saved.length; i++) {
-            if (saved[i].epochTxn == pinnedEpochTxn) {
-                generation = saved[i].generation;
-                break;
-            }
-        }
-        path.trimTo(pathSize).concat(DurableEpochManifest.FILE_NAME).put('.').put(generation);
-        final long fd = TableUtils.openRW(ff, path.$(), LOG, CairoConfiguration.O_NONE);
-        final long header = Unsafe.malloc(DurableEpochManifest.FILE_SIZE, MemoryTag.NATIVE_TABLE_WRITER);
-        try {
-            if (ff.read(fd, header, DurableEpochManifest.FILE_SIZE, 0) != DurableEpochManifest.FILE_SIZE
-                    || ff.write(fd, header, DurableEpochManifest.FILE_SIZE, 0) != DurableEpochManifest.FILE_SIZE) {
-                throw CairoException.critical(ff.errno()).put("could not rewrite adaptive save point header [path=").put(path).put(']');
-            }
-            ff.fsyncDurable(fd);
-        } finally {
-            Unsafe.free(header, DurableEpochManifest.FILE_SIZE, MemoryTag.NATIVE_TABLE_WRITER);
-            ff.close(fd);
-            path.trimTo(pathSize);
         }
     }
 

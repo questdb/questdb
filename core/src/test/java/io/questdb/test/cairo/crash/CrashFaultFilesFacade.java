@@ -1215,6 +1215,13 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
+     * The path of an open file descriptor (null if not open through this facade).
+     */
+    public String pathOf(long fd) {
+        return fdToPath.get(fd);
+    }
+
+    /**
      * Number of files currently retained by the durability content model.
      */
     public int trackedFileCount() {
