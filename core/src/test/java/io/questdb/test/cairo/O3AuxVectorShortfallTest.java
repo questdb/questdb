@@ -43,15 +43,10 @@ import org.junit.Test;
 
 /**
  * An O3 append into an existing partition reads that partition's last aux entry to find where the data
- * vector ends. It trusts the aux file to hold an entry for every row {@code _txn}/{@code _cv} claim; the
- * read goes through a mapping just extended to the new row count, so a short file is not a read error:
- * the missing tail reads back as zeros.
- *
- * <p>Unchecked, those zeros travel: under {@code -ea} a zero varchar header trips an assertion deep in the
- * type driver, with no column, partition or size in the message; with assertions off it yields a data
- * vector size of 0, and a reader later reports {@code Invalid column size} for the partition. This test
- * asserts that the append names the shortfall where it is detectable, with the file length, the length
- * required and the column top.
+ * vector ends, through a mapping just extended to the new row count, so a short aux file reads back zeros
+ * rather than failing. Unchecked, those zeros surface later as an assertion with no context or as
+ * {@code Invalid column size} in a reader. The test asserts that the append reports the shortfall itself,
+ * with the file length, the length required and the column top.
  */
 public class O3AuxVectorShortfallTest extends AbstractCairoTest {
     private static final LogCapture capture = new LogCapture();
