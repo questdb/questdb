@@ -6919,17 +6919,16 @@ public class MatViewTest extends AbstractCairoTest {
             final long counterAfterInitial = TestTimestampCounterFactory.COUNTER.get();
             Assert.assertEquals("Initial period refresh should emit 1 bucket", 1, counterAfterInitial);
 
-            // Seed the EMA so the cost model has a known threshold, exactly as
+            // Seed the EMA so the cost model has a known threshold, as
             // testRefreshIntervalsO3MergesNarrowGap does for the merge case.
-            // Without this the threshold is commit * range / sample measured off
-            // the warmup refresh, i.e. a WALL-CLOCK property of the agent: under
-            // the suite's ADAPTIVE commit mode every commit fsyncs, and on a slow
-            // Windows agent that inflates avgCommitNanos until the threshold
-            // exceeds the 30h gap below, merging the two intervals and sweeping
-            // the untouched 10:00 bucket back in (3 buckets, not 2).
-            // threshold = commit * range / sample, so sample = range = 1 reduces
-            // it to threshold = commit; 5s is far below the 30h gap, which is the
-            // regime this test means to pin: SPLIT, not merge.
+            // Otherwise the threshold is commit * range / sample taken from the
+            // warmup refresh, a wall-clock property of the machine: under the
+            // suite's ADAPTIVE commit mode every commit fsyncs, and on a slow
+            // machine avgCommitNanos can grow until the threshold exceeds the
+            // 30h gap below, merging the two intervals and sweeping the untouched
+            // 10:00 bucket back in (3 buckets, not 2). With sample = range = 1 the
+            // threshold equals the commit cost; 5s is far below the 30h gap, so
+            // the test stays in the split regime.
             final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
             final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
             final long fiveSecondsInTsUnits = timestampType.getDriver().fromMicros(5_000_000L);
@@ -6943,7 +6942,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             // O3 write 24h back, plus a current write -- arrived as 2 separate
             // WAL txns. With a 30h gap and the threshold pinned to 5s above,
-            // clustering splits them regardless of how slow this agent is.
+            // clustering splits them regardless of machine speed.
             execute("insert into base_price(price, ts) values (2.0, '2024-09-09T05:01')");
             execute("insert into base_price(price, ts) values (3.0, '2024-09-10T11:01')");
 
