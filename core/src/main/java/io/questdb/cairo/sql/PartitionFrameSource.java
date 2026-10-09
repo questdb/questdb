@@ -34,6 +34,7 @@ import io.questdb.std.Mutable;
 public final class PartitionFrameSource implements Mutable {
     public static final int NATIVE = 1;
     public static final int PARQUET = 2;
+    public static final int REMOTE_PARQUET = 3;
     private long columnVersion = -1;
     private int kind;
     private long metadataCommittedBytes;
@@ -54,7 +55,7 @@ public final class PartitionFrameSource implements Mutable {
         return columnVersion;
     }
 
-    /** NATIVE or PARQUET; zero after clear or a failed source query. */
+    /** NATIVE, PARQUET or REMOTE_PARQUET; zero after clear or a failed source query. */
     public int getKind() {
         return kind;
     }
