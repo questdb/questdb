@@ -44,17 +44,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Data before pointer for WAL segment structural changes.
- * <p>
- * A segment's {@code _meta} names its columns, and WAL apply resolves those names to files, so the files
- * must be in place before the metadata that points at them is published. Otherwise a crash on the
- * {@code _meta.swp} barrier leaves durable metadata naming a file that does not exist, the segment can never
- * be applied, and recovery suspends the table with
- * {@code "WAL segment column too short for committed row range [... actual=-1]"} (actual=-1 means a missing
- * file).
- * <p>
- * The tests assert the order directly rather than crashing: by the time {@code _meta.swp} is opened, the
- * column file the new metadata will name must already exist on disk. That keeps them deterministic.
+ * Data before pointer for WAL segment structural changes: a segment's {@code _meta} names column files, so
+ * those files must exist before the metadata is published. Otherwise a crash on the {@code _meta.swp} barrier
+ * leaves durable metadata naming a missing file, and recovery suspends the table with
+ * {@code "WAL segment column too short ... actual=-1"}. The tests assert the order directly, without a crash:
+ * when {@code _meta.swp} opens, the column file the new metadata names already exists on disk.
  */
 public class WalWriterStructuralPublishOrderTest extends AbstractCairoTest {
 
@@ -204,17 +198,11 @@ public class WalWriterStructuralPublishOrderTest extends AbstractCairoTest {
     }
 
     /**
-     * ADAPTIVE device-barrier handshake for the structural null-backfill.
-     * <p>
-     * Adding a column to a segment that already holds uncommitted rows backfills nulls into the new
-     * column's files. That write happens on the structural path, which sequences via events-only barriers
+     * Under ADAPTIVE, adding a column to a segment with uncommitted rows backfills nulls into the new column's
+     * files on the structural path, which uses events-only barriers
      * ({@code syncAdaptiveEventsBeforeSequencing}) and never runs {@code syncIfRequired0}'s per-column
-     * fdatasync loop, so the backfill carries its own device barrier.
-     * <p>
-     * Relying on {@code msync(MS_SYNC)} as an implicit range fsync would make the durability grade depend on
-     * kernel behaviour, and under a group-commit window (W&gt;0) it would force a synchronous device flush
-     * that the window defers. Every other ADAPTIVE path in this class pairs an ordering msync with an explicit
-     * fdatasync; this test checks that the backfill does too.
+     * fdatasync loop. The test checks that the backfill pairs its ordering msync with an explicit fdatasync,
+     * rather than relying on {@code msync(MS_SYNC)} as an implicit range fsync.
      */
     @Test
     public void testAdaptiveVarColumnBackfillGetsExplicitDeviceBarrier() throws Exception {
