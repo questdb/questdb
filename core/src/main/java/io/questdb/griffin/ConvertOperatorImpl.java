@@ -247,7 +247,7 @@ public class ConvertOperatorImpl implements Closeable {
             // with the new type anyway.
             //
             // Each per-partition convert is performed without committing. The batch is published
-            // by the ALTER's final commit together with the new _meta: it must NOT get its own
+            // by the ALTER's final commit together with the new _meta: it must not get its own
             // _txn write, because the writer already carries the ALTER's seqTxn and an
             // intermediate _txn would bind it to the old column type. If any partition throws
             // midway, the loop exits and the writer becomes distressed, so the in-memory updates
@@ -362,8 +362,8 @@ public class ConvertOperatorImpl implements Closeable {
                                     dstFixFd = this.fixedFd;
                                     dstVarFd = this.varFd;
                                     if (tableWriter.getEffectiveCommitMode() == CommitMode.SYNC) {
-                                        // The new column files exist now. Make their names durable; the
-                                        // conversion task fsyncs their data. Both precede the ALTER's commit.
+                                        // Make the new column files' names durable; the conversion task
+                                        // fsyncs their data. Both precede the ALTER's commit.
                                         TableUtils.fsyncDirDurable(ff, path.trimTo(pathTrimToLen).$());
                                     }
 
