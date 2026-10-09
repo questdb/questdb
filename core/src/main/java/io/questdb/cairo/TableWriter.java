@@ -7614,42 +7614,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         lifecycleManager.onBeforeClose();
         // destroy() may have already closed everything
         boolean tx = inTransaction();
-        // Graceful-close durable epoch: fold any committed-but-un-epoched tail into a final durable
-        // epoch so a clean restart lands on the committed frontier with nothing to roll forward
-        // (durableEpochSeqTxn catches up to seqTxn). Runs before the teardown below, while txWriter /
-        // columnVersionWriter / the epoch marker and the still-open (writerPool is freed before the
-        // sequencer + scoreboard in CairoEngine.close) sequencer are all live. Gated to a HEALTHY
-        // ADAPTIVE WAL writer that actually has a tail: a distressed/rolled-back writer -- including
-        // the drop path, which sets distressed before doClose -- must NOT stamp an epoch over
-        // possibly-torn or about-to-be-deleted state. A negative epoch interval turns the tail epoch off
-        // here too, as in the apply job, but not an owed one: that covers a change no WAL replay can redo.
-        // Best effort: a failure just leaves the tail for the next boot's idempotent WAL replay.
+        // A graceful close of a healthy adaptive WAL writer folds the committed tail into a final epoch, so a
+        // clean restart lands on the committed frontier with nothing to replay. It runs before the teardown
+        // below, while txWriter, columnVersionWriter and the sequencer are open (CairoEngine.close frees the
+        // writer pool before the sequencer and the scoreboard). A distressed or rolled-back writer, the drop
+        // path included, publishes no epoch over state that may be torn or about to be deleted. A negative
+        // epoch interval turns the tail epoch off, as in the apply job, but not an owed one: that covers a
+        // change no WAL replay can redo. Best effort: a failure leaves the tail to the next start's WAL replay.
         //
-        // fullyConstructed keeps this block from ever ENTERING the epoch on a half-built writer. doClose()
-        // is called from the CONSTRUCTOR's own catch block, where the failure may have come from
-        // configureColumns() / configureSymbolTable() and left `columns` / `denseSymbolMapWriters` /
-        // `denseIndexers` only PARTLY populated -- while effectiveCommitMode was already resolved to
-        // ADAPTIVE far earlier, so every other condition here passes. advanceDurableEpoch() then walks
-        // those half-built lists and dies with "index out of bounds"; being an AssertionError it slipped
-        // past the CairoException | CairoError catch below, ESCAPED doClose(), and REPLACED the
-        // constructor's real exception. The WAL drop-table retry (ApplyWal2TableJob.purgeTableFiles)
-        // catches only CairoException, so the substituted AssertionError aborted the whole drop-retry
-        // chain and left the table's files — including _txn — on disk forever. Reproduced by
-        // WalTableSqlTest.testDropFailedWhileSymbolFileLocked and pinned directly by
-        // TableWriterCloseEpochGuardsTest.
+        // fullyConstructed keeps a half-built writer out: the constructor's catch calls doClose() with the
+        // columns, symbol map writers and indexers only partly populated, and advanceDurableEpoch() would walk
+        // them. Keep both this guard and the Throwable catch below: the catch stops anything the epoch throws
+        // from escaping doClose() and masking the constructor's real exception; the guard stops the walk.
         //
-        // This guard and the widened catch below OVERLAP deliberately: measured by negative control,
-        // reverting either one ALONE still leaves testFailedOpenPropagatesRealErrorUnderAdaptive green,
-        // and only reverting BOTH reproduces the substituted AssertionError. So neither is individually
-        // pinned by that test, and neither should be removed on the grounds that "the test still passes".
-        // They answer different questions: the catch stops anything the epoch throws from escaping
-        // doClose(), while this guard stops the half-built walk from being attempted at all -- cheaper,
-        // and not dependent on every future failure mode inside advanceDurableEpoch() being throw-shaped
-        // rather than, say, a partial write.
-        // A FAILED FSYNC in the epoch or the seal-purge spill below is fatal and must stay fatal, but it must
-        // not be raised until this method has finished releasing resources. Captured here, first failure
-        // wins, rethrown at the very end of doClose(). See the epoch catch block for why both halves are
-        // required.
+        // A failed fsync in the epoch or the seal-purge spill below stays fatal, but is raised only once this
+        // method has released its resources: the first such failure is kept here and rethrown at the end.
         CairoError deferredFatal = null;
         if (fullyConstructed
                 && !distressed
@@ -7662,22 +7641,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
                 }
             } catch (Throwable e) {
-                // Throwable, not CairoException | CairoError: this block is documented as BEST EFFORT, and a
-                // best-effort epoch must never be able to break close(). Anything it throws would otherwise
-                // escape doClose(), skip every free below and, on the constructor path, mask the real open
-                // failure. Mirrors the closeDeferredPostingSealPurges() guard immediately below, which
-                // widened its catch for exactly this reason.
+                // Throwable, not CairoException | CairoError: a best-effort epoch must never break close().
+                // Anything it throws would escape doClose(), skip every free below and, on the constructor
+                // path, mask the real open failure. The closeDeferredPostingSealPurges() guard below does
+                // the same.
                 try {
                     handleBestEffortDurableEpochFailure(e, "writer close");
                 } catch (CairoError fatal) {
-                    // A genuine data-sync failure is INDETERMINATE — the device may or may not hold the
-                    // epoch's bytes — so handleBestEffortDurableEpochFailure deliberately re-raises after
-                    // poisoning the engine. That fail-stop must be preserved, but letting it unwind from
-                    // HERE skips every free() below: it leaks the writer's fds and native memory and
-                    // strands the table lock, on a path whose whole job is to release them. So DEFER it:
-                    // the poison and the operator callback have already happened (fail-stop is in force
-                    // from this instant, and getDurableAckRegistry now reports nothing durable), we finish
-                    // the cleanup, then rethrow so the caller still sees the fatal error.
+                    // A data-sync failure is indeterminate (the device may or may not hold the epoch's
+                    // bytes), so handleBestEffortDurableEpochFailure re-raises it after poisoning the
+                    // engine. Unwinding from here would skip every free() below, leaking the writer's fds
+                    // and native memory and stranding the table lock, so the error is deferred: the poison
+                    // and the operator callback have happened and fail-stop is in force; the cleanup
+                    // finishes, then the caller gets the fatal error.
                     deferredFatal = fatal;
                 }
             }
@@ -7758,9 +7734,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             LOG.debug().$("closed [table=").$(tableToken).I$();
         }
-        // Every resource is now released. Re-raise the deferred fatal data-sync failure so a failed fsync
-        // in the close epoch or the seal-purge spill stays fail-stop for the caller (the engine was already
-        // poisoned at the point of failure). Last statement in the method: nothing after it could be skipped.
+        // Every resource is released. Re-raise the deferred fatal data-sync failure, so a failed fsync in the
+        // close epoch or the seal-purge spill stays fail-stop for the caller (the engine is poisoned already).
+        // The last statement in the method, so nothing after it can be skipped.
         if (deferredFatal != null) {
             throw deferredFatal;
         }
@@ -8089,21 +8065,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // When a backup checkpoint is in progress, force async-only purge to prevent
         // deleting column version files that the checkpoint may still reference.
         //
-        // ADAPTIVE WAL tables have the same property, for a different reason: the materialized table is a
-        // REBUILDABLE
-        // CACHE of the durable WAL, so recovery may rewind it to the durable epoch cut and replay forward.
-        // A synchronous purge is one-shot destructive filesystem work that no epoch can re-derive -- it
-        // deletes column files (including a symbol column's <name>.o/.c/.k/.v) that a replayed transaction
-        // still needs. The crash-fuzz hit exactly that: DROP COLUMN purged sym2.*, the crash rewound _meta
-        // to a version that still declares the column, and apply then failed with "SymbolMap does not
-        // exist: ...sym2.o" leaving writerTxn at 0 while the sequencer held every txn -- a table that could
-        // never apply another transaction. Defer to the async purge, which runs once the state it would
-        // destroy is no longer reachable.
-        //
-        // WAL-ONLY: the rewind-and-replay that makes a synchronous purge unsafe is a WAL-apply mechanism.
-        // A non-WAL table is never rewound to an epoch cut, so deferring there would only strand files --
-        // and it broke TableWriterTest's remove/rename column-file tests, which run under the ADAPTIVE
-        // default and assert the files are gone. Same gate the parquet convert above already uses.
+        // Adaptive WAL tables need the same, for another reason: recovery may rewind the table to its
+        // last epoch and replay the WAL forward, and a synchronous purge deletes column files (a symbol
+        // column's <name>.o/.c/.k/.v included) that a replayed transaction still needs. A crash that
+        // rewinds _meta to a version still declaring a dropped column would then fail the apply on the
+        // missing symbol map, and the table could never apply another transaction. The async purge runs
+        // once nothing can rewind to that state. A non-WAL table is never rewound, so it purges at once.
         boolean asyncOnly = checkScoreboardHasReadersBeforeLastCommittedTxn()
                 || isCheckpointInProgress()
                 || (tableToken.isWal() && effectiveCommitMode == CommitMode.ADAPTIVE);
@@ -14825,19 +14792,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // rename _meta to _meta.prev
         renameMetaToMetaPrev(metadataEffectiveCommitMode);
 
-        // After moving _meta to _meta.prev we must arm the _todo restore marker BEFORE any step
-        // that can fail. If we abort while _meta has been renamed away but no _todo exists yet,
-        // open-time recovery cannot roll back and instead rolls forward to the half-applied
-        // _meta.swp -- surfacing e.g. a spurious "duplicate column" when the failed DDL is
-        // legitimately retried. writeRestoreMetaTodo() writes the marker into the already-mapped
-        // todo memory before it opens anything, so the marker survives even if the directory
-        // fsync below faults.
+        // Once _meta moves to _meta.prev, the _todo restore marker is armed before any step that
+        // can fail. An abort with _meta renamed away and no _todo would make open-time recovery
+        // roll forward to the half-applied _meta.swp instead of back, and a retry of the failed
+        // DDL could then fail with a spurious "duplicate column". writeRestoreMetaTodo() writes
+        // the marker into the mapped todo memory before it opens anything, so the marker survives
+        // even if the directory fsync below faults.
         writeRestoreMetaTodo(metadataEffectiveCommitMode);
 
-        // Durably persist the _meta -> _meta.prev rename together with the _todo marker. This
-        // fsync must stay AFTER writeRestoreMetaTodo(): opening the directory can fail (injected
-        // IO fault, real EIO), and only with the marker already in place does a failure here
-        // leave a recoverable state.
+        // Make the _meta -> _meta.prev rename durable together with the _todo marker. This fsync
+        // stays after writeRestoreMetaTodo(): opening the directory can fail, and only with the
+        // marker in place does a failure here leave a recoverable state.
         if (!Os.isWindows() && metadataEffectiveCommitMode != CommitMode.NOSYNC) {
             try {
                 final long dirFd = TableUtils.openRONoCache(ff, path.trimTo(pathSize).$(), LOG);
@@ -15015,15 +14980,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void rollbackSymbolTables(boolean quiet) {
         int expectedMapWriters = txWriter.unsafeReadSymbolColumnCount();
-        // _txn's symbol area and denseSymbolMapWriters are two views of the same list -- _txn is written FROM
-        // the dense list, and the dense list is rebuilt from _meta's live symbol columns on every open. They
-        // can only disagree if the two files were not captured from the same table shape, which recovery can
-        // produce by restoring a _txn from a durable epoch that does not match the _meta beside it.
-        //
-        // Without this, that lands as a bare "Array index out of range: N" from ObjList.get, thrown from
-        // inside the TableWriter CONSTRUCTOR (initLastPartition -> performRecovery), naming neither the table
-        // nor the mismatch. It cost a long investigation to trace one back to its source. Fail with the two
-        // counts instead; the caller's `quiet` contract is unchanged.
+        // _txn's symbol area and denseSymbolMapWriters are two views of one list: _txn is written from the
+        // dense list, and every open rebuilds the dense list from _meta's live symbol columns. They disagree
+        // only when the two files come from different table shapes, as when recovery restores a _txn from a
+        // durable epoch that does not match the _meta beside it. Fail with the table and the two counts rather
+        // than a bare index error from inside the constructor; the caller's `quiet` contract is unchanged.
         if (expectedMapWriters > denseSymbolMapWriters.size()) {
             final CairoException e = CairoException.critical(0)
                     .put("table _txn and _meta disagree on symbol column count, refusing to roll back symbol tables [table=")
