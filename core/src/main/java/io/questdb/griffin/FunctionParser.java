@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.RuntimeConstFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryBoundRefFunction;
+import io.questdb.griffin.engine.functions.lt.AbstractScalarCursorFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
@@ -499,7 +500,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     }
                 }
             }
-            functionStack.push(createFunction(node, mutableArgs, mutableArgPositions));
+            final Function function = createFunction(node, mutableArgs, mutableArgPositions);
+            if (function instanceof AbstractScalarCursorFunction) {
+                linkScalarSubQuery(node, function);
+            }
+            functionStack.push(function);
         }
         positionStack.push(node.position);
     }
@@ -514,6 +519,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     void restoreExecutionRequirementPosition(int position) {
         executionRequirementPosition = position;
+    }
+
+    // The comparison's sub-query operand, the one QUERY child, is linked to the comparison: see
+    // ExpressionNode#scalarSubQueryFunction.
+    private static void linkScalarSubQuery(ExpressionNode node, Function function) {
+        final boolean isLhs = node.lhs != null && node.lhs.type == ExpressionNode.QUERY;
+        final boolean isRhs = node.rhs != null && node.rhs.type == ExpressionNode.QUERY;
+        if (node.paramCount == 2 && isLhs != isRhs) {
+            (isLhs ? node.lhs : node.rhs).scalarSubQueryFunction = function;
+        }
     }
 
     private static int countWindowOverloads(ObjList<FunctionFactoryDescriptor> overload) {

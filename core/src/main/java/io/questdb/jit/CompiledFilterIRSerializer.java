@@ -36,6 +36,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.engine.functions.bind.CompiledFilterScalarSubQuery;
+import io.questdb.griffin.engine.functions.lt.AbstractScalarCursorFunction;
 import io.questdb.griffin.GeoHashUtil;
 import io.questdb.griffin.PostOrderTreeTraversalAlgo;
 import io.questdb.griffin.SqlException;
@@ -50,6 +52,7 @@ import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.DoubleList;
 import io.questdb.std.GenericLexer;
@@ -204,6 +207,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // that truncates bindVarFunctions, and it clears this map alongside: a memoized slot above the
     // watermark would otherwise point past the end of the vars block the backend reads.
     private final ObjIntHashMap<ExpressionNode> bindVarIndexes = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
+    // the scalar sub-queries the filter reads as bind variables, by the synthetic token of their
+    // BIND_VARIABLE node, see addScalarSubQuery()
+    private final CharSequenceObjHashMap<AbstractScalarCursorFunction> scalarSubQueries = new CharSequenceObjHashMap<>();
     // List to collect predicates from AND chains for reordering
     private final ObjList<ExpressionNode> collectedPredicates = new ObjList<>();
     // Memoizes containsFloatExpression() for the current predicate. See arithExprTypeCache.
@@ -336,8 +342,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         this.symbolInSetSupported = symbolInSetSupported;
     }
 
+    /**
+     * Makes a BIND_VARIABLE node with {@code token} read the value of a scalar sub-query: the value
+     * {@code source} computes once per execution (see {@link CompiledFilterScalarSubQuery}). The
+     * token is one no SQL text can produce, so it never names a real bind variable.
+     */
+    public void addScalarSubQuery(CharSequence token, AbstractScalarCursorFunction source) {
+        scalarSubQueries.put(token, source);
+    }
+
     @Override
     public void clear() {
+        scalarSubQueries.clear();
         memory = null;
         metadata = null;
         pageFrameCursor = null;
@@ -2423,6 +2439,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private Function getBindVariableFunction(int position, CharSequence token) throws SqlException {
+        final AbstractScalarCursorFunction scalarSubQuery = scalarSubQueries.get(token);
+        if (scalarSubQuery != null) {
+            return CompiledFilterScalarSubQuery.newLink(scalarSubQuery);
+        }
         Function varFunction;
 
         if (token.charAt(0) == ':') {
@@ -3251,6 +3271,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private Function lookupBindVariable(CharSequence token) {
+        final AbstractScalarCursorFunction scalarSubQuery = token != null ? scalarSubQueries.get(token) : null;
+        if (scalarSubQuery != null) {
+            // read for its type only
+            return CompiledFilterScalarSubQuery.newLink(scalarSubQuery);
+        }
         BindVariableService svc = executionContext.getBindVariableService();
         if (svc == null || token == null || token.isEmpty()) {
             return null;

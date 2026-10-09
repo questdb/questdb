@@ -1492,6 +1492,14 @@ public interface CairoConfiguration {
     boolean isSqlJitSymbolInBitsetEnabled();
 
     /**
+     * Binds an uncorrelated scalar sub-query compared with a column, such as bid >= (SELECT ...), as a
+     * constant of each execution, so the filter stays JIT-compiled.
+     */
+    default boolean isSqlJitScalarSubQueryEnabled() {
+        return true;
+    }
+
+    /**
      * Compiles a SYMBOL column compared with the empty string ('') into the JIT filter instead of
      * falling back to the Java filter.
      */

@@ -366,6 +366,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getCairoConfiguration().isSqlJitDebugEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlJitSymbolInBitsetEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlJitSymbolEmptyConstantEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlJitScalarSubQueryEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlSymbolInBitsetEnabled());
         Assert.assertEquals(16 * 1024 * 1024, configuration.getCairoConfiguration().getSqlSymbolInBitsetMaxKeys());
 
@@ -3466,6 +3467,7 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.isSqlJitDebugEnabled());
         Assert.assertFalse(configuration.isSqlJitSymbolInBitsetEnabled());
         Assert.assertFalse(configuration.isSqlJitSymbolEmptyConstantEnabled());
+        Assert.assertFalse(configuration.isSqlJitScalarSubQueryEnabled());
         Assert.assertFalse(configuration.isSqlSymbolInBitsetEnabled());
         Assert.assertEquals(4096, configuration.getSqlSymbolInBitsetMaxKeys());
 

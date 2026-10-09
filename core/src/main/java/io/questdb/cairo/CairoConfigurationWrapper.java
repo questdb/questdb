@@ -1935,6 +1935,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlJitScalarSubQueryEnabled() {
+        return getDelegate().isSqlJitScalarSubQueryEnabled();
+    }
+
+    @Override
     public boolean isSqlJitSymbolEmptyConstantEnabled() {
         return getDelegate().isSqlJitSymbolEmptyConstantEnabled();
     }

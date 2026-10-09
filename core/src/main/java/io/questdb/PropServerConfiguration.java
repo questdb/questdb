@@ -563,6 +563,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlJitIRMemoryPageSize;
     private final int sqlJitMaxInListSizeThreshold;
     private final boolean sqlJitSymbolInBitsetEnabled;
+    private final boolean sqlJitScalarSubQueryEnabled;
     private final boolean sqlJitSymbolEmptyConstantEnabled;
     private final boolean sqlSymbolInBitsetEnabled;
     private final int sqlSymbolInBitsetMaxKeys;
@@ -1890,6 +1891,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlJitDebugEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_JIT_DEBUG_ENABLED, false);
             this.sqlJitMaxInListSizeThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD, 10);
             this.sqlJitSymbolInBitsetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_JIT_SYMBOL_IN_BITSET_ENABLED, true);
+            this.sqlJitScalarSubQueryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_JIT_SCALAR_SUBQUERY_ENABLED, true);
             this.sqlJitSymbolEmptyConstantEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_JIT_SYMBOL_EMPTY_CONSTANT_ENABLED, true);
             this.sqlSymbolInBitsetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_ENABLED, true);
             this.sqlSymbolInBitsetMaxKeys = getInt(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS, 16 * 1024 * 1024);
@@ -6018,6 +6020,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlJitSymbolInBitsetEnabled() {
             return sqlJitSymbolInBitsetEnabled;
+        }
+
+        @Override
+        public boolean isSqlJitScalarSubQueryEnabled() {
+            return sqlJitScalarSubQueryEnabled;
         }
 
         @Override

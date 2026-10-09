@@ -71,6 +71,12 @@ import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
+import io.questdb.griffin.engine.functions.TernaryFunction;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.bind.CompiledFilterScalarSubQuery;
+import io.questdb.griffin.engine.functions.lt.AbstractScalarCursorFunction;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.LimitOverflowException;
@@ -546,6 +552,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ObjectPool<IntList> intListPool = new ObjectPool<>(IntList::new, 4);
     private final MemoryCARW jitIRMem;
     private final CompiledFilterIRSerializer jitIRSerializer = new CompiledFilterIRSerializer();
+    // the scalar sub-queries of the filter being compiled, see bindScalarSubQueries()
+    private final ObjList<AbstractScalarCursorFunction> scalarSubQuerySources = new ObjList<>();
+    private final ObjList<CharSequence> scalarSubQueryTokens = new ObjList<>();
     private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     // this list is used to generate record sinks
     private final ListColumnFilter listColumnFilterA = new ListColumnFilter();
@@ -5125,6 +5134,37 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     // Whether the expression holds a sub-query, which a copy of a filter would run again.
+    // Whether target is function or one of its arguments, at any depth, through the function kinds
+    // whose arguments are known. An unknown kind answers false: the caller then declines.
+    private static boolean isReachableFunction(Function function, Function target) {
+        if (function == null) {
+            return false;
+        }
+        if (function == target) {
+            return true;
+        }
+        if (function instanceof UnaryFunction unary) {
+            return isReachableFunction(unary.getArg(), target);
+        }
+        if (function instanceof BinaryFunction binary) {
+            return isReachableFunction(binary.getLeft(), target) || isReachableFunction(binary.getRight(), target);
+        }
+        if (function instanceof TernaryFunction ternary) {
+            return isReachableFunction(ternary.getLeft(), target)
+                    || isReachableFunction(ternary.getCenter(), target)
+                    || isReachableFunction(ternary.getRight(), target);
+        }
+        if (function instanceof MultiArgFunction multiArg) {
+            final ObjList<Function> args = multiArg.args();
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (isReachableFunction(args.getQuick(i), target)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private static boolean hasSubQuery(@Nullable ExpressionNode node) {
         if (node == null) {
             return false;
@@ -5874,10 +5914,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         int jitOptions;
                         Throwable jitScratchFailure = null;
                         try {
+                            // uncorrelated scalar sub-queries become bind variables of the compiled filter
+                            final ExpressionNode jitFilterExpr = bindScalarSubQueries(filterExpr, filter);
                             try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext, ORDER_ANY)) {
                                 final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
                                 jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
-                                jitOptions = jitIRSerializer.serialize(filterExpr, forceScalar, enableJitDebug, enableJitNullChecks);
+                                for (int i = 0, n = scalarSubQueryTokens.size(); i < n; i++) {
+                                    jitIRSerializer.addScalarSubQuery(scalarSubQueryTokens.getQuick(i), scalarSubQuerySources.getQuick(i));
+                                }
+                                jitOptions = jitIRSerializer.serialize(jitFilterExpr, forceScalar, enableJitDebug, enableJitNullChecks);
+                            } finally {
+                                scalarSubQueryTokens.clear();
+                                scalarSubQuerySources.clear();
                             }
 
                             compiledFilter = new CompiledFilter();
@@ -7151,6 +7199,52 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
         Misc.free(symbolShortCircuit);
         return factory;
+    }
+
+    /**
+     * The filter the JIT compiles: {@code filterExpr}, or a copy of it in which each scalar sub-query
+     * operand of a comparison that {@code filter} evaluates once per execution (an
+     * {@link AbstractScalarCursorFunction} of this very filter) is a BIND_VARIABLE node, whose value
+     * {@link CompiledFilterScalarSubQuery} links to that function's (cairo.sql.jit.scalar.subquery.enabled).
+     * The tokens and sources go to {@link #scalarSubQueryTokens} and {@link #scalarSubQuerySources}.
+     * Any other sub-query stays a QUERY node, which the serializer declines, as before.
+     */
+    private ExpressionNode bindScalarSubQueries(ExpressionNode filterExpr, Function filter) {
+        scalarSubQueryTokens.clear();
+        scalarSubQuerySources.clear();
+        if (!configuration.isSqlJitScalarSubQueryEnabled() || !hasSubQuery(filterExpr)) {
+            return filterExpr;
+        }
+        final ExpressionNode copy = deepClone(expressionNodePool, filterExpr);
+        bindScalarSubQueries0(filterExpr, copy, filter);
+        return scalarSubQueryTokens.size() > 0 ? copy : filterExpr;
+    }
+
+    private void bindScalarSubQueries0(@Nullable ExpressionNode node, @Nullable ExpressionNode copy, Function filter) {
+        if (node == null || copy == null) {
+            return;
+        }
+        if (node.type == QUERY) {
+            if (node.scalarSubQueryFunction instanceof AbstractScalarCursorFunction source
+                    && isReachableFunction(filter, source)) {
+                final String token = "\0scalar sub-query " + scalarSubQueryTokens.size();
+                copy.type = BIND_VARIABLE;
+                copy.token = token;
+                copy.queryModel = null;
+                copy.paramCount = 0;
+                copy.lhs = null;
+                copy.rhs = null;
+                copy.args.clear();
+                scalarSubQueryTokens.add(token);
+                scalarSubQuerySources.add(source);
+            }
+            return;
+        }
+        bindScalarSubQueries0(node.lhs, copy.lhs, filter);
+        bindScalarSubQueries0(node.rhs, copy.rhs, filter);
+        for (int i = 0, n = Math.min(node.args.size(), copy.args.size()); i < n; i++) {
+            bindScalarSubQueries0(node.args.getQuick(i), copy.args.getQuick(i), filter);
+        }
     }
 
     private RecordCursorFactory generateJoinAsof(

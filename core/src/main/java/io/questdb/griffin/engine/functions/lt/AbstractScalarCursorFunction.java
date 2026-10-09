@@ -58,6 +58,8 @@ public abstract class AbstractScalarCursorFunction extends NegatableBooleanFunct
     private final RecordCursorFactory factory;
     private final Function rightFunc;
     private final int rightPos;
+    // the executions this function ran its sub-query for, see CompiledFilterScalarSubQuery
+    private int executionCount;
     private boolean stateInherited = false;
     private boolean stateShared = false;
 
@@ -93,7 +95,43 @@ public abstract class AbstractScalarCursorFunction extends NegatableBooleanFunct
                 setNullValue();
             }
         }
+        executionCount++;
     }
+
+    /**
+     * The number of executions this function has run its sub-query for: the compiled filter's link
+     * to its value runs the sub-query itself when it sees no new execution.
+     */
+    public int getExecutionCount() {
+        return executionCount;
+    }
+
+    /**
+     * @return the cached sub-query value, when {@link #getScalarType()} is DOUBLE
+     */
+    public double getScalarDouble() {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * @return the cached sub-query value, when {@link #getScalarType()} is INT
+     */
+    public int getScalarInt() {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * @return the cached sub-query value, when {@link #getScalarType()} is LONG
+     */
+    public long getScalarLong() {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * The type the comparison reads the sub-query value at, its NULL included: DOUBLE (NaN), LONG
+     * ({@code LONG_NULL}) or INT ({@code INT_NULL}).
+     */
+    public abstract int getScalarType();
 
     @Override
     public boolean isThreadSafe() {
