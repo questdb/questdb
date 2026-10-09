@@ -38,13 +38,9 @@ import org.junit.Test;
  */
 public class WriteBarrierCheckTest {
 
-    // -----------------------------------------------------------------------
-    // Basic barrier-state detection
-    // -----------------------------------------------------------------------
-
     @Test
     public void testExt4Nobarrier() {
-        // ext4 mounted with nobarrier → BARRIERS_DISABLED
+        // ext4 mounted with nobarrier -> BARRIERS_DISABLED
         String mounts =
                 "sysfs /sys sysfs rw,nosuid,nodev,noexec,relatime 0 0\n" +
                         "/dev/sda1 / ext4 rw,relatime,errors=remount-ro 0 0\n" +
@@ -55,7 +51,7 @@ public class WriteBarrierCheckTest {
 
     @Test
     public void testExt4BarrierEquals0() {
-        // ext4 mounted with barrier=0 (older kernel syntax) → BARRIERS_DISABLED
+        // ext4 mounted with barrier=0 (older kernel syntax) -> BARRIERS_DISABLED
         String mounts =
                 "/dev/sda1 / ext4 rw,relatime,errors=remount-ro 0 0\n" +
                         "/dev/sdb1 /data ext4 rw,relatime,barrier=0 0 0\n";
@@ -65,7 +61,7 @@ public class WriteBarrierCheckTest {
 
     @Test
     public void testExt4DefaultBarriers() {
-        // ext4 with default options (no barrier token) → BARRIERS_PRESUMED_ENABLED
+        // ext4 with default options (no barrier token) -> BARRIERS_PRESUMED_ENABLED
         String mounts =
                 "/dev/sda1 / ext4 rw,relatime,errors=remount-ro 0 0\n" +
                         "/dev/sdb1 /data ext4 rw,relatime,data=ordered 0 0\n";
@@ -75,7 +71,7 @@ public class WriteBarrierCheckTest {
 
     @Test
     public void testXfsDefault() {
-        // xfs default (barriers on, not advertised in options) → BARRIERS_PRESUMED_ENABLED
+        // xfs default (barriers on, not advertised in options) -> BARRIERS_PRESUMED_ENABLED
         String mounts =
                 "/dev/sda1 / xfs rw,relatime,attr2,inode64,noquota 0 0\n" +
                         "/dev/nvme0n1p1 /data xfs rw,relatime,attr2,inode64,noquota 0 0\n";
@@ -83,14 +79,10 @@ public class WriteBarrierCheckTest {
                 WriteBarrierCheck.classify(mounts, "/data/qdb"));
     }
 
-    // -----------------------------------------------------------------------
-    // Longest-prefix mount selection
-    // -----------------------------------------------------------------------
-
     @Test
     public void testLongestPrefixWins_specificMountSafe() {
         // dbRoot=/data/qdb, root mount has nobarrier, /data mount is default (safe).
-        // Longest prefix = /data → PRESUMED_ENABLED (the specific, safe mount wins).
+        // Longest prefix = /data -> PRESUMED_ENABLED (the specific, safe mount wins).
         String mounts =
                 "/dev/sda1 / ext4 rw,relatime,nobarrier 0 0\n" +
                         "/dev/sdb1 /data ext4 rw,relatime,data=ordered 0 0\n";
@@ -101,7 +93,7 @@ public class WriteBarrierCheckTest {
     @Test
     public void testLongestPrefixWins_specificMountNobarrier() {
         // dbRoot=/data/qdb, root mount is safe, /data mount has nobarrier.
-        // Longest prefix = /data → BARRIERS_DISABLED.
+        // Longest prefix = /data -> BARRIERS_DISABLED.
         String mounts =
                 "/dev/sda1 / ext4 rw,relatime,data=ordered 0 0\n" +
                         "/dev/sdb1 /data ext4 rw,relatime,nobarrier 0 0\n";
@@ -119,18 +111,14 @@ public class WriteBarrierCheckTest {
                 WriteBarrierCheck.classify(mounts, "/data/qdb"));
     }
 
-    // -----------------------------------------------------------------------
-    // Path-boundary correctness
-    // -----------------------------------------------------------------------
-
     @Test
     public void testPathBoundaryNoFalsePrefix() {
-        // dbRoot=/database must NOT match /data mount — they share a common prefix string
-        // but /data is not a path-component prefix of /database.
+        // dbRoot=/database must not match the /data mount: they share a string prefix, but /data is
+        // not a path-component prefix of /database.
         String mounts =
                 "/dev/sda1 / ext4 rw,relatime 0 0\n" +
                         "/dev/sdb1 /data ext4 rw,relatime,nobarrier 0 0\n";
-        // /database is not under /data, so we should fall back to / which has no nobarrier.
+        // /database is not under /data, so the classifier falls back to /, which has no nobarrier.
         Assert.assertEquals(WriteBarrierCheck.BARRIERS_PRESUMED_ENABLED,
                 WriteBarrierCheck.classify(mounts, "/database"));
     }
@@ -143,10 +131,6 @@ public class WriteBarrierCheckTest {
         Assert.assertEquals(WriteBarrierCheck.BARRIERS_DISABLED,
                 WriteBarrierCheck.classify(mounts, "/some/deep/path"));
     }
-
-    // -----------------------------------------------------------------------
-    // No matching mount → UNKNOWN
-    // -----------------------------------------------------------------------
 
     @Test
     public void testNoMatchingMount() {
@@ -177,10 +161,6 @@ public class WriteBarrierCheckTest {
                 WriteBarrierCheck.classify("sysfs /sys sysfs rw 0 0\n", null));
     }
 
-    // -----------------------------------------------------------------------
-    // Comment / blank lines are ignored
-    // -----------------------------------------------------------------------
-
     @Test
     public void testCommentLinesIgnored() {
         String mounts =
@@ -190,11 +170,6 @@ public class WriteBarrierCheckTest {
         Assert.assertEquals(WriteBarrierCheck.BARRIERS_DISABLED,
                 WriteBarrierCheck.classify(mounts, "/var/qdb"));
     }
-
-    // -----------------------------------------------------------------------
-    // Smoke test: classifyDbRoot on real /proc/mounts (Linux only)
-    // Verifies the method does not throw regardless of what it finds.
-    // -----------------------------------------------------------------------
 
     @Test
     public void testClassifyDbRootSmokeNoException() {
@@ -214,18 +189,13 @@ public class WriteBarrierCheckTest {
             Assert.assertEquals(WriteBarrierCheck.UNKNOWN,
                     WriteBarrierCheck.classifyDbRoot(FilesFacadeImpl.INSTANCE, "/tmp"));
         }
-        // On Linux: just verify no exception is thrown (covered by the smoke test above).
+        // On Linux the smoke test covers that no exception is thrown.
     }
 
-    // -----------------------------------------------------------------------
-    // Octal-escape decoding in mount points
-    // -----------------------------------------------------------------------
-
     /**
-     * A dbRoot carrying a trailing slash must still match its mount. {@code cairo.root=/data/qdb/} is
-     * an ordinary way to write the config, and the normalisation that strips the slash had no test --
-     * without it the prefix match fails and the mount is never found, so a nobarrier filesystem would
-     * silently classify as UNKNOWN instead of DISABLED.
+     * A dbRoot carrying a trailing slash, such as {@code cairo.root=/data/qdb/}, must still match its
+     * mount. Without the normalisation the prefix match fails and a nobarrier filesystem classifies as
+     * UNKNOWN instead of DISABLED.
      */
     @Test
     public void testTrailingSlashOnDbRootStillMatchesItsMount() {
@@ -252,9 +222,9 @@ public class WriteBarrierCheckTest {
     }
 
     /**
-     * A truncated or malformed line -- fewer than the four fields /proc/mounts guarantees -- must be
-     * skipped, not allowed to throw or to be read with garbage field indices. PROC_MOUNTS_MAX_BYTES
-     * caps the read, so a truncated final line is a real possibility rather than a hypothetical.
+     * A truncated or malformed line, with fewer than the four fields /proc/mounts guarantees, is
+     * skipped rather than throwing or being read with garbage field indices. PROC_MOUNTS_MAX_BYTES
+     * caps the read, so a truncated final line can occur.
      */
     @Test
     public void testShortLineIsSkippedRatherThanParsed() {
@@ -268,9 +238,8 @@ public class WriteBarrierCheckTest {
 
     /**
      * Whitespace must not shift the field indices: options are field 3, and reading field 2 or 4
-     * instead would classify on the fstype or the dump flag. Covers BOTH skips -- the leading-
-     * whitespace one that runs before the comment check, and the inter-field one -- because they are
-     * separate loops and padding between fields does not exercise the leading case.
+     * instead would classify on the fstype or the dump flag. Covers both skips, the leading-whitespace
+     * one that runs before the comment check and the inter-field one, because they are separate loops.
      */
     @Test
     public void testLeadingAndInterFieldWhitespaceDoNotShiftFields() {
@@ -283,7 +252,7 @@ public class WriteBarrierCheckTest {
 
     @Test
     public void testOctalEscapeInMountpoint() {
-        // Mountpoint with a space encoded as \040 — /data\040qdb = "/data qdb"
+        // Mountpoint with a space encoded as \040: /data\040qdb = "/data qdb"
         String mounts =
                 "/dev/sda1 / ext4 rw,relatime 0 0\n" +
                         "/dev/sdb1 /data\\040qdb ext4 rw,relatime,nobarrier 0 0\n";
