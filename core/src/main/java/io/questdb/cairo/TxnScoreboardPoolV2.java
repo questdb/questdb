@@ -109,9 +109,9 @@ public class TxnScoreboardPoolV2 implements TxnScoreboardPool {
     /**
      * Restores the pins that must outlive a pooled scoreboard instance. The pool frees a scoreboard as soon as
      * nothing references it ({@link #releaseInactive()}), which suits reader pins: they die with their
-     * readers. The adaptive durable-epoch pin does not: it protects files a restart rewinds to, for as long as
-     * the published epoch names them. Its source of truth is therefore kept outside the scoreboard, and this
-     * callback puts it back on every replacement.
+     * readers. The two adaptive save point pins do not: they protect the files a restart rewinds to, for as long
+     * as a save point generation names them. Their source of truth lives outside the scoreboard, and this
+     * callback puts them back on every replacement.
      */
     @FunctionalInterface
     public interface PinRestorer {
