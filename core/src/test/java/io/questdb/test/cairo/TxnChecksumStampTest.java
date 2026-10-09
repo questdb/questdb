@@ -50,7 +50,7 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
  * A bare {@code stored == 0} sentinel cannot tell a legacy record (written before the checksum existed)
  * from one whose checksum slot a torn page write zeroed, so a torn {@code _txn} would be served as healthy.
  * The stamp beside the checksum settles it: it names the txn the checksum was computed for, so a slot that
- * names THIS record was written for it and its absence is tearing, while a slot naming another record -- or
+ * names this record was written for it and its absence is tearing, while a slot naming another record -- or
  * none at all -- says nothing about this one.
  * <p>
  * The stamp is what a file-level "guaranteed from here on" watermark cannot be: withdrawable. A binary that
@@ -133,9 +133,9 @@ public class TxnChecksumStampTest extends AbstractCairoTest {
 
     @Test
     public void testLegacyTxnWithoutChecksumStillLoads() throws Exception {
-        // The false-positive control. A _txn written before the capability existed has neither the marker
-        // nor a body checksum, and MUST still load -- this is the failure mode TableUtils.CV_CHECKSUM_MAGIC
-        // warns about for _cv. If this fails, every existing database is being condemned.
+        // The false-positive control. A _txn written before the checksum existed has neither a stamp nor a
+        // body checksum and must still load, or every existing database fails to open. TableUtils.CV_CHECKSUM_MAGIC
+        // warns about the same failure mode for _cv.
         assertMemoryLeak(() -> {
             execute("create table txn_legacy (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into txn_legacy values ('2024-01-01T00:00:00.000000Z', 1)");
@@ -173,7 +173,7 @@ public class TxnChecksumStampTest extends AbstractCairoTest {
                     TxnCorruptionUtils.readLiveAreaChecksumStamp(engine, tableName)
             );
 
-            // Tear the LIVE area's checksum only, leaving its stamp: the other area stays intact so
+            // Tear the live area's checksum only, leaving its stamp: the other area stays intact so
             // unsafeLoadAll() can fall back to it and the reader survives long enough to be diagnosed.
             TxnCorruptionUtils.tearLiveAreaChecksumSlot(engine, tableName);
             Assert.assertEquals(
@@ -192,7 +192,7 @@ public class TxnChecksumStampTest extends AbstractCairoTest {
                 );
             }
 
-            // Same bytes, stamp erased: now it is a legacy record and must NOT be called torn.
+            // Same bytes, stamp erased: a legacy record, which must not be called torn.
             TxnCorruptionUtils.makeAreasLookLegacy(engine, tableName);
             try (Path path = new Path(); TxReader txReader = new TxReader(ff)) {
                 txnPath(path, tableName);
@@ -208,13 +208,13 @@ public class TxnChecksumStampTest extends AbstractCairoTest {
 
     @Test
     public void testZeroedChecksumSlotWithALiveStampIsTorn() throws Exception {
-        // THE regression this design exists for. Without the stamp a zeroed checksum slot read as "legacy,
-        // skip the check" and the torn record was served.
+        // The case the stamp exists for: a zeroed checksum slot under a stamp that names the record is a torn
+        // write, not a legacy record, and the reader must not serve it.
         assertMemoryLeak(() -> {
             execute("create table txn_cap (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into txn_cap values ('2024-01-01T00:00:00.000000Z', 1)");
             drainWalQueue();
-            // A second commit so BOTH A/B areas carry a stamped record; otherwise the A/B fallback would
+            // A second commit so both A/B areas carry a stamped record; otherwise the A/B fallback would
             // legitimately land on an unstamped (legacy) record and this would not exercise the torn verdict.
             execute("insert into txn_cap values ('2024-01-02T00:00:00.000000Z', 2)");
             drainWalQueue();
@@ -228,7 +228,7 @@ public class TxnChecksumStampTest extends AbstractCairoTest {
                     0, TxnCorruptionUtils.readChecksumStampB(engine, "txn_cap")
             );
 
-            // Zero BOTH areas' checksum slots, leaving their stamps intact. That is exactly what a partial
+            // Zero both areas' checksum slots, leaving their stamps intact. That is what a partial
             // page write leaves behind: the stamp still names the record whose checksum has gone.
             TxnCorruptionUtils.tearChecksumSlots(engine, "txn_cap");
 
