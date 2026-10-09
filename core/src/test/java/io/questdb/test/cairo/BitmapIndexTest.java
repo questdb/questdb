@@ -1609,8 +1609,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - mem.getAppendOffset());
 
             }
-            // The new map-size guard fires first (value file missing → too short);
-            // previously got to "corrupt file" on blockValueCount == 0.
+            // The map-size guard fires first (value file missing -> too short).
             assertWriterConstructorFail("bitmap index value file too short");
         });
     }
