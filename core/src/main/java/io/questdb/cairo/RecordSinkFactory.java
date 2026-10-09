@@ -692,7 +692,11 @@ public class RecordSinkFactory {
     static int sinkOpcode(int type, String kind) {
         final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(type);
         if (accessor != null) {
-            return accessor.opcode();
+            // a family arm copies the value's bytes, which hold a NULL under these policies only;
+            // a policy that keeps NULL outside the value needs an arm of its own
+            return switch (ColumnType.getTypeDriver(type).getNullPolicy()) {
+                case SENTINEL, NONE -> accessor.opcode();
+            };
         }
         final short tag = ColumnType.tagOf(type);
         if (tag == ColumnType.RECORD) {

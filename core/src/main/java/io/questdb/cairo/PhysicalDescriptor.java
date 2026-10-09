@@ -77,7 +77,11 @@ public final class PhysicalDescriptor {
             throw CairoException.critical(0).put("no compare arm for ").put(driver.getTypeName()).put(" at ").put(site)
                     .put(": add a compare arm or declare the type ordered like its family");
         }
-        return driver.getAccessor().opcode();
+        // a family arm orders the value's bytes, which hold a NULL under these policies only; a
+        // policy that keeps NULL outside the value needs an arm of its own
+        return switch (driver.getNullPolicy()) {
+            case SENTINEL, NONE -> driver.getAccessor().opcode();
+        };
     }
 
     /**
