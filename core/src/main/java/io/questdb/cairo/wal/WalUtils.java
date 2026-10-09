@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DurableEpochManifest;
-import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterMetadata;
@@ -145,8 +144,8 @@ public class WalUtils {
      * {@code dstDir}; it then renames {@code dstDir} into place atomically. No in-memory sequencer is
      * registered and the WAL listener is not notified - the live sequencer opens lazily on first access.
      * When {@code markRebased} is set, the permanent {@code _rebase_new} marker is written too (see below).
-     * Under ADAPTIVE the clone gets its own generation-zero anchor, or, when {@code localDurabilityEnabled} is
-     * false (a replica), the enrolment marker instead; see {@code RecoveryCoordinator.replaceAnchorWithEnrolmentMarker}.
+     * Under ADAPTIVE the clone gets its own generation-zero anchor, unless {@code localDurabilityEnabled} is
+     * false (a replica, which keeps no save point).
      */
     public static void cloneTableDirForRebase(
             CairoConfiguration configuration,
@@ -220,8 +219,7 @@ public class WalUtils {
             metaMem.putInt(TableUtils.META_OFFSET_TABLE_ID, newTableId);
             // Through resetMetadataVersion, never a raw putLong: the metadataVersion is checksummed into the
             // meta-format minor-version field, so rewriting it in place otherwise switches off every
-            // version-gated tail field and the clone silently loses its TTL, table format and adaptive
-            // enrolment record.
+            // version-gated tail field and the clone silently loses its TTL and table format.
             TableUtils.resetMetadataVersion(metaMem, 0);
             txWriter.resetStructureVersionUnsafe();
 
@@ -243,30 +241,15 @@ public class WalUtils {
         // rename below carries a table that is self-consistent from the first instant it is visible: a boot
         // that finds the published dir - as the live table after the registry swap, or as a crash-orphan the
         // root-directory scan adopts - can always validate its epoch instead of refusing to start.
-        if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
-            if (localDurabilityEnabled) {
-                DurableEpochManifest.publishInitialAt(
-                        configuration,
-                        newToken,
-                        dstDir.trimTo(dstLen),
-                        timestampType,
-                        partitionBy,
-                        configuration.getMicrosecondClock().getTicks() / 1000L
-                );
-            } else {
-                // The replica REBASE WAL INTO variant: a replica keeps no anchor, it would go stale behind
-                // purged WAL. The marker, laid down before the rename like the anchor would be, makes startup
-                // re-baseline at the live cut.
-                DurableEpochManifest.enrolWithoutAnchor(configuration, newToken, dstDir.trimTo(dstLen));
-            }
-            dstDir.trimTo(dstLen);
-        } else {
-            // No anchor for this clone, so it must not inherit the SOURCE's enrolment record either -- the
-            // copied _meta carries it, and a source left enrolled by a crash (awaiting the reconciliation
-            // its next writer performs) would hand the clone a claim of lazy state with nothing to rewind
-            // to, which recovery refuses. Symmetric to excluding the source's epoch artifacts from the copy:
-            // the clone's _txn/_meta were just reset, so it has no lazy state by construction.
-            DurableEpochManifest.clearEnrollmentRecord(configuration, newToken, dstDir.trimTo(dstLen), dstLen);
+        if (configuration.getCommitMode() == CommitMode.ADAPTIVE && localDurabilityEnabled) {
+            DurableEpochManifest.publishInitialAt(
+                    configuration,
+                    newToken,
+                    dstDir.trimTo(dstLen),
+                    timestampType,
+                    partitionBy,
+                    configuration.getMicrosecondClock().getTicks() / 1000L
+            );
             dstDir.trimTo(dstLen);
         }
 
@@ -669,10 +652,6 @@ public class WalUtils {
                 || Chars.equals(name, TableUtils.TXN_SCOREBOARD_FILE_NAME)
                 || Chars.equals(name, TableUtils.SNAPSHOT_FILE_NAME)
                 || Chars.startsWith(name, DurableEpochManifest.FILE_NAME)
-                // The SOURCE's restore-enrolment marker states something about the SOURCE's files, not the
-                // clone's. Copied in, it would let a clone whose own baseline never landed silently re-enrol
-                // rather than refuse -- the one thing an explicit, per-caller marker exists to prevent.
-                || Chars.equals(name, RecoveryCoordinator.RESTORE_ENROL_FILE_NAME)
                 || Chars.contains(name, TableUtils.EPOCH_COPY_SUFFIX)) {
             return false;
         }

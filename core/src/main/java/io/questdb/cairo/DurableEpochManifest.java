@@ -162,7 +162,7 @@ public final class DurableEpochManifest {
             int partitionBy,
             long nowMs
     ) {
-        publishBaseline(configuration, tableToken, null, timestampType, partitionBy, true);
+        publishBaseline(configuration, tableToken, null, timestampType, partitionBy);
     }
 
     /**
@@ -182,86 +182,7 @@ public final class DurableEpochManifest {
             int partitionBy,
             long nowMs
     ) {
-        publishBaseline(configuration, tableToken, tableDirPath, timestampType, partitionBy, true);
-    }
-
-    /**
-     * The replica counterpart of {@link #publishInitial} and {@link #publishInitialAt}, for a caller running
-     * under {@link io.questdb.cairo.wal.LocalDurabilityPolicy#REPLICA_SKIP}: enrols the new table under
-     * ADAPTIVE WITHOUT an anchor. It marks the table for enrolment, clears any anchor the directory already
-     * holds, then records the enrolment. See {@link RecoveryCoordinator#replaceAnchorWithEnrolmentMarker} for
-     * why a replica must not keep an anchor.
-     *
-     * <p>Marker first, record last, for the same reason {@link #recordEnrollment} runs after the anchor: an
-     * enrolled table must never be found with neither. A crash between the two leaves an unenrolled, marked
-     * table; startup publishes its baseline at the live cut, and the first writer records the enrolment
-     * against it.
-     *
-     * @param tableDirPath the table's directory when it is not at its final path yet (the REBASE WAL staging
-     *                     clone), or {@code null} for the live directory under the db root
-     */
-    public static void enrolWithoutAnchor(
-            CairoConfiguration configuration,
-            TableToken tableToken,
-            @Nullable Path tableDirPath
-    ) {
-        try (Path tablePath = new Path()) {
-            if (tableDirPath != null) {
-                tablePath.of(tableDirPath);
-            } else {
-                tablePath.of(configuration.getDbRoot()).concat(tableToken);
-            }
-            final int rootLen = tablePath.size();
-            RecoveryCoordinator.replaceAnchorWithEnrolmentMarker(configuration, tablePath, rootLen);
-            recordEnrollment(configuration, tableToken, tablePath, rootLen);
-        }
-    }
-
-    /**
-     * Whether the table's live {@code _txn} and {@code _cv} form a cut the {@code TableWriter} constructor
-     * would open unchanged: neither live area is torn, and {@code _cv} is at the column version {@code _txn}
-     * names. Startup may adopt only such a cut as a generation-zero baseline.
-     *
-     * <p>A table marked for enrolment by a replica tenure fails this after a crash: the replica applies at
-     * NOSYNC grade, so a kill or power loss can leave {@code _cv} one version ahead of {@code _txn}, or tear the
-     * live {@code _txn} area. Both readers fall back to the previous area silently, so a successful load alone
-     * would let startup copy a torn file into the anchor. The writer repairs either shape, as it does for any
-     * NOSYNC table, and publishes the baseline itself afterwards.
-     *
-     * <p>Reads only, and needs no metadata: a pooled metadata reader opened on a torn {@code _txn} keeps the
-     * fallback record and refuses to refresh past it, which would hide the table from WAL apply. Any failure to
-     * read reports the cut as not intact; the caller then writes nothing.
-     */
-    public static boolean isLiveCutIntact(CairoConfiguration configuration, TableToken tableToken) {
-        final FilesFacade ff = configuration.getFilesFacade();
-        try (
-                Path path = new Path();
-                TxReader txReader = new TxReader(ff);
-                ColumnVersionReader cvReader = new ColumnVersionReader()
-        ) {
-            final int rootLen = path.of(configuration.getDbRoot()).concat(tableToken).size();
-            // Neither the column version nor the area geometry depends on the partitioning or the timestamp type.
-            txReader.ofRO(path.concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, PartitionBy.NONE);
-            if (!txReader.unsafeLoadAll() || txReader.unsafeIsLiveAreaTorn()) {
-                return false;
-            }
-            cvReader.ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
-            return cvReader.readSafe()
-                    && !cvReader.hasTornLiveArea()
-                    && cvReader.getVersion() == txReader.getColumnVersion();
-        } catch (CairoException e) {
-            return false;
-        }
-    }
-
-    public static void publishCheckpointRestored(
-            CairoConfiguration configuration,
-            TableToken tableToken,
-            int timestampType,
-            int partitionBy,
-            long nowMs
-    ) {
-        publishBaseline(configuration, tableToken, null, timestampType, partitionBy, false);
+        publishBaseline(configuration, tableToken, tableDirPath, timestampType, partitionBy);
     }
 
     private static void publishBaseline(
@@ -269,8 +190,7 @@ public final class DurableEpochManifest {
             TableToken tableToken,
             @Nullable Path tableDirPath,
             int timestampType,
-            int partitionBy,
-            boolean requireInitialSeqTxn
+            int partitionBy
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
         try (Path tablePath = new Path()) {
@@ -309,114 +229,13 @@ public final class DurableEpochManifest {
             } finally {
                 tablePath.trimTo(rootLen);
             }
-            if (requireInitialSeqTxn && seqTxn != 0) {
+            if (seqTxn != 0) {
                 throw CairoException.critical(0).put("initial adaptive baseline is not at sequencer transaction zero [table=")
                         .put(tableToken.getTableName()).put(", seqTxn=").put(seqTxn).put(']');
             }
             // Durable, name included, before table-name/sequencer registration.
             write(configuration, tableToken, tablePath, rootLen, 0, seqTxn, txn, columnVersion, metadataVersion);
-            if (requireInitialSeqTxn) {
-                // CREATE and the REBASE staging clone only. A checkpoint/backup restore or a replica demote
-                // also publishes a baseline here, but those tables are not necessarily adaptive and their
-                // record must stay whatever it was: the first writer to open one enrolls it if, and only if,
-                // the table actually resolves to ADAPTIVE. Recording it for them would assert lazy state on a
-                // table that may never have any.
-                recordEnrollment(configuration, tableToken, tablePath, rootLen);
-            }
         }
-    }
-
-    /**
-     * Records in {@code _meta} that the anchor just published covers this table, so the first
-     * {@code TableWriter} to open it does not have to enroll it — which would rewrite {@code _meta} and bump
-     * the metadata version of every newly created adaptive table.
-     *
-     * <p>Runs AFTER the save point is published and its directory entry is durable, never before. That ordering
-     * is what makes the write safe to do in place: once the anchor exists, EVERY outcome of this 4-byte
-     * write is correct. The new value is correct because the anchor it speaks for is on disk. The old value
-     * (UNSET) is correct because it only means "not enrolled yet", and the next writer to open the table
-     * enrolls it — finding the anchor already naming the live cut, so it publishes no new epoch and merely
-     * records. A torn value is correct as whichever of those two it reads as. Recording BEFORE the anchor
-     * would have no such property: it would claim durable state that is not on disk yet.
-     *
-     * <p>The argument holds only because the record is a SINGLE store.
-     *
-     * <p>The generation-zero payload copy of {@code _meta} predates this write and so still reads UNSET.
-     * That is deliberate and harmless: a recovery that restores the payload reverts the record to "not
-     * enrolled", and the next writer re-records it against the same, still-valid anchor.
-     */
-    private static void recordEnrollment(CairoConfiguration configuration, TableToken tableToken, Path tablePath, int rootLen) {
-        writeEnrollmentRecord(configuration, tableToken, tablePath, rootLen, CommitMode.ADAPTIVE);
-    }
-
-    /**
-     * Writes the enrolment record of an EXISTING table in place, for a {@code _meta} that already carries
-     * the field. Callers must have made the state the record describes durable first -- see
-     * {@link #recordEnrollment}, whose ordering argument this shares.
-     *
-     * <p>In place, rather than through a metadata rewrite: a rewrite bumps the table's metadataVersion,
-     * which is a structural event other subsystems legitimately react to (Enterprise's incremental backup
-     * among them). Enrolment is a durability bookkeeping detail and must not masquerade as a schema change.
-     */
-    public static void recordEnrolledCommitMode(CairoConfiguration configuration, TableToken tableToken, int enrolledCommitMode) {
-        try (Path tablePath = new Path()) {
-            tablePath.of(configuration.getDbRoot()).concat(tableToken);
-            writeEnrollmentRecord(configuration, tableToken, tablePath, tablePath.size(), enrolledCommitMode);
-        }
-    }
-
-    /**
-     * Clears the enrolment record of a table that is being built by COPYING another table's {@code _meta}
-     * and is not receiving an anchor — an {@code ALTER TABLE ... REBASE WAL} staging clone whose effective
-     * mode is not adaptive.
-     *
-     * <p>Without this the clone inherits the source's record. The source can legitimately still say ADAPTIVE
-     * while resolving to something else (a table left enrolled by a crash, awaiting the reconciliation its
-     * next writer performs), and the clone would then be a table claiming lazy state with no anchor to
-     * rewind to — which recovery refuses, taking the whole instance down. The clone has no lazy state by
-     * construction: its {@code _txn}/{@code _meta} were just reset and its files freshly written.
-     */
-    public static void clearEnrollmentRecord(CairoConfiguration configuration, TableToken tableToken, Path tablePath, int rootLen) {
-        writeEnrollmentRecord(configuration, tableToken, tablePath, rootLen, CommitMode.UNSET);
-    }
-
-    private static void writeEnrollmentRecord(
-            CairoConfiguration configuration,
-            TableToken tableToken,
-            Path tablePath,
-            int rootLen,
-            int enrolledCommitMode
-    ) {
-        final FilesFacade ff = configuration.getFilesFacade();
-        tablePath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME);
-        final long fd = TableUtils.openRW(ff, tablePath.$(), LOG, configuration.getWriterFileOpenOpts());
-        if (fd == -1) {
-            throw CairoException.critical(ff.errno())
-                    .put("could not open table metadata to record adaptive enrollment [table=")
-                    .put(tableToken.getTableName()).put(", path=").put(tablePath).put(']');
-        }
-        // malloc INSIDE the try: checkAllocLimit throws when rssMemLimit is exceeded, and an allocation
-        // that failed outside the guard would strand the _meta descriptor opened just above. The DDL
-        // failure is non-critical, so the operator retries and each retry would leak another fd.
-        long tempMem = 0;
-        try {
-            tempMem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_TABLE_WRITER);
-            TableUtils.writeIntOrFail(
-                    ff,
-                    fd,
-                    TableUtils.META_OFFSET_ENROLLED_COMMIT_MODE,
-                    enrolledCommitMode,
-                    tempMem,
-                    tablePath
-            );
-            ff.fsync(fd);
-        } finally {
-            if (tempMem != 0) {
-                Unsafe.free(tempMem, Long.BYTES, MemoryTag.NATIVE_TABLE_WRITER);
-            }
-            ff.close(fd);
-        }
-        tablePath.trimTo(rootLen);
     }
 
     /**

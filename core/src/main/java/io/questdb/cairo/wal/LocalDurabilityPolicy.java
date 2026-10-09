@@ -53,10 +53,8 @@ public interface LocalDurabilityPolicy {
      * <p>
      * Nothing downloads WAL again after a crash: the downloader resumes from the local {@code _txnlog}. So
      * a replica must not keep an anchor that startup would rewind the table to, because the WAL purge job
-     * keeps no epoch floor here and replay would need WAL it has deleted. The replica keeps each adaptive
-     * table enrolled, with the restore-enrolment marker instead of an anchor, and startup re-baselines it
-     * at the live cut. See {@code TableWriter.reconcileDurableEpochAnchor} and
-     * {@code RecoveryCoordinator.replaceAnchorWithEnrolmentMarker}.
+     * keeps no epoch floor here and replay would need WAL it has deleted. The replica keeps no save point, and
+     * startup leaves each table at its live cut. See {@code TableWriter.reconcileDurableEpochAnchor}.
      */
     LocalDurabilityPolicy REPLICA_SKIP = () -> false;
 

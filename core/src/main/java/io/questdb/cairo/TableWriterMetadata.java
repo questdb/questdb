@@ -36,8 +36,6 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 
 public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata {
-    private int enrolledCommitMode = CommitMode.UNSET;
-    private boolean enrolledCommitModeFieldPresent;
     private int maxUncommittedRows;
     private long metadataVersion;
     private long o3MaxLag;
@@ -72,28 +70,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     @Override
     public byte getIndexType(int columnIndex) {
         return getColumnMetadata(columnIndex).getIndexType();
-    }
-
-    /**
-     * The commit mode this table's materialized state is enrolled under — see
-     * {@link TableUtils#META_OFFSET_ENROLLED_COMMIT_MODE}. {@link CommitMode#ADAPTIVE} means the state may
-     * be lazily ahead of the durable epoch and must not be trusted without one.
-     */
-    public int getEnrolledCommitMode() {
-        return enrolledCommitMode;
-    }
-
-    /**
-     * Whether this {@code _meta} already carries the enrolment field. When it does, the record can be
-     * written in place; when it does not (a table written before the field existed), only a full metadata
-     * rewrite can add it.
-     */
-    public boolean isEnrolledCommitModeFieldPresent() {
-        return enrolledCommitModeFieldPresent;
-    }
-
-    public void setEnrolledCommitMode(int commitMode) {
-        this.enrolledCommitMode = commitMode;
     }
 
     @Override
@@ -188,8 +164,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
         this.tableFormat = TableUtils.getTableFormat(metaMem);
-        this.enrolledCommitMode = TableUtils.getEnrolledCommitMode(metaMem);
-        this.enrolledCommitModeFieldPresent = TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_ENROLLED_COMMIT_MODE);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;

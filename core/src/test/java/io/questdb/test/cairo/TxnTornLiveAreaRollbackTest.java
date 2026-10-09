@@ -30,7 +30,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
@@ -229,9 +228,7 @@ public class TxnTornLiveAreaRollbackTest extends AbstractCairoTest {
             engine.clear();
             final File tableDir = new File(txnPath).getParentFile();
             final File anchor = new File(tableDir, DurableEpochManifest.FILE_NAME + ".0");
-            final File marker = new File(tableDir, RecoveryCoordinator.RESTORE_ENROL_FILE_NAME);
             Assert.assertFalse("a replica keeps no anchor", anchor.exists());
-            Assert.assertTrue("a replica marks the table for enrolment", marker.exists());
             installTornImage(txnPath, snapshots);
 
             try (CairoEngine restarted = new CairoEngine(configuration)) {
@@ -251,7 +248,6 @@ public class TxnTornLiveAreaRollbackTest extends AbstractCairoTest {
                 restarted.execute("insert into x values (" + (T0 + 220 * DAY) + "::timestamp, 777)", ctx);
                 TestUtils.drainWalQueue(restarted);
                 Assert.assertTrue(anchor.exists());
-                Assert.assertFalse(marker.exists());
                 restarted.clear();
             }
 

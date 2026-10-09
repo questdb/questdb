@@ -303,8 +303,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final LongList partitionRemovalsAfterSavePoint = new LongList();
     private final LongList partitionRemoveCandidates = new LongList();
     private final Path path;
-    // Scratch path for the save point and enrolment marker file names.
-    private final Path durableEpochSnapshotPath = new Path();
     private final int pathRootSize;
     private final int pathSize;
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
@@ -340,13 +338,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // (syncColumns, applyColumnSyncMode, configureColumn's setApplyLazy, partition split/squash, parquet
     // rebuild) uses THIS rather than configuration.getCommitMode(), so the enrolment window is honoured.
     private int effectiveCommitMode = CommitMode.UNSET;
-    // The instance runs ADAPTIVE but this table's _meta does not yet record it as enrolled: it needs a
-    // durable baseline published at the LIVE cut before a single commit may be applied lazily.
+    // The instance runs ADAPTIVE but this table has no valid save point: it needs a durable baseline published
+    // at the LIVE cut before a single commit may be applied lazily.
     private boolean adaptiveEnrollmentPending;
-    // The mirror: _meta records the state as enrolled under ADAPTIVE but the instance no longer runs it
-    // (the global mode changed across a restart). The lazily-applied state must be reconciled durably
-    // before the record can stop saying "may be ahead of the epoch".
-    private boolean adaptiveExitPending;
     // The CairoEngine.getLocalDurabilityPolicyVersion() this writer last brought its table's durable-epoch
     // anchor in line with; -1 until it first does. See reconcileDurableEpochAnchor().
     private long adaptiveAnchorPolicyVersion = -1;
@@ -554,10 +548,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.metadata = new TableWriterMetadata(this.tableToken);
             openMetaFile(ff, path, pathSize, ddlMem, metadata);
             final int resolvedCommitMode = configuration.getCommitMode();
-            // Enrollment is driven by the ENROLLED record in _meta, not by the metadata FORMAT. A legacy
-            // table (no enrolment field at all) reads back UNSET and is therefore covered by the same
-            // rule as a table that was created while the instance ran nosync and only became adaptive when
-            // the default changed under it. Both have no anchor, both must get one at their live cut.
+            // A table is enrolled exactly when it has a valid save point. One without (created under another
+            // mode, by an older build, or left without one by a restore or a lineage discard) gets one at its
+            // live cut. A replica keeps none (see reconcileDurableEpochAnchor) and applies at its grade.
             // A writer opened against a root other than the engine's dbRoot is a PRIVATE STAGING writer --
             // CopyImportTask builds one per worker under the SQL COPY work directory, cloning the target
             // table's metadata (so isWalEnabled() is true) but with no sequencer, no txn_seq and no durable
@@ -572,11 +565,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     && tableToken.isWal()
                     && metadata.isWalEnabled()
                     && resolvedCommitMode == CommitMode.ADAPTIVE
-                    && metadata.getEnrolledCommitMode() != CommitMode.ADAPTIVE;
-            this.adaptiveExitPending = !privateRootWriter
-                    && metadata.isWalEnabled()
-                    && resolvedCommitMode != CommitMode.ADAPTIVE
-                    && metadata.getEnrolledCommitMode() == CommitMode.ADAPTIVE;
+                    && (engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled() || tableToken.isView())
+                    && DurableEpochManifest.loadCandidates(ff, path.trimTo(pathSize), pathSize, tableToken.getTableId()).length == 0;
             // An unenrolled table cannot use lazy adaptive apply until a full durable baseline has been
             // published. Open/configure it with eager SYNC semantics, then enroll it at the end of
             // construction before publishing ADAPTIVE to the tracker.
@@ -724,8 +714,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             segmentFileCache = metadata.isWalEnabled() ? new TableWriterSegmentFileCache(tableToken, configuration) : null;
             if (adaptiveEnrollmentPending) {
                 enrollTableInAdaptiveMode();
-            } else if (adaptiveExitPending) {
-                reconcileAdaptiveExit(effectiveCommitMode);
             }
             enrolledAdaptive = !privateRootWriter
                     && tableToken.isWal()
@@ -3377,19 +3365,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *
      * <p>Under {@link LocalDurabilityPolicy#REPLICA_SKIP} no epoch advances the anchor and the WAL purge job
      * keeps no epoch floor, so an anchor left in place falls behind WAL that gets deleted, and the next startup
-     * rewinds the table onto WAL that no longer exists. Before applying anything on top of it, the writer
-     * replaces the anchor with the enrolment marker, which makes startup re-baseline at the live cut, and
-     * releases the epoch pin that protected the anchor's partitions. Tables usually reach a replica without an
-     * anchor already (enrolment, registration and the demote clear all leave the marker instead); this catches
-     * the rest: an anchor another thread could not delete, one an in-flight epoch wrote after the demote clear,
-     * and one published by a path that does not know about replicas. The replacement is best effort: while the
-     * anchor survives, the WAL purge job keeps the WAL it needs, and the next batch retries.
+     * rewinds the table onto WAL that no longer exists. Before applying anything on top of it, the writer makes
+     * the table durable, removes the anchor, and releases the epoch pin that protected the anchor's partitions.
+     * Tables usually reach a replica without an anchor already (the demote clear removes it); this catches the
+     * rest: an anchor another thread could not delete, one an in-flight epoch wrote after the demote clear, and
+     * one published by a path that does not know about replicas. The removal is best effort: while the anchor
+     * survives, the WAL purge job keeps the WAL it needs, and the next batch retries.
      *
-     * <p>Under {@link LocalDurabilityPolicy#ALWAYS_ON}, a table left marked by a replica tenure has no anchor,
-     * and its applied state is only as durable as the replica kept it. Before a commit is applied lazily on top
-     * of it, publish a full baseline at the live cut, as enrolment does, then consume the marker. Failing to
-     * publish fails the batch, like a failed enrolment: applying lazily without an anchor would let a power
-     * loss tear transactions the WAL has already acknowledged.
+     * <p>Under {@link LocalDurabilityPolicy#ALWAYS_ON}, a table a replica tenure left has no anchor, and its
+     * applied state is only as durable as the replica kept it. Before a commit is applied lazily on top of it,
+     * publish a full baseline at the live cut, as enrolment does. Failing to publish fails the batch, like a
+     * failed enrolment: applying lazily without an anchor would let a power loss tear transactions the WAL has
+     * already acknowledged.
      */
     public void reconcileDurableEpochAnchor() {
         // Views are not rolled forward by recovery, so their anchors never matter.
@@ -3402,9 +3389,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         if (engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
-            publishAnchorForMarkedTable();
+            publishAnchorForTableWithoutOne();
             adaptiveAnchorPolicyVersion = policyVersion;
-        } else if (replaceAnchorWithEnrolmentMarker()) {
+        } else if (removeSavePointForReplica()) {
             adaptiveAnchorPolicyVersion = policyVersion;
         }
     }
@@ -3851,70 +3838,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Version before policy, as CairoEngine.getLocalDurabilityPolicyVersion() requires: a policy change
         // after this read shows up as a newer version on the next apply batch, which then reconciles again.
         final long policyVersion = engine.getLocalDurabilityPolicyVersion();
-        if (engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled() || tableToken.isView()) {
-            publishAdaptiveBaselineOrFail();
-        } else {
-            // A replica enrols without an anchor: it would never advance one, and its WAL purge keeps no floor
-            // for it, so the anchor would only go stale behind deleted WAL. The marker makes startup take the
-            // live cut instead, which is the grade REPLICA_SKIP gives the replica's applied state anyway. See
-            // reconcileDurableEpochAnchor(), which also publishes the real baseline if this node is promoted.
-            RecoveryCoordinator.replaceAnchorWithEnrolmentMarker(configuration, path.trimTo(pathSize), pathSize);
-        }
-        // COVERING BARRIER: publishAdaptiveBaselineOrFail() has forced the whole materialized state durable
-        // and re-read the marker to confirm the anchor names exactly this (txn, seqTxn); on a replica, the
-        // enrolment marker is durable instead. Only now may _meta record the state as lazily-applicable. A crash
-        // before this point leaves the record unenrolled and re-enrolls on the next open (publishing a fresh
-        // baseline, or startup publishing one for a marked table); a crash after it always leaves a validated
-        // anchor to rewind to, or the marker that makes startup re-baseline at the live cut.
-        recordEnrolledCommitMode(CommitMode.ADAPTIVE);
+        // COVERING BARRIER: the baseline forces the whole materialized state durable and confirms the save point
+        // names exactly this (txn, seqTxn). Only then may the table be applied lazily. A crash before it leaves
+        // the table without a save point, and the next open enrols it again.
+        publishAdaptiveBaselineOrFail();
         effectiveCommitMode = CommitMode.ADAPTIVE;
         adaptiveEnrollmentPending = false;
         adaptiveAnchorPolicyVersion = policyVersion;
         reapplyColumnCommitMode(effectiveCommitMode);
-    }
-
-    /**
-     * The table was left enrolled under ADAPTIVE but no longer resolves to it. Reconcile the lazily-applied
-     * state durably, then stop claiming it may be ahead of the epoch.
-     *
-     * <p>Ordering is the mirror of {@link #enrollTableInAdaptiveMode()} and matters for the same reason: the
-     * record is what {@link RecoveryCoordinator} consults to decide whether a crash left this table torn
-     * ahead of its durable cut. Writing it before the reconciliation would tell the next startup to skip the
-     * roll-forward for a table that still needs one -- which is not a boot failure but a silently wrong read.
-     *
-     * <p>From here the table has exactly the durability its new mode promises. Under NOSYNC that is none:
-     * a later crash can tear it, and no epoch will rewind it. That is the configured behaviour, not a
-     * regression -- what this method guarantees is that the state inherited from the ADAPTIVE tenure is
-     * whole and durable at the moment the mode changes.
-     */
-    private void reconcileAdaptiveExit(int targetCommitMode) {
-        publishAdaptiveBaselineOrFail();
-        recordEnrolledCommitMode(targetCommitMode);
-        adaptiveExitPending = false;
-        // Release the epoch pin only after the record is durable. A crash in between leaves the record
-        // saying ADAPTIVE, so the next startup rolls forward to this epoch -- which must therefore still
-        // hold its partitions against purge.
-        releaseEpochPin();
-    }
-
-    /**
-     * Persists the enrolment record, in place where the {@code _meta} already carries the field.
-     *
-     * <p>NOT through {@code writeMetadataToDisk()}: that rewrites the whole file and bumps the table's
-     * metadataVersion, which is a STRUCTURAL event other subsystems act on -- Enterprise's incremental
-     * backup reads it as a schema change and its txnlog accounting then disagrees with what it uploaded.
-     * Enrolment is durability bookkeeping, not a schema change, and must not present itself as one.
-     *
-     * <p>A {@code _meta} written before the field existed has nowhere to put the record, so that case still
-     * takes the full rewrite -- which is also what upgrades the file's format, and is a one-off per table.
-     */
-    private void recordEnrolledCommitMode(int enrolledCommitMode) {
-        metadata.setEnrolledCommitMode(enrolledCommitMode);
-        if (metadata.isEnrolledCommitModeFieldPresent()) {
-            DurableEpochManifest.recordEnrolledCommitMode(configuration, tableToken, enrolledCommitMode);
-        } else {
-            writeMetadataToDisk();
-        }
     }
 
     private void releaseEpochPin() {
@@ -3930,41 +3861,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * The {@link LocalDurabilityPolicy#ALWAYS_ON} half of {@link #reconcileDurableEpochAnchor()}: a table a
-     * replica tenure left marked and without an anchor gets its baseline before anything is applied lazily.
+     * The {@link LocalDurabilityPolicy#ALWAYS_ON} half of {@link #reconcileDurableEpochAnchor()}: a table without a
+     * save point, which a replica tenure leaves, enrols before anything is applied lazily.
      */
-    private void publishAnchorForMarkedTable() {
+    private void publishAnchorForTableWithoutOne() {
         if (DurableEpochManifest.loadCandidates(ff, path.trimTo(pathSize), pathSize, tableToken.getTableId()).length > 0) {
             return;
         }
-        durableEpochSnapshotPath.of(path.trimTo(pathSize)).concat(RecoveryCoordinator.RESTORE_ENROL_FILE_NAME);
-        if (!ff.exists(durableEpochSnapshotPath.$())) {
-            // Enrolled with neither anchor nor marker is not a state a replica tenure leaves behind. Startup
-            // refuses it, and repairing it is not this method's business.
-            return;
-        }
         publishAdaptiveBaselineOrFail();
-        // Consume the marker only after the baseline is durable and validated, as recovery does. A crash in
-        // between finds both, and the anchor wins.
-        durableEpochSnapshotPath.of(path.trimTo(pathSize)).concat(RecoveryCoordinator.RESTORE_ENROL_FILE_NAME);
-        if (!ff.removeQuiet(durableEpochSnapshotPath.$())) {
-            LOG.info().$("could not remove adaptive enrolment marker, the new anchor takes precedence [path=")
-                    .$(durableEpochSnapshotPath).$(", errno=").$(ff.errno()).I$();
-        }
         final long seqTxn = getSeqTxn();
-        LOG.info().$("published adaptive durable epoch baseline for a table left without one by a replica tenure [table=")
+        LOG.info().$("published adaptive durable epoch baseline for a table without one [table=")
                 .$(tableToken).$(", seqTxn=").$(seqTxn).I$();
     }
 
     /**
-     * The {@link LocalDurabilityPolicy#REPLICA_SKIP} half of {@link #reconcileDurableEpochAnchor()}. Returns
-     * {@code false} when the anchor could not be replaced, so that the next batch tries again.
+     * The {@link LocalDurabilityPolicy#REPLICA_SKIP} half of {@link #reconcileDurableEpochAnchor()}: makes the
+     * table durable, then removes the save point, older generation first. Returns {@code false} when the save point
+     * could not be removed, so that the next batch tries again.
      */
-    private boolean replaceAnchorWithEnrolmentMarker() {
+    private boolean removeSavePointForReplica() {
         try {
             if (DurableEpochManifest.exists(ff, path.trimTo(pathSize), pathSize)) {
-                RecoveryCoordinator.replaceAnchorWithEnrolmentMarker(configuration, path.trimTo(pathSize), pathSize);
-                LOG.info().$("replaced adaptive durable epoch anchor with the enrolment marker, local durability is disabled [table=")
+                // Nothing restores the lazily applied state once the save point is gone: a replica keeps no WAL
+                // purge floor, so the WAL those rows came from may go.
+                fsyncMaterializedState();
+                RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, path.trimTo(pathSize), pathSize);
+                LOG.info().$("removed adaptive durable epoch anchor, local durability is disabled [table=")
                         .$(tableToken).I$();
             }
             // Also covers an anchor the demote clear removed from under this writer, which still holds its pin.
@@ -3978,7 +3900,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 engine.handleDataSyncFailure(e);
                 throw e;
             }
-            LOG.error().$("could not replace adaptive durable epoch anchor, WAL purge keeps the WAL it needs until a retry succeeds [table=")
+            LOG.error().$("could not remove adaptive durable epoch anchor, WAL purge keeps the WAL it needs until a retry succeeds [table=")
                     .$(tableToken).$(", error=").$safe(e.getFlyweightMessage()).I$();
             return false;
         } finally {
@@ -7758,7 +7680,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(ddlMem);
         Misc.free(other);
         dirFsyncPath = Misc.free(dirFsyncPath);
-        Misc.free(durableEpochSnapshotPath);
         Misc.free(todoMem);
         Misc.free(attachMetaMem);
         Misc.free(attachColumnVersionReader);
@@ -14794,7 +14715,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount));
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
             ddlMem.putInt(metadata.getTableFormat());
-            ddlMem.putInt(metadata.getEnrolledCommitMode());
 
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
@@ -14979,11 +14899,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private void rollbackToPreviousTxn(boolean isTxnTorn) {
         final long txn = txWriter.getTornLiveVersion();
-        if (metadata.getEnrolledCommitMode() == CommitMode.ADAPTIVE && DurableEpochManifest.exists(ff, path.trimTo(pathSize), pathSize)) {
+        if (DurableEpochManifest.exists(ff, path.trimTo(pathSize), pathSize)) {
             // Startup recovery restores an anchored table's _txn and _cv from its durable epoch before anything
             // opens the table, so it has no torn area to find; do not second-guess that cut from here. A table
-            // enrolled without an anchor (a replica's, marked for enrolment) has no such cut: its live state is
-            // NOSYNC grade, startup leaves a torn one to this writer, and rolling back is the repair.
+            // without an anchor (a replica's, or one written outside adaptive) has no such cut: its live state is
+            // NOSYNC grade, and rolling back is the repair.
             throw previousTxnException(isTxnTorn, txn, "the table is enrolled in adaptive commit mode").put(']');
         }
         if (txWriter.getMetadataVersion() != metadata.getMetadataVersion()) {

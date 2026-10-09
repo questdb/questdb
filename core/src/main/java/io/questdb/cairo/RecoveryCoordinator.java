@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
@@ -75,21 +76,16 @@ import io.questdb.std.str.Path;
  *       on the same cut. Apply itself is idempotent through {@code _txn} (the contiguity assert
  *       {@code seqTxn == appliedSeqTxn + 1} is satisfied because {@code _txn} now says
  *       {@code epoch.seqTxn}).</li>
- *   <li><b>Enrolment decides:</b> only a table whose {@code _meta} records it as enrolled under ADAPTIVE
- *       is rolled forward, whatever mode the instance runs now. Any other table, including every table a
- *       non-adaptive instance or an older build wrote, is left UNTOUCHED (normal open / WAL apply), apart
- *       from finishing a metadata swap that a crash interrupted, exactly as its writer would on open. A
- *       table whose {@code _meta} cannot be read is left to fail when opened, unless it has an anchor and
- *       either the instance runs ADAPTIVE or the file exists but failed to read. Non-WAL tables are never
- *       touched.</li>
+ *   <li><b>A save point decides:</b> a table is enrolled exactly when it has a save point file. Its writer
+ *       publishes one before it applies anything lazily, and every path that resets its lineage removes it.
+ *       Any other table, including every table a non-adaptive instance or an older build wrote, costs two
+ *       existence checks and is left UNTOUCHED (normal open / WAL apply). Non-WAL tables are never touched.</li>
+ *   <li><b>The exit:</b> a start outside adaptive makes every enrolled table durable, removes its save point
+ *       (the older generation first) and releases its pin, so no save point outlives adaptive.</li>
  * </ul>
  */
 public class RecoveryCoordinator {
     private static final Log LOG = LogFactory.getLog(RecoveryCoordinator.class);
-    // Left in a table dir by a restore that cleared the table's epoch artifacts, to say the cleared state
-    // is a trustworthy restored cut rather than a lost anchor. Consumed once the baseline is republished.
-    public static final String RESTORE_ENROL_FILE_NAME = "_epoch.enrol";
-    private final boolean checkpointRestored;
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final FilesFacade ff;
@@ -97,31 +93,22 @@ public class RecoveryCoordinator {
     private boolean contentMismatch;
 
     public RecoveryCoordinator(CairoEngine engine) {
-        this(engine, false);
-    }
-
-    public RecoveryCoordinator(CairoEngine engine, boolean checkpointRestored) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
-        this.checkpointRestored = checkpointRestored;
     }
 
     /**
-     * Restore the durable epoch cut for every adaptive WAL table that has one. Must be called once,
-     * after the table registry is loaded and before any WAL apply.
+     * Restore the durable epoch cut for every WAL table that has a save point and, on a start outside adaptive,
+     * make each such table durable and remove its save point. Must be called once, after the table registry is
+     * loaded and before any WAL apply.
      */
     public void recover() {
-        // The enrolment record in _meta decides whether a table is rolled forward, never the instance mode.
-        // Only a table enrolled under adaptive can have been applied lazily ahead of its durable epoch:
-        // enrolment publishes the anchor before it sets the record, and leaving adaptive makes the state
-        // durable before it clears the record. The record outlives a mode change across a restart, so a table
-        // left enrolled is still recovered when the instance now runs nosync, and a table that left adaptive
-        // is not rewound to the anchor it left behind when the instance runs adaptive again.
-        // Every enrolled table must have a trustworthy marker/generation; absence fails startup closed.
+        // The save point decides whether a table is rolled forward, never the instance mode: a table left
+        // enrolled is still recovered when the instance now runs nosync, and then leaves adaptive here.
         final boolean adaptiveInstance = configuration.getCommitMode() == CommitMode.ADAPTIVE;
         final ObjHashSet<TableToken> tokens = new ObjHashSet<>();
-        final ObjList<TableToken> checkpointEnrollments = new ObjList<>();
+        final ObjList<TableToken> exits = new ObjList<>();
         engine.getTableTokens(tokens, false);
 
         try (Path src = new Path(); Path dst = new Path(); Path dir = new Path()) {
@@ -131,92 +118,19 @@ public class RecoveryCoordinator {
                 // durable epoch, and its ViewState is not yet hydrated at this point in completeInit()
                 // (views compile lazily, after recover()). Mat-views (isView()==false) keep their on-disk
                 // _meta and are still recovered.
-                if (!token.isWal() || token.isView()) {
+                if (!token.isWal() || token.isView() || !hasAnchor(token, dir)) {
                     continue;
                 }
                 try {
+                    failIfRecoveryDisabled(token);
                     // Before anything below reads _meta, finish the _todo_ repair of a metadata swap that a
                     // crash interrupted. TableWriter performs it on open, which comes after this pass.
-                    try {
-                        repairInterruptedMetaSwap(token, src, dst);
-                    } catch (CairoException | CairoError repairFailure) {
-                        if (CairoException.isDataSyncFailure(repairFailure) || mayHoldAdaptiveState(token, dir)) {
-                            throw repairFailure;
-                        }
-                        // Leave the repair to the table's writer, which retries it on open, exactly as it
-                        // would without this pass.
-                        LOG.error().$("could not repair interrupted metadata swap, deferring to table writer [table=").$(token)
-                                .$(", error=").$((Throwable) repairFailure).I$();
-                        continue;
+                    repairInterruptedMetaSwap(token, src, dst);
+                    // A table converting to non-WAL keeps its save point: the conversion replays its WAL
+                    // from it first.
+                    if (recoverTable(token, src, dst, dir) && !adaptiveInstance && !isConversionToNonWalPending(token, dir)) {
+                        exits.add(token);
                     }
-                    final boolean enrolledAdaptive;
-                    try {
-                        enrolledAdaptive = readEnrolledCommitMode(token, dir) == CommitMode.ADAPTIVE;
-                    } catch (CairoException | CairoError metadataFailure) {
-                        // Nothing opens a table whose _meta is missing or empty -- readers, WAL apply and the
-                        // writer all load it first -- so leaving such a table alone never serves torn state: it
-                        // fails when opened, as it does without this pass. A table without an anchor has no lazy
-                        // state to protect -- enrolment publishes the anchor first, and a restore that clears it
-                        // lays down a consistent cut -- so it is left alone whatever the read failed on.
-                        //
-                        // On an adaptive instance a crash during a structural metadata swap can leave the live
-                        // _meta absent or torn while the durable epoch still has a bound, checksummed _meta
-                        // payload. Recover from that generation before a retrying metadata reader can spin
-                        // forever on a pinned clock; any other anchored table aborts the startup. Outside
-                        // adaptive the anchor is never restored from: nothing tells a current anchor from one a
-                        // table left behind when it left adaptive, and rewinding to that one would replay purged
-                        // WAL. An anchored table whose _meta exists but failed to read still aborts there: it
-                        // may be left enrolled, and the writer that opens it once the read succeeds would take
-                        // its lazily applied state as durable.
-                        if (adaptiveInstance && hasValidSavePoint(token, dir)) {
-                            failIfRecoveryDisabled(token);
-                            recoverTable(token, src, dst, dir, checkpointEnrollments);
-                            continue;
-                        }
-                        if (hasAnchor(token, dir) && (adaptiveInstance || hasNonEmptyMetadataFile(token, dir))) {
-                            throw metadataFailure;
-                        }
-                        LOG.error().$("could not read table metadata, leaving the table to fail when opened [table=").$(token)
-                                .$(", error=").$((Throwable) metadataFailure).I$();
-                        continue;
-                    }
-                    if (!enrolledAdaptive) {
-                        // Nothing to roll forward: a table that is not enrolled was never applied lazily since
-                        // its last durable cut, so its live state is exactly as durable as the mode it was
-                        // written under promised. An anchor it still carries was either left on disk when the
-                        // table left adaptive, and the WAL purge floor has dropped below it since, or published
-                        // at the live cut by an enrolment a crash interrupted. Rewinding to the first replays
-                        // purged WAL; rewinding to the second changes nothing. The TableWriter constructor
-                        // enrolls the table (baseline at the live cut, then the record) before the first lazy
-                        // apply.
-                        //
-                        // A restored table is the one exception, on an adaptive instance: it publishes its
-                        // baseline here, below, so that the restore marker is consumed.
-                        if (adaptiveInstance && isRestoredWithoutAnchor(token, dir)) {
-                            failIfRecoveryDisabled(token);
-                            checkpointEnrollments.add(token);
-                        }
-                        continue;
-                    }
-                    failIfRecoveryDisabled(token);
-                    if (isRestoredWithoutAnchor(token, dir)) {
-                        // A restore is a trustworthy, internally consistent materialized cut, but restore
-                        // metadata intentionally excludes adaptive epoch anchors -- both the checkpoint path
-                        // (TableSnapshotRestore) and an out-of-process restore that clears them via
-                        // removeAdaptiveEpochArtifacts, because a SOURCE anchor left behind would roll the
-                        // freshly restored _txn/_cv back to a pre-restore cut. Record the table for
-                        // synchronous baseline publication below. A one-startup in-memory exemption is not
-                        // sufficient: a second restart before WAL apply must find a durable marker.
-                        //
-                        // checkpointRestored is an in-process flag, so it cannot speak for a restore that ran
-                        // before this engine existed; such a restore leaves the per-table marker instead (see
-                        // markRestoredForEnrolment). Without one of the two signals an absent anchor is
-                        // indistinguishable from a table whose anchor was lost, which recoverTable must keep
-                        // refusing: its state may be ahead of a cut nothing can name any more.
-                        checkpointEnrollments.add(token);
-                        continue;
-                    }
-                    recoverTable(token, src, dst, dir, checkpointEnrollments);
                 } catch (CairoException | CairoError e) {
                     if (CairoException.isDataSyncFailure(e)) {
                         // A writeback failure poisons the process-wide page-cache durability state. Do not
@@ -229,65 +143,33 @@ public class RecoveryCoordinator {
                     throw e;
                 }
             }
-        }
 
-        // Do this only after the validation/restoration pass has completed for every table. Publish directly
-        // from the restored files rather than opening TableWriter: constructor maintenance (index/purge repair)
-        // must not mutate checkpoint state before the caller's configured recovery jobs run.
-        boolean isFileSystemSynced = false;
-        for (int i = 0, n = checkpointEnrollments.size(); i < n; i++) {
-            final TableToken token = checkpointEnrollments.getQuick(i);
-            if (isLiveCutLeftToWriter(token)) {
-                LOG.info().$("live cut of a table marked for adaptive enrolment needs repair, deferring its baseline to the table writer [table=")
-                        .$(token).I$();
-                continue;
-            }
-            try (TableMetadata metadata = engine.getTableMetadata(token);
-                 Path markerPath = new Path()) {
-                // The baseline below fsyncs _meta, _cv and _txn, but not the column files they name. A marked
-                // table's columns are only as durable as the tenure or restore that wrote them kept them, which
-                // is not at all for a NOSYNC replica or an out-of-process restore. Flush them before the anchor
-                // vouches for them, as the writer's enrolment epoch does. Where syncfs is filesystem-wide, one
-                // flush covers every marked table, so a startup pays for it once; a table without a marker was
-                // restored from a checkpoint in this process, and the checkpoint agent has already run that
-                // flush. Elsewhere each table is flushed file by file: the checkpoint agent's sync(2) does not
-                // flush the drive cache, and Windows has no filesystem-wide flush at all.
-                if (!ff.isSyncfsFileSystemWide()) {
-                    DurableEpochManifest.fsyncTableFiles(
-                            configuration,
-                            token,
-                            metadata.getTimestampType(),
-                            metadata.getPartitionBy()
-                    );
-                } else if (!isFileSystemSynced && isMarkedForRestoreEnrolment(token, markerPath)) {
-                    DatabaseCheckpointAgent.syncRestoredState(ff, markerPath.of(configuration.getDbRoot()), true);
-                    isFileSystemSynced = true;
+            // The exit, after every table is restored. The live files of a table enrolled under adaptive are
+            // only as durable as its save point says; make them durable before the save point goes, since
+            // nothing restores them afterwards. Where syncfs is filesystem-wide one flush covers every table;
+            // elsewhere each table is flushed file by file.
+            boolean isFileSystemSynced = false;
+            for (int i = 0, n = exits.size(); i < n; i++) {
+                final TableToken token = exits.getQuick(i);
+                try {
+                    if (!ff.isSyncfsFileSystemWide()) {
+                        try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                            DurableEpochManifest.fsyncTableFiles(configuration, token, metadata.getTimestampType(), metadata.getPartitionBy());
+                        }
+                    } else if (!isFileSystemSynced) {
+                        DatabaseCheckpointAgent.syncRestoredState(ff, dir.of(configuration.getDbRoot()), true);
+                        isFileSystemSynced = true;
+                    }
+                    tablePath(dir, token);
+                    removeAdaptiveEpochArtifacts(ff, dir, dir.size());
+                    unpinRecoveredEpoch(token);
+                    LOG.info().$("table left adaptive commit mode, its save point is removed [table=").$(token).I$();
+                } catch (CairoException | CairoError e) {
+                    if (CairoException.isDataSyncFailure(e)) {
+                        engine.handleDataSyncFailure(e);
+                    }
+                    throw e;
                 }
-                DurableEpochManifest.publishCheckpointRestored(
-                        configuration,
-                        token,
-                        metadata.getTimestampType(),
-                        metadata.getPartitionBy(),
-                        configuration.getMicrosecondClock().getTicks() / 1000L
-                );
-                markerPath.of(configuration.getDbRoot()).concat(token);
-                final DurableEpochManifest.Candidate[] candidates = DurableEpochManifest.loadCandidates(ff, markerPath, markerPath.size(), token.getTableId());
-                if (candidates.length == 0) {
-                    throw CairoException.critical(0)
-                            .put("checkpoint-restored adaptive baseline is invalid [table=")
-                            .put(token.getTableName()).put(']');
-                }
-                pinRecoveredEpoch(token, candidates[0].epochTxn, candidates[0].epochSeqTxn);
-                // Consume the restore marker only now: the baseline above is durable and validated, so a
-                // crash before this point simply re-enrols on the next start rather than losing the signal
-                // and refusing to boot.
-                markerPath.of(configuration.getDbRoot()).concat(token).concat(RESTORE_ENROL_FILE_NAME);
-                ff.removeQuiet(markerPath.$());
-            } catch (CairoException | CairoError e) {
-                if (CairoException.isDataSyncFailure(e)) {
-                    engine.handleDataSyncFailure(e);
-                }
-                throw e;
             }
         }
     }
@@ -306,34 +188,13 @@ public class RecoveryCoordinator {
         return DurableEpochManifest.exists(ff, tablePath(dir, token), dir.size());
     }
 
-    private boolean hasValidSavePoint(TableToken token, Path dir) {
+    // Whether a conversion to non-WAL waits for this table; the conversion runs after this pass.
+    private boolean isConversionToNonWalPending(TableToken token, Path dir) {
+        tablePath(dir, token).concat(WalUtils.CONVERT_FILE_NAME);
         try {
-            tablePath(dir, token);
-            return DurableEpochManifest.loadCandidates(ff, dir, dir.size(), token.getTableId()).length > 0;
+            return ff.exists(dir.$()) && !TableConverter.readWalEnabled(dir.$(), ff);
         } catch (CairoException e) {
             return false;
-        }
-    }
-
-    private boolean hasNonEmptyMetadataFile(TableToken token, Path metaPath) {
-        tablePath(metaPath, token).concat(TableUtils.META_FILE_NAME);
-        return ff.length(metaPath.$()) > 0;
-    }
-
-    /**
-     * Whether startup must leave a table's baseline to its writer. A marked table has no durable cut to protect:
-     * its live state is whatever grade the tenure that marked it kept, NOSYNC on a replica, and a crash there can
-     * leave {@code _cv} a version ahead of {@code _txn}, or either live area torn. The writer repairs each shape
-     * as it does for any NOSYNC table and replays the lost WAL; adopting the cut here would refuse the boot, or
-     * anchor the tear and with it forbid that repair. The marker stays: the writer publishes the baseline once
-     * the table is repaired ({@code TableWriter.reconcileDurableEpochAnchor}), or the next startup does.
-     *
-     * <p>A restore that left no marker is not covered: it lays down a consistent cut, so one that fails the
-     * check still fails the startup when its baseline is published.
-     */
-    private boolean isLiveCutLeftToWriter(TableToken token) {
-        try (Path dir = new Path()) {
-            return isMarkedForRestoreEnrolment(token, dir) && !DurableEpochManifest.isLiveCutIntact(configuration, token);
         }
     }
 
@@ -352,50 +213,6 @@ public class RecoveryCoordinator {
             }
         }
         return false;
-    }
-
-    private boolean isMarkedForRestoreEnrolment(TableToken token, Path dir) {
-        tablePath(dir, token).concat(RESTORE_ENROL_FILE_NAME);
-        return ff.exists(dir.$());
-    }
-
-    private boolean isRestoredWithoutAnchor(TableToken token, Path dir) {
-        return !hasAnchor(token, dir) && (checkpointRestored || isMarkedForRestoreEnrolment(token, dir));
-    }
-
-    /**
-     * Whether adaptive may have left this table's materialized state lazily ahead of its durable epoch, which
-     * is what makes a failure to reconcile it fatal. The enrolment record answers when {@code _meta} can be
-     * read. When it cannot, an anchor is the remaining evidence, since enrolment publishes one first.
-     */
-    private boolean mayHoldAdaptiveState(TableToken token, Path dir) {
-        try {
-            return readEnrolledCommitMode(token, dir) == CommitMode.ADAPTIVE;
-        } catch (CairoException | CairoError e) {
-            return hasAnchor(token, dir);
-        }
-    }
-
-    /**
-     * The commit mode this table's materialized state is enrolled under, read straight from {@code _meta}
-     * (see {@link TableUtils#META_OFFSET_ENROLLED_COMMIT_MODE}). {@link CommitMode#ADAPTIVE} means the state
-     * may be lazily ahead of the durable epoch; anything else means it may not.
-     * <p>
-     * Throws on an unreadable {@code _meta} rather than defaulting to "not enrolled": a non-ADAPTIVE answer
-     * skips the roll-forward, and inferring that from a file it could not read would turn a corrupt enrolled
-     * table into a silent live-state fallback. The caller decides what an unreadable table means.
-     */
-    private int readEnrolledCommitMode(TableToken token, Path metaPath) {
-        tablePath(metaPath, token).concat(TableUtils.META_FILE_NAME);
-        final long size = ff.length(metaPath.$());
-        if (size <= 0) {
-            throw CairoException.critical(ff.errno())
-                    .put("could not read table metadata to resolve adaptive enrollment [table=")
-                    .put(token.getTableName()).put(", path=").put(metaPath).put(']');
-        }
-        try (MemoryCMR metaMem = Vm.getCMRInstance(ff, metaPath.$(), size, MemoryTag.MMAP_TABLE_READER)) {
-            return TableUtils.getEnrolledCommitMode(metaMem);
-        }
     }
 
     /**
@@ -689,19 +506,16 @@ public class RecoveryCoordinator {
         }
     }
 
-    private void recoverTable(TableToken token, Path src, Path dst, Path dir, ObjList<TableToken> enrollments) {
+    /**
+     * Restores the table's save point. Returns {@code false} when the table turns out to have none: only a save
+     * point a crash interrupted before it was published, or one of a superseded lineage, which are removed.
+     */
+    private boolean recoverTable(TableToken token, Path src, Path dst, Path dir) {
         // A generation whose header was never written is a save point a crash interrupted before it was published.
         tablePath(dir, token);
         DurableEpochManifest.removeUnpublished(configuration, dir, dir.size(), token.getTableId());
         if (!hasAnchor(token, dir)) {
-            if (isRestoredWithoutAnchor(token, dir)) {
-                // A crash interrupted the baseline of a table marked for enrolment: publish it again.
-                enrollments.add(token);
-                return;
-            }
-            throw CairoException.critical(0)
-                    .put("adaptive save point is absent; refusing unsafe live-state fallback [table=")
-                    .put(token.getTableName()).put(']');
+            return false;
         }
 
         DurableEpochManifest.Candidate selected = null;
@@ -763,25 +577,18 @@ public class RecoveryCoordinator {
             // re-seeded wholesale (ALTER TABLE ... SET TYPE WAL re-registers it from txn 0, REBASE WAL builds
             // a new one, an out-of-process restore may drop a fresh txn_seq in place), which makes the anchor
             // unreachable rather than evidence of lost writes — no replay can ever produce the cut it names.
-            // Discard it and re-enrol at the live cut instead of refusing to start. This is not a relaxation
-            // of the refusal above: the live _txn here loaded CLEAN (epochIsAheadOfLiveTxn returns true only
-            // then), so the table has a self-consistent cut, and WAL replay from the sequencer frontier is
-            // exactly what the new lineage needs.
+            // Discard it instead of refusing to start; the table's next writer enrols it at the live cut. This is
+            // not a relaxation of the refusal above: the live _txn here loaded CLEAN (epochIsAheadOfLiveTxn returns
+            // true only then), so the table has a self-consistent cut, and WAL replay from the sequencer frontier
+            // is exactly what the new lineage needs.
             final long frontier = sequencerFrontierOrUnknown(token);
             if (frontier >= 0 && epochSeqTxn > frontier) {
-                LOG.critical().$("adaptive epoch belongs to a superseded WAL lineage, discarding anchor and re-enrolling [table=").$(token)
+                LOG.critical().$("adaptive epoch belongs to a superseded WAL lineage, discarding anchor [table=").$(token)
                         .$(", epochSeqTxn=").$(epochSeqTxn)
                         .$(", seqLastTxn=").$(frontier).I$();
                 tablePath(dir, token);
-                final int tableRootLen = dir.size();
-                // Marker BEFORE removal: between the two the table is enrolled in _meta with no anchor, and
-                // only the marker keeps the next startup from refusing that state if we crash here.
-                markRestoredForEnrolment(ff, dir, tableRootLen);
-                removeAdaptiveEpochArtifacts(ff, dir, tableRootLen);
-                // Publish the replacement baseline in THIS startup, from the same post-loop pass the restore
-                // path uses, so the table is not left anchorless for a whole run.
-                enrollments.add(token);
-                return;
+                removeAdaptiveEpochArtifacts(ff, dir, dir.size());
+                return false;
             }
             throw CairoException.critical(0)
                     .put("adaptive epoch post-dates live state; refusing wrong-lineage recovery [table=")
@@ -820,7 +627,7 @@ public class RecoveryCoordinator {
             pinRecoveredEpoch(token, selected.epochTxn, epochSeqTxn);
             LOG.info().$("adaptive epoch matches live state, nothing to restore [table=").$(token)
                     .$(", epochSeqTxn=").$(epochSeqTxn).I$();
-            return;
+            return true;
         }
 
         // Reads the live files, which now equal the save point. A crash before it is covered by the branch above
@@ -840,6 +647,7 @@ public class RecoveryCoordinator {
         pinRecoveredEpoch(token, selected.epochTxn, epochSeqTxn);
         tracker.bumpRecoveryIncarnation();
         engine.getMetrics().walMetrics().incrementRecoveryEvents();
+        return true;
     }
 
     private void pinRecoveredEpoch(TableToken token, long epochTxn, long epochSeqTxn) {
@@ -1116,25 +924,17 @@ public class RecoveryCoordinator {
         return p.of(configuration.getDbRoot()).concat(token);
     }
 
-    /**
-     * Records that this table's epoch artifacts were cleared by a wholesale restore of its files, so the
-     * next startup republishes a baseline at the RESTORED cut instead of refusing to start.
-     *
-     * <p>Separate from {@link #removeAdaptiveEpochArtifacts} on purpose. Clearing the artifacts is also how
-     * a test manufactures a genuinely anchorless table, and how a torn or superseded anchor is discarded;
-     * neither of those may be silently re-enrolled. Only a caller that KNOWS the files it just laid down are
-     * a trustworthy, internally consistent cut may say so, and it says so with this call.
-     *
-     * <p>Marks the table rather than the database because a restore may cover a subset of tables. The
-     * marker is consumed by {@code recover()} once the baseline is published.
-     */
-    public static void markRestoredForEnrolment(FilesFacade ff, Path path, int tableRootLen) {
-        path.trimTo(tableRootLen).concat(RESTORE_ENROL_FILE_NAME);
-        if (!ff.touch(path.$())) {
-            throw CairoException.critical(ff.errno())
-                    .put("could not mark restored table for adaptive epoch enrolment [path=").put(path).put(']');
+    private void unpinRecoveredEpoch(TableToken token) {
+        final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+        final long pinnedTxn = tracker.getPinnedEpochTxn();
+        if (pinnedTxn < 0) {
+            return;
         }
-        path.trimTo(tableRootLen);
+        try (TxnScoreboard scoreboard = engine.getTxnScoreboard(token)) {
+            scoreboard.releaseTxn(tracker.isPinnedEpochSlotA() ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B, pinnedTxn);
+            // While this handle keeps the scoreboard pooled, as pinRecoveredEpoch records the pin.
+            tracker.clearPinnedEpoch();
+        }
     }
 
     /**
@@ -1152,8 +952,8 @@ public class RecoveryCoordinator {
      * </ul>
      * Removing the anchor prevents recovery from selecting a stale lineage. Absent files are accepted so
      * this remains idempotent for non-adaptive / never-epoch'd tables, but any artifact that still exists
-     * after deletion is a hard restore failure. Only the save point files, the copy files of older development
-     * layouts and the marker are removed; the LIVE {@code _txn}/{@code _cv} are never touched. Leaves
+     * after deletion is a hard restore failure. Only the save point files and the copy files of older development
+     * layouts are removed; the LIVE {@code _txn}/{@code _cv} are never touched. Leaves
      * {@code path} trimmed back to the table root.
      */
     public static void removeAdaptiveEpochArtifacts(FilesFacade ff, Path path, int tableRootLen) {
@@ -1180,29 +980,6 @@ public class RecoveryCoordinator {
             DurableEpochManifest.fsyncDirectory(ff, path, tableRootLen);
         }
         path.trimTo(tableRootLen);
-    }
-
-    /**
-     * Replaces one table's adaptive durable-epoch anchor with the restore-enrolment marker: marks the table,
-     * makes the marker's directory entry durable, then removes the anchor. {@code path} must be positioned at
-     * the table root, {@code tableRootLen} long, and is left there.
-     *
-     * <p>This is the state a replica keeps every adaptive table in, under
-     * {@link io.questdb.cairo.wal.LocalDurabilityPolicy#REPLICA_SKIP}: enrolled, marked, no anchor. A replica
-     * advances no epoch and keeps no epoch floor under the WAL purge job, so an anchor it kept would fall behind
-     * WAL that has already been deleted, and the next startup would rewind the table onto WAL that no longer
-     * exists: the table comes back suspended, and readers see it truncated to the anchor. With the marker
-     * instead, startup re-baselines the table at its live cut. That keeps every applied row, and gives the
-     * replica's lazily applied state the grade the policy already promises it, which is NOSYNC's.
-     *
-     * <p>The directory fsync between the two steps keeps a crash from persisting the removal without the
-     * marker. An enrolled table with neither refuses to start.
-     */
-    public static void replaceAnchorWithEnrolmentMarker(CairoConfiguration configuration, Path path, int tableRootLen) {
-        final FilesFacade ff = configuration.getFilesFacade();
-        markRestoredForEnrolment(ff, path, tableRootLen);
-        DurableEpochManifest.fsyncDirectory(configuration, path, tableRootLen);
-        removeAdaptiveEpochArtifacts(ff, path, tableRootLen);
     }
 
     private static void removeAdaptiveEpochArtifactOrFail(FilesFacade ff, Path path) {

@@ -5693,19 +5693,13 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     /**
-     * A REBASE clone copies the source's {@code _meta}, enrolment record and all, but publishes an adaptive
-     * anchor only when the clone itself resolves to adaptive. A source can legitimately still be recorded as
-     * enrolled while resolving to something else — that is precisely a table whose adaptive tenure ended
-     * with a crash and whose next writer has not reconciled it yet — so a clone that inherited the record
-     * without an anchor would be a table claiming lazy state with nothing to rewind to. Recovery refuses
-     * that, and the refusal fails the engine component: one rebased table would stop the instance booting.
-     *
-     * <p>Modelled here by creating the table under adaptive (which records the enrolment) and flipping the
-     * instance to nosync without letting a writer reconcile it — the precondition below asserts the source
-     * really is in that state, so this cannot pass vacuously.
+     * {@code ALTER TABLE ... REBASE WAL} on a nosync instance, from a source that still has the save point an
+     * adaptive run left (nothing opened it since the mode changed). The clone is a new table with no lazy state:
+     * it must not carry the source's save point, which binds metadata the clone no longer has, and a startup
+     * then leaves it as it is.
      */
     @Test
-    public void testRebaseWalCloneDoesNotInheritTheSourceEnrolmentWithoutAnAnchor() throws Exception {
+    public void testRebaseWalCloneDoesNotInheritTheSourceSavePoint() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         try {
@@ -5716,14 +5710,13 @@ public class WalWriterTest extends AbstractCairoTest {
                 final TableToken oldToken = engine.verifyTableName("t");
                 engine.releaseInactive();
 
-                // The operator turns adaptive off. Nothing opens the table in between, so its record still
-                // says enrolled -- the state a crash under adaptive leaves behind.
+                // The operator turns adaptive off. Nothing opens the table in between, so it keeps its save point.
                 setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-                try (TableReaderMetadata md = new TableReaderMetadata(configuration, oldToken)) {
-                    md.loadMetadata();
-                    Assert.assertEquals("precondition: the source must still be recorded as enrolled, or this"
-                                    + " test proves nothing about inheriting that record",
-                            CommitMode.ADAPTIVE, md.getEnrolledCommitMode());
+                final FilesFacade ff = configuration.getFilesFacade();
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(oldToken);
+                    Assert.assertTrue("precondition: the source still has its save point",
+                            DurableEpochManifest.exists(ff, path, path.size()));
                 }
 
                 execute("alter table t suspend wal");
@@ -5733,18 +5726,12 @@ public class WalWriterTest extends AbstractCairoTest {
                 final TableToken newToken = engine.verifyTableName("t");
                 Assert.assertNotEquals(oldToken.getDirName(), newToken.getDirName());
 
-                final FilesFacade ff = configuration.getFilesFacade();
                 try (Path path = new Path()) {
-                    path.of(configuration.getDbRoot()).concat(newToken).concat(DurableEpochManifest.FILE_NAME + ".0");
-                    Assert.assertFalse("a nosync clone publishes no anchor", ff.exists(path.$()));
-                }
-                try (TableReaderMetadata md = new TableReaderMetadata(configuration, newToken)) {
-                    md.loadMetadata();
-                    Assert.assertNotEquals("a clone with no anchor must not claim to be enrolled",
-                            CommitMode.ADAPTIVE, md.getEnrolledCommitMode());
+                    path.of(configuration.getDbRoot()).concat(newToken);
+                    Assert.assertFalse("a nosync clone has no save point", DurableEpochManifest.exists(ff, path, path.size()));
                 }
 
-                // The consequence: a startup validates the clone instead of refusing to serve the instance.
+                // A startup leaves the clone as it is.
                 new RecoveryCoordinator(engine).recover();
                 assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
             });
