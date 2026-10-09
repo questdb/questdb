@@ -374,6 +374,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI, WalColum
     @Override
     public void beginColumnarWrite() {
         checkDistressed();
+        // The roll opens an empty segment without copying rows, so it must never find
+        // uncommitted rows: the flag is set only after a commit and by
+        // rollUncommittedToNewSegment with nothing uncommitted. QWP commit batching
+        // keeps rows uncommitted across blocks and relies on this.
+        assert !rollSegmentOnNextRow || getUncommittedRowCount() == 0;
         try {
             if (rollSegmentOnNextRow) {
                 rollSegment();

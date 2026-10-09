@@ -37,9 +37,13 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.wal.WalColumnSink;
+import io.questdb.cairo.wal.WalColumnarRowAppender;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -57,6 +61,50 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class WalColumnSinkTest extends AbstractCairoTest {
     private static final long TS0 = 1_767_225_600_000_000L; // 2026-01-01T00:00:00.000000Z
+
+    @Test
+    public void testAppenderWritesThroughForeignSink() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken token = createTable(new TableModel(configuration, "sink_appender", PartitionBy.HOUR)
+                    .col("a", ColumnType.LONG)
+                    .timestamp("ts")
+                    .wal()
+            );
+            final int rowCount = 3;
+            final long valuesAddr = Unsafe.malloc(rowCount * 8L, MemoryTag.NATIVE_DEFAULT);
+            final long tsAddr = Unsafe.malloc(rowCount * 8L, MemoryTag.NATIVE_DEFAULT);
+            try (WalWriter walWriter = engine.getWalWriter(token)) {
+                for (int i = 0; i < rowCount; i++) {
+                    Unsafe.putLong(valuesAddr + i * 8L, 500L + i);
+                    Unsafe.putLong(tsAddr + i * 8L, TS0 + i * 1_000_000L);
+                }
+                ForwardingSink sink = new ForwardingSink(walWriter);
+                try (WalColumnarRowAppender appender = new WalColumnarRowAppender(sink)) {
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedColumn(0, valuesAddr, rowCount, 8, 0, rowCount);
+                    appender.putTimestampColumn(1, tsAddr, rowCount, 0, rowCount, Numbers.LONG_NULL);
+                    appender.endColumnarWrite(TS0, TS0 + (rowCount - 1) * 1_000_000L, false);
+                }
+                walWriter.commit();
+                Assert.assertEquals(1, sink.beginCount);
+                Assert.assertEquals(1, sink.finishCount);
+            } finally {
+                Unsafe.free(valuesAddr, rowCount * 8L, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(tsAddr, rowCount * 8L, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT a, ts FROM sink_appender")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            a\tts
+                            500\t2026-01-01T00:00:00.000000Z
+                            501\t2026-01-01T00:00:01.000000Z
+                            502\t2026-01-01T00:00:02.000000Z
+                            """);
+        });
+    }
 
     @Test
     public void testBeginRollFailureLatchesDistressed() throws Exception {
