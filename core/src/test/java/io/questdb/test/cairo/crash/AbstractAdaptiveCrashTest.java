@@ -103,6 +103,57 @@ public abstract class AbstractAdaptiveCrashTest extends AbstractCrashConsistency
      * {@code RecoveryCoordinator.recover()} -> {@code notifyWalTxnRepublisher(tt)} -> {@code drainWalQueue()}.
      */
     protected void recoverAfterCrash(TableToken[] tokens) {
+        simulateRestart(tokens);
+        new RecoveryCoordinator(engine).recover();
+        for (TableToken tt : tokens) {
+            engine.notifyWalTxnRepublisher(tt);
+        }
+        drainWalQueue();
+    }
+
+    /**
+     * Release readers, writers, WAL writers and inactive sequencers so the next iteration starts fresh.
+     */
+    protected void releaseEngineHandles() {
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        // Force-reclaim any writer this (single-threaded) sweep left checked out or locked when a simulated
+        // crash unwound a TableWriter.close()/unlock mid-operation: releaseAllWriters() above skips OWNED
+        // entries (only their owner can return them), so without this they linger busy with an open .lock fd
+        // and trip the enclosing assertMemoryLeak's busy-writer / open-fd checks. A real power loss's process
+        // death reclaims them; this models that on the live JVM, the writer-pool analogue of the non-cache fd
+        // reclaim in reclaimLingeringNonCacheFds. A no-op on a healthy engine (production never leaks a writer).
+        engine.releaseCrashOrphanedWriters();
+        // WAL-writer analogue of the line above: a swept crash on the deferred close-time fdatasync under
+        // group commit (W>0) leaves a distressed WalWriter owned in the pool (see recoverAfterCrash); reclaim
+        // it before releaseAllWalWriters() so the full release does not trip "left behind on pool shutdown".
+        engine.releaseCrashOrphanedWalWriters();
+        engine.releaseAllWalWriters();
+        engine.releaseInactiveTableSequencers();
+        // Table writers must be released LAST. The WAL-writer and sequencer releases above re-enter the
+        // engine (draining/finalising WAL work opens a TableWriter), so a writer released on the first pass
+        // can exist AGAIN by the time this method returns -- and the caller's next step is
+        // reclaimLingeringNonCacheFds, which treats every non-baseline no-cache fd as a crash artifact and
+        // force-closes it. A live pooled writer's symbol/index fds are no-cache too, so that reclaim would
+        // strand them, and the NEXT iteration's legitimate close would then operate on a dead descriptor
+        // ("Invalid fd, not found in cache" out of TableWriter.doClose -> freeSymbolMapWriters).
+        //
+        // NOT COVERED BY A TEST. Three attempts at a single-shot pin (plain release, crash-orphaned writer,
+        // outstanding WAL work) all passed with this release removed, i.e. proved nothing. The condition
+        // needs the sweep's multi-iteration context -- the reclaim runs against a baseline captured an
+        // iteration earlier -- which a unit test does not cheaply reproduce. Evidence for the fix is an
+        // A/B on the fuzz: seeds 1858466998207609950,7098192113821025591 and
+        // -5599363307717330847,-4230914800796809183 fail with "Invalid fd, not found in cache" without it
+        // and pass with it. If you touch this ordering, re-run those seeds.
+        engine.releaseAllWriters();
+        engine.releaseCrashOrphanedWriters();
+    }
+
+    /**
+     * The first half of {@link #recoverAfterCrash}: everything a power loss and a fresh process do before
+     * {@code RecoveryCoordinator.recover()} runs.
+     */
+    protected void simulateRestart(TableToken[] tokens) {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
         // Empty the WAL-writer pool BEFORE crash(), while the segment files are still their intact
@@ -175,49 +226,5 @@ public abstract class AbstractAdaptiveCrashTest extends AbstractCrashConsistency
                 engine.getTableSequencerAPI().getTxnTracker(tt).setUnsuspended();
             }
         }
-
-        new RecoveryCoordinator(engine).recover();
-        for (TableToken tt : tokens) {
-            engine.notifyWalTxnRepublisher(tt);
-        }
-        drainWalQueue();
-    }
-
-    /**
-     * Release readers, writers, WAL writers and inactive sequencers so the next iteration starts fresh.
-     */
-    protected void releaseEngineHandles() {
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
-        // Force-reclaim any writer this (single-threaded) sweep left checked out or locked when a simulated
-        // crash unwound a TableWriter.close()/unlock mid-operation: releaseAllWriters() above skips OWNED
-        // entries (only their owner can return them), so without this they linger busy with an open .lock fd
-        // and trip the enclosing assertMemoryLeak's busy-writer / open-fd checks. A real power loss's process
-        // death reclaims them; this models that on the live JVM, the writer-pool analogue of the non-cache fd
-        // reclaim in reclaimLingeringNonCacheFds. A no-op on a healthy engine (production never leaks a writer).
-        engine.releaseCrashOrphanedWriters();
-        // WAL-writer analogue of the line above: a swept crash on the deferred close-time fdatasync under
-        // group commit (W>0) leaves a distressed WalWriter owned in the pool (see recoverAfterCrash); reclaim
-        // it before releaseAllWalWriters() so the full release does not trip "left behind on pool shutdown".
-        engine.releaseCrashOrphanedWalWriters();
-        engine.releaseAllWalWriters();
-        engine.releaseInactiveTableSequencers();
-        // Table writers must be released LAST. The WAL-writer and sequencer releases above re-enter the
-        // engine (draining/finalising WAL work opens a TableWriter), so a writer released on the first pass
-        // can exist AGAIN by the time this method returns -- and the caller's next step is
-        // reclaimLingeringNonCacheFds, which treats every non-baseline no-cache fd as a crash artifact and
-        // force-closes it. A live pooled writer's symbol/index fds are no-cache too, so that reclaim would
-        // strand them, and the NEXT iteration's legitimate close would then operate on a dead descriptor
-        // ("Invalid fd, not found in cache" out of TableWriter.doClose -> freeSymbolMapWriters).
-        //
-        // NOT COVERED BY A TEST. Three attempts at a single-shot pin (plain release, crash-orphaned writer,
-        // outstanding WAL work) all passed with this release removed, i.e. proved nothing. The condition
-        // needs the sweep's multi-iteration context -- the reclaim runs against a baseline captured an
-        // iteration earlier -- which a unit test does not cheaply reproduce. Evidence for the fix is an
-        // A/B on the fuzz: seeds 1858466998207609950,7098192113821025591 and
-        // -5599363307717330847,-4230914800796809183 fail with "Invalid fd, not found in cache" without it
-        // and pass with it. If you touch this ordering, re-run those seeds.
-        engine.releaseAllWriters();
-        engine.releaseCrashOrphanedWriters();
     }
 }

@@ -775,7 +775,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             // The phase runs the WAL event barriers (_event, _event.i), the sequencer txn-log entry -- where the
             // transaction becomes DURABLE -- then parquet production (data.parquet, _pm, the new partition
             // directory), then the apply's async column-flush kicks and the epoch tail (syncfs, _cv, _txn, the
-            // .epoch copies, the manifest, the table directory, _snapshot).
+            // save point file twice, the table directory, _snapshot).
             // Everything after the txn-log entry is MATERIALIZATION, re-derivable from the WAL; parquet
             // production must nevertheless fail loudly, so the boundary is its last op, the partition directory
             // fsync. A fault after it is allowed to be consumed because the conversion transaction and logical

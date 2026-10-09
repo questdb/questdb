@@ -405,6 +405,89 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         assertCleanRestartRestoresNothing("reverted_selector", true);
     }
 
+    /**
+     * A save point whose {@code _txn} and {@code _meta} sections describe different table shapes must be
+     * rejected, not adopted. Every checksum passes: the sections are byte-for-byte what was saved. Only the
+     * content checks, run on the restored live files, compare {@code _txn}'s symbol count with the symbol
+     * columns {@code _meta} declares. The skew is produced at save time (a stale one-symbol {@code _meta} is
+     * served in place of the live one, at the live metadata version), which is the state a cut taken inside
+     * {@code changeColumnType}'s structural window would leave. Recovery must fall back to the older, consistent
+     * generation, whose replay floor lies before the ALTER that added the second symbol column.
+     */
+    @Test
+    public void testRecoveryRejectsSavePointWhoseTxnAndMetaDisagreeOnSymbolColumns() throws Exception {
+        final StaleMetaFacade staleFf = new StaleMetaFacade();
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        try {
+            assertMemoryLeak(staleFf, () -> {
+                Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
+                execute("create table skew (ts timestamp, sym symbol, v long) timestamp(ts) partition by day wal");
+                for (int i = 0; i < 4; i++) {
+                    execute("insert into skew values ('2024-10-01T0" + i + ":00:00.000000Z', 's" + i + "', " + i + ")");
+                }
+                drainWalQueue();
+                final TableToken tt = engine.verifyTableName("skew");
+                final long consistentSeqTxn;
+                try (TableWriter w = getWriter(tt)) {
+                    w.advanceDurableEpoch(1L);
+                    consistentSeqTxn = w.getSeqTxn();
+                }
+
+                final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                try (Path live = new Path(); Path stale = new Path()) {
+                    live.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.META_FILE_NAME);
+                    stale.of(engine.getConfiguration().getDbRoot()).concat("stale_meta_one_symbol");
+                    Assert.assertTrue(ff.copy(live.$(), stale.$()) >= 0);
+
+                    execute("alter table skew add column sym2 symbol");
+                    for (int i = 4; i < 8; i++) {
+                        execute("insert into skew values ('2024-10-01T0" + i + ":00:00.000000Z', 's" + i + "', " + i + ", 'x')");
+                    }
+                    drainWalQueue();
+                    // Equal metadata versions, as the real defect produced: otherwise the version check rejects
+                    // the save point first and the symbol check is never reached.
+                    try (TableMetadata meta = engine.getTableMetadata(tt);
+                         io.questdb.cairo.vm.api.MemoryMARW mem = io.questdb.cairo.vm.Vm.getCMARWInstance()) {
+                        mem.smallFile(ff, stale.$(), MemoryTag.MMAP_DEFAULT);
+                        TableUtils.resetMetadataVersion(mem, meta.getMetadataVersion());
+                    }
+
+                    staleFf.arm(live.toString(), stale.toString());
+                    try (TableWriter w = getWriter(tt)) {
+                        w.advanceDurableEpoch(2L);
+                    } finally {
+                        staleFf.disarm();
+                    }
+                    Assert.assertTrue("the stale _meta was never served, so no skewed save point was written", staleFf.served > 0);
+                }
+
+                for (int i = 8; i < 11; i++) {
+                    execute("insert into skew values ('2024-10-02T0" + (i - 8) + ":00:00.000000Z', 's" + i + "', " + i + ", 'x')");
+                }
+                drainWalQueue();
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+
+                new RecoveryCoordinator(engine).recover();
+                Assert.assertEquals("recovery must fall back to the consistent generation", consistentSeqTxn, readTxnSeqTxn(tt));
+                // A second start before the replay: the rejected generation is still listed first and is ahead of
+                // the live _txn the fallback rewound, which must not read as a wrong-lineage state.
+                new RecoveryCoordinator(engine).recover();
+                Assert.assertEquals("a second start must stay on the consistent generation", consistentSeqTxn, readTxnSeqTxn(tt));
+
+                engine.getTxnScoreboardPool().remove(tt);
+                engine.notifyWalTxnRepublisher(tt);
+                drainWalQueue();
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tt));
+                assertQuery("select count(), count(sym2) from skew").noRandomAccess().expectSize().returns("count\tcount1\n11\t7\n");
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+        }
+    }
+
     @Test
     public void testRecoveryRestoresMetadataMatchingEpochTxnAfterStructuralWal() throws Exception {
         assertMemoryLeak(() -> {
@@ -424,8 +507,8 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 try (Path epochMetaPath = new Path(); TableReaderMetadata epochMetadata = new TableReaderMetadata(configuration)) {
-                    epochMetaPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME)
-                            .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(0);
+                    epochMetaPath.of(configuration.getDbRoot()).concat("saved" + TableUtils.META_FILE_NAME);
+                    TestUtils.copySavePointSection(configuration.getFilesFacade(), configuration.getDbRoot(), token, 0, TableUtils.META_FILE_NAME, epochMetaPath.$());
                     epochMetadata.loadMetadata(epochMetaPath.$());
                     Assert.assertEquals("creation epoch metadata must remain immutable", 0, epochMetadata.getMetadataVersion());
                 }
@@ -440,8 +523,8 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 engine.releaseAllWriters();
                 engine.releaseAllReaders();
                 try (Path epochMetaPath = new Path(); TableReaderMetadata epochMetadata = new TableReaderMetadata(configuration)) {
-                    epochMetaPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME)
-                            .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(0);
+                    epochMetaPath.of(configuration.getDbRoot()).concat("saved" + TableUtils.META_FILE_NAME);
+                    TestUtils.copySavePointSection(configuration.getFilesFacade(), configuration.getDbRoot(), token, 0, TableUtils.META_FILE_NAME, epochMetaPath.$());
                     epochMetadata.loadMetadata(epochMetaPath.$());
                     Assert.assertEquals("writer release must not mutate epoch metadata", 0, epochMetadata.getMetadataVersion());
                     epochMetaPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
@@ -722,43 +805,6 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRecoverLegacyV1AnchorWhenAvailableTupleMatches() throws Exception {
-        assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
-            try {
-                execute("create table legacy (ts timestamp, v long) timestamp(ts) partition by day wal");
-                for (int i = 0; i < 3; i++) {
-                    execute("insert into legacy values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
-                }
-                drainWalQueue();
-                final TableToken token = engine.verifyTableName("legacy");
-                final long epochSeqTxn;
-                final long epochTxn;
-                try (io.questdb.cairo.TableWriter writer = getWriter(token)) {
-                    writer.fsyncMaterializedState();
-                    epochSeqTxn = writer.getSeqTxn();
-                    epochTxn = writer.getTxn();
-                }
-                try (SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration()); Path p = new Path()) {
-                    p.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
-                    marker.of(p.$()).write(epochSeqTxn, epochTxn, 1L);
-                }
-                execute("insert into legacy values ('2024-09-01T03:00:00.000000Z', 3)");
-                drainWalQueue();
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-
-                new RecoveryCoordinator(engine).recover();
-                Assert.assertEquals(epochSeqTxn, readTxnSeqTxn(token));
-            } finally {
-                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
-            }
-        });
-    }
-
-    @Test
     public void testCreationBaselineAndPreviousGenerationFallback() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
@@ -786,12 +832,12 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
                 final io.questdb.std.FilesFacade files = engine.getConfiguration().getFilesFacade();
                 try (Path p = new Path()) {
-                    p.of(engine.getConfiguration().getDbRoot()).concat(token)
-                            .concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(1);
+                    // Cut generation one's file at its _txn section: the sections are gone, the header stays.
+                    final long[] section = TestUtils.savePointSection(files, p, engine.getConfiguration().getDbRoot(), token, 1, TableUtils.TXN_FILE_NAME);
                     final long fd = files.openRW(p.$(), CairoConfiguration.O_NONE);
                     Assert.assertTrue(fd > -1);
                     try {
-                        Assert.assertTrue(files.truncate(fd, 0));
+                        Assert.assertTrue(files.truncate(fd, section[0]));
                     } finally {
                         files.close(fd);
                     }
@@ -1263,6 +1309,82 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     /**
+     * An out-of-process restore put back a backup of a quiet table, taken right after a save point, sequencer
+     * included, but left the newer save point files in place. The live {@code _txn} then equals the older
+     * generation's cut while the newer generation is beyond the restored sequencer: it belongs to the lineage the
+     * restore discarded, so recovery must discard the save point and re-enrol, not take it for a generation its
+     * own fallback rejected. Kept, the stale generation is restored over the new lineage's rows once the
+     * sequencer passes its cut.
+     */
+    @Test
+    public void testRestoreLeavingNewerSavePointOfDiscardedLineageIsDiscarded() throws Exception {
+        org.junit.Assume.assumeFalse("replants files over existing destinations, which Windows forbids", Os.isWindows());
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        try {
+            assertMemoryLeak(() -> {
+                execute("create table oop (ts timestamp, v long) timestamp(ts) partition by day wal");
+                execute("insert into oop values ('2024-09-01T01:00:00.000000Z', 1)");
+                drainWalQueue();
+                final TableToken tt = engine.verifyTableName("oop");
+                try (TableWriter w = getWriter(tt)) {
+                    w.advanceDurableEpoch(1L);
+                }
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                engine.releaseInactive();
+                final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                final int mkDirMode = engine.getConfiguration().getMkDirMode();
+                try (Path table = new Path(); Path backup = new Path(); Path newer = new Path(); Path from = new Path(); Path to = new Path()) {
+                    table.of(engine.getConfiguration().getDbRoot()).concat(tt);
+                    backup.of(engine.getConfiguration().getDbRoot()).concat("oop_backup");
+                    newer.of(engine.getConfiguration().getDbRoot()).concat("oop_newer");
+                    Assert.assertEquals(0, ff.copyRecursive(table, backup, mkDirMode));
+                    for (int i = 2; i < 5; i++) {
+                        execute("insert into oop values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+                    }
+                    drainWalQueue();
+                    try (TableWriter w = getWriter(tt)) {
+                        w.advanceDurableEpoch(2L);
+                    }
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+                    engine.releaseInactive();
+                    Assert.assertEquals(0, ff.rename(table.$(), newer.$()));
+                    Assert.assertEquals(0, ff.copyRecursive(backup, table, mkDirMode));
+                    for (String name : new String[]{TableUtils.SNAPSHOT_FILE_NAME, "_epoch.manifest.0", "_epoch.manifest.1"}) {
+                        to.of(table).concat(name);
+                        ff.removeQuiet(to.$());
+                        Assert.assertTrue(ff.copy(from.of(newer).concat(name).$(), to.$()) >= 0);
+                    }
+                }
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                engine.getTxnScoreboardPool().remove(tt);
+
+                new RecoveryCoordinator(engine).recover();
+                Assert.assertEquals("the restored cut must stay", 1, readTxnSeqTxn(tt));
+                for (int i = 0; i < 3; i++) {
+                    execute("insert into oop values ('2024-09-02T0" + i + ":00:00.000000Z', " + (100 + i) + ")");
+                }
+                drainWalQueue();
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                engine.getTxnScoreboardPool().remove(tt);
+
+                new RecoveryCoordinator(engine).recover();
+                engine.notifyWalTxnRepublisher(tt);
+                drainWalQueue();
+                assertQuery("select v from oop").expectSize().returns("v\n1\n100\n101\n102\n");
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        }
+    }
+
+    /**
      * Finding C2 (invariant pin) — locks the {@code TxReader.unsafeLoadAll} SLOT-SELECTION property that
      * {@code RecoveryCoordinator.epochIsAheadOfLiveTxn}'s C2 assert relies on: {@code unsafeLoadAll} returns
      * the VERSION-SELECTED (latest) A/B slot when it is intact, and ONLY its IMMEDIATE predecessor
@@ -1389,9 +1511,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
      */
     private void copyEpochArtifacts(TableToken tt, boolean restore) {
         final String[] names = {
-                TableUtils.SNAPSHOT_FILE_NAME,
-                "_meta.epoch.0", "_txn.epoch.0", "_cv.epoch.0", "_epoch.manifest.0",
-                "_meta.epoch.1", "_txn.epoch.1", "_cv.epoch.1", "_epoch.manifest.1"
+                TableUtils.SNAPSHOT_FILE_NAME, "_epoch.manifest.0", "_epoch.manifest.1"
         };
         for (int i = 0; i < names.length; i++) {
             final String live = names[i];
@@ -1413,8 +1533,9 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     /**
-     * The shared clear helper used by the ENT restore + demote paths must remove exactly the epoch trio
-     * (_snapshot + _txn.epoch + _cv.epoch), leave the LIVE _txn/_cv untouched, and be idempotent.
+     * The shared clear helper used by the ENT restore + demote paths must remove the marker, both save point
+     * files and any copy file an older development layout left, leave the LIVE files untouched, and be
+     * idempotent.
      */
     @Test
     public void testRemoveAdaptiveEpochArtifactsRemovesTrioOnly() throws Exception {
@@ -1434,13 +1555,16 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 engine.releaseAllWriters();
                 engine.releaseAllReaders();
 
-                // Precondition: both bound generations and the live files exist.
+                // Precondition: both generations and the live files exist. The separate copy files of older
+                // development layouts are planted too: a database written before them may still hold them.
                 Assert.assertTrue("marker present", epochArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME, ""));
+                final String[] copySuffixes = {TableUtils.EPOCH_COPY_SUFFIX, TableUtils.EPOCH_COPY_SUFFIX + ".0", TableUtils.EPOCH_COPY_SUFFIX + ".1"};
+                for (String suffix : copySuffixes) {
+                    copyTableFile(tt, TableUtils.META_FILE_NAME, TableUtils.META_FILE_NAME + suffix);
+                    copyTableFile(tt, TableUtils.TXN_FILE_NAME, TableUtils.TXN_FILE_NAME + suffix);
+                    copyTableFile(tt, TableUtils.COLUMN_VERSION_FILE_NAME, TableUtils.COLUMN_VERSION_FILE_NAME + suffix);
+                }
                 for (int generation = 0; generation < 2; generation++) {
-                    final String suffix = TableUtils.EPOCH_COPY_SUFFIX + "." + generation;
-                    Assert.assertTrue("meta epoch generation present", epochArtifactExists(tt, TableUtils.META_FILE_NAME, suffix));
-                    Assert.assertTrue("txn epoch generation present", epochArtifactExists(tt, TableUtils.TXN_FILE_NAME, suffix));
-                    Assert.assertTrue("cv epoch generation present", epochArtifactExists(tt, TableUtils.COLUMN_VERSION_FILE_NAME, suffix));
                     Assert.assertTrue("manifest generation present", epochArtifactExists(tt, io.questdb.cairo.DurableEpochManifest.FILE_NAME, "." + generation));
                 }
 
@@ -1452,11 +1576,12 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
                 // All anchors are gone; the live _txn/_cv are untouched.
                 Assert.assertFalse("marker removed", epochArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME, ""));
+                for (String suffix : copySuffixes) {
+                    Assert.assertFalse("old _meta copy removed", epochArtifactExists(tt, TableUtils.META_FILE_NAME, suffix));
+                    Assert.assertFalse("old _txn copy removed", epochArtifactExists(tt, TableUtils.TXN_FILE_NAME, suffix));
+                    Assert.assertFalse("old _cv copy removed", epochArtifactExists(tt, TableUtils.COLUMN_VERSION_FILE_NAME, suffix));
+                }
                 for (int generation = 0; generation < 2; generation++) {
-                    final String suffix = TableUtils.EPOCH_COPY_SUFFIX + "." + generation;
-                    Assert.assertFalse("meta epoch generation removed", epochArtifactExists(tt, TableUtils.META_FILE_NAME, suffix));
-                    Assert.assertFalse("txn epoch generation removed", epochArtifactExists(tt, TableUtils.TXN_FILE_NAME, suffix));
-                    Assert.assertFalse("cv epoch generation removed", epochArtifactExists(tt, TableUtils.COLUMN_VERSION_FILE_NAME, suffix));
                     Assert.assertFalse("manifest generation removed", epochArtifactExists(tt, io.questdb.cairo.DurableEpochManifest.FILE_NAME, "." + generation));
                 }
                 Assert.assertTrue("live _meta untouched", epochArtifactExists(tt, TableUtils.META_FILE_NAME, ""));
@@ -1670,6 +1795,10 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             final FilesFacade ffBefore = AbstractCairoTest.ff;
             try {
                 buildAdaptiveLazyGapTable("cvtorn");
+                // Recovery restores only the live files that differ from the save point; an UPDATE after it
+                // writes column versions, so the live _cv differs and its restore runs.
+                execute("update cvtorn set v = v + 1 where v > 4");
+                drainWalQueue();
                 final TableToken tt = engine.verifyTableName("cvtorn");
                 engine.releaseAllWriters();
                 engine.releaseAllReaders();
@@ -1705,12 +1834,12 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     /**
      * Fails the CONTENT TRANSFER of one named live file's restore, for one table dir.
      * <p>
-     * The restore replaces a live file's content in place ({@code TableUtils.replaceFileContent}: open the
-     * destination read-write, truncate, transfer) rather than whole-file copying onto it, because a
+     * The restore replaces a live file's content in place (open the destination read-write, truncate,
+     * transfer its section from the save point file) rather than whole-file copying onto it, because a
      * whole-file copy is refused on Windows once the destination exists. The fault therefore has to be
      * injected on the transfer, and it is keyed by the destination FD learned from the read-write open —
-     * {@code copyData} sees fds, not paths. Matching {@code endsWith} keeps the {@code .epoch.N} sources
-     * out of it; those are opened read-only anyway.
+     * {@code copyData} sees fds, not paths. Matching {@code endsWith} keeps the save point file out of it;
+     * it is opened read-only anyway.
      */
     private static final class SimulatedCrash extends RuntimeException {
     }
@@ -2186,6 +2315,49 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             tx.ofRO(p.$(), io.questdb.cairo.ColumnType.TIMESTAMP_MICRO, io.questdb.cairo.PartitionBy.DAY);
             tx.unsafeLoadAll();
             return tx.getSeqTxn();
+        }
+    }
+
+    // Serves a stashed file in place of one live _meta while armed, so a save point taken meanwhile saves it.
+    private static final class StaleMetaFacade extends TestFilesFacadeImpl {
+        private volatile String livePath;
+        private int served;
+        private String stalePath;
+
+        @Override
+        public long length(LPSZ name) {
+            if (isLive(name)) {
+                try (Path stale = new Path()) {
+                    return super.length(stale.of(stalePath).$());
+                }
+            }
+            return super.length(name);
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            if (isLive(name)) {
+                served++;
+                try (Path stale = new Path()) {
+                    return super.openRO(stale.of(stalePath).$());
+                }
+            }
+            return super.openRO(name);
+        }
+
+        void arm(String livePath, String stalePath) {
+            this.stalePath = stalePath;
+            served = 0;
+            this.livePath = livePath;
+        }
+
+        void disarm() {
+            livePath = null;
+        }
+
+        private boolean isLive(LPSZ name) {
+            final String live = livePath;
+            return live != null && Utf8s.equalsAscii(live, name);
         }
     }
 }

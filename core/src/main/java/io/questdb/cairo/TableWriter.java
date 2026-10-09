@@ -16104,64 +16104,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Persist a DURABLE EPOCH COPY of metadata or a commit-pointer file ({@code _meta}, {@code _txn},
-     * or {@code _cv}) into the
-     * table dir as {@code <name>.epoch}, then fsync it. These immutable copies are the recovery anchor
-     * (Plan 3): {@link RecoveryCoordinator} restores them over the live files to rewind the table to
-     * the epoch cut after a power cut.
-     * <p>
-     * The copy is taken by {@link TableUtils#replaceFileContent} of the LIVE committed file, which was just
-     * made durable by {@code txWriter.fsync()} / {@code columnVersionWriter.fsync()} a few lines up in
-     * {@link #fsyncMaterializedState()} (the writer is held throughout, so the live file is a stable
-     * cut and is not advancing). A direct file copy is byte-identical to the live file and therefore
-     * trivially READABLE + RESTORABLE by {@code TxReader}/{@code ColumnVersionReader}.
-     * <p>
-     * <b>Why not {@code dumpTo}:</b> an earlier version dumped from the live {@code TxWriter} via
-     * {@code dumpTo()}. That emits {@code version}/{@code txn} from out-of-sync writer fields, so the
-     * dumped record violated {@code TxReader}'s {@code version == body-txn} invariant
-     * ({@code unsafeLoadAreaFields}) and the copy was UNREADABLE — recovery could not restore it. The
-     * checkpoint path's {@code dumpTo} works only because it dumps from a loaded {@code TxReader} (where
-     * {@code version == txn}); copying the live file is the robust equivalent here.
-     */
-    private void writeEpochCopy(String baseFileName, int generation) {
-        // Source: the live committed file (just fsync'd). Dest: the inactive generation (or legacy sibling
-        // for the public test seam). The active generation is never truncated before the marker switches.
-        path.trimTo(pathSize).concat(baseFileName).put(TableUtils.EPOCH_COPY_SUFFIX);
-        if (generation != SnapshotMarker.LEGACY_GENERATION) {
-            path.put('.').put(generation);
-        }
-        // replaceFileContent truncates and rewrites the destination, so it both creates and fully replaces
-        // this generation's prior copy; no explicit remove needed, and no platform on which an existing
-        // destination is refused. Build the source path into `other` to avoid clobbering `path` (the dest).
-        other.trimTo(pathSize).concat(baseFileName);
-        try {
-            TableUtils.replaceFileContent(ff, other.$(), path.$(), configuration.getWriterFileOpenOpts());
-        } catch (CairoException e) {
-            other.trimTo(pathSize);
-            path.trimTo(pathSize);
-            throw CairoException.critical(e.getErrno())
-                    .put("could not write durable epoch copy [table=").put(tableToken.getTableName())
-                    .put(", file=").put(baseFileName).put(TableUtils.EPOCH_COPY_SUFFIX)
-                    .put(", reason=").put(e.getFlyweightMessage()).put(']');
-        }
-        other.trimTo(pathSize);
-        // Make the copy hard-durable: fsync the freshly-written .epoch file. The copy is immutable until
-        // the next epoch overwrites it, so a single fsync here is the recovery anchor's durability barrier.
-        final long fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
-        if (fd == -1) {
-            throw CairoException.critical(ff.errno())
-                    .put("could not open durable epoch copy for fsync [table=").put(tableToken.getTableName())
-                    .put(", path=").put(path).put(']');
-        }
-        try {
-            ff.fsync(fd);
-        } finally {
-            ff.close(fd);
-        }
-        path.trimTo(pathSize);
-    }
-
-    /**
      * Advance the adaptive durable EPOCH for this table: a fully-durable, self-consistent cut of the
      * materialized state, recorded so recovery lands exactly on it (INV-5 strict ordering). Owned here
      * so BOTH the WAL-apply cadence path ({@code ApplyWal2TableJob.maybeAdvanceDurableEpoch}) and
@@ -16238,7 +16180,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return false;
         }
 
-        // An epoch is only a usable recovery cut if its _meta.epoch and _txn.epoch payloads describe the
+        // An epoch is only a usable recovery cut if its saved _meta and _txn describe the
         // SAME table shape. _txn's symbol area is written from denseSymbolMapWriters, while _meta carries
         // the live symbol columns, so those two counts agreeing is precisely the precondition for a
         // mutually consistent pair. Structural operations transiently break it: changeColumnType() creates
@@ -16265,8 +16207,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return false;
         }
 
-        // Select the INACTIVE epoch-copy generation before writing any payload. A failed attempt can damage
-        // only that generation; the marker continues to select the previous complete generation.
+        // Select the INACTIVE generation before writing anything. A failed attempt can damage only that
+        // generation; the marker continues to select the previous complete generation.
         if (durableEpochMarker == null) {
             durableEpochMarker = new SnapshotMarker(configuration);
         }
@@ -16281,10 +16223,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ? 1 - durableEpochMarker.getGeneration()
                 : 0;
 
-        // Step 1: make the materialized state fully durable + write the inactive durable epoch copies.
-        // Capture the applied cut before flushing it; the writer is held, so this frontier cannot move.
+        // Step 1: make the materialized state fully durable. Capture the applied cut before flushing it; the
+        // writer is held, so this frontier cannot move.
         final long epochSeqTxn = getSeqTxn();
-        fsyncMaterializedState(epochGeneration);
+        fsyncMaterializedState();
 
         final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
         if (epochSeqTxn > 0) {
@@ -16301,7 +16243,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             tracker.setLocalDurableSeqTxn(epochSeqTxn);
         }
 
-        // Bind all three payloads to this exact table/cut before making their directory entries durable.
+        // Save the live _txn, _cv and _meta into the inactive generation's file, bound to this table and cut.
         final long epochTxn = getTxn();
         DurableEpochManifest.write(
                 configuration,
@@ -16410,9 +16352,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *       the batched path already syncs them in its passes);</li>
      *   <li>{@code _cv} durable: {@code columnVersionWriter.fsync()} (msync + fsync);</li>
      *   <li>{@code _txn} durable LAST: {@code txWriter.fsync()} (msync + fsync) — the visibility
-     *       pointer becomes durable only after everything it exposes;</li>
-     *   <li>durable epoch copies {@code _meta.epoch} / {@code _txn.epoch} / {@code _cv.epoch} written + fsync'd (the
-     *       immutable recovery anchor).</li>
+     *       pointer becomes durable only after everything it exposes.</li>
      * </ol>
      * The cut's identity is the writer's current {@link #getSeqTxn()} / {@link #getTxn()} right after
      * its A/B commit point; the caller ({@code advance()}) reads them after this returns.
@@ -16421,10 +16361,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * does, so a durable cut is self-consistent with respect to index state too.
      */
     public void fsyncMaterializedState() {
-        fsyncMaterializedState(SnapshotMarker.LEGACY_GENERATION);
-    }
-
-    private void fsyncMaterializedState(int epochGeneration) {
         // Publish buffered index writes (PostingIndexWriter / BitmapIndexWriter) just like
         // syncColumns(): without this readers (and the durable cut) could see keyCount=0.
         final long publishTxn = txWriter.getTxn() + 1;
@@ -16503,18 +16439,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Step 3+4: commit pointers durable, data-before-pointer: _cv before _txn.
         columnVersionWriter.fsync();
         txWriter.fsync();
-
-        // Step 5: durable epoch copies (immutable recovery anchor). Copy _meta first so recovery can
-        // interpret the matching _txn even when later structural WAL transactions advanced live metadata.
-        // Then copy the just-fsync'd live _cv and _txn. CV BEFORE TXN (data-before-pointer), mirroring steps 3+4:
-        // RecoveryCoordinator restores BOTH copies, so a crash BETWEEN these two copies must leave a SAFE
-        // skew. With _cv.epoch first, a crash after it but before _txn.epoch leaves _cv.epoch NEWER than
-        // _txn.epoch; restoring that pair makes _cv ahead of _txn — harmless (column versions only grow;
-        // the older _txn never references the extra ones, and _txn is the authoritative row-count/seqTxn
-        // pointer). The reverse order could leave _txn ahead of _cv (a dangling column-version reference).
-        writeEpochCopy(TableUtils.META_FILE_NAME, epochGeneration);
-        writeEpochCopy(TableUtils.COLUMN_VERSION_FILE_NAME, epochGeneration);
-        writeEpochCopy(TableUtils.TXN_FILE_NAME, epochGeneration);
 
         // Mirror syncColumns(): forward indexer purge entries safe for the committed txn.
         publishPendingPostingSealPurges(txWriter.getTxn());
@@ -16679,7 +16603,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * column fd — right before {@code advanceDurableEpoch}) and at graceful-close with the active partition
      * already closed, ALL
      * column fds are {@code -1}. The old "first open column fd" sourcing then left the syncfs a NO-OP while
-     * the epoch still stamped {@code _txn.epoch}/{@code _cv.epoch} + the marker past those never-device-
+     * the epoch still saved {@code _txn}/{@code _cv} + the marker past those never-device-
      * flushed rows -> silent row loss on power cut. The {@code _txn} file lives in the table dir (same
      * filesystem as every column) and is mapped for the whole writer lifetime, so its fd is the stable
      * source. Sourced UNCONDITIONALLY: a table-dir {@code openRO} is the defensive fallback (an open writer

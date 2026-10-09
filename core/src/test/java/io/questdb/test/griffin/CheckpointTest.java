@@ -42,6 +42,7 @@ import io.questdb.cairo.CheckpointListener;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableColumnMetadata;
@@ -2175,8 +2176,8 @@ public class CheckpointTest extends AbstractCairoTest {
             }
 
             Assert.assertFalse(
-                    "checkpoint recover must remove stale legacy epoch copies before publishing a fresh baseline",
-                    legacyEpochCopiesExist(token));
+                    "checkpoint recover must remove the stale save point before publishing a fresh baseline",
+                    staleSavePointExists(token));
             try (Path markerPath = new Path(); SnapshotMarker marker = new SnapshotMarker(configuration)) {
                 markerPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
                 marker.of(markerPath.$());
@@ -2192,13 +2193,10 @@ public class CheckpointTest extends AbstractCairoTest {
             final String dbRoot = configuration.getDbRoot();
             final int s = src.of(dbRoot).concat(token).size();
             final int d = dst.of(dbRoot).concat(token).size();
-            // _txn -> _txn.epoch, _cv -> _cv.epoch (real copies); _snapshot marker (content irrelevant to the clear).
+            // A generation-one save point file and a _snapshot marker; their content is irrelevant to the clear.
             Assert.assertTrue(ff.copy(
                     src.trimTo(s).concat(TableUtils.TXN_FILE_NAME).$(),
-                    dst.trimTo(d).concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).$()) >= 0);
-            Assert.assertTrue(ff.copy(
-                    src.trimTo(s).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(),
-                    dst.trimTo(d).concat(TableUtils.COLUMN_VERSION_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).$()) >= 0);
+                    dst.trimTo(d).concat(DurableEpochManifest.FILE_NAME).put(".1").$()) >= 0);
             Assert.assertTrue(ff.touch(dst.trimTo(d).concat(TableUtils.SNAPSHOT_FILE_NAME).$()));
         }
     }
@@ -2207,15 +2205,14 @@ public class CheckpointTest extends AbstractCairoTest {
         try (Path p = new Path()) {
             final int len = p.of(configuration.getDbRoot()).concat(token).size();
             return ff.exists(p.trimTo(len).concat(TableUtils.SNAPSHOT_FILE_NAME).$())
-                    || legacyEpochCopiesExist(token);
+                    || staleSavePointExists(token);
         }
     }
 
-    private boolean legacyEpochCopiesExist(TableToken token) {
+    // The fresh baseline that checkpoint recovery publishes is generation zero; generation one is the stale one.
+    private boolean staleSavePointExists(TableToken token) {
         try (Path p = new Path()) {
-            final int len = p.of(configuration.getDbRoot()).concat(token).size();
-            return ff.exists(p.trimTo(len).concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).$())
-                    || ff.exists(p.trimTo(len).concat(TableUtils.COLUMN_VERSION_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).$());
+            return ff.exists(p.of(configuration.getDbRoot()).concat(token).concat(DurableEpochManifest.FILE_NAME).put(".1").$());
         }
     }
 

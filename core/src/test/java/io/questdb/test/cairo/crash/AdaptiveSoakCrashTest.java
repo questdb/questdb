@@ -357,9 +357,9 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
                             wal[2] <= SEG_PER_WAL_CAP
                     );
                     Assert.assertEquals(
-                            "cycle " + cycle + ": durable-epoch payloads must be EXACTLY _meta/_txn/_cv "
-                                    + "for generations 0 and 1; a different count is an artifact leak",
-                            6, epochCopies
+                            "cycle " + cycle + ": the save point must be EXACTLY one file for each of "
+                                    + "generations 0 and 1; a different count is an artifact leak",
+                            2, epochCopies
                     );
                     // Partition-version leak: exactly ONE live directory per committed day. A recovery rewind or
                     // O3/append that leaks a STALE superseded partition-version copy would leave >1 dir for some
@@ -585,7 +585,7 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
     }
 
     /**
-     * Count bounded generation payloads ({@code _meta/_txn/_cv.epoch.{0,1}}).
+     * Count save point files ({@code _epoch.manifest.{0,1}}) and any separate copy file ({@code *.epoch*}).
      */
     private int countEpochCopies(TableToken tt) {
         final File[] files = tableDir(tt).listFiles();
@@ -593,9 +593,7 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
         if (files != null) {
             for (File file : files) {
                 final String name = file.getName();
-                if (name.startsWith("_meta.epoch.")
-                        || name.startsWith("_txn.epoch.")
-                        || name.startsWith("_cv.epoch.")) {
+                if (name.startsWith("_epoch.manifest.") || name.contains(".epoch")) {
                     n++;
                 }
             }
