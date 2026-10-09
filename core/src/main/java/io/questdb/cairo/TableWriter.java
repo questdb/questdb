@@ -691,7 +691,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             minSplitPartitionTimestamp = findMinSplitPartitionTimestamp();
             clearTodoLog();
             if (isLostTxnRepublishRequired) {
-                // Unlike a torn one, the lost _txn record was intact: a reader may have registered its txn with the
+                // Unlike a torn one, the lost _txn record is intact: a reader may have registered its txn with the
                 // scoreboard before failing on _cv, and the scoreboard refuses any older txn from then on. Publish
                 // the previous transaction's state under the lost txn, as the next commit would have, or no reader
                 // could open the table before that commit. The torn record's slot takes it, so the previous one
@@ -1715,7 +1715,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * In-memory completion of the batched parquet->native conversions queued by
      * {@link #convertPartitionParquetToNative(long, boolean)} calls with {@code doCommit=false}:
-     * if the active partition was converted, reopen the writer's append columns on its new native
+     * if the batch converted the active partition, reopen the writer's append columns on its new native
      * directory so the surrounding column-type change can open its output files there. Empty
      * batch is a no-op.
      * <p>
@@ -5930,7 +5930,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         continue;
                     }
                     // The rule TableReader opens a column by: the column holds rows in this partition when some
-                    // lie below its column top, and it was added at or before this partition or has an entry here.
+                    // lie below its column top, and it has an entry here or its first partition is not later
+                    // than this one.
                     final int recordIndex = columnVersions.getRecordIndex(partitionTimestamp, columnIndex);
                     if (partitionSize <= columnVersions.getColumnTopByIndex(recordIndex)
                             || (recordIndex < 0 && columnVersions.getColumnTopPartitionTimestamp(columnIndex) > partitionTimestamp)) {
@@ -7670,7 +7671,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (Throwable th) {
             if (CairoException.isDataSyncFailure(th)) {
                 distressed = true;
-                // Poison now, throw after the frees below, as the epoch block above does.
+                // Poison at once, throw after the frees below, as the epoch block above does.
                 final CairoError fatal = engine.poisonOnDataSyncFailure(th);
                 if (deferredFatal == null) {
                     deferredFatal = fatal;
@@ -12954,7 +12955,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 } catch (CairoException ex) {
                     if (ex.isDataSyncFailure()) {
                         distressed = true;
-                        // Poison now, throw after the decoder close and munmap below. The fatal error takes
+                        // Poison at once, throw after the decoder close and munmap below. The fatal error takes
                         // precedence over an earlier cleanup error, which it carries as suppressed.
                         final CairoError fatal = engine.poisonOnDataSyncFailure(ex);
                         if (cleanupError != null) {
@@ -14919,7 +14920,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // Always restore path to the table root. If the open above faults, the
                     // rollback-DDL catch calls openMetaFile(ff, path, ...), which assumes path is at
                     // pathSize and concatenates _meta -- a stale _meta.swp suffix would make it open
-                    // "_meta.swp/_meta" (ENOTDIR), fail the revert, and falsely distress the writer.
+                    // "_meta.swp/_meta" (ENOTDIR), fail the rollback, and falsely distress the writer.
                     path.trimTo(pathSize);
                 }
             }
@@ -15034,7 +15035,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * commit may have made newer ones durable: a {@code _meta} or {@code _cv} it moved forward, or a purge
      * of the partition or column versions the previous transaction reads. Without that partition this
      * constructor would drop its rows without a word (see {@link #repairDataGaps(long)}); without the column
-     * file it would create an empty one. Each such shape fails the open and leaves every file as it was.
+     * file it would create an empty one. Each such shape fails the open and leaves every file untouched.
      */
     private void rollbackToPreviousTxn(boolean isTxnTorn) {
         final long txn = txWriter.getTornLiveVersion();
@@ -16525,7 +16526,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
 
-        // Step 3+4: commit pointers durable, data-before-pointer: _cv before _txn.
+        // Steps 3 and 4: the commit pointers, data before pointer: _cv before _txn.
         columnVersionWriter.fsync();
         txWriter.fsync();
 
