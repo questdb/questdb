@@ -1233,6 +1233,11 @@ final class QwpColumnScratch implements QuietCloseable {
      * today's per-batch reset.
      */
     void resetPositions() {
+        // Capture the batch that was just shipped before its positions go, as beginBatch does: a
+        // query that ships its rows in one batch resets here and nowhere else before the next
+        // query's resetForNewQuery, which would otherwise see no peak, trim every buffer back to
+        // its initial size, and leave the next run of the same query to grow them again.
+        updatePeakUsage();
         rowCount = 0;
         nonNullCount = 0;
         nullCount = 0;
