@@ -33,26 +33,22 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * The COMMIT-POINTER sync gate: {@code _txn} ({@code TxWriter.commit}), {@code _cv}
+ * The commit-pointer sync gate: {@code _txn} ({@code TxWriter.commit}), {@code _cv}
  * ({@code ColumnVersionWriter.doCommit}) and the index files ({@code BitmapIndexWriter.commit} /
- * {@code PostingIndexWriter.commit}) must make their per-commit durability decision from
- * {@link CommitMode#appliesColumnSync} -- exactly like the column data they describe.
+ * {@code PostingIndexWriter.commit}) make their per-commit durability decision from
+ * {@link CommitMode#appliesColumnSync}, like the column data they describe.
  *
- * <p>Historically all four sites branched on {@code != NOSYNC}, which treated ADAPTIVE as SYNC-grade: a
- * cost bug on the default path. Under ADAPTIVE the materialized table is a rebuildable cache of the
- * durable WAL, so the apply path is deliberately lazy; flushing {@code _txn}/{@code _cv}/indexes on every
- * apply is precisely the per-commit cost the lazy-apply gate exists to remove, and is not what makes
- * ADAPTIVE crash-safe.
+ * <p>Under ADAPTIVE the materialized table is a rebuildable cache of the durable WAL, so the apply path is
+ * lazy and does not flush {@code _txn}, {@code _cv} or the indexes; the durable epoch forces them.
  *
- * <p>Every assertion below is scoped to ONE table's directory via
- * {@link SyncAttributingFilesFacade}, so sibling tables (telemetry, etc.) cannot pollute the counts.
+ * <p>Every assertion is scoped to one table's directory via {@link SyncAttributingFilesFacade}, so sibling
+ * tables (telemetry, etc.) cannot pollute the counts.
  */
 public class CommitPointerSyncGateTest extends AbstractCairoTest {
 
     /**
-     * ADAPTIVE must NOT flush {@code _txn}/{@code _cv} on every apply -- but the durable EPOCH must force
-     * both, so the laziness never costs crash-safety. Both halves are asserted on the SAME table in one
-     * run, which is what makes this a durability test and not merely a "we removed a flush" test.
+     * ADAPTIVE does not flush {@code _txn}/{@code _cv} on every apply, but the durable epoch forces both,
+     * so the laziness never costs crash safety. Both halves are asserted on the same table in one run.
      */
     @Test
     public void testAdaptiveIsLazyPerApplyButForcedByEpoch() throws Exception {
@@ -66,23 +62,17 @@ public class CommitPointerSyncGateTest extends AbstractCairoTest {
             execute("create table t (ts timestamp, v long) timestamp(ts) partition by day wal");
             final String dir = engine.verifyTableName("t").getDirName();
 
-            // Warm-up: the FIRST apply batch always epochs (lastEpochTs == 0), so get that out of the way
-            // before measuring the steady state. The two rows also establish a max timestamp, and the ADD
-            // COLUMN sets up the one apply-path shape that actually dirties _cv (see below) -- all of it
-            // before the measurement window opens.
+            // Warm-up: the first apply batch always epochs (lastEpochTs == 0). The two rows also establish a
+            // max timestamp, and the ADD COLUMN sets up the apply-path shape that dirties _cv (see below).
             execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
             execute("insert into t values ('2024-01-01T00:00:10.000000Z', 2)");
             execute("alter table t add column extra long");
             drainWalQueue();
 
-            // ---- steady-state apply: no epoch is due, so nothing may be flushed ----
-            // The measured row lands OUT OF ORDER into a partition that carries a COLUMN TOP, and both
-            // halves are load-bearing for the _cv assertion below. ColumnVersionWriter.commit() returns
-            // early unless hasChanges, and under a global SYNC -- a mode that unambiguously demands the
-            // flush -- the measured barrier counts are: plain in-order append _cv=0; pure O3 with no added
-            // column _cv=0; in-order append after ADD COLUMN _cv=0; and only this shape, an O3 rewrite of a
-            // partition carrying a column top, _cv=1. Any of the others would make the assertion VACUOUS --
-            // reading 0 under EVERY commit mode, and so unable to detect the gate regressing at all.
+            // Steady-state apply: no epoch is due, so nothing may be flushed. The row lands out of order
+            // into a partition that carries a column top: ColumnVersionWriter.commit() returns early unless
+            // it has changes, and only an O3 rewrite of a partition with a column top changes _cv. With any
+            // other shape the _cv assertion reads 0 under every commit mode and proves nothing.
             facade.clearCounters();
             execute("insert into t values ('2024-01-01T00:00:05.000000Z', 3, 4)");
             drainWalQueue();
@@ -94,7 +84,7 @@ public class CommitPointerSyncGateTest extends AbstractCairoTest {
                     "ADAPTIVE must not flush _cv on the apply path",
                     0, facade.barrierCount(dir + "/_cv"));
 
-            // ---- the durable epoch must force BOTH, regardless of mode ----
+            // The durable epoch forces both, regardless of mode.
             facade.clearCounters();
             try (io.questdb.cairo.TableWriter w = getWriter(engine.verifyTableName("t"))) {
                 w.advanceDurableEpoch(System.currentTimeMillis());
@@ -113,9 +103,9 @@ public class CommitPointerSyncGateTest extends AbstractCairoTest {
 
     /**
      * The index files follow the same gate as the column they index: lazy under ADAPTIVE on the apply
-     * path, force-flushed by the epoch. The epoch half is the load-bearing one -- {@code commit()}'s
-     * durability flush becoming a no-op under ADAPTIVE is only safe because
-     * {@code fsyncMaterializedState()} now calls {@code sync(false)} on every indexer explicitly.
+     * path, force-flushed by the epoch. The epoch half matters most: skipping {@code commit()}'s flush
+     * under ADAPTIVE is safe only because {@code fsyncMaterializedState()} calls {@code sync(false)} on
+     * every indexer.
      */
     @Test
     public void testAdaptiveIndexIsLazyPerApplyButForcedByEpoch() throws Exception {
@@ -155,8 +145,8 @@ public class CommitPointerSyncGateTest extends AbstractCairoTest {
     }
 
     /**
-     * Pure-function contract for {@code CommitMode.fromString}: an UNRECOGNISED token must be
-     * {@link CommitMode#UNKNOWN}, never a mode. {@code PropServerConfiguration} turns that into a startup
+     * Pure-function contract for {@code CommitMode.fromString}: an unrecognised token maps to
+     * {@link CommitMode#UNKNOWN}, never to a mode. {@code PropServerConfiguration} turns that into a startup
      * failure, so a typo'd {@code cairo.commit.mode=syncc} cannot silently select a weaker durability
      * grade than the operator asked for.
      */
@@ -177,8 +167,8 @@ public class CommitPointerSyncGateTest extends AbstractCairoTest {
 
     /**
      * A {@code nosync} instance must not flush the commit pointers at all. The paired arm is
-     * {@link #testSyncInstanceFlushesCommitPointers}; between them they pin the polarity of the gate, so a
-     * regression that inverts it fails one arm or the other rather than passing both.
+     * {@link #testSyncInstanceFlushesCommitPointers}; together they fix the polarity of the gate, so a
+     * regression that inverts it fails one arm.
      */
     @Test
     public void testNosyncInstanceDoesNotFlushCommitPointers() throws Exception {
@@ -205,9 +195,8 @@ public class CommitPointerSyncGateTest extends AbstractCairoTest {
     }
 
     /**
-     * A {@code sync} instance must flush its {@code _txn} on every commit -- the historical eager grade,
-     * which ADAPTIVE deliberately does not inherit (see
-     * {@link #testAdaptiveIsLazyPerApplyButForcedByEpoch}).
+     * A {@code sync} instance flushes its {@code _txn} on every commit, an eager grade that ADAPTIVE does
+     * not share (see {@link #testAdaptiveIsLazyPerApplyButForcedByEpoch}).
      */
     @Test
     public void testSyncInstanceFlushesCommitPointers() throws Exception {
@@ -233,8 +222,8 @@ public class CommitPointerSyncGateTest extends AbstractCairoTest {
     /**
      * {@code structuralCommitMode} maps ADAPTIVE onto SYNC and leaves every other mode alone.
      * One-shot structural writers (table conversion, WAL staging creation, checkpoint restore) run
-     * outside any table writer and outside the epoch's coverage, so they must NOT inherit the apply-path
-     * laziness -- this helper is what keeps them at their historical {@code != NOSYNC} grade.
+     * outside any table writer and outside the epoch's coverage, so they must not inherit the apply-path
+     * laziness; this helper keeps them at the {@code != NOSYNC} grade.
      */
     @Test
     public void testStructuralCommitModeKeepsAdaptiveSitesEager() {
@@ -243,8 +232,7 @@ public class CommitPointerSyncGateTest extends AbstractCairoTest {
         Assert.assertEquals(CommitMode.SYNC, CommitMode.structuralCommitMode(CommitMode.SYNC));
         Assert.assertEquals(CommitMode.ASYNC, CommitMode.structuralCommitMode(CommitMode.ASYNC));
 
-        // The mapped grades must land on the same side of the apply-path gate as before the change:
-        // ADAPTIVE-as-structural flushes, NOSYNC still does not.
+        // ADAPTIVE mapped as structural flushes; NOSYNC does not.
         Assert.assertTrue(CommitMode.appliesColumnSync(CommitMode.structuralCommitMode(CommitMode.ADAPTIVE)));
         Assert.assertFalse(CommitMode.appliesColumnSync(CommitMode.structuralCommitMode(CommitMode.NOSYNC)));
     }
