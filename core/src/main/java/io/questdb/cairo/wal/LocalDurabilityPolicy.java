@@ -48,13 +48,14 @@ public interface LocalDurabilityPolicy {
 
     /**
      * Installed by Enterprise while a node is a replica: skip the adaptive durable epoch, the per-batch
-     * {@code fsyncMaterializedState} + durable epoch copies. A replica keeps its applied columns at
+     * {@code fsyncMaterializedState} and save point. A replica keeps its applied columns at
      * {@link CommitMode#NOSYNC} grade; the object store holds the durable copy.
      * <p>
      * Nothing downloads WAL again after a crash: the downloader resumes from the local {@code _txnlog}. So
      * a replica must not keep an anchor that startup would rewind the table to, because the WAL purge job
      * keeps no epoch floor here and replay would need WAL it has deleted. The replica keeps no save point, and
-     * startup leaves each table at its live cut. See {@code TableWriter.reconcileDurableEpochAnchor}.
+     * startup leaves each table at its live cut. A table is made durable before its save point goes, since nothing
+     * restores its lazily applied state afterwards. See {@code TableWriter.reconcileDurableEpochAnchor}.
      */
     LocalDurabilityPolicy REPLICA_SKIP = () -> false;
 
