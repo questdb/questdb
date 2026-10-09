@@ -1515,6 +1515,47 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
      * idempotent.
      */
     @Test
+    public void testReadSavePointHeaderIgnoresErrnoOfAbsentFile() throws Exception {
+        // The facade reports one errno for every failure, as some test facades do. An absent save point file reads
+        // as absent through every reader of the headers; one that exists but cannot be opened is still a failure.
+        final AtomicBoolean failOpen = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int errno() {
+                return 999;
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (failOpen.get() && Utf8s.containsAscii(name, io.questdb.cairo.DurableEpochManifest.FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            final long scratch = Unsafe.malloc(io.questdb.cairo.DurableEpochManifest.FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            try (Path path = new Path()) {
+                Files.createDirectories(Paths.get(root, "probe"));
+                final int rootLen = path.of(root).concat("probe").size();
+                Assert.assertFalse(io.questdb.cairo.DurableEpochManifest.removeUnpublished(configuration, path, rootLen, 1));
+                Assert.assertEquals(0, io.questdb.cairo.DurableEpochManifest.loadCandidates(ff, path, rootLen, 1).length);
+                Assert.assertEquals(Long.MAX_VALUE, io.questdb.cairo.DurableEpochManifest.readLowestSeqTxn(ff, path, rootLen, 1, scratch));
+
+                Files.write(Paths.get(root, "probe", io.questdb.cairo.DurableEpochManifest.FILE_NAME + ".0"), new byte[0]);
+                failOpen.set(true);
+                final String expected = "could not open adaptive save point";
+                TestUtils.assertContains(Assert.assertThrows(CairoException.class, () -> io.questdb.cairo.DurableEpochManifest.removeUnpublished(configuration, path, rootLen, 1)).getFlyweightMessage(), expected);
+                TestUtils.assertContains(Assert.assertThrows(CairoException.class, () -> io.questdb.cairo.DurableEpochManifest.loadCandidates(ff, path, rootLen, 1)).getFlyweightMessage(), expected);
+                // The WAL purge floor reads a failure as seqTxn 0, which keeps every WAL segment.
+                Assert.assertEquals(0, io.questdb.cairo.DurableEpochManifest.readLowestSeqTxn(ff, path, rootLen, 1, scratch));
+            } finally {
+                Unsafe.free(scratch, io.questdb.cairo.DurableEpochManifest.FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testRemoveAdaptiveEpochArtifactsRemovesTrioOnly() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");

@@ -768,8 +768,14 @@ public final class DurableEpochManifest {
     // one call after its sections are durable, so a file without magic, of an older format or shorter than a header
     // was never published, and one with magic that fails a check is damaged.
     private static int readHeader(FilesFacade ff, Path path, int tableId, int generation, long scratch) {
+        // Probe first: whether a failed open means "absent" must not depend on errno, which some facades report
+        // for every failure. A file that exists but cannot be opened still fails.
+        if (!ff.exists(path.$())) {
+            return HEADER_ABSENT;
+        }
         final long fd = ff.openRO(path.$());
         if (fd < 0) {
+            // Removed since the probe.
             if (Files.isErrnoFileDoesNotExist(ff.errno())) {
                 return HEADER_ABSENT;
             }
