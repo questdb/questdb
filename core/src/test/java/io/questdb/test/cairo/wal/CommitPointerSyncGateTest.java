@@ -35,14 +35,9 @@ import org.junit.Test;
 /**
  * The commit-pointer sync gate: {@code _txn} ({@code TxWriter.commit}), {@code _cv}
  * ({@code ColumnVersionWriter.doCommit}) and the index files ({@code BitmapIndexWriter.commit} /
- * {@code PostingIndexWriter.commit}) make their per-commit durability decision from
- * {@link CommitMode#appliesColumnSync}, like the column data they describe.
- *
- * <p>Under ADAPTIVE the materialized table is a rebuildable cache of the durable WAL, so the apply path is
- * lazy and does not flush {@code _txn}, {@code _cv} or the indexes; the durable epoch forces them.
- *
- * <p>Every assertion is scoped to one table's directory via {@link SyncAttributingFilesFacade}, so sibling
- * tables (telemetry, etc.) cannot pollute the counts.
+ * {@code PostingIndexWriter.commit}) decide per-commit durability from {@link CommitMode#appliesColumnSync},
+ * like the column data they describe. Under ADAPTIVE apply does not flush them; the durable epoch does.
+ * {@link SyncAttributingFilesFacade} scopes every count to one table's directory.
  */
 public class CommitPointerSyncGateTest extends AbstractCairoTest {
 
