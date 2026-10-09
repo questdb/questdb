@@ -155,14 +155,13 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
     }
 
     /**
-     * A representative REWINDING crash point within the LAZY_M batch's durability-op range: recovery must
-     * rewind {@code _txn}/{@code _cv} to the LAZY_K durable-epoch cut and re-derive only PART of the gap
-     * from the durable WAL, landing on a genuine, non-degenerate PARTIAL result (more than LAZY_K, fewer
-     * than ROWS) — chosen from this class's own sweep staircase (see {@link
-     * #testIndexedSymbolLazyGapSweepRecoversCleanlyAtEveryCrashPoint}'s logged {@code recoveredByK}) the
-     * same way {@code AdaptiveO3CrashSweepTest.LAZY_GAP_CRASH_K} was.
+     * The rewinding crash point, pinned by phase rather than by an op count: this many lazy rows are applied,
+     * each as its own txn, and the crash fires on the first durability op of the next lazy row's commit,
+     * before that row's WAL is durable. Recovery rewinds {@code _txn}/{@code _cv} to the LAZY_K durable-epoch
+     * cut and replays the applied rows from the durable WAL, a partial result ({@code LAZY_K} plus this many
+     * rows) whatever the number of ops per commit.
      */
-    private static final int REPRESENTATIVE_REWIND_CRASH_K = 30;
+    private static final int REWIND_APPLIED_LAZY_ROWS = 2;
 
     /**
      * DATA BEFORE POINTER, for an indexed-symbol lazy gap.
@@ -177,13 +176,11 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
      * those writes on the table's EFFECTIVE mode made the pointer as lazy as the data it describes, and
      * with it the torn-forward window disappeared.
      *
-     * <p>Measured by flipping that one predicate back, nothing else: with the old global gate the
-     * post-crash {@code _txn} claims a seqTxn past the LAZY_K=4 durable cut (5 and 6, depending on where
-     * in the batch the crash lands — 6 at this test's crash point), and the recovery-disabled arm reads
-     * back the zero-fill shape, {@code [0, 0, 1, 2, 3]} where {@code [0, 1, 2, 3, 4]} was committed. With
-     * the effective-mode gate {@code _txn} sits exactly at the durable cut and BOTH arms read back the same
-     * correct prefix — at every one of the sweep's crash points, not just this one, which is what rules out
-     * "the pinned k drifted off a rewinding op".
+     * <p>A {@code _txn} flushed on the instance-global mode claims the applied lazy rows past the LAZY_K=4
+     * durable cut (seqTxn 6 at this test's crash point), and the recovery-disabled arm reads them back
+     * zero-filled, {@code [0, 0, 0, 1, 2, 3]} where {@code [0, 1, 2, 3, 4, 5]} is committed. With the
+     * effective-mode gate {@code _txn} sits exactly at the durable cut and both arms read back the same
+     * correct prefix.
      *
      * <p>So the comparison the old assertion made can no longer distinguish anything, and re-pinning it
      * would only pin the absence of a fixed defect. What is asserted instead is the invariant that replaced
@@ -193,10 +190,10 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
      */
     @Test
     public void testCommitPointerNeverPublishedAheadOfDataForIndexedSymbolLazyGap() throws Exception {
-        final VsAndSyms withRecovery = runLazyGapCrashScenario(REPRESENTATIVE_REWIND_CRASH_K, true);
-        final VsAndSyms withoutRecovery = runLazyGapCrashScenario(REPRESENTATIVE_REWIND_CRASH_K, false);
+        final VsAndSyms withRecovery = runLazyGapCrashScenario(REWIND_APPLIED_LAZY_ROWS, true);
+        final VsAndSyms withoutRecovery = runLazyGapCrashScenario(REWIND_APPLIED_LAZY_ROWS, false);
 
-        LOG.info().$("[indexed-symbol lazy-gap negative control] k=").$(REPRESENTATIVE_REWIND_CRASH_K)
+        LOG.info().$("[indexed-symbol lazy-gap negative control] appliedLazyRows=").$(REWIND_APPLIED_LAZY_ROWS)
                 .$(" withRecovery.vs=").$(withRecovery.vs.toString())
                 .$(" withRecovery.syms=").$(withRecovery.syms.toString())
                 .$(" withoutRecovery.vs=").$(withoutRecovery.vs.toString())
@@ -207,10 +204,15 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
         // not merely a negative-control finding.
         assertValidIdentityAndSymbolPrefix("withRecovery", withRecovery);
         Assert.assertTrue(
-                "k=" + REPRESENTATIVE_REWIND_CRASH_K + " (recovery enabled) must land on a non-degenerate "
+                "the crash (recovery enabled) must land on a non-degenerate "
                         + "PARTIAL result for this comparison to be meaningful (withRecovery.vs="
                         + withRecovery.vs + ")",
                 withRecovery.vs.size() > LAZY_K && withRecovery.vs.size() < ROWS
+        );
+        Assert.assertEquals(
+                "the crash must land after " + REWIND_APPLIED_LAZY_ROWS + " lazy applies and before the next "
+                        + "lazy row's WAL is durable (withRecovery.vs=" + withRecovery.vs + ")",
+                LAZY_K + REWIND_APPLIED_LAZY_ROWS, withRecovery.vs.size()
         );
 
         // WITHOUT recovery: disabled-recovery must not show MORE surviving rows than recovery-enabled at
@@ -226,8 +228,8 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
         // THE INVARIANT (data before pointer), asserted BEFORE the row check below so that a regression
         // reports its CAUSE rather than its symptom. The crash left _txn at or below the durable epoch cut
         // in both arms: no reader can be shown a row whose column data was never flushed, recovery or not.
-        // Reverting the TxWriter gate to the old global `!= NOSYNC` branch takes this seqTxn to 5 and 6
-        // against a cut of LAZY_K=4.
+        // A TxWriter gate on the instance-global mode (`!= NOSYNC`) takes this seqTxn to 6 against a cut of
+        // LAZY_K=4.
         for (VsAndSyms arm : new VsAndSyms[]{withRecovery, withoutRecovery}) {
             Assert.assertTrue(
                     "the crash must not leave _txn claiming past the durable epoch cut: the commit pointer "
@@ -246,12 +248,13 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
 
     /**
      * Runs the LAZY_K/LAZY_M lazy-gap scenario once: LAZY_K rows -&gt; durable epoch -&gt; LAZY_M more rows
-     * applied lazily (epoch disabled) -&gt; crash at durability op {@code k} of the LAZY_M batch -&gt; the
+     * applied lazily (epoch disabled) -&gt; crash on the first durability op of the commit of lazy row
+     * {@code appliedLazyRows} (counted from 0), after that many lazy applies -&gt; the
      * recovery triple with {@code RecoveryCoordinator.recover()} included or skipped per {@code
      * recoveryOn} -&gt; returns the recovered (v, s) pairs ordered by v (tolerant of a loud torn read).
      * Leak-safe: drops the table + reclaims per-cycle fds before returning, mirroring the sweep driver.
      */
-    private VsAndSyms runLazyGapCrashScenario(int k, boolean recoveryOn) throws Exception {
+    private VsAndSyms runLazyGapCrashScenario(int appliedLazyRows, boolean recoveryOn) throws Exception {
         final VsAndSyms[] resultBox = new VsAndSyms[1];
         final long[] preRecoverySeqTxn = {-1};
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
@@ -280,9 +283,14 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
                 final Set<Long> fdBaseline = new HashSet<>(crashFf.noCacheOpenFdsSnapshot());
                 markDurableBaseline();
                 final int base = crashFf.durabilityOpCount();
-                crashFf.armCrashAt(base + k);
+                int crashOp = -1;
                 try {
                     for (int i = LAZY_K; i < LAZY_K + LAZY_M; i++) {
+                        if (i == LAZY_K + appliedLazyRows) {
+                            // the first durability op of this row's commit
+                            crashOp = crashFf.durabilityOpCount() + 1;
+                            crashFf.armCrashAt(crashOp);
+                        }
                         insertRow(table, i);
                         drainWalQueue();
                         if (anyTableSuspended(tt)) {
@@ -292,6 +300,14 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
                 } catch (CrashSimulationError propagated) {
                     // expected: the armed crash fired during the WAL-commit fsync path
                 }
+                Assert.assertTrue(
+                        "the lazy batch must reach row " + (LAZY_K + appliedLazyRows) + " to arm the crash",
+                        crashOp > 0
+                );
+                Assert.assertFalse("the armed crash must fire", crashFf.isCrashArmed());
+                final String crashedOp = crashFf.durabilityOpLog().get(crashOp - 1);
+                LOG.info().$("[indexed-symbol lazy-gap negative control] recovery=").$(recoveryOn)
+                        .$(" crash at k=").$(crashOp - base).$(" of the lazy batch: ").$(crashedOp).$();
 
                 // Driver-faithful recovery EXCEPT the recovery-enabled flag is the toggled variable.
                 engine.releaseAllReaders();
