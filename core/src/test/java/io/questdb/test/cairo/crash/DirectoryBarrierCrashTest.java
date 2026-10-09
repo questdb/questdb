@@ -150,6 +150,12 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
+    public void testAsyncConvertToParquetWalFailedSquashFsyncIsNotFailStop() throws Exception {
+        // the squash fsyncs the column data it copies under ASYNC; NOSYNC and ADAPTIVE take no sync there
+        assertConvertToParquetSquashSyncFailure("async", new FsyncFailureFacade("squashPartitionForce", 0, false));
+    }
+
+    @Test
     public void testNoSyncAddColumnFailedDirFsyncIsNotFailStop() throws Exception {
         assertAddColumnDirFsyncFailureIsNotFailStop("nosync");
     }
@@ -361,6 +367,11 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testSyncConvertToParquetWalFailedDataFsyncIsFailStop() throws Exception {
         assertConvertToParquetSyncFailure("sync", true, new FsyncFailureFacade("produceParquetFromNative", 0, false));
+    }
+
+    @Test
+    public void testSyncConvertToParquetWalFailedSquashMsyncIsFailStop() throws Exception {
+        assertConvertToParquetSquashSyncFailure("sync", new FsyncFailureFacade("squashPartitionForce", 0, true));
     }
 
     @Test
@@ -644,6 +655,32 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
                 () -> execute("ALTER TABLE x ALTER COLUMN v TYPE " + newType),
                 "cthConvertPartitionHandler",
                 skipCount
+        );
+    }
+
+    /**
+     * CONVERT TO PARQUET of a WAL table's active partition first squashes the parts an out-of-order insert split it
+     * into. A data sync of that squash fails. Under SYNC and ADAPTIVE the engine must be poisoned, as for a failed
+     * data sync of the conversion itself; otherwise the apply fails and the engine keeps taking writes.
+     */
+    private void assertConvertToParquetSquashSyncFailure(String commitMode, FsyncFailureFacade ff) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 << 10);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
+        assertSyncFailure(
+                commitMode,
+                true,
+                () -> {
+                    execute("INSERT INTO x SELECT timestamp_sequence('2024-01-03T00:01', 60_000_000L), 'a', x FROM long_sequence(1320)");
+                    drainWalQueue();
+                    execute("INSERT INTO x SELECT timestamp_sequence('2024-01-03T20:01', 1_000_000L), 'b', x FROM long_sequence(200)");
+                    drainWalQueue();
+                    try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                        Assert.assertEquals("the active partition must be split", 4, reader.getTxFile().getPartitionCount());
+                    }
+                },
+                () -> execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-03'"),
+                ff,
+                "sync".equals(commitMode) || "adaptive".equals(commitMode)
         );
     }
 
