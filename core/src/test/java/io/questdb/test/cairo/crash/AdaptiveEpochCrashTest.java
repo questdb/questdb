@@ -265,13 +265,28 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
+    public void testFailedHeaderSyncThenRestartNextSavePointThenPowerLoss() throws Exception {
+        assertFailedHeaderSyncThenRestartKeepsData(false, true);
+    }
+
+    @Test
     public void testFailedHeaderSyncThenRestartVacuumThenPowerLoss() throws Exception {
         assertFailedHeaderSyncKeepsData(true, false);
     }
 
     @Test
+    public void testFailedHeaderSyncThenRestartWalPurgeThenPowerLoss() throws Exception {
+        assertFailedHeaderSyncThenRestartKeepsData(false, false);
+    }
+
+    @Test
     public void testFailedHeaderSyncThenRestartWriterOpenThenPowerLoss() throws Exception {
         assertFailedHeaderSyncKeepsData(true, true);
+    }
+
+    @Test
+    public void testFailedHeaderSyncThenRestartWriterOpenWalPurgeThenPowerLoss() throws Exception {
+        assertFailedHeaderSyncThenRestartKeepsData(true, false);
     }
 
     /**
@@ -777,16 +792,7 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
             insertRows(s, 0, 2, true, false, true);
             drainWalQueue();
             engine.releaseAllReaders();
-            faultFf.isHeaderSyncDropped = true;
-            Throwable failure = null;
-            try {
-                publishSavePoint(s);
-            } catch (CairoException | CairoError th) {
-                failure = th;
-            }
-            Assert.assertFalse("the header sync must have been reached", faultFf.isHeaderSyncDropped);
-            Assert.assertNotNull("the failed header sync must fail the save point", failure);
-            engine.resetDurabilityFailure();
+            publishSavePointWithFailedHeaderSync(s);
             if (isRestartedFirst) {
                 engine.releaseAllReaders();
                 engine.releaseAllWriters();
@@ -812,6 +818,65 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                 }
             }
             powerLossAndCheck(s, isRestartedFirst ? (isWriterOpened ? "restart, writer open, purge" : "restart, VACUUM, purge") : "power loss");
+            assertNoRowFailures();
+        });
+    }
+
+    /**
+     * Rows appended in a second WAL, then the header sync of the save point that covers them fails and leaves the
+     * header only in the page cache. A restart without a power loss selects that save point. Before the power loss,
+     * either the WAL purge runs (no partition version is superseded, so a writer open has nothing to purge), or the
+     * next save point dies at its own header sync, after it has overwritten the other generation. Whichever save
+     * point recovery then selects must be valid on the device and still have its WAL.
+     *
+     * @param isWriterOpened      the WAL apply and a writer open run before the WAL purge
+     * @param isNextSavePointTorn the next save point dies at its header sync instead of the WAL purge running
+     */
+    private void assertFailedHeaderSyncThenRestartKeepsData(boolean isWriterOpened, boolean isNextSavePointTorn) throws Exception {
+        runWithFaultFacade(() -> {
+            configureSavePoints();
+            final Scenario s = newScenario("hdrw");
+            insertRows(s, 0, 2);
+            insertRows(s, 1, 2);
+            drainWalQueue();
+            engine.releaseAllWalWriters();
+            publishSavePoint(s);
+            markDurableBaseline();
+            insertRows(s, 1, 2);
+            drainWalQueue();
+            engine.releaseAllWalWriters();
+            engine.releaseAllReaders();
+            publishSavePointWithFailedHeaderSync(s);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            engine.releaseAllWalWriters();
+            restart(s);
+            new RecoveryCoordinator(engine).recover();
+            if (isWriterOpened) {
+                engine.notifyWalTxnRepublisher(s.token);
+                drainWalQueue();
+                try (TableWriter w = getWriter(s.token)) {
+                    Assert.assertNotNull(w);
+                }
+                engine.releaseAllWriters();
+            }
+            if (isNextSavePointTorn) {
+                engine.notifyWalTxnRepublisher(s.token);
+                drainWalQueue();
+                engine.releaseAllReaders();
+                publishSavePointWithFailedHeaderSync(s);
+                powerLoss(s);
+                Assert.assertTrue("the power loss must leave a valid save point on the device", savePointCount(s) > 0);
+                restartAndCheck(s, "restart, next save point torn", false);
+            } else {
+                purgeWal();
+                // the filesystem journals the directory changes on its own, as ext4 does within seconds
+                try (Path path = new Path()) {
+                    path.of(root).concat(s.token.getDirName());
+                    faultFf.fsyncAndClose(faultFf.openRO(path.$()));
+                }
+                powerLossAndCheck(s, isWriterOpened ? "restart, writer open, WAL purge" : "restart, WAL purge");
+            }
             assertNoRowFailures();
         });
     }
@@ -1013,6 +1078,21 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         try (TableWriter w = getWriter(s.token)) {
             w.advanceDurableEpoch(nowMs());
         }
+    }
+
+    // The header sync fails and the header stays only in the page cache; the engine stops, and the next process
+    // starts without the failure.
+    private void publishSavePointWithFailedHeaderSync(Scenario s) {
+        faultFf.isHeaderSyncDropped = true;
+        Throwable failure = null;
+        try {
+            publishSavePoint(s);
+        } catch (CairoException | CairoError th) {
+            failure = th;
+        }
+        Assert.assertFalse("the header sync must have been reached", faultFf.isHeaderSyncDropped);
+        Assert.assertNotNull("the failed header sync must fail the save point", failure);
+        engine.resetDurabilityFailure();
     }
 
     private void purgePartitions() {
@@ -1270,8 +1350,12 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
             if (isHeaderSyncDropped && StackWalker.getInstance().walk(frames -> frames.anyMatch(
                     frame -> frame.getClassName().endsWith(".DurableEpochManifest") && frame.getMethodName().equals("write")))
             ) {
-                // the header write stays in the page cache
+                // the header write stays in the page cache; the kernel marks the page clean after the failed
+                // writeback, so the device keeps the old content until the file is written again
                 isHeaderSyncDropped = false;
+                final String path = pathOf(fd);
+                final byte[] durable = durableContentOf(path);
+                frozenContent.put(path, durable != null ? durable.clone() : new byte[0]);
                 faultedOp = "fsyncDurable of the save point header";
                 throw CairoException.dataSyncFailure(EIO, "fsyncDurable");
             }
@@ -1353,7 +1437,13 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
 
         @Override
         public long write(long fd, long address, long len, long offset) {
-            return ioFault("write", null) ? -1 : super.write(fd, address, len, offset);
+            if (ioFault("write", null)) {
+                return -1;
+            }
+            if (!frozenContent.isEmpty()) {
+                frozenContent.remove(pathOf(fd));
+            }
+            return super.write(fd, address, len, offset);
         }
 
         void armCrashAfterRemoval(int removal) {

@@ -611,6 +611,12 @@ public class RecoveryCoordinator {
                     .put(DurableEpochManifest.FILE_NAME).put(".1 out of the table directory and start again;")
                     .put(" after a power loss, restore the table from a backup or a checkpoint");
         }
+        // The selected save point may be only in the page cache; the purges and the next save point trust it from
+        // here on.
+        if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+            tablePath(dir, token);
+            DurableEpochManifest.rewriteHeader(ff, dir, dir.size(), selected.generation);
+        }
         if (rejected != null) {
             removeRejectedGeneration(token, dir, rejected);
         }
