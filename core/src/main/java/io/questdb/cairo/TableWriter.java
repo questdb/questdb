@@ -16103,22 +16103,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Apply-path column-sync gate. Thin alias for {@link CommitMode#appliesColumnSync(int)} (the
-     * single source of truth, shared with {@code O3CopyJob}'s destination-column sync). Returns true
-     * only for SYNC/ASYNC; ADAPTIVE is lazy on the apply side (durability via the epoch + recovery
-     * roll-forward). See {@link CommitMode#appliesColumnSync(int)} for the full rationale.
+     * The apply-path column-sync gate: an alias for {@link CommitMode#appliesColumnSync(int)}, which
+     * {@code O3CopyJob}'s destination-column sync shares. True only for SYNC and ASYNC: ADAPTIVE applies
+     * lazily, and the epoch and recovery make the columns durable.
      */
     private static boolean appliesColumnSync(int commitMode) {
         return CommitMode.appliesColumnSync(commitMode);
     }
 
     /**
-     * The EFFECTIVE commit mode for an apply-path COLUMN-DATA sync: the configured mode when
-     * {@link #appliesColumnSync(int)} is true, otherwise {@link CommitMode#NOSYNC}. Passed to
-     * {@link io.questdb.cairo.frm.FrameAlgebra#append} at the partition split/squash sites so those
-     * column writes skip their msync/fsync under ADAPTIVE (lazy apply), exactly like the O3 path —
-     * while every other (structural) effect of split/squash, recorded via {@code _txn}/{@code _cv},
-     * stays as durable as the commit mode dictates. NOSYNC and the structural metadata are untouched.
+     * The commit mode for an apply-path column-data sync: the writer's mode when
+     * {@link #appliesColumnSync(int)} is true, otherwise {@link CommitMode#NOSYNC}. The partition split
+     * and squash sites pass it to {@link io.questdb.cairo.frm.FrameAlgebra#append}, so those column writes
+     * skip their msync and fsync under ADAPTIVE (lazy apply), as the O3 path does, while the structural
+     * effects of the split or squash, recorded in {@code _txn} and {@code _cv}, stay as durable as the
+     * commit mode makes them.
      */
     private int applyColumnSyncMode() {
         // This writer's own grade, not the raw global mode: a table held at SYNC pending adaptive
@@ -16132,9 +16131,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Always commit indexers: PostingIndexWriter buffers add() calls in native
         // memory and only publishes them to the memory-mapped files during commit().
         // Without this, readers see keyCount=0 until the writer is closed (seal).
-        // commit()'s DURABILITY flush is itself mode-gated on the same appliesColumnSync
-        // predicate as the column block below (no-op under NOSYNC *and* ADAPTIVE), so
-        // calling it unconditionally here costs nothing in those modes.
+        // commit()'s durability flush is gated on the same appliesColumnSync predicate as
+        // the column block below (a no-op under NOSYNC and ADAPTIVE), so calling it
+        // unconditionally here costs nothing in those modes.
         //
         // The publish-txn announced here is the one any in-process seal
         // should record as the visibility boundary of its new sealed files.
@@ -16148,14 +16147,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 throwDistressException(e);
             }
         }
-        // ADAPTIVE skips this block: the WAL is durable (Task A fdatasync), so the table partition
-        // columns are a rebuildable cache — no apply-side flush needed. See appliesColumnSync().
+        // ADAPTIVE skips this block: the WAL is durable, so the partition columns are a cache that
+        // recovery rebuilds, and the apply side needs no flush. See appliesColumnSync().
         if (appliesColumnSync(commitMode)) {
-            // Per-file sync(async) — byte-identical to master — for SYNC and ASYNC commits.
-            // (The batched KICK/DRAIN/syncfs machinery below is reserved for the adaptive durable
-            // epoch — see fsyncMaterializedState() — which forces a whole-filesystem flush
-            // independent of commit mode. Routing per-commit SYNC apply through it was reverted:
-            // see FastCommitCheck for why per-file msync(MS_SYNC) is the proven-durable baseline.)
+            // Per-file sync(async) for SYNC and ASYNC commits. The batched kick, drain and syncfs
+            // passes (syncColumnsBatchedSync()) serve only the adaptive durable epoch, which flushes
+            // the whole filesystem whatever the commit mode (see fsyncMaterializedState()); see
+            // FastCommitCheck for why a SYNC commit keeps the per-file msync(MS_SYNC).
             final boolean async = commitMode == CommitMode.ASYNC;
             syncColumns0(async);
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
@@ -16169,19 +16167,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void syncColumns0(boolean async) {
-        // Durability ordering matters here. For variable-size columns the aux vector
-        // (secondary) stores offsets that point into the data vector (primary). If the
-        // aux became durable before the data it references, a crash could leave an aux
-        // entry pointing past the end of the durable data - a dangling pointer into
-        // not-yet-written bytes. So always sync the data (primary, i*2) before the aux
-        // (secondary, i*2+1): the pointer's target is made durable first. syncColumns()
-        // runs before txWriter.commit(), so both column vectors are durable before the
-        // _txn file that exposes the new row count. (In CommitMode.SYNC msync blocks;
-        // in ASYNC it only schedules writeback, so this is best-effort program order.)
-        // Note: under the default CommitMode.NOSYNC, syncColumns() never calls this
-        // method - no msync/fsync happens at all and recent commits may be lost or torn
-        // on power loss by design. Recovery's torn-tail guard (VarcharTypeDriver /
-        // StringTypeDriver setAppendPosition) is the only crash protection in that mode.
+        // For variable-size columns the aux vector (secondary) holds offsets into the data
+        // vector (primary). An aux that became durable before its data could point past the
+        // end of the durable data after a crash, so the data (i*2) syncs before the aux
+        // (i*2+1). syncColumns() runs before txWriter.commit(), so both vectors are durable
+        // before the _txn that exposes the new row count. Under SYNC msync blocks; under ASYNC
+        // it only schedules writeback, so the order is best effort. Under NOSYNC syncColumns()
+        // never calls this method, and recovery's torn-tail guard (VarcharTypeDriver and
+        // StringTypeDriver setAppendPosition) is the only crash protection.
         for (int i = 0; i < columnCount; i++) {
             columns.getQuick(i * 2).sync(async);          // data (primary) first
             final MemoryMA m2 = columns.getQuick(i * 2 + 1);
@@ -16192,33 +16185,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Linux SYNC-mode batched column+symbol flush. Three passes over the SAME data-before-aux traversal
-     * (columns first, then symbol writers):
+     * The Linux batched column and symbol flush of the adaptive durable epoch ({@link #fsyncMaterializedState()}).
+     * Three passes over the same data-before-aux traversal (columns first, then symbol writers):
      * <ol>
-     *   <li>KICK: msync(MS_ASYNC) every dirty mem's written range -> pushes mmap-dirty pages to the page
-     *       cache (so the following sync_file_range can see them). No device flush, no watermark advance.</li>
-     *   <li>DRAIN: sync_file_range(WRITE | WAIT_AFTER) every mem -> writes the page-cache-dirty range back to
-     *       the device cache and WAITS. No device flush, no watermark advance. The WAIT is what guarantees the
-     *       content is in the device cache before the syncfs below flushes it.</li>
-     *   <li>SYNCFS: ONE syncfs(fd) over the table's filesystem. This is the single device flush that makes
-     *       ALL drained columns durable AND — crucially — journals every column inode's pending ext4
-     *       unwritten->written extent conversions (and i_size) in that same journal commit. This replaces the
-     *       earlier, BROKEN reliance on _cv's later msync(MS_SYNC) to flush the columns: that device flush
-     *       persisted the column DATA blocks but did NOT journal the column files' extent conversions, so a
-     *       power cut could read just-committed columns back as zeros (proven by power-cut-dmflakey.sh). A
-     *       micro-test proved syncfs DOES journal those conversions durably across the same cut.</li>
-     *   <li>FINISH-IF-EXTENDED: watermark bookkeeping ONLY. syncfs already journaled i_size + extents for
-     *       every column, so the per-column fdatasync that used to live here is now REDUNDANT and is dropped;
-     *       each mem merely advances its lastSynced* watermark to the now-durable size.</li>
+     *   <li>kick: msync(MS_ASYNC) every dirty mem's written range, which pushes mmap-dirty pages to the page
+     *       cache, where the following sync_file_range sees them. No device flush, no watermark advance.</li>
+     *   <li>drain: sync_file_range(WRITE | WAIT_AFTER) every mem, which writes the dirty range back to the
+     *       device cache and waits, so the content is there before the syncfs flushes it.</li>
+     *   <li>syncfs: one syncfs(fd) over the table's filesystem, the single device flush that makes every drained
+     *       column durable and journals each column inode's pending ext4 unwritten-to-written extent conversions
+     *       and size in the same journal commit. A device flush through _cv's msync(MS_SYNC) persists the column
+     *       data blocks but not those conversions, so a power cut could read just-committed columns back as
+     *       zeros.</li>
+     *   <li>finish-if-extended: watermark bookkeeping only. syncfs journaled every column's size and extents, so
+     *       each mem advances its lastSynced* watermark to the durable size without an fdatasync.</li>
      * </ol>
-     * Splitting into passes lets the kernel writeback proceed in parallel across files between the kicks and
-     * the waits. The kicks/drains are order-free; the data-before-aux traversal is preserved for clarity. The
-     * durability order of the overall commit is: columns durable HERE (syncfs) -> _cv durable
-     * (columnVersionWriter.commit's own msync(MS_SYNC)) -> _txn durable LAST (txWriter.commit's own
-     * msync(MS_SYNC)), so the visibility pointer becomes durable only after everything it exposes.
+     * The passes let kernel writeback proceed in parallel across files between the kicks and the waits; kicks
+     * and drains are order-free. The caller then makes _cv and then _txn durable, so the visibility pointer
+     * becomes durable only after everything it exposes.
      */
     private void syncColumnsBatchedSync() {
-        // Pass 1: KICK all columns (data before aux) then all symbol writers.
+        // Pass 1: kick all columns (data before aux), then all symbol writers.
         for (int i = 0; i < columnCount; i++) {
             final MemoryMA m1 = columns.getQuick(i * 2);
             m1.syncFlushKick();
@@ -16230,7 +16217,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
             denseSymbolMapWriters.getQuick(i).syncFlushKick();
         }
-        // Pass 2: DRAIN all (writeback to device cache + WAIT). Order-free.
+        // Pass 2: drain all (writeback to the device cache, then wait). Order-free.
         for (int i = 0; i < columnCount; i++) {
             columns.getQuick(i * 2).syncFlushDrain();
             final MemoryMA m2 = columns.getQuick(i * 2 + 1);
@@ -16241,15 +16228,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
             denseSymbolMapWriters.getQuick(i).syncFlushDrain();
         }
-        // Pass 2.5: SYNCFS once over the table's filesystem AFTER all columns+symbols are drained. This is the
-        // single device flush that makes every drained column durable AND journals all their ext4 extent
-        // conversions + i_size in one journal commit (replacing the broken reliance on _cv's flush, which did
-        // not journal the column files' extent conversions). CRIT-1: the fd is sourced from a STABLE
-        // table-level file (the _txn fd), NOT an open column, so this NEVER no-ops when every column is closed
-        // (convert-last-partition / graceful-close) — see fsyncMaterializedStateSyncFs().
+        // Pass 2.5: syncfs once over the table's filesystem, after all columns and symbols are drained: the
+        // single device flush that makes every drained column durable and journals their ext4 extent
+        // conversions and sizes in one journal commit. The fd comes from the _txn file, not an open column, so
+        // this flush happens even when every column is closed; see fsyncMaterializedStateSyncFs().
         fsyncMaterializedStateSyncFs();
-        // Pass 3: FINISH-IF-EXTENDED (watermark bookkeeping ONLY; the per-file fdatasync is now redundant —
-        // the syncfs above already journaled i_size + extents for every column). Data before aux preserved.
+        // Pass 3: finish-if-extended, watermark bookkeeping only (the syncfs above journaled every column's
+        // size and extents). Data before aux.
         for (int i = 0; i < columnCount; i++) {
             columns.getQuick(i * 2).syncFlushFinishIfExtended();
             final MemoryMA m2 = columns.getQuick(i * 2 + 1);
@@ -16278,9 +16263,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Takes a durable epoch after a change no WAL replay can redo: an attach, which consumes its .attachable
-     * directory, or a change made outside the WAL. Recovery rewinds only an enrolled adaptive table to its last
-     * epoch, so on any other table this does nothing.
+     * Takes a durable epoch after a change no WAL replay can redo by itself: an attach, whose .attachable source
+     * goes once a save point covers it, or a change made outside the WAL. Recovery rewinds only an enrolled
+     * adaptive table to its last epoch, so on any other table this does nothing.
      */
     @Override
     public void advanceDurableEpochAfter(CharSequence operation) {
