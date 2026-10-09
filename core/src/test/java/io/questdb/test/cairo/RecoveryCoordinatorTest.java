@@ -1312,50 +1312,189 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     /**
-     * Startup recovery rewinds an adaptive table to its durable epoch and relies on WAL replay for every
-     * transaction after it. A pending {@code SET TYPE BYPASS WAL} deletes that WAL on the same startup, so
-     * {@code TableConverter} must replay it first, or the rows committed since the epoch are lost.
+     * Kill, then convert: an adaptive table applies one row lazily after its creation save point, the server is
+     * killed with {@code SET TYPE BYPASS WAL} pending, and the next start converts it. The row is kept whether the
+     * kill left the lazily written {@code _txn} in place, or a power loss reverted it to the save point, so that
+     * recovery has nothing to restore.
      */
     @Test
-    public void testConversionToNonWalReplaysWalRewoundByRecovery() throws Exception {
-        assertConversionAfterRewind(false, 7);
+    public void testConversionToNonWalAfterKillKeepsTheRow() throws Exception {
+        org.junit.Assume.assumeFalse("the test copies over a live file, which Windows forbids", Os.isWindows());
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        try {
+            assertMemoryLeak(() -> {
+                setCommitMode("adaptive");
+                final List<String> failures = new ArrayList<>();
+                for (boolean txnReverted : new boolean[]{false, true}) {
+                    final String name = txnReverted ? "kill_reverted" : "kill";
+                    execute("CREATE TABLE " + name + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    final TableToken tt = engine.verifyTableName(name);
+                    copyTableFile(tt, TableUtils.TXN_FILE_NAME, "_txn.bak");
+                    execute("INSERT INTO " + name + " VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                    drainWalQueue();
+                    execute("ALTER TABLE " + name + " SET TYPE BYPASS WAL");
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+                    engine.releaseAllWalWriters();
+                    if (txnReverted) {
+                        copyTableFile(tt, "_txn.bak", TableUtils.TXN_FILE_NAME);
+                    }
+                    removeTableFile(tt, "_txn.bak");
+
+                    engine.getTableSequencerAPI().resetForReboot(tt);
+                    new RecoveryCoordinator(engine).recover();
+                    engine.load();
+                    final TableToken converted = engine.verifyTableName(name);
+                    final long rows = rowCount(converted);
+                    if (converted.isWal() || rows != 1) {
+                        failures.add(name + ": wal=" + converted.isWal() + ", rows=" + rows);
+                    }
+                }
+                Assert.assertEquals("[]", failures.toString());
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        }
     }
 
     /**
-     * A replay that killed the process leaves its marker behind. The next startup must convert without
-     * replaying, so that a transaction that crashes the apply cannot stop the instance from starting.
+     * Committed WAL transactions that were never applied are applied before the conversion deletes the WAL, in
+     * every mode and for a table that has no save point.
      */
     @Test
-    public void testConversionToNonWalSkipsReplayAfterReplayCrash() throws Exception {
-        assertConversionAfterRewind(true, 3);
+    public void testConversionToNonWalAppliesUnappliedWalInEveryMode() throws Exception {
+        try {
+            assertMemoryLeak(() -> {
+                final List<String> failures = new ArrayList<>();
+                for (String mode : new String[]{"nosync", "async", "sync"}) {
+                    setCommitMode(mode);
+                    final String name = "unapplied_" + mode;
+                    execute("CREATE TABLE " + name + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("INSERT INTO " + name + " VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                    drainWalQueue();
+                    // Committed and acknowledged, not applied: the server stops before the apply job reaches them.
+                    execute("INSERT INTO " + name + " VALUES ('2024-09-02T00:00:00.000000Z', 2), ('2024-09-03T00:00:00.000000Z', 3)");
+                    execute("ALTER TABLE " + name + " SET TYPE BYPASS WAL");
+                    final TableToken tt = engine.verifyTableName(name);
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+                    engine.releaseAllWalWriters();
+
+                    engine.getTableSequencerAPI().resetForReboot(tt);
+                    new RecoveryCoordinator(engine).recover();
+                    engine.load();
+                    final TableToken converted = engine.verifyTableName(name);
+                    final long rows = rowCount(converted);
+                    if (converted.isWal() || rows != 3) {
+                        failures.add(mode + ": wal=" + converted.isWal() + ", rows=" + rows);
+                    }
+                }
+                Assert.assertEquals("[]", failures.toString());
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
     }
 
     /**
-     * The replay's save point flushes an index file first. That flush reports its failure wrapped in a CairoError.
+     * A conversion that fails with an ordinary error on a start outside adaptive leaves the table a WAL table with its
+     * save point, which recovery skipped for the conversion. The run that follows applies and purges WAL, and the next
+     * start rewinds the table to that save point again, so the WAL after it must still be there.
      */
     @Test
-    public void testConversionToNonWalReplayIndexFlushFailureStopsTheEngine() throws Exception {
-        assertReplayFlushFailureKeepsEveryRow("s.k");
+    public void testConversionToNonWalFailedOnNosyncStartKeepsEveryRow() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        final AtomicBoolean failRemoval = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (failRemoval.get() && Utf8s.containsAscii(name, io.questdb.cairo.DurableEpochManifest.FILE_NAME)) {
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        try {
+            assertMemoryLeak(ff, () -> {
+                buildAdaptiveLazyGapTable("conv");
+                final TableToken tt = engine.verifyTableName("conv");
+                execute("ALTER TABLE conv SET TYPE BYPASS WAL");
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                engine.releaseAllWalWriters();
+
+                // A NOSYNC start whose conversion fails on an ordinary error.
+                setCommitMode("nosync");
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                new RecoveryCoordinator(engine).recover();
+                failRemoval.set(true);
+                try {
+                    engine.load();
+                } finally {
+                    failRemoval.set(false);
+                }
+                Assert.assertTrue("precondition: the conversion failed, the table is still a WAL table", engine.verifyTableName("conv").isWal());
+                Assert.assertTrue("precondition: the save point outlived the NOSYNC start", hasSavePointFile(tt));
+
+                // The NOSYNC run: a row, the apply, a WAL purge.
+                execute("INSERT INTO conv VALUES ('2024-09-02T00:00:00.000000Z', 100)");
+                drainWalQueue();
+                engine.releaseAllWalWriters();
+                engine.releaseAllWriters();
+                drainPurgeJob();
+                assertQuery("SELECT count() FROM conv").noRandomAccess().expectSize().returns("count\n8\n");
+
+                // The next start; the conversion succeeds this time.
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                engine.getTxnScoreboardPool().remove(tt);
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                new RecoveryCoordinator(engine).recover();
+                engine.load();
+                Assert.assertFalse("the table must be converted", engine.verifyTableName("conv").isWal());
+                assertQuery("SELECT count() FROM conv").noRandomAccess().expectSize().returns("count\n8\n");
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        }
     }
 
     /**
-     * The replay's save point ends with a flush of the sequencer log, which reports its failure as it is.
+     * A failed flush of the replayed WAL stops the engine, whether it is the conversion's own flush or the apply
+     * job's save point inside the replay (at the shipped interval). The production callback halts the process in
+     * that call, and the next start, with a healthy disk, rewinds to the save point, replays again and converts
+     * the table with every row.
      */
     @Test
-    public void testConversionToNonWalReplayLogFlushFailureStopsTheEngine() throws Exception {
-        assertReplayFlushFailureKeepsEveryRow(WalUtils.TXNLOG_FILE_NAME);
+    public void testConversionToNonWalReplayFlushFailureStopsTheEngine() throws Exception {
+        assertReplayFlushFailureKeepsEveryRow(TableUtils.TXN_FILE_NAME, -1, true);
+        assertReplayFlushFailureKeepsEveryRow("s.k", -1, true);
+        assertReplayFlushFailureKeepsEveryRow(WalUtils.TXNLOG_FILE_NAME, 60_000, true);
+        assertReplayFlushFailureKeepsEveryRow("s.k", 60_000, true);
     }
 
     /**
-     * A transaction that fails to apply ends the replay, and the table converts anyway, so the conversion
-     * still works as the way to get rid of a transaction that keeps failing.
-     * <p>
-     * The row count pins a known limitation. The four good transactions after the epoch and the broken one
-     * fall into one apply batch, the failure discards the whole batch, and only the epoch's three rows
-     * remain. If the replay learns to keep the good transactions, this count becomes 7.
+     * A failure of the conversion's flush that is not a data-sync failure does not stop the engine: the table stays
+     * a WAL table and the next start converts it with every row.
      */
     @Test
-    public void testConversionToNonWalReplayStopsAtFailingTransaction() throws Exception {
+    public void testConversionToNonWalReplayPlainFailureRetriesAtNextStart() throws Exception {
+        assertReplayFlushFailureKeepsEveryRow(TableUtils.TXN_FILE_NAME, -1, false);
+    }
+
+    /**
+     * A transaction that fails to apply for good stops the replay, and the conversion is refused: the table stays a
+     * WAL table with its {@code _convert}, and every transaction after the failing one is still in its WAL.
+     */
+    @Test
+    public void testConversionToNonWalRefusedAtFailingTransaction() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
@@ -1390,14 +1529,407 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
                 rebootAndConvert(tt);
 
-                final TableToken converted = engine.verifyTableName("conv");
-                Assert.assertFalse("the table must be converted", converted.isWal());
-                assertQuery("SELECT count() FROM conv").noRandomAccess().expectSize().returns("count\n3\n");
+                final TableToken after = engine.verifyTableName("conv");
+                Assert.assertTrue("the conversion must be refused", after.isWal());
+                Assert.assertTrue("the refused conversion keeps its _convert", epochArtifactExists(tt, WalUtils.CONVERT_FILE_NAME, ""));
+                Assert.assertTrue("the refused conversion keeps the save point", hasSavePointFile(tt));
+                Assert.assertEquals("the WAL keeps every transaction", 8L, engine.getTableSequencerAPI().lastTxn(tt));
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        }
+    }
+
+    /**
+     * A replay that stops early, here at a transaction that fails to apply and suspends the table, refuses the
+     * conversion in every mode, whether the table has a save point or not: it stays a WAL table with its
+     * {@code _convert}, its WAL and its save point. Once the cause is fixed and the table is resumed and caught up,
+     * the next start converts it with every row. On a start outside adaptive the WAL purge in between keeps the WAL
+     * that the save point still needs.
+     */
+    @Test
+    public void testConversionToNonWalRefusedWhileReplayStopsKeepsEveryRow() throws Exception {
+        final AtomicBoolean armed = new AtomicBoolean();
+        final FilesFacade failingFf = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (armed.get() && Utf8s.containsAscii(name, "2024-09-02")) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        try {
+            assertMemoryLeak(failingFf, () -> {
+                final List<String> failures = new ArrayList<>();
+                // The mode the table is written in, then the mode of the start that converts it.
+                for (String[] modes : new String[][]{{"adaptive", "adaptive"}, {"adaptive", "nosync"}, {"nosync", "nosync"}}) {
+                    final String label = modes[0] + " table, " + modes[1] + " start";
+                    final String name = "refused_" + modes[0] + '_' + modes[1];
+                    setCommitMode(modes[0]);
+                    execute("CREATE TABLE " + name + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    for (int i = 0; i < 3; i++) {
+                        execute("INSERT INTO " + name + " VALUES ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+                    }
+                    drainWalQueue();
+                    final TableToken tt = engine.verifyTableName(name);
+                    if (modes[0].equals("adaptive")) {
+                        try (TableWriter w = getWriter(tt)) {
+                            w.advanceDurableEpoch(1L);
+                        }
+                    }
+                    for (int i = 3; i < 7; i++) {
+                        execute("INSERT INTO " + name + " VALUES ('2024-09-02T0" + i + ":00:00.000000Z', " + i + ")");
+                    }
+                    execute("ALTER TABLE " + name + " SET TYPE BYPASS WAL");
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+                    engine.releaseAllWalWriters();
+
+                    setCommitMode(modes[1]);
+                    armed.set(true);
+                    try {
+                        engine.getTableSequencerAPI().resetForReboot(tt);
+                        new RecoveryCoordinator(engine).recover();
+                        engine.load();
+                    } finally {
+                        armed.set(false);
+                    }
+                    if (!engine.verifyTableName(name).isWal() || !epochArtifactExists(tt, WalUtils.CONVERT_FILE_NAME, "")) {
+                        failures.add(label + ": the conversion went ahead with " + rowCount(engine.verifyTableName(name)) + " rows");
+                        continue;
+                    }
+                    if (modes[0].equals("adaptive") && !hasSavePointFile(tt)) {
+                        failures.add(label + ": the refused conversion removed the save point");
+                    }
+
+                    // The manual step: the cause is fixed, the table resumed and caught up, then a restart.
+                    execute("ALTER TABLE " + name + " RESUME WAL");
+                    drainWalQueue();
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+                    engine.releaseAllWalWriters();
+                    drainPurgeJob();
+                    // A restart starts with an empty scoreboard.
+                    engine.getTxnScoreboardPool().remove(tt);
+                    engine.getTableSequencerAPI().resetForReboot(tt);
+                    new RecoveryCoordinator(engine).recover();
+                    engine.load();
+                    final TableToken converted = engine.verifyTableName(name);
+                    final long rows = rowCount(converted);
+                    if (converted.isWal() || rows != 7) {
+                        failures.add(label + ": after the manual step wal=" + converted.isWal() + ", rows=" + rows);
+                    }
+                }
+                Assert.assertEquals("[]", failures.toString());
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        }
+    }
+
+    /**
+     * A kill in the middle of the replay leaves the save point, so the next start rewinds the table to it and
+     * replays again: however often the replay is interrupted, the start that finishes it keeps every row.
+     */
+    @Test
+    public void testConversionToNonWalReplaysAgainAfterKillMidReplay() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        final AtomicBoolean armed = new AtomicBoolean();
+        final AtomicReference<String> markerPath = new AtomicReference<>();
+        final AtomicReference<Boolean> markerAtKill = new AtomicReference<>();
+        final FilesFacade killingFf = new SyncAttributingFilesFacade() {
+            @Override
+            public void fsync(long fd) {
+                killIfArmed(pathOfFd(fd));
+                super.fsync(fd);
+            }
+
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                if (!async) {
+                    killIfArmed(pathOfAddress(addr));
+                }
+                super.msync(addr, len, async);
+            }
+
+            // The flush of the table's _txn comes after the replay has applied every transaction.
+            private void killIfArmed(String path) {
+                if (path.endsWith(io.questdb.std.Files.SEPARATOR + TableUtils.TXN_FILE_NAME) && armed.compareAndSet(true, false)) {
+                    try (Path p = new Path()) {
+                        markerAtKill.set(exists(p.of(markerPath.get()).$()));
+                    }
+                    throw new Error("simulated kill");
+                }
+            }
+        };
+        try {
+            assertMemoryLeak(killingFf, () -> {
+                buildAdaptiveLazyGapTable("conv");
+                final TableToken tt = engine.verifyTableName("conv");
+                execute("ALTER TABLE conv SET TYPE BYPASS WAL");
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                try (Path marker = new Path()) {
+                    // The replay marker of older builds, which made the start after a kill convert without a replay.
+                    marker.of(engine.getConfiguration().getDbRoot()).concat(tt).concat("_convert.replay");
+                    markerPath.set(marker.toString());
+                    final StringBuilder starts = new StringBuilder();
+                    engine.getTableSequencerAPI().resetForReboot(tt);
+                    new RecoveryCoordinator(engine).recover();
+                    armed.set(true);
+                    try {
+                        engine.load();
+                        starts.append("start 1 went on");
+                    } catch (Error e) {
+                        starts.append("start 1 killed");
+                    }
+                    // A kill runs no clean-up: put back the marker as it was at the kill.
+                    if (Boolean.TRUE.equals(markerAtKill.get()) && !ff.exists(marker.$())) {
+                        Assert.assertTrue(ff.touch(marker.$()));
+                    }
+                    engine.releaseInactive();
+                    engine.closeNameRegistry();
+                    for (int start = 2; start < 4; start++) {
+                        markerAtKill.set(null);
+                        try (CairoEngine rebooted = new CairoEngine(configuration)) {
+                            // The constructor runs recovery; load() runs the conversion, as EngineEnvelope.start()
+                            // does. The second start is killed in the replay again, the third one runs to the end.
+                            armed.set(start == 2);
+                            try {
+                                rebooted.load();
+                                final TableToken after = rebooted.verifyTableName("conv");
+                                try (TableReader reader = rebooted.getReader(after)) {
+                                    starts.append(", start ").append(start).append(": wal=").append(after.isWal()).append(", rows=").append(reader.size());
+                                }
+                            } catch (Error e) {
+                                starts.append(", start ").append(start).append(" killed");
+                            }
+                        }
+                        if (Boolean.TRUE.equals(markerAtKill.get()) && !ff.exists(marker.$())) {
+                            Assert.assertTrue(ff.touch(marker.$()));
+                        }
+                    }
+                    armed.set(false);
+                    engine.reloadTableNames(null);
+                    Assert.assertEquals("start 1 killed, start 2 killed, start 3: wal=false, rows=7", starts.toString());
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        }
+    }
+
+    /**
+     * Startup recovery rewinds an adaptive table to its save point and relies on WAL replay for every transaction
+     * after it. A pending {@code SET TYPE BYPASS WAL} deletes that WAL on the same startup, so the conversion
+     * replays it first, then flushes the table, removes the save point and releases its pin, in every start mode:
+     * a start outside adaptive leaves the save point of such a table to the conversion. A power loss after the
+     * conversion keeps every row.
+     */
+    @Test
+    public void testConversionToNonWalReplaysWalRewoundByRecovery() throws Exception {
+        org.junit.Assume.assumeFalse("the crash model rewrites files under a live engine, which Windows forbids", Os.isWindows());
+        final CrashFaultFilesFacade crashFf = new CrashFaultFilesFacade();
+        crashFf.setDbRoot(root);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        // A clean close must not take a save point, or there is nothing left to rewind.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        try {
+            assertMemoryLeak(crashFf, () -> {
+                final List<String> failures = new ArrayList<>();
+                for (String mode : new String[]{"nosync", "adaptive"}) {
+                    setCommitMode("adaptive");
+                    final String name = "conv_" + mode;
+                    execute("CREATE TABLE " + name + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    crashFf.markDurableBaseline(engine.getConfiguration().getDbRoot());
+                    for (int i = 0; i < 3; i++) {
+                        execute("INSERT INTO " + name + " VALUES ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+                    }
+                    drainWalQueue();
+                    final TableToken tt = engine.verifyTableName(name);
+                    try (TableWriter w = getWriter(tt)) {
+                        w.advanceDurableEpoch(1L);
+                    }
+                    for (int i = 3; i < 7; i++) {
+                        execute("INSERT INTO " + name + " VALUES ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+                    }
+                    drainWalQueue();
+                    execute("ALTER TABLE " + name + " SET TYPE BYPASS WAL");
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+                    engine.releaseAllWalWriters();
+
+                    setCommitMode(mode);
+                    engine.getTableSequencerAPI().resetForReboot(tt);
+                    new RecoveryCoordinator(engine).recover();
+                    final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+                    Assert.assertEquals("precondition: recovery rewound the table to its save point", 3L, readTxnSeqTxn(tt));
+                    Assert.assertTrue("precondition: recovery pinned the save point", tracker.getPinnedEpochTxn() > -1);
+                    engine.load();
+
+                    final TableToken converted = engine.verifyTableName(name);
+                    final long rows = rowCount(converted);
+                    if (converted.isWal() || rows != 7) {
+                        failures.add(mode + " start: wal=" + converted.isWal() + ", rows=" + rows);
+                    }
+                    if (hasSavePointFile(tt)) {
+                        failures.add(mode + " start: the save point remains");
+                    }
+                    if (tracker.getPinnedEpochTxn() > -1) {
+                        failures.add(mode + " start: the save point's pin remains");
+                    }
+                    engine.releaseAllReaders();
+                    engine.releaseAllWriters();
+                    if (mode.equals("nosync")) {
+                        // A start outside adaptive writes the conversion itself at its own grade, but the replayed
+                        // rows are flushed all the same: the column files keep every byte at a power loss.
+                        final Map<String, byte[]> columnFiles = new TreeMap<>(readTableFiles(tt, true));
+                        columnFiles.keySet().removeIf(file -> !file.contains(java.io.File.separator));
+                        final List<String> lost = bytesLostAtPowerLoss(crashFf, tt, columnFiles);
+                        if (!lost.isEmpty()) {
+                            failures.add(mode + " start: a power loss after the conversion loses bytes of " + lost);
+                        }
+                        continue;
+                    }
+                    crashFf.crash(engine.getConfiguration().getDbRoot());
+                    final long rowsAfterPowerLoss = rowCount(converted);
+                    if (rowsAfterPowerLoss != 7) {
+                        failures.add(mode + " start: " + rowsAfterPowerLoss + " rows after a power loss after the conversion");
+                    }
+                    engine.releaseAllReaders();
+                }
+                Assert.assertEquals("[]", failures.toString());
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        }
+    }
+
+    /**
+     * A table whose save point files both fail their checks refuses the start, and the message names the manual
+     * step. After a clean stop or a kill, moving both files out of the table directory lets the table start with
+     * its rows.
+     */
+    @Test
+    public void testDamagedSavePointRefusalNamesItsManualStep() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        try {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE damaged (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO damaged VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                final TableToken tt = engine.verifyTableName("damaged");
+                try (TableWriter w = getWriter(tt)) {
+                    w.advanceDurableEpoch(1L);
+                }
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                corruptSavePointSection(tt, 0);
+                corruptSavePointSection(tt, 1);
+
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                try {
+                    new RecoveryCoordinator(engine).recover();
+                    Assert.fail("a table with no trustworthy save point must refuse the start");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "no trustworthy adaptive epoch generation; refusing unsafe live-state fallback [table=damaged, dir="
+                                    + tt.getDirName() + "]; after a clean stop or a process kill, move _epoch.manifest.0 and "
+                                    + "_epoch.manifest.1 out of the table directory and start again; after a power loss, restore "
+                                    + "the table from a backup or a checkpoint"
+                    );
+                }
+
+                moveSavePointFileOut(tt, 0);
+                moveSavePointFileOut(tt, 1);
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                new RecoveryCoordinator(engine).recover();
+                drainWalQueue();
+                assertQuery("SELECT count() FROM damaged").noRandomAccess().expectSize().returns("count\n1\n");
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+        }
+    }
+
+    /**
+     * A save point ahead of a cleanly loading live {@code _txn} refuses the start, and the message names the file to
+     * move out. Without it, the start restores the older save point and replays the WAL after it.
+     */
+    @Test
+    public void testPostDatedSavePointRefusalNamesItsManualStep() throws Exception {
+        org.junit.Assume.assumeFalse("the test copies over live files, which Windows forbids", Os.isWindows());
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        try {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE ahead (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                for (int i = 0; i < 3; i++) {
+                    execute("INSERT INTO ahead VALUES ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+                }
+                drainWalQueue();
+                final TableToken tt = engine.verifyTableName("ahead");
+                copyTableFile(tt, TableUtils.TXN_FILE_NAME, "_txn.bak");
+                copyTableFile(tt, TableUtils.COLUMN_VERSION_FILE_NAME, "_cv.bak");
+                for (int i = 3; i < 6; i++) {
+                    execute("INSERT INTO ahead VALUES ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+                }
+                drainWalQueue();
+                try (TableWriter w = getWriter(tt)) {
+                    w.advanceDurableEpoch(1L);
+                }
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                final int newest;
+                try (Path p = new Path()) {
+                    p.of(engine.getConfiguration().getDbRoot()).concat(tt);
+                    newest = io.questdb.cairo.DurableEpochManifest.loadCandidates(engine.getConfiguration().getFilesFacade(), p, p.size(), tt.getTableId())[0].generation;
+                }
+                copyTableFile(tt, "_txn.bak", TableUtils.TXN_FILE_NAME);
+                copyTableFile(tt, "_cv.bak", TableUtils.COLUMN_VERSION_FILE_NAME);
+                removeTableFile(tt, "_txn.bak");
+                removeTableFile(tt, "_cv.bak");
+
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                try {
+                    new RecoveryCoordinator(engine).recover();
+                    Assert.fail("a save point ahead of the live _txn must refuse the start");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "adaptive epoch post-dates live state; refusing wrong-lineage recovery [table=ahead, dir="
+                                    + tt.getDirName() + ", epochSeqTxn=6]; move _epoch.manifest." + newest
+                                    + " out of the table directory and start again"
+                    );
+                }
+
+                moveSavePointFileOut(tt, newest);
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                new RecoveryCoordinator(engine).recover();
+                engine.notifyWalTxnRepublisher(tt);
+                drainWalQueue();
+                assertQuery("SELECT count() FROM ahead").noRandomAccess().expectSize().returns("count\n6\n");
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 
@@ -2121,52 +2653,11 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     /**
-     * Builds an adaptive table with a durable epoch taken at seqTxn=K (via {@code fsyncMaterializedState}
-     * + an explicit {@code _snapshot} marker, exactly as {@link #testRecoverRestoresTxnToEpochCut()}),
-     * then applies M more rows LAZILY so the live {@code _txn} sits ahead of the epoch. Returns the epoch
-     * cut's seqTxn. The caller drives recovery.
+     * Fails the next flush of {@code failingFile} during the replay before a conversion to non-WAL, with a data-sync
+     * failure or a plain one. The production callback halts the process inside the call that stops the engine, so
+     * the files at that moment are what the next start sees.
      */
-    private void assertConversionAfterRewind(boolean hasReplayCrashed, int expectedRowCount) throws Exception {
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
-        // A clean close must not take the epoch, or there is nothing left to rewind.
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
-        try {
-            assertMemoryLeak(() -> {
-                buildAdaptiveLazyGapTable("conv");
-                final TableToken tt = engine.verifyTableName("conv");
-                execute("ALTER TABLE conv SET TYPE BYPASS WAL");
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-
-                final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-                try (Path marker = new Path()) {
-                    marker.of(engine.getConfiguration().getDbRoot()).concat(tt).concat("_convert.replay");
-                    if (hasReplayCrashed) {
-                        Assert.assertTrue(ff.touch(marker.$()));
-                    }
-                    rebootAndConvert(tt);
-                    Assert.assertFalse("the replay marker must not outlive the startup", ff.exists(marker.$()));
-                }
-
-                final TableToken converted = engine.verifyTableName("conv");
-                Assert.assertFalse("the table must be converted", converted.isWal());
-                assertQuery("SELECT count() FROM conv").noRandomAccess().expectSize().returns("count\n" + expectedRowCount + "\n");
-            });
-        } finally {
-            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
-        }
-    }
-
-    /**
-     * A failed flush in the replay's save point must stop the engine: the kernel reports a writeback error once, so
-     * no later flush proves the replayed rows. The production callback halts the process inside that call, so the
-     * files at that moment are what the next start sees. The replay marker must be gone by then, or the next start
-     * converts without the replay and loses the rows after the save point, which exist only in the WAL.
-     */
-    private void assertReplayFlushFailureKeepsEveryRow(String failingFile) throws Exception {
+    private void assertReplayFlushFailureKeepsEveryRow(String failingFile, long replayIntervalMs, boolean dataSync) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
@@ -2178,7 +2669,13 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 super.fdatasync(fd);
             }
 
-            // Where syncfs does not cover the whole filesystem, the replay's flush flushes the sequencer log itself.
+            @Override
+            public void fsync(long fd) {
+                failIfArmed(pathOfFd(fd), "fsync");
+                super.fsync(fd);
+            }
+
+            // Where syncfs does not cover the whole filesystem, a save point flushes the sequencer log itself.
             @Override
             public boolean isSyncfsFileSystemWide() {
                 return false;
@@ -2194,47 +2691,57 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
             private void failIfArmed(String path, String operation) {
                 if (path.endsWith(failingFile) && armed.compareAndSet(true, false)) {
-                    throw CairoException.dataSyncFailure(5, operation).put("injected flush failure [path=").put(path).put(']');
+                    if (dataSync) {
+                        throw CairoException.dataSyncFailure(5, operation).put("injected flush failure [path=").put(path).put(']');
+                    }
+                    throw CairoException.critical(5).put("injected plain failure [path=").put(path).put(']');
                 }
             }
         };
+        final String name = "conv_" + (dataSync ? "" : "plain_") + (replayIntervalMs < 0 ? "converter" : "job") + failingFile.replace('.', '_');
         try {
             assertMemoryLeak(failingFf, () -> {
-                execute("create table conv (ts timestamp, v long, s symbol index) timestamp(ts) partition by day wal");
+                execute("create table " + name + " (ts timestamp, v long, s symbol index) timestamp(ts) partition by day wal");
                 for (int i = 0; i < 7; i++) {
-                    execute("insert into conv values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ", 'a')");
+                    execute("insert into " + name + " values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ", 'a')");
                     if (i == 2) {
                         drainWalQueue();
-                        try (TableWriter w = getWriter("conv")) {
+                        try (TableWriter w = getWriter(name)) {
                             w.advanceDurableEpoch(1L);
                         }
                     }
                 }
                 drainWalQueue();
-                final TableToken tt = engine.verifyTableName("conv");
-                execute("ALTER TABLE conv SET TYPE BYPASS WAL");
+                final TableToken tt = engine.verifyTableName(name);
+                execute("ALTER TABLE " + name + " SET TYPE BYPASS WAL");
                 engine.releaseAllWriters();
                 engine.releaseAllReaders();
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, replayIntervalMs);
 
                 final FilesFacade ff = engine.getConfiguration().getFilesFacade();
                 try (Path marker = new Path()) {
+                    // The replay marker of older builds: left on disk at the halt, it made the next start convert
+                    // without a replay.
                     marker.of(engine.getConfiguration().getDbRoot()).concat(tt).concat("_convert.replay");
                     final AtomicInteger callbacks = new AtomicInteger();
                     final AtomicReference<Boolean> markerAtHalt = new AtomicReference<>();
                     engine.setDurabilityFailureHandler(failure -> {
-                        callbacks.incrementAndGet();
-                        markerAtHalt.set(ff.exists(marker.$()));
+                        if (callbacks.incrementAndGet() == 1) {
+                            markerAtHalt.set(ff.exists(marker.$()));
+                        }
                     });
                     engine.getTableSequencerAPI().resetForReboot(tt);
                     new RecoveryCoordinator(engine).recover();
                     armed.set(true);
+                    boolean stopped = false;
                     try {
                         engine.load();
-                        Assert.fail("a failed flush of the replayed WAL must stop the startup");
-                    } catch (CairoError ignore) {
+                    } catch (CairoError e) {
+                        stopped = true;
                     }
                     Assert.assertFalse("test setup: the replay's flush must have failed", armed.get());
-                    Assert.assertTrue("the table must stay a WAL table", engine.verifyTableName("conv").isWal());
+                    Assert.assertEquals("only a data-sync failure stops the startup", dataSync, stopped);
+                    Assert.assertTrue("the table must stay a WAL table", engine.verifyTableName(name).isWal());
                     final String firstStart = "engine stopped: " + engine.isDurabilityFailed() + ", callbacks: " + callbacks.get();
                     // A halt runs no clean-up, so put back a marker that a clean-up after the callback removed.
                     if (Boolean.TRUE.equals(markerAtHalt.get()) && !ff.exists(marker.$())) {
@@ -2243,17 +2750,27 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                     engine.resetDurabilityFailure();
                     engine.releaseInactive();
 
-                    // The next start, with a healthy disk: a fresh engine runs recovery and the conversion.
+                    // The next start, with a healthy disk: a fresh engine runs recovery and the conversion. It
+                    // takes the name registry, as a start does.
                     final long rows;
+                    final boolean isWal;
+                    engine.closeNameRegistry();
                     try (CairoEngine rebooted = new CairoEngine(configuration)) {
                         rebooted.load();
-                        try (TableReader reader = rebooted.getReader(rebooted.verifyTableName("conv"))) {
+                        final TableToken after = rebooted.verifyTableName(name);
+                        isWal = after.isWal();
+                        try (TableReader reader = rebooted.getReader(after)) {
                             rows = reader.size();
                         }
+                    } finally {
+                        engine.reloadTableNames(null);
                     }
                     Assert.assertEquals(
-                            "engine stopped: true, callbacks: 1, replay marker on disk at the halt: false, rows after the next start: 7",
-                            firstStart + ", replay marker on disk at the halt: " + markerAtHalt.get() + ", rows after the next start: " + rows
+                            (dataSync ? "engine stopped: true, callbacks: 1, replay marker on disk at the halt: false"
+                                    : "engine stopped: false, callbacks: 0, replay marker on disk at the halt: null")
+                                    + ", rows after the next start: 7 (wal=false)",
+                            firstStart + ", replay marker on disk at the halt: " + markerAtHalt.get()
+                                    + ", rows after the next start: " + rows + " (wal=" + isWal + ")"
                     );
                 }
             });
@@ -2265,6 +2782,12 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Builds an adaptive table with a durable epoch taken at seqTxn=K (via {@code fsyncMaterializedState}
+     * + an explicit {@code _snapshot} marker, exactly as {@link #testRecoverRestoresTxnToEpochCut()}),
+     * then applies M more rows LAZILY so the live {@code _txn} sits ahead of the epoch. Returns the epoch
+     * cut's seqTxn. The caller drives recovery.
+     */
     private long buildAdaptiveLazyGapTable(String name) throws Exception {
         execute("create table " + name + " (ts timestamp, v long) timestamp(ts) partition by day wal");
         for (int i = 0; i < 3; i++) {
@@ -2597,6 +3120,47 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         new RecoveryCoordinator(engine).recover();
         Assert.assertEquals("precondition: recovery rewound the table to its epoch", 3L, readTxnSeqTxn(tt));
         engine.load();
+    }
+
+    // Flips the first byte of the _txn section of one save point file: the header stays valid, the section checksum fails.
+    private void corruptSavePointSection(TableToken tt, int generation) {
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path p = new Path()) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(io.questdb.cairo.DurableEpochManifest.FILE_NAME).put('.').put(generation);
+            final long fd = ff.openRW(p.$(), engine.getConfiguration().getWriterFileOpenOpts());
+            Assert.assertTrue("must open the save point file", fd > 0);
+            final long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Assert.assertEquals(1, ff.read(fd, buf, 1, io.questdb.cairo.DurableEpochManifest.FILE_SIZE));
+                Unsafe.getUnsafe().putByte(buf, (byte) ~Unsafe.getUnsafe().getByte(buf));
+                Assert.assertEquals(1, ff.write(fd, buf, 1, io.questdb.cairo.DurableEpochManifest.FILE_SIZE));
+            } finally {
+                Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
+                ff.close(fd);
+            }
+        }
+    }
+
+    // The manual step of a refusal: moves one save point file out of the table directory.
+    private void moveSavePointFileOut(TableToken tt, int generation) throws IOException {
+        final String fileName = io.questdb.cairo.DurableEpochManifest.FILE_NAME + '.' + generation;
+        Files.move(
+                Paths.get(engine.getConfiguration().getDbRoot().toString(), tt.getDirName(), fileName),
+                temp.newFolder().toPath().resolve(fileName)
+        );
+    }
+
+    private void removeTableFile(TableToken tt, CharSequence name) {
+        try (Path p = new Path()) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(name);
+            Assert.assertTrue(engine.getConfiguration().getFilesFacade().removeQuiet(p.$()));
+        }
+    }
+
+    private long rowCount(TableToken tt) {
+        try (TableReader reader = engine.getReader(tt)) {
+            return reader.size();
+        }
     }
 
     private long readTxnSeqTxn(TableToken tt) {

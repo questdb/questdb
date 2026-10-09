@@ -2126,6 +2126,48 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     /**
+     * A table whose tracker holds a save point pin keeps the WAL from its save point in any mode. On a start outside
+     * adaptive only a refused conversion to non-WAL keeps its save point and pin, and the next start rewinds the
+     * table to that save point and replays the WAL after it.
+     */
+    @Test
+    public void testNosyncModeKeepsDurableEpochFloorOfPinnedTable() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 100);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            execute("create table " + tableName + "("
+                    + "x long,"
+                    + "ts timestamp"
+                    + ") timestamp(ts) partition by DAY WAL");
+
+            execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            execute("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z')");
+
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            final io.questdb.cairo.wal.seq.SeqTxnTracker tracker =
+                    engine.getTableSequencerAPI().getTxnTracker(tableToken);
+            tracker.setPinnedEpoch(1, true);
+            tracker.setDurableEpochSeqTxn(0);
+
+            engine.releaseInactive();
+            drainPurgeJob();
+
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+
+            tracker.clearPinnedEpoch();
+            drainPurgeJob();
+
+            assertSegmentExistence(false, tableName, 1, 0);
+            assertWalExistence(false, tableName, 1);
+        });
+    }
+
+    /**
      * Verifies that with commit.mode=nosync the durableEpochSeqTxn field in the tracker
      * is NOT consulted — purge proceeds to the applied seqTxn as usual.
      */

@@ -162,7 +162,7 @@ public class RecoveryCoordinator {
                     }
                     tablePath(dir, token);
                     removeAdaptiveEpochArtifacts(ff, dir, dir.size());
-                    unpinRecoveredEpoch(token);
+                    unpinEpoch(engine, token);
                     LOG.info().$("table left adaptive commit mode, its save point is removed [table=").$(token).I$();
                 } catch (CairoException | CairoError e) {
                     if (CairoException.isDataSyncFailure(e)) {
@@ -592,12 +592,17 @@ public class RecoveryCoordinator {
             }
             throw CairoException.critical(0)
                     .put("adaptive epoch post-dates live state; refusing wrong-lineage recovery [table=")
-                    .put(token.getTableName()).put(", epochSeqTxn=").put(epochSeqTxn).put(']');
+                    .put(token.getTableName()).put(", dir=").put(token.getDirName()).put(", epochSeqTxn=").put(epochSeqTxn)
+                    .put("]; move ").put(DurableEpochManifest.FILE_NAME).put('.').put(ahead.generation)
+                    .put(" out of the table directory and start again");
         }
         if (selected == null) {
             throw CairoException.critical(0)
                     .put("no trustworthy adaptive epoch generation; refusing unsafe live-state fallback [table=")
-                    .put(token.getTableName()).put(']');
+                    .put(token.getTableName()).put(", dir=").put(token.getDirName())
+                    .put("]; after a clean stop or a process kill, move ").put(DurableEpochManifest.FILE_NAME).put(".0 and ")
+                    .put(DurableEpochManifest.FILE_NAME).put(".1 out of the table directory and start again;")
+                    .put(" after a power loss, restore the table from a backup or a checkpoint");
         }
         if (rejected != null) {
             removeRejectedGeneration(token, dir, rejected);
@@ -924,19 +929,6 @@ public class RecoveryCoordinator {
         return p.of(configuration.getDbRoot()).concat(token);
     }
 
-    private void unpinRecoveredEpoch(TableToken token) {
-        final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
-        final long pinnedTxn = tracker.getPinnedEpochTxn();
-        if (pinnedTxn < 0) {
-            return;
-        }
-        try (TxnScoreboard scoreboard = engine.getTxnScoreboard(token)) {
-            scoreboard.releaseTxn(tracker.isPinnedEpochSlotA() ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B, pinnedTxn);
-            // While this handle keeps the scoreboard pooled, as pinRecoveredEpoch records the pin.
-            tracker.clearPinnedEpoch();
-        }
-    }
-
     /**
      * Fail-closed removal of the adaptive durable-epoch anchor for ONE table — the save point files
      * {@code _epoch.manifest.0} and {@code _epoch.manifest.1}, the older one first — given
@@ -980,6 +972,20 @@ public class RecoveryCoordinator {
             DurableEpochManifest.fsyncDirectory(ff, path, tableRootLen);
         }
         path.trimTo(tableRootLen);
+    }
+
+    // Releases the pin of the save point recovery restored, once the save point is removed.
+    static void unpinEpoch(CairoEngine engine, TableToken token) {
+        final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+        final long pinnedTxn = tracker.getPinnedEpochTxn();
+        if (pinnedTxn < 0) {
+            return;
+        }
+        try (TxnScoreboard scoreboard = engine.getTxnScoreboard(token)) {
+            scoreboard.releaseTxn(tracker.isPinnedEpochSlotA() ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B, pinnedTxn);
+            // While this handle keeps the scoreboard pooled, as pinRecoveredEpoch records the pin.
+            tracker.clearPinnedEpoch();
+        }
     }
 
     private static void removeAdaptiveEpochArtifactOrFail(FilesFacade ff, Path path) {
