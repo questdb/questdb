@@ -59,6 +59,8 @@ import java.util.Arrays;
  *   partition directory a parquet conversion or the switch of a native partition to its parquet file creates and
  *   then the table directory, before the commit that publishes them. A failed one poisons the engine, as every
  *   failed barrier does.</li>
+ *   <li>SYNC and ADAPTIVE fsync each column file ALTER COLUMN TYPE converts, data before aux, before the commit
+ *   that publishes it. A failed one poisons the engine too.</li>
  *   <li>ADAPTIVE takes no directory barrier in {@code TableWriter.openPartition}: the durable epoch makes
  *   directory entries durable, and recovery re-creates the later ones when it replays the WAL. That holds
  *   also when {@code syncfs} is not filesystem-wide (macOS, Windows), where the epoch fsyncs the dirty
@@ -68,6 +70,31 @@ import java.util.Arrays;
  * </ul>
  */
 public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
+
+    @Test
+    public void testAdaptiveAlterColumnTypeNonWalFailedFixedFsyncIsFailStop() throws Exception {
+        assertColumnConversionFsyncFailureIsFailStop("adaptive", false, "LONG", 0);
+    }
+
+    @Test
+    public void testAdaptiveAlterColumnTypeWalFailedFixedFsyncIsFailStop() throws Exception {
+        assertColumnConversionFsyncFailureIsFailStop("adaptive", true, "LONG", 0);
+    }
+
+    @Test
+    public void testAdaptiveAlterColumnTypeWalFailedSymbolFsyncIsFailStop() throws Exception {
+        assertColumnConversionFsyncFailureIsFailStop("adaptive", true, "SYMBOL", 0);
+    }
+
+    @Test
+    public void testAdaptiveAlterColumnTypeWalFailedVarAuxFsyncIsFailStop() throws Exception {
+        assertColumnConversionFsyncFailureIsFailStop("adaptive", true, "VARCHAR", 1);
+    }
+
+    @Test
+    public void testAdaptiveAlterColumnTypeWalFailedVarDataFsyncIsFailStop() throws Exception {
+        assertColumnConversionFsyncFailureIsFailStop("adaptive", true, "VARCHAR", 0);
+    }
 
     @Test
     public void testAdaptiveEpochCoversPartitionDirs() throws Exception {
@@ -105,6 +132,11 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
+    public void testSyncAlterColumnTypeNonWalFailedFixedFsyncIsFailStop() throws Exception {
+        assertColumnConversionFsyncFailureIsFailStop("sync", false, "LONG", 0);
+    }
+
+    @Test
     public void testSyncAlterColumnTypeNonWalSurvivesCrash() throws Exception {
         assertSyncSchemaChangeSurvivesCrash(false, false, "ALTER TABLE x ALTER COLUMN v TYPE LONG", this::assertConvertedColumnNames);
     }
@@ -124,6 +156,26 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testSyncAlterColumnTypeWalFailedBarrierIsFailStop() throws Exception {
         assertSyncSchemaChangeBarrierFailureIsFailStop(true, false, "ALTER TABLE x ALTER COLUMN v TYPE LONG", "convertColumn0");
+    }
+
+    @Test
+    public void testSyncAlterColumnTypeWalFailedFixedFsyncIsFailStop() throws Exception {
+        assertColumnConversionFsyncFailureIsFailStop("sync", true, "LONG", 0);
+    }
+
+    @Test
+    public void testSyncAlterColumnTypeWalFailedSymbolFsyncIsFailStop() throws Exception {
+        assertColumnConversionFsyncFailureIsFailStop("sync", true, "SYMBOL", 0);
+    }
+
+    @Test
+    public void testSyncAlterColumnTypeWalFailedVarAuxFsyncIsFailStop() throws Exception {
+        assertColumnConversionFsyncFailureIsFailStop("sync", true, "VARCHAR", 1);
+    }
+
+    @Test
+    public void testSyncAlterColumnTypeWalFailedVarDataFsyncIsFailStop() throws Exception {
+        assertColumnConversionFsyncFailureIsFailStop("sync", true, "VARCHAR", 0);
     }
 
     @Test
@@ -390,6 +442,31 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
+     * ALTER COLUMN TYPE converts the column of each native partition in a conversion task, which fsyncs the new
+     * column files, data before aux, under SYNC and ADAPTIVE. One of those fsyncs fails with a data-sync error.
+     * The engine must be poisoned, as for a failed directory barrier around the same statement.
+     *
+     * @param commitMode the commit mode the row pins
+     * @param newType    the column's new type: fixed-size, var-size (data and aux files) or symbol
+     * @param skipCount  how many of the conversion task's fsyncs succeed before the one that fails
+     */
+    private void assertColumnConversionFsyncFailureIsFailStop(
+            String commitMode,
+            boolean wal,
+            String newType,
+            int skipCount
+    ) throws Exception {
+        assertFsyncFailureIsFailStop(
+                commitMode,
+                wal,
+                null,
+                () -> execute("ALTER TABLE x ALTER COLUMN v TYPE " + newType),
+                "cthConvertPartitionHandler",
+                skipCount
+        );
+    }
+
+    /**
      * The column converter writes the new column through a mapping that it unmaps without {@code msync}, and the
      * crash model credits the later {@code fsync} only with bytes it saw written, so it cannot check the
      * converted values. It checks that each partition's file of the converted column survives under the name
@@ -425,6 +502,74 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     /**
      * Reads the index files of every partition.
      */
+    /**
+     * Fails one fsync of a change, in the given commit mode. The engine must be poisoned and refuse the next
+     * write; a non-WAL statement must also fail with a data-sync {@link CairoError}, and a WAL apply must not
+     * merely suspend the table while the engine keeps taking writes.
+     *
+     * @param prepare   runs once the rows are inserted, before they are applied to a WAL table; null for none
+     * @param change    the change whose fsync fails
+     * @param caller    the method whose fsync fails
+     * @param skipCount how many of the caller's fsyncs succeed before the one that fails
+     */
+    private void assertFsyncFailureIsFailStop(
+            String commitMode,
+            boolean wal,
+            TestUtils.LeakProneCode prepare,
+            TestUtils.LeakProneCode change,
+            String caller,
+            int skipCount
+    ) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        final FsyncFailureFacade ff = new FsyncFailureFacade(caller, skipCount);
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, s SYMBOL INDEX, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY "
+                    + (wal ? "WAL" : "BYPASS WAL"));
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'a', 1.0),
+                        ('2024-01-02T00:00:00.000000Z', 'b', 2.0),
+                        ('2024-01-03T00:00:00.000000Z', 'a', 3.0)
+                    """);
+            if (prepare != null) {
+                prepare.run();
+            }
+            drainWalQueue();
+            Throwable failure = null;
+            ff.isArmed = true;
+            try {
+                change.run();
+                drainWalQueue();
+            } catch (Throwable th) {
+                failure = th;
+            } finally {
+                ff.isArmed = false;
+            }
+            final boolean isPoisoned = engine.isDurabilityFailed();
+            Throwable nextWriteFailure = null;
+            try {
+                execute("INSERT INTO x (ts, s) VALUES ('2024-01-04T00:00:00.000000Z', 'c')");
+            } catch (Throwable th) {
+                nextWriteFailure = th;
+            }
+            engine.resetDurabilityFailure();
+            releaseEngineHandles();
+            Assert.assertEquals("the injected fsync failure must have been reached", 1, ff.failureCount);
+            Assert.assertTrue("a failed fsync must poison the engine, failure: " + failure, isPoisoned);
+            Assert.assertTrue(
+                    "a poisoned engine must refuse the next write, failure: " + nextWriteFailure,
+                    nextWriteFailure instanceof CairoError
+                            && nextWriteFailure.getMessage().contains("engine is poisoned by a failed durability barrier")
+            );
+            if (!wal) {
+                Assert.assertTrue(
+                        "the statement must fail with a data-sync CairoError, failure: " + failure,
+                        failure instanceof CairoError && CairoException.isDataSyncFailure(failure)
+                );
+            }
+        });
+    }
+
     private void assertIndexedSymbolFilter() throws Exception {
         assertQuery("SELECT ts FROM x WHERE s = 'a'").timestamp("ts").returns("""
                 ts
@@ -487,43 +632,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
             String barrierCaller
     ) throws Exception {
         Assume.assumeFalse("a directory takes no fsync on Windows", Os.isWindows());
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
-        final FsyncAndCloseFailureFacade ff = new FsyncAndCloseFailureFacade(barrierCaller);
-        assertMemoryLeak(ff, () -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, s SYMBOL INDEX, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY "
-                    + (wal ? "WAL" : "BYPASS WAL"));
-            execute("""
-                    INSERT INTO x VALUES
-                        ('2024-01-01T00:00:00.000000Z', 'a', 1.0),
-                        ('2024-01-02T00:00:00.000000Z', 'b', 2.0),
-                        ('2024-01-03T00:00:00.000000Z', 'a', 3.0)
-                    """);
-            if (prepare != null) {
-                prepare.run();
-            }
-            drainWalQueue();
-            Throwable failure = null;
-            ff.isArmed = true;
-            try {
-                change.run();
-                drainWalQueue();
-            } catch (Throwable th) {
-                failure = th;
-            } finally {
-                ff.isArmed = false;
-            }
-            final boolean isPoisoned = engine.isDurabilityFailed();
-            engine.resetDurabilityFailure();
-            releaseEngineHandles();
-            Assert.assertEquals("the injected fsync failure must have been reached", 1, ff.failureCount);
-            Assert.assertTrue("a failed barrier must poison the engine, failure: " + failure, isPoisoned);
-            if (!wal) {
-                Assert.assertTrue(
-                        "the statement must fail with a data-sync CairoError, failure: " + failure,
-                        failure instanceof CairoError && CairoException.isDataSyncFailure(failure)
-                );
-            }
-        });
+        assertFsyncFailureIsFailStop("sync", wal, prepare, change, barrierCaller, 0);
     }
 
     /**
@@ -667,28 +776,49 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * Fails the next {@code fsyncAndClose} called from {@code caller} once armed, with a genuine data-sync
-     * failure, then behaves normally.
+     * Once armed, fails one {@code fsync} or {@code fsyncAndClose} called from {@code caller}, the first after
+     * {@code skipCount} such calls, with a genuine data-sync failure, then behaves normally.
      */
-    private static final class FsyncAndCloseFailureFacade extends TestFilesFacadeImpl {
+    private static final class FsyncFailureFacade extends TestFilesFacadeImpl {
         private final String caller;
         int failureCount;
         boolean isArmed;
+        private int skipCount;
 
-        FsyncAndCloseFailureFacade(String caller) {
+        FsyncFailureFacade(String caller, int skipCount) {
             this.caller = caller;
+            this.skipCount = skipCount;
+        }
+
+        @Override
+        public void fsync(long fd) {
+            if (isFailureDue()) {
+                throw CairoException.dataSyncFailure(5, "fsync").put("injected fsync failure");
+            }
+            super.fsync(fd);
         }
 
         @Override
         public void fsyncAndClose(long fd) {
-            if (isArmed && isCalledFrom(caller)) {
-                isArmed = false;
-                failureCount++;
+            if (isFailureDue()) {
                 // FilesFacadeImpl closes the fd before it throws. So must this fake, or the leak is its own.
                 super.close(fd);
                 throw CairoException.dataSyncFailure(5, "fsyncAndClose").put("injected fsync failure");
             }
             super.fsyncAndClose(fd);
+        }
+
+        private boolean isFailureDue() {
+            if (!isArmed || !isCalledFrom(caller)) {
+                return false;
+            }
+            if (skipCount > 0) {
+                skipCount--;
+                return false;
+            }
+            isArmed = false;
+            failureCount++;
+            return true;
         }
     }
 
