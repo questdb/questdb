@@ -31,57 +31,44 @@ import org.junit.Assume;
 import org.junit.Before;
 
 /**
- * Base for the ADAPTIVE exhaustive crash-point SWEEP (SP-D increment D1.a). Provides
- * {@link #forEachAdaptiveCrashPoint} — the driver that runs a caller-supplied deterministic adaptive
- * workload and crashes at EVERY durability op of its commit phase, then recovers and hands each crash
- * point to the workload's oracle. The five curated workloads W0–W4 (D1.c) and this class's own
- * self-check ({@code AdaptiveCrashSweepSelfCheckTest}) plug into it via {@link AdaptiveCrashWorkload}.
+ * Base for the adaptive exhaustive crash-point sweep. {@link #forEachAdaptiveCrashPoint} runs a caller-supplied
+ * deterministic adaptive workload, crashes at every durability op of its commit phase, recovers, and hands each
+ * crash point to the workload's oracle. Workloads plug in through {@link AdaptiveCrashWorkload}.
  *
- * <p>It sits on a dedicated subclass of {@link AbstractCrashConsistencyTest} (rather than on that base
- * directly, as the spec sketch allowed) so the generic crash oracle stays uncluttered by the
- * adaptive-specific recovery/suspend machinery below; every adaptive sweep test extends THIS class and
- * so still shares the driver.
- *
- * <h3>Why the sweep needs more than "expect a CrashSimulationError"</h3>
- * A crash armed during the swept commit phase manifests in TWO ways, because {@link CrashSimulationError}
- * is an {@code Error} that unwinds to whichever layer is running the durability op:
+ * <h3>How a crash shows up</h3>
+ * {@link CrashSimulationError} is an {@code Error} that unwinds to whichever layer runs the durability op:
  * <ul>
- *   <li><b>WAL-commit fsync path</b> (an {@code insert} under {@code W=0}, or an explicit epoch drive) —
- *       the Error propagates OUT of the commit call. The driver catches it.</li>
- *   <li><b>WAL-apply path</b> ({@code drainWalQueue()} — lazy apply + durable epoch) — {@code
- *       ApplyWal2TableJob}'s top-level {@code catch (Throwable)} SWALLOWS the Error into a table
- *       {@code suspendTable(...)} and returns normally. There is no exception to catch; the crash shows
- *       up as {@link io.questdb.cairo.wal.seq.TableSequencerAPI#isSuspended}.</li>
+ *   <li><b>WAL-commit fsync path</b> (an {@code insert} under {@code W=0}, or an explicit epoch drive): the
+ *       Error propagates out of the commit call, and the driver catches it.</li>
+ *   <li><b>WAL-apply path</b> ({@code drainWalQueue()}: lazy apply and durable epoch): the top-level
+ *       {@code catch (Throwable)} in {@code ApplyWal2TableJob} turns the Error into {@code suspendTable(...)}
+ *       and returns normally. The crash shows up as
+ *       {@link io.questdb.cairo.wal.seq.TableSequencerAPI#isSuspended}.</li>
  * </ul>
- * The driver treats EITHER as "the crash fired". A workload's commit phase should stop as soon as it
- * observes a suspend (see {@link #anyTableSuspended}) so that post-crash commits do not durably extend
- * the WAL and mask the injection point — exactly as a real power loss would halt everything.
+ * The driver treats either as "the crash fired". A workload's commit phase stops as soon as it observes a
+ * suspend (see {@link #anyTableSuspended}), so post-crash commits do not durably extend the WAL and mask the
+ * injection point.
  *
  * <h3>Modelling a fresh-process restart</h3>
- * A REAL power loss kills the JVM AT the fsync; it never runs the apply job's {@code catch ->
- * suspendTable}. On a live test engine that catch DOES run, leaving a transient in-memory suspend on the
- * cached {@code SeqTxnTracker} (a suspended table is excluded from apply, so recovery could never
- * re-apply it). The driver clears that artifact before recovery, so the recovery triple re-applies
- * exactly as a freshly booted engine — whose trackers start un-suspended — would.
+ * A real power loss kills the JVM at the fsync and never runs the apply job's {@code catch -> suspendTable}. On
+ * a live test engine that catch runs and leaves a transient suspend on the cached {@code SeqTxnTracker}, which
+ * would exclude the table from apply. The driver clears it before recovery, as a freshly booted engine starts
+ * with un-suspended trackers.
  *
  * <h3>Count-stable per-k isolation</h3>
- * Each sweep iteration uses a FRESH, uniquely-named table (the workload names it after the iteration id)
- * and calls {@link AbstractCrashConsistencyTest#markDurableBaseline()} after setup, so every prior
- * iteration's tables are already fully durable and inert to {@code crash()}/{@code recover()}. The crash
- * point is armed RELATIVE to the live {@code durabilityOpCount()} read right after that baseline
- * ({@code armCrashAt(base + k)}), so op {@code k} always means "the k-th durability op of THIS commit
- * phase" regardless of how many ops earlier iterations performed. Because these tests drive WAL apply
- * synchronously via {@code drainWalQueue()} (no background apply/purge threads), that per-phase op count
- * is deterministic and reproducible between the count pass and every sweep pass.
+ * Each iteration uses a fresh table named after the iteration id and calls
+ * {@link AbstractCrashConsistencyTest#markDurableBaseline()} after setup, so earlier iterations' tables are
+ * durable and inert to {@code crash()}/{@code recover()}. The crash point is armed relative to the
+ * {@code durabilityOpCount()} read after that baseline ({@code armCrashAt(base + k)}), so op {@code k} is the
+ * k-th durability op of this commit phase. The tests drive WAL apply synchronously via {@code drainWalQueue()},
+ * so the per-phase op count is the same in the count pass and every sweep pass.
  */
 public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCrashTest {
 
     /**
-     * Adaptive crash-point SWEEPS are long-running (each test iterates EVERY durability op of its commit
-     * phase as a separate crash+recover point, ~minutes each) and are fuzz/soak workloads, not unit tests.
-     * The regular pipeline now also selects {@code io.questdb.test.cairo.crash}, so gate the whole sweep
-     * family behind {@code -Dquestdb.fuzz.nightly=true}: PR CI skips them via a fast assumption, while the
-     * adaptive soak pipeline sets the flag and runs them.
+     * Crash-point sweeps run for minutes each, so the whole family runs only with
+     * {@code -Dquestdb.fuzz.nightly=true}: PR CI skips them through an assumption, and the adaptive soak pipeline
+     * sets the flag.
      */
     @Before
     public void assumeNightlySweep() {
@@ -92,7 +79,7 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
     }
 
     /**
-     * Original crash-consistency sweep cap (2026-06-22 spec); truncation past N is logged, never silent.
+     * Default crash-point cap. Truncation past it is logged.
      */
     protected static final int DEFAULT_ADAPTIVE_CRASH_POINT_CAP = 200;
 
@@ -100,45 +87,42 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
     private int phaseOpCount;      // how many ops that phase performed (N)
 
     /**
-     * A deterministic, replayable adaptive crash workload. The SAME iteration must reproduce the SAME
-     * durability-op sequence across the count pass and every sweep pass — that determinism is what makes
-     * {@code armCrashAt(k)} reproducible.
+     * A deterministic, replayable adaptive crash workload. The same iteration must reproduce the same durability-op
+     * sequence across the count pass and every sweep pass, which makes {@code armCrashAt(k)} reproducible.
      */
     protected interface AdaptiveCrashWorkload {
 
         /**
-         * Create fresh, uniquely-named table(s) for this iteration plus any durable baseline data, and
-         * return the table token(s) recovery must re-publish ({@code notifyWalTxnRepublisher}) and the
-         * oracle inspects. Called once per count/sweep iteration with a DISTINCT {@code iteration} id
-         * (0 = the count pass, then 1..min(N,cap)); the name MUST embed the id so iterations do not
-         * collide.
+         * Creates fresh table(s) for this iteration plus any durable baseline data, and returns the tokens recovery
+         * re-publishes ({@code notifyWalTxnRepublisher}) and the oracle inspects. Called once per iteration with a
+         * distinct {@code iteration} id (0 for the count pass, then 1..min(N,cap)); the table name embeds the id so
+         * iterations do not collide.
          */
         TableToken[] setup(int iteration) throws Exception;
 
         /**
-         * Apply the deterministic commit sequence that the sweep arms a crash within (the swept phase).
-         * MUST stop promptly once the crash has fired — it manifests either as a propagated
-         * {@link CrashSimulationError} (which needs no handling here) OR as a table becoming suspended
-         * (check {@link #anyTableSuspended} after each apply step and return) — otherwise post-crash
-         * commits would durably extend the WAL and mask the injection point.
+         * Applies the deterministic commit sequence the sweep crashes within. Stops promptly once the crash has fired,
+         * either as a propagated {@link CrashSimulationError} (no handling needed) or as a suspended table (check
+         * {@link #anyTableSuspended} after each apply step and return); otherwise post-crash commits durably extend the
+         * WAL and mask the injection point.
          */
         void commit() throws Exception;
 
         /**
-         * Assert the crash-aware oracle (D1.b) for crash point {@code k} of {@code n} AFTER recovery, and
-         * return the recovered committed-row count so the driver can prove the injection points are
-         * distinct (non-decreasing in k, reaching the full set by k=n).
+         * Asserts the crash-aware oracle for crash point {@code k} of {@code n} after recovery, and returns the
+         * recovered committed-row count so the driver can check that the count is non-decreasing in k and complete at
+         * k=n.
          */
         int oracle(int k, int n) throws Exception;
 
         /**
-         * Whether a table left SUSPENDED by the count pass (which runs with NO fault armed) means the
-         * drawn workload cannot exercise crash recovery and should be rejected.
+         * Whether a table left suspended by the count pass, which runs with no fault armed, rejects the drawn workload
+         * as unable to exercise crash recovery.
          * <p>
-         * Only RANDOMIZED workloads want this: a generator can emit a combination the product does not
-         * support (e.g. a replace-range insert over a Parquet partition), and sweeping it would report a
-         * pre-existing suspend as a crash-recovery failure at every crash point. Curated workloads are
-         * deliberately hand-built and some end their clean pass suspended by design, so they opt out.
+         * Randomized workloads want this: a generator can emit a combination the product does not support (such as a
+         * replace-range insert over a Parquet partition), and sweeping it would report that suspend as a recovery
+         * failure at every crash point. Some curated workloads end their clean pass suspended by design, so they opt
+         * out.
          */
         default boolean rejectWhenCountPassSuspends() {
             return false;
@@ -146,9 +130,9 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
 
         /**
          * Declare how many of the clean pass's {@code countedOps} belong to the atomic durability phase.
-         * The default sweeps the full clean count. An override is valid only when workload semantics prove
-         * that op {@code returnValue + 1} is the first post-commit, best-effort durability operation; it must
-         * never derive the boundary by observing whether an injected fault was swallowed.
+         * The default sweeps the full clean count. An override is valid only when the workload's semantics prove that
+         * op {@code returnValue + 1} is the first post-commit, best-effort durability operation; it never derives the
+         * boundary by observing whether an injected fault was swallowed.
          */
         default int atomicCommitDurabilityOpCount(int countedOps) {
             return countedOps;
@@ -206,27 +190,8 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
     }
 
     /**
-     * Sweep a crash across every durability op of {@code workload}'s commit phase.
-     * <ol>
-     *   <li><b>Count pass:</b> run the commit phase with NO fault; {@code N} = durability ops it performed.</li>
-     *   <li><b>Sweep:</b> for {@code k = 1..min(N, cap)}: fresh identical baseline, {@code armCrashAt(k)},
-     *       run the commit phase, expect the crash to fire, roll files back with {@code crash()}, run the
-     *       recovery triple, and invoke the workload's oracle for {@code k}.</li>
-     * </ol>
-     * If {@code N > cap} the truncation is LOGGED (never silent) and flagged on the result.
-     */
-    /**
-     * The commit phase's durability ops, one line each ({@code <n> <kind> <path>}), from the count pass.
-     * <p>
-     * A pinned op count is a drift tripwire, and a bare "expected 27 but was 26" says nothing about whether
-     * a barrier moved, was added, or was REMOVED — the last of which is a durability regression. Attach this
-     * to the assertion message so the diff is readable at the point of failure. Valid only after the count
-     * pass has run.
-     */
-    /**
-     * The single durability op armed at crash point {@code k}, as {@code <n> <kind> <path>}. A failure at a
-     * crash point is far easier to act on when it names the barrier it crashed at rather than just an index.
-     * Valid only after the count pass has run.
+     * The single durability op armed at crash point {@code k}, as {@code <n> <kind> <path>}, so a failure names the
+     * barrier it crashed at. Valid only after the count pass has run.
      */
     protected String phaseDurabilityOp(int k) {
         if (phaseFirstOp < 1) {
@@ -237,6 +202,12 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
         return idx >= 0 && idx < log.size() ? log.get(idx) : "<op index out of range>";
     }
 
+    /**
+     * The commit phase's durability ops from the count pass, one line each ({@code <n> <kind> <path>}). A pinned
+     * op count fails with a bare "expected 27 but was 26"; attaching this to the assertion message shows whether a
+     * barrier moved, appeared or disappeared, the last being a durability regression. Valid only after the count
+     * pass has run.
+     */
     protected String phaseDurabilityOps() {
         if (phaseFirstOp < 1) {
             return "<count pass has not run>";
@@ -248,17 +219,13 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
     }
 
     /**
-     * COUNT PASS ONLY: run {@code workload}'s commit phase with no fault armed and return {@code N}, the
-     * number of durability ops it performs — without paying for the sweep.
+     * Count pass only: runs {@code workload}'s commit phase with no fault armed and returns {@code N}, the number of
+     * durability ops it performs.
      * <p>
-     * A randomized workload's N is not known until it has been generated and committed once, but the sweep's
-     * cap has to be chosen BEFORE the sweep: pick it too low and the run dies on the truncation bar rather
-     * than on a durability defect. This lets a caller size the cap to the workload it actually drew (or
-     * reject a pathologically large one) instead of pinning a constant that only suits one fixed seed.
-     * <p>
-     * Uses the same setup/commit/teardown/reclaim sequence as the sweep's own count pass, so calling this
-     * first and then {@link #forEachAdaptiveCrashPoint(AdaptiveCrashWorkload, int)} on the SAME workload
-     * instance is safe — the sweep re-runs its own count pass from an equivalent baseline.
+     * A randomized workload's N is unknown until it has been generated and committed once, and the sweep's cap must
+     * be chosen before the sweep. This lets a caller size the cap to the workload it drew, or reject a very large
+     * one. It uses the same setup/commit/teardown/reclaim sequence as the sweep's own count pass, so calling it and
+     * then {@link #forEachAdaptiveCrashPoint(AdaptiveCrashWorkload, int)} on the same workload instance is safe.
      */
     protected int probeCommitDurabilityOps(AdaptiveCrashWorkload workload) throws Exception {
         if (crashFf == null) {
@@ -349,8 +316,8 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
     }
 
     /**
-     * The drawn workload suspends the table with NO fault injected, so it cannot test crash recovery.
-     * Thrown from the count pass; a randomized caller redraws the seed, a pinned one fails loudly.
+     * The drawn workload suspends the table with no fault injected, so it cannot test crash recovery. Thrown from
+     * the count pass; a randomized caller redraws the seed, a pinned one fails.
      */
     public static final class WorkloadNotCrashTestableException extends RuntimeException {
         public WorkloadNotCrashTestableException(String reason) {
@@ -359,30 +326,38 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
         }
     }
 
+    /**
+     * Sweeps a crash across every durability op of {@code workload}'s commit phase.
+     * <ol>
+     *   <li><b>Count pass:</b> run the commit phase with no fault; {@code N} = durability ops it performed.</li>
+     *   <li><b>Sweep:</b> for {@code k = 1..min(N, cap)}: fresh identical baseline, {@code armCrashAt(k)},
+     *       run the commit phase, expect the crash to fire, roll files back with {@code crash()}, run the
+     *       recovery triple, and invoke the workload's oracle for {@code k}.</li>
+     * </ol>
+     * If {@code N > cap}, the truncation is logged and flagged on the result.
+     */
     protected SweepResult forEachAdaptiveCrashPoint(AdaptiveCrashWorkload workload, int cap) throws Exception {
         if (crashFf == null) {
             throw new IllegalStateException("call runWithCrashFacade(...) first");
         }
 
-        // Baseline NON-cached engine fds before the count pass. The count workload must not normalize
-        // leaked one-shot directory fds into the baseline used by every crash iteration.
+        // Baseline non-cached engine fds before the count pass, so leaked one-shot directory fds from the count
+        // workload do not enter the baseline every crash iteration uses.
         final java.util.Set<Long> nonCacheFdBaseline = new java.util.HashSet<>(crashFf.noCacheOpenFdsSnapshot());
 
-        // ---- 1. COUNT PASS: no fault armed; N = durability ops performed by the commit phase. ----
+        // 1. Count pass: no fault armed; N = durability ops performed by the commit phase.
         final TableToken[] countPassTokens = workload.setup(0);
         final int opsBeforeCommit = crashFf.durabilityOpCount();
         workload.commit();
         final int n = crashFf.durabilityOpCount() - opsBeforeCommit;
-        // Remember the count pass's window so a workload's pinned-op-count assertion can name the ops it
-        // actually saw. Recorded BEFORE teardown, whose own ops would otherwise be mistaken for the phase's.
+        // Record the count pass's window so a pinned-op-count assertion can name the ops it saw. Recorded before
+        // teardown, whose own ops would otherwise count as the phase's.
         phaseFirstOp = opsBeforeCommit + 1; // the facade numbers ops from 1
         phaseOpCount = n;
-        // SAFETY CHECK: the count pass ran with NO fault armed. If it already suspended the table, the
-        // WORKLOAD is unusable for crash testing -- every crash point would then "fail" on a condition that
-        // has nothing to do with durability. A randomized generator can legitimately emit such a
-        // combination (e.g. a replace-range insert over a partition an earlier txn converted to Parquet,
-        // which QuestDB does not support), so this is a property of the drawn seed, not a defect.
-        // Detect it HERE, once, rather than letting it masquerade as a crash-recovery failure N times.
+        // The count pass ran with no fault armed. If it already suspended the table, every crash point would fail on a
+        // condition unrelated to durability. A randomized generator can emit such a combination (a replace-range insert
+        // over a partition an earlier txn converted to Parquet, which QuestDB does not support), so this rejects the
+        // drawn seed once instead of reporting N crash-recovery failures.
         final String uncrashedSuspend = workload.rejectWhenCountPassSuspends()
                 ? firstSuspendReason(countPassTokens)
                 : null;
@@ -417,11 +392,11 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
         }
 
         final int[] recoveredByK = new int[sweptPoints + 1];
-        // ---- 2. SWEEP: crash at each DECLARED atomic-commit durability op k, recover, run the oracle. ----
+        // 2. Sweep: crash at each declared atomic-commit durability op k, recover, run the oracle.
         for (int k = 1; k <= sweptPoints; k++) {
             final TableToken[] tokens = workload.setup(k);
-            // Fresh, count-stable baseline: everything on disk NOW (prior tables + this table's pre-commit
-            // state) is durable and inert to crash()/recover(); ops are armed relative to this point.
+            // Fresh, count-stable baseline: everything on disk now (prior tables and this table's pre-commit state) is
+            // durable and inert to crash()/recover(); ops are armed relative to this point.
             markDurableBaseline();
             final int base = crashFf.durabilityOpCount();
             crashFf.armCrashAt(base + k); // fire on the k-th durability op of THIS commit phase
@@ -464,8 +439,8 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
             reclaimLingeringNonCacheFds(nonCacheFdBaseline);
         }
 
-        // Direct epoch-metadata probes use read-only mmaps. In the test harness there is no continuously
-        // scheduled AsyncMunmapJob, so drain its final queued mappings before the enclosing exact FD check.
+        // Direct epoch-metadata reads use read-only mmaps, and the test harness has no scheduled AsyncMunmapJob, so
+        // drain its queued mappings before the enclosing exact fd check.
         Files.getMmapCache().asyncMunmap();
         return new SweepResult(n, atomicCommitOps, cap, sweptPoints, truncated, recoveredByK);
     }
