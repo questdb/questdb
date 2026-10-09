@@ -141,6 +141,38 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAdaptiveLeftVersionGoesAfterNextSavePoint() throws Exception {
+        // A partition version that leaves an adaptive table, by DROP PARTITION, a TTL eviction or an O3 rewrite,
+        // stays while the older save point names it, because recovery can fall back to that save point. It goes
+        // by itself once the next save point no longer names it, with the writer kept open.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+        assertMemoryLeak(() -> {
+            final String[] changes = {
+                    "ALTER TABLE %s DROP PARTITION LIST '2024-01-01'",
+                    "ALTER TABLE %s DROP PARTITION WHERE ts < '2024-01-02'",
+                    "INSERT INTO %s VALUES ('2024-01-04T12:00:00.000000Z', 4)",
+                    "INSERT INTO %s VALUES ('2024-01-01T01:00:00.000000Z', 4)"
+            };
+            final StringSink failures = new StringSink();
+            for (int i = 0; i < changes.length; i++) {
+                final String change = String.format(changes[i], "t" + i);
+                final TableToken tt = createAdaptiveDays("t" + i, i == 2);
+                final ObjList<String> left = versionDirs(tt);
+                execute(change);
+                drainWalQueue();
+                purgeJob.drain(0);
+                checkOnDisk(failures, change + ", the older save point names it", tt, left, true);
+                execute("INSERT INTO t" + i + " VALUES ('2024-01-04T13:00:00.000000Z', 5)");
+                drainWalQueue();
+                purgeJob.drain(0);
+                checkOnDisk(failures, change + ", no save point names it", tt, left, false);
+            }
+            Assert.assertEquals("", failures.toString());
+        });
+    }
+
+    @Test
     public void testAdaptiveLeftVersionGoesAfterRestart() throws Exception {
         // A kill right after the change leaves the version on disk while the older save point names it. Recovery
         // pins both save points, so it stays through the restart and VACUUM TABLE, and goes after the restarted

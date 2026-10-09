@@ -618,13 +618,13 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
     }
 
     // DETACH and CONVERT remove the partition directories they supersede before the statement returns, after
-    // its save point. In ADAPTIVE the older save point, which recovery falls back to, may still name the version a
-    // CONVERT supersedes, so the purge the statement schedules removes it once the next save point moves past it.
+    // its save point. In ADAPTIVE the older save point, which recovery falls back to, may still name them, so the
+    // purge the statement schedules removes them once the next save point moves past them.
     private void assertSupersededDirsRemoved(CairoEngine e, long supersededBefore) throws Exception {
         switch (operation) {
-            case CONVERT_LIST_SECOND_FAILS, CONVERT_TO_NATIVE, CONVERT_TO_PARQUET -> {
+            case CONVERT_LIST_SECOND_FAILS, CONVERT_TO_NATIVE, CONVERT_TO_PARQUET, DETACH, DETACH_LIST_SECOND_FAILS -> {
                 if (!history.failsSavePoint()) {
-                    if (history != History.NOSYNC) {
+                    if (history != History.NOSYNC && history != History.KILLED_BEFORE_TXN_NOSYNC) {
                         takeSavePoint(e);
                         try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(e, 1)) {
                             while (purgeJob.run()) {
@@ -632,11 +632,6 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                             }
                         }
                     }
-                    Assert.assertTrue("superseded partition directories left behind", supersededPartitionDirs(e) <= supersededBefore);
-                }
-            }
-            case DETACH, DETACH_LIST_SECOND_FAILS -> {
-                if (!history.failsSavePoint()) {
                     Assert.assertTrue("superseded partition directories left behind", supersededPartitionDirs(e) <= supersededBefore);
                 }
             }

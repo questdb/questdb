@@ -431,6 +431,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private SymbolColumnIndexer parquetRewriteIndexer;
     private byte parquetRewriteIndexerType = IndexType.NONE;
     private RowGroupBuffers parquetRewriteRowGroupBuffers;
+    // The txn at which this writer last left partition versions to the async purge, or -1. On an adaptive table
+    // they may wait for a save point, and each save point queues a purge until the older pin reaches this txn.
+    private long partitionPurgeOwedTxn = -1;
     private long partitionTimestampHi;
     private boolean performRecovery;
     private boolean processingQueue;
@@ -11441,6 +11444,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         if (scheduleAsyncPurge) {
+            partitionPurgeOwedTxn = lastCommittedTxn;
             // Any more complicated case involve looking at what folders are present on disk before removing
             // do it async in O3PartitionPurgeJob
             if (schedulePurgeO3Partitions(messageBus, tableToken, timestampType, partitionBy)) {
@@ -16396,6 +16400,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txnScoreboard.releaseTxn(priorSlotA ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B, priorEpochTxn);
         }
         tracker.setPinnedEpoch(epochTxn, newSlotA, priorOnDisk ? priorEpochTxn : -1);
+        // A version left to the purge while a pin covered it goes once no save point names it, and nothing else
+        // queues that purge: queue it after each save point until the older pin reaches the txn it was left at.
+        if (partitionPurgeOwedTxn > -1) {
+            if (!schedulePurgeO3Partitions(messageBus, tableToken, timestampType, partitionBy)) {
+                LOG.error().$("could not queue for purge, queue is full [table=").$(tableToken).I$();
+            } else if (!priorOnDisk || priorEpochTxn >= partitionPurgeOwedTxn) {
+                partitionPurgeOwedTxn = -1;
+            }
+        }
 
         // Step 5: publish the durable frontier and the cadence timestamp, last. The WAL purge also keeps the WAL from
         // the other generation (WalPurgeJob reads the lowest save point).
