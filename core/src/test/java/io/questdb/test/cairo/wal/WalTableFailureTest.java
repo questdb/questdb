@@ -293,6 +293,24 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertActivePartitionOfSuspendedTableWithSavedLag() throws Exception {
+        assertMemoryLeak(() -> {
+            final String committed = "('2022-02-24', 1_000_000, 'c', 'c1'), ('2022-02-25', 2_000_000, 'c', 'c2')";
+            final TableToken token = saveWalLag(committed);
+            // a suspended table denies WAL writes, so the ALTER runs on the pooled writer, which holds the lag
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+            execute("ALTER TABLE x SUSPEND WAL");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2022-02-25'");
+            execute("ALTER TABLE x RESUME WAL");
+            // the first pass must apply the rest: a later pass opens a fresh writer, which hides a failed one
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, -1);
+            tickWalQueue(1);
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertSavedLagRows(committed);
+        });
+    }
+
+    @Test
     public void testDataTxnFailToCommitInWalWriter() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
@@ -744,6 +762,18 @@ public class WalTableFailureTest extends AbstractCairoTest {
             // the committed day-2 row is dropped on purpose; the lag transaction and the out-of-order row
             // were not committed when the partition was dropped, so they must all be there
             assertSavedLagRows("('2022-02-24', 1_000_000, 'c', 'c1')");
+        });
+    }
+
+    @Test
+    public void testForceDropLagPartitionOfEmptyTableWithSavedLag() throws Exception {
+        assertMemoryLeak(() -> {
+            // the table has no committed rows: the lag sits in the 0-row partition it created
+            final TableToken token = saveWalLag(null);
+            execute("ALTER TABLE x FORCE DROP PARTITION LIST '2022-02-25'");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertSavedLagRows(null);
         });
     }
 
@@ -2079,11 +2109,13 @@ public class WalTableFailureTest extends AbstractCairoTest {
         }
     }
 
-    // The table and the reference hold the same rows: the committed ones, the lag transaction's 1,000
-    // and the out-of-order row.
+    // The table and the reference hold the same rows: the committed ones (null for none), the lag
+    // transaction's 1,000 and the out-of-order row.
     private static void assertSavedLagRows(String committedValues) throws Exception {
         execute("CREATE TABLE x_expected (ts TIMESTAMP, v LONG, s SYMBOL, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-        execute("INSERT INTO x_expected VALUES " + committedValues);
+        if (committedValues != null) {
+            execute("INSERT INTO x_expected VALUES " + committedValues);
+        }
         execute(String.format(SAVED_LAG_INSERT, "x_expected"));
         execute("INSERT INTO x_expected VALUES ('2022-02-25T00:30', -1, 'neg', 'neg')");
         assertSqlCursors("SELECT count(), sum(v) FROM x_expected", "SELECT count(), sum(v) FROM x");
@@ -2439,8 +2471,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
         execute("CREATE TABLE x (ts TIMESTAMP, v LONG, s SYMBOL, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL WITH maxUncommittedRows=50");
         final TableToken token = engine.verifyTableName("x");
-        execute("INSERT INTO x VALUES " + committedValues);
-        drainWalQueue();
+        if (committedValues != null) {
+            execute("INSERT INTO x VALUES " + committedValues);
+            drainWalQueue();
+        }
         if (negativeLagChecksum) {
             // A table with many commits: the empty-lag checksum of every txn from 73,046 to 145,130 is negative.
             engine.releaseInactive();
