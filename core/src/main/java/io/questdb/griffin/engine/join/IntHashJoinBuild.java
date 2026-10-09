@@ -117,7 +117,9 @@ public final class IntHashJoinBuild implements Closeable {
     private MemoryTracker memoryTracker;
     private boolean open;
 
-    /** A build with payload columns stores row ids for probes to read them through; see the class docs. */
+    /**
+     * A build with payload columns stores row ids for probes to read them through; see the class docs.
+     */
     @TestOnly
     public IntHashJoinBuild(boolean hasPayload, int initialSlots, long initialRowCapacity) {
         this(hasPayload, initialSlots, initialRowCapacity, false);
@@ -139,7 +141,9 @@ public final class IntHashJoinBuild implements Closeable {
         tables.add(keys);
     }
 
-    /** Appends one row. On failure all execution allocations are released. */
+    /**
+     * Appends one row. On failure all execution allocations are released.
+     */
     public void append(int key, long rowId) {
         requireBuilding();
         try {
@@ -168,7 +172,9 @@ public final class IntHashJoinBuild implements Closeable {
         }
     }
 
-    /** The filtered twin of {@link #appendFrame(PageFrameMemoryRecord, int, long)}: appends the listed rows only. */
+    /**
+     * The filtered twin of {@link #appendFrame(PageFrameMemoryRecord, int, long)}: appends the listed rows only.
+     */
     public void appendFrame(PageFrameMemoryRecord record, int keyColumn, DirectLongList rows) {
         requireBuilding();
         try {
@@ -327,7 +333,9 @@ public final class IntHashJoinBuild implements Closeable {
         }
     }
 
-    /** Only call after every probe is drained and aggregate output is finished. */
+    /**
+     * Only call after every probe is drained and aggregate output is finished.
+     */
     @Override
     public void close() {
         if (frozen != null) {
@@ -346,7 +354,9 @@ public final class IntHashJoinBuild implements Closeable {
         memoryTracker = null;
     }
 
-    /** Ends mutation of a build without payload columns. */
+    /**
+     * Ends mutation of a build without payload columns.
+     */
     public FrozenHashJoinBuild.IntKeyed freeze() {
         return freeze(null);
     }
@@ -416,17 +426,23 @@ public final class IntHashJoinBuild implements Closeable {
         return partitions.getPartitionCount();
     }
 
-    /** Rows of this partition of a parallel build, once the partitions are planned. */
+    /**
+     * Rows of this partition of a parallel build, once the partitions are planned.
+     */
     public long getPartitionRowCount(int partition) {
         return partitions.getPartitionRowCount(partition);
     }
 
-    /** Rows the frames of a parallel build kept, once every frame is partitioned. */
+    /**
+     * Rows the frames of a parallel build kept, once every frame is partitioned.
+     */
     public long getPartitionedRowCount() {
         return partitions.getPartitionedRowCount();
     }
 
-    /** Rows that this frame of a parallel build keeps in this partition. */
+    /**
+     * Rows that this frame of a parallel build keeps in this partition.
+     */
     public long getSegmentRowCount(int frameIndex, int partition) {
         return partitions.getSegmentRowCount(frameIndex, partition);
     }
@@ -448,7 +464,9 @@ public final class IntHashJoinBuild implements Closeable {
         return size;
     }
 
-    /** Reopens a closed skeleton for a fresh execution. */
+    /**
+     * Reopens a closed skeleton for a fresh execution.
+     */
     public void open(@Nullable MemoryTracker memoryTracker, SqlExecutionCircuitBreaker circuitBreaker) {
         if (open) {
             throw new IllegalStateException("hash join build is already open");
@@ -640,7 +658,9 @@ public final class IntHashJoinBuild implements Closeable {
         }
     }
 
-    /** What both kinds of snapshot share: the frozen heap and the source its probes read payloads through. */
+    /**
+     * What both kinds of snapshot share: the frozen heap and the source its probes read payloads through.
+     */
     private abstract class AbstractFrozen implements FrozenHashJoinBuild.IntKeyed {
         long generation;
         long handleBase;

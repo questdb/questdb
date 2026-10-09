@@ -47,7 +47,9 @@ public final class SymbolKeyTranslatingRecord extends DelegatingRecord implement
     private final IntList columnToView = new IntList();
     private final ObjList<SymbolKeyTranslator.View> views = new ObjList<>();
 
-    /** Symbol key columns are probe-record indexes; the count bounds every index the sink reads. */
+    /**
+     * Symbol key columns are probe-record indexes; the count bounds every index the sink reads.
+     */
     public SymbolKeyTranslatingRecord(int probeColumnCount, IntList symbolKeyColumns) {
         columnToView.setAll(probeColumnCount, -1);
         for (int i = 0, n = symbolKeyColumns.size(); i < n; i++) {
@@ -73,7 +75,9 @@ public final class SymbolKeyTranslatingRecord extends DelegatingRecord implement
         return view < 0 ? base.getInt(col) : views.getQuick(view).translate(base.getInt(col));
     }
 
-    /** The view of one symbol key column, in the order the constructor took the columns. */
+    /**
+     * The view of one symbol key column, in the order the constructor took the columns.
+     */
     public SymbolKeyTranslator.View getView(int key) {
         return views.getQuick(key);
     }

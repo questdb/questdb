@@ -43,7 +43,9 @@ import io.questdb.std.ObjList;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-/** Keeps probe/build symbols alive until output and parent consumers finish. */
+/**
+ * Keeps probe/build symbols alive until output and parent consumers finish.
+ */
 final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
     private final CairoEngine engine;
     private final UnorderedPageFrameSequence<AsyncHashJoinGroupByAtom> frameSequence;
@@ -61,7 +63,7 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
     private MapRecordCursor mapCursor;
 
     AsyncHashJoinGroupByRecordCursor(CairoEngine engine, UnorderedPageFrameSequence<AsyncHashJoinGroupByAtom> frameSequence,
-                                    HashJoinGroupByFunctions functions) {
+                                     HashJoinGroupByFunctions functions) {
         this.engine = engine;
         this.mergeCircuitBreaker = new PostAggregationCircuitBreaker(engine);
         this.frameSequence = frameSequence;

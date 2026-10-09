@@ -8537,6 +8537,229 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLateralBodyFullJoinThenCorrelatedInnerJoin() throws Exception {
+        // The LATERAL body runs a FULL join and then INNER-joins a sub-query that reads the outer row
+        // through a non-equality. Keeping RIGHT and FULL joins at their SQL position must leave this
+        // shape working: the rewriter adds a join to the distinct outer values to the body, and the
+        // join order decides whether that join runs before or after the FULL join.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, x INT)");
+            execute("CREATE TABLE a (id INT, k INT)");
+            execute("CREATE TABLE b (id INT, k INT, x INT)");
+            execute("INSERT INTO o VALUES (1, 10), (2, 20)");
+            execute("INSERT INTO a VALUES (1, 1), (2, 2)");
+            execute("INSERT INTO b VALUES (11, 1, 10), (12, 2, 20), (13, 2, 30), (14, 3, 10)");
+
+            // The FULL join yields (aid, a.k, cid) = (1, 1, 11), (2, 2, 12), (2, 2, 13) and the
+            // NULL-extended (null, null, 14), which s never matches.
+            // o.id = 1, x = 10: s holds b's rows 12 and 13, both with k = 2, so each of the two
+            // a.k = 2 rows pairs with both, and the a.k = 1 row finds no s row.
+            // o.id = 2, x = 20: s holds b's rows 11 (k = 1), 13 (k = 2) and 14 (k = 3), so the
+            // a.k = 1 row pairs with 11 and each of the two a.k = 2 rows pairs with 13.
+            assertQuery("""
+                    SELECT o.id, t.aid, t.cid, t.sid
+                    FROM o CROSS JOIN LATERAL (
+                        SELECT a.id aid, c.id cid, s.id sid
+                        FROM a
+                        FULL JOIN b c ON c.k = a.k
+                        JOIN (SELECT id, k FROM b WHERE x != o.x) s ON s.k = a.k
+                    ) t
+                    ORDER BY o.id, t.aid, t.cid, t.sid
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tcid\tsid
+                            1\t2\t12\t12
+                            1\t2\t12\t13
+                            1\t2\t13\t12
+                            1\t2\t13\t13
+                            2\t1\t11\t11
+                            2\t2\t12\t13
+                            2\t2\t13\t13
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralBodyFullJoinWithGreaterThanCorrelationInWhere() throws Exception {
+        // The body's WHERE reads the outer row through an inequality, so the rewriter keeps its join
+        // to the distinct outer values in the body, and no join of the body reads that join. Keeping
+        // RIGHT and FULL joins at their SQL position must not move it before the FULL join: there the
+        // FULL join NULL-extends the outer value of b's unmatched row 14, and the inequality then
+        // rejects the row for every outer row.
+        assertMemoryLeak(() -> {
+            createLateralBodyTables();
+
+            // The FULL join yields (aid, cid, c.x) = (1, 11, 10), (2, 12, 20), (2, 13, 30), the
+            // NULL-extended (null, 14, 10) for b's row 14, and (3, null, null) for a's row 3.
+            // o.id = 1, x = 5: all four rows with a c.x pass. o.id = 2, x = 20: only cid 13 has
+            // c.x > 20. o.id = 3, x = 30 and o.id = 5, x = 40: no c.x is greater.
+            assertQuery("""
+                    SELECT o.id, t.aid, t.cid
+                    FROM o CROSS JOIN LATERAL (
+                        SELECT a.id aid, c.id cid
+                        FROM a
+                        FULL JOIN b c ON c.k = a.k
+                        WHERE c.x > o.x
+                    ) t
+                    ORDER BY o.id, t.cid
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tcid
+                            1\t1\t11
+                            1\t2\t12
+                            1\t2\t13
+                            1\tnull\t14
+                            2\t2\t13
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralBodyFullJoinWithOrCorrelationInWhere() throws Exception {
+        // The body's WHERE reads the outer row on both sides of an OR, so the rewriter keeps its join
+        // to the distinct outer values in the body, and no join of the body reads that join. Keeping
+        // RIGHT and FULL joins at their SQL position must not move it before the FULL join: there the
+        // FULL join NULL-extends the outer value of b's unmatched row 14, and c.k = o.id then
+        // compares with NULL.
+        assertMemoryLeak(() -> {
+            createLateralBodyTables();
+
+            // The FULL join yields (aid, a.k, cid, c.k) = (1, 1, 11, 1), (2, 2, 12, 2), (2, 2, 13, 2),
+            // the NULL-extended (null, null, 14, 3) for b's row 14, and (3, 5, null, null) for a's
+            // row 3. o.id = 1 and o.id = 2 keep the rows with that k on both sides. o.id = 3 keeps
+            // b's row 14 through c.k = 3, and o.id = 5 keeps a's row 3 through a.k = 5.
+            assertQuery("""
+                    SELECT o.id, t.aid, t.cid
+                    FROM o CROSS JOIN LATERAL (
+                        SELECT a.id aid, c.id cid
+                        FROM a
+                        FULL JOIN b c ON c.k = a.k
+                        WHERE a.k = o.id OR c.k = o.id
+                    ) t
+                    ORDER BY o.id, t.cid
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tcid
+                            1\t1\t11
+                            2\t2\t12
+                            2\t2\t13
+                            3\tnull\t14
+                            5\t3\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralBodyRightJoinThenAsOfJoinWithNotEqualCorrelationInWhere() throws Exception {
+        // The body's WHERE reads the outer row through !=, so the rewriter keeps its join to the
+        // distinct outer values in the body, and no join of the body reads that join. The ASOF join
+        // follows a non-equi RIGHT join, whose output has no designated timestamp, so it runs before
+        // the RIGHT join, on the RIGHT join's SQL prefix. That prefix must not include the join to the
+        // outer values: it would then run inside the RIGHT join's master, the RIGHT join would
+        // NULL-extend the outer value of b's unmatched row 11, and the row would belong to no outer
+        // row. The inner join to d separates the RIGHT join from the join to the outer values, which
+        // the rewriter puts first: a non-equi ON clause makes the RIGHT join depend on the join
+        // before it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, x INT)");
+            execute("CREATE TABLE a (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE d (id INT)");
+            execute("CREATE TABLE b (id INT, k INT, x INT)");
+            execute("CREATE TABLE s (id INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO o VALUES (1, 10), (2, 20)");
+            execute("""
+                    INSERT INTO a VALUES
+                    (1, 1, '2024-01-01T00:00:01.000000Z'),
+                    (2, 2, '2024-01-01T00:00:03.000000Z')
+                    """);
+            execute("INSERT INTO d VALUES (1), (2)");
+            execute("INSERT INTO b VALUES (11, 1, 10), (12, 2, 20), (13, 3, 30)");
+            execute("INSERT INTO s VALUES (21, '2024-01-01T00:00:02.000000Z')");
+
+            // The inner join keeps both a rows. The RIGHT join yields (aid, cid, c.x) = (1, 12, 20),
+            // (1, 13, 30), (2, 13, 30) and the NULL-extended (null, 11, 10) for b's row 11: no a.k is
+            // below its k. The ASOF join finds s's row 21 for a's row 2 only: a's row 1 precedes it,
+            // and the NULL-extended row has no timestamp.
+            // o.id = 1, x = 10 drops cid 11, and o.id = 2, x = 20 drops cid 12.
+            assertQuery("""
+                    SELECT o.id, t.aid, t.cid, t.sid
+                    FROM o CROSS JOIN LATERAL (
+                        SELECT a.id aid, c.id cid, s.id sid
+                        FROM a
+                        JOIN d ON d.id = a.id
+                        RIGHT JOIN b c ON c.k > a.k
+                        ASOF JOIN s
+                        WHERE c.x != o.x
+                    ) t
+                    ORDER BY o.id, t.cid, t.aid
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tcid\tsid
+                            1\t1\t12\tnull
+                            1\t1\t13\tnull
+                            1\t2\t13\t21
+                            2\tnull\t11\tnull
+                            2\t1\t13\tnull
+                            2\t2\t13\t21
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralBodyRightJoinWithNotEqualCorrelationInWhere() throws Exception {
+        // The body's WHERE reads the outer row through !=, so the rewriter keeps its join to the
+        // distinct outer values in the body, and no join of the body reads that join. Keeping RIGHT
+        // and FULL joins at their SQL position must not move it before the RIGHT join: there the
+        // RIGHT join NULL-extends the outer value of b's unmatched row 14, and the row then belongs
+        // to no outer row.
+        assertMemoryLeak(() -> {
+            createLateralBodyTables();
+
+            // The RIGHT join yields (aid, cid, c.x) = (1, 11, 10), (2, 12, 20), (2, 13, 30) and the
+            // NULL-extended (null, 14, 10) for b's row 14.
+            // o.id = 1, x = 5 and o.id = 5, x = 40: no c.x is equal, so all four rows pass.
+            // o.id = 2, x = 20 drops cid 12, and o.id = 3, x = 30 drops cid 13.
+            assertQuery("""
+                    SELECT o.id, t.aid, t.cid
+                    FROM o CROSS JOIN LATERAL (
+                        SELECT a.id aid, c.id cid
+                        FROM a
+                        RIGHT JOIN b c ON c.k = a.k
+                        WHERE c.x != o.x
+                    ) t
+                    ORDER BY o.id, t.cid
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tcid
+                            1\t1\t11
+                            1\t2\t12
+                            1\t2\t13
+                            1\tnull\t14
+                            2\t1\t11
+                            2\t2\t13
+                            2\tnull\t14
+                            3\t1\t11
+                            3\t2\t12
+                            3\tnull\t14
+                            5\t1\t11
+                            5\t2\t12
+                            5\t2\t13
+                            5\tnull\t14
+                            """);
+        });
+    }
+
+    @Test
     public void testLeftHashJoinOnFunctionCondition1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 (i int)");
@@ -14760,6 +14983,17 @@ public class JoinTest extends AbstractCairoTest {
                 ('2020-01-01T02:00', 4),
                 ('2020-01-01T03:00', 5)
                 """);
+    }
+
+    // Tables of testLateralBody*CorrelationInWhere(). a's row 3 has no b row and b's row 14 has no a row,
+    // so a RIGHT or FULL join of a and b NULL-extends a row on either side.
+    private void createLateralBodyTables() throws SqlException {
+        execute("CREATE TABLE o (id INT, x INT)");
+        execute("CREATE TABLE a (id INT, k INT)");
+        execute("CREATE TABLE b (id INT, k INT, x INT)");
+        execute("INSERT INTO o VALUES (1, 5), (2, 20), (3, 30), (5, 40)");
+        execute("INSERT INTO a VALUES (1, 1), (2, 2), (3, 5)");
+        execute("INSERT INTO b VALUES (11, 1, 10), (12, 2, 20), (13, 2, 30), (14, 3, 10)");
     }
 
     private void testAsOfJoin0(boolean fullFatJoin) throws Exception {

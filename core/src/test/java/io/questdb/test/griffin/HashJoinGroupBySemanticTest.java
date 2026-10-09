@@ -382,8 +382,10 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                     }
                     // TRUNCATE resets the dictionary, so the key column of the table without rows from
                     // insertRows() never holds text: every non-null key on the other side misses.
-                    case 9 -> execute("insert into a (id,i,l,d,t) values (1,1,10,0.5,'2020-01-01'),(null,2,20,2,'2020-01-02')");
-                    case 10 -> execute("insert into b (id,i,l,d,t) values (1,1,10,0.5,'2020-01-01'),(null,2,20,2,'2020-01-02')");
+                    case 9 ->
+                            execute("insert into a (id,i,l,d,t) values (1,1,10,0.5,'2020-01-01'),(null,2,20,2,'2020-01-02')");
+                    case 10 ->
+                            execute("insert into b (id,i,l,d,t) values (1,1,10,0.5,'2020-01-01'),(null,2,20,2,'2020-01-02')");
                     // The dictionary keeps every key text, but only null keys have rows.
                     case 11 -> {
                         execute("truncate table a keep symbol maps");

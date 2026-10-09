@@ -134,6 +134,9 @@ public class SqlOptimiser implements Mutable {
     private static final int JOIN_OP_EQUAL = 1;
     private static final int JOIN_OP_OR = 3;
     private static final int JOIN_OP_REGEX = 4;
+    // The alias prefix of the join model that LateralJoinRewriter adds to a LATERAL body for the
+    // distinct outer values. LateralJoinRewriter keeps the same literal in its private OUTER_REF_PREFIX.
+    private static final String LATERAL_OUTER_REF_PREFIX = "__qdb_outer_ref__";
     // Rewriters that break the 1:1 relationship between baseModel rows and
     // the rows the outer LIMIT counts: DISTINCT and GROUP BY drop rows
     // (SAMPLE BY is encoded as GROUP BY); WINDOW preserves the count but
@@ -713,6 +716,16 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return true;
+    }
+
+    /**
+     * Returns true for the join model that LateralJoinRewriter adds to a LATERAL body for the
+     * distinct outer values. The model stands for "once per outer value" and is no table of the
+     * body's FROM clause, so {@link #constrainRightAndFullJoinOrder} keeps it out of the SQL prefix.
+     */
+    private static boolean isLateralOuterRefModel(IQueryModel model) {
+        final ExpressionNode alias = model.getAlias();
+        return alias != null && Chars.startsWith(alias.token, LATERAL_OUTER_REF_PREFIX);
     }
 
     /**
@@ -3177,6 +3190,13 @@ public class SqlOptimiser implements Mutable {
      * <p>
      * A later ASOF or LT join that {@link #canRunBeforeOuterJoin} admits is the exception: it
      * executes after the prefix of the level's first RIGHT/FULL join and before that join.
+     * <p>
+     * The join model that LateralJoinRewriter adds to a LATERAL body for the distinct outer values
+     * is not part of the SQL prefix, see {@link #isLateralOuterRefModel}. The rewriter inserts it at
+     * join index 1, and doReorderTables() runs it after the body's joins when no join depends on it,
+     * so the body's WHERE clause tests each joined row against each outer value. A prefix edge would
+     * run it inside the outer join's master, where the outer join NULL-extends it for its unmatched
+     * rows, which then reach no outer row.
      */
     private void constrainRightAndFullJoinOrder(IQueryModel parent) {
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
@@ -3197,7 +3217,9 @@ public class SqlOptimiser implements Mutable {
                 }
             }
             for (int prefixIndex = 0; prefixIndex < i; prefixIndex++) {
-                recordOrderingConstraint(prefixIndex, i);
+                if (!isLateralOuterRefModel(joinModels.getQuick(prefixIndex))) {
+                    recordOrderingConstraint(prefixIndex, i);
+                }
             }
             for (int laterIndex = i + 1; laterIndex < n; laterIndex++) {
                 if (joinsBeforeOuterJoin.excludes(laterIndex)) {
@@ -3211,7 +3233,9 @@ public class SqlOptimiser implements Mutable {
         for (int laterIndex = firstOuterJoinIndex + 1; laterIndex < n; laterIndex++) {
             if (joinsBeforeOuterJoin.contains(laterIndex)) {
                 for (int prefixIndex = 0; prefixIndex < firstOuterJoinIndex; prefixIndex++) {
-                    recordOrderingConstraint(prefixIndex, laterIndex);
+                    if (!isLateralOuterRefModel(joinModels.getQuick(prefixIndex))) {
+                        recordOrderingConstraint(prefixIndex, laterIndex);
+                    }
                 }
                 // the only edge against model order: the later join executes before the outer join
                 recordOrderingConstraint(laterIndex, firstOuterJoinIndex);

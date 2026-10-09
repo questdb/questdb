@@ -49,7 +49,9 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
     // A generation no snapshot carries: the heap's first freeze is 1.
     private static final long EXPIRED = -1;
     protected final HashJoinRowHeap rowHeap;
-    /** The row link of the next duplicate: a byte offset plus eight, zero at a chain end. */
+    /**
+     * The row link of the next duplicate: a byte offset plus eight, zero at a chain end.
+     */
     protected long next;
     // Null for a build without payload columns, whose rows store no id.
     @Nullable
@@ -77,7 +79,9 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
         probeGeneration = EXPIRED;
     }
 
-    /** The payload reader, positioned at the last match; null for a build without payload columns. */
+    /**
+     * The payload reader, positioned at the last match; null for a build without payload columns.
+     */
     @Override
     public final Record getRecord() {
         return payload;
@@ -123,7 +127,9 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
         positionAt(offset);
     }
 
-    /** True while this probe is bound to the build's current frozen snapshot. */
+    /**
+     * True while this probe is bound to the build's current frozen snapshot.
+     */
     protected final boolean isCurrent() {
         return probeGeneration == rowHeap.getGeneration();
     }
@@ -151,7 +157,9 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
         }
     }
 
-    /** Positions the payload reader at the row at this byte offset of the heap. */
+    /**
+     * Positions the payload reader at the row at this byte offset of the heap.
+     */
     protected final void positionAt(long offset) {
         if (payload != null) {
             payload.position(HashJoinRowHeap.getRowIdAddress(heapAddress + offset), HashJoinRowHeap.getOrdinal(offset));

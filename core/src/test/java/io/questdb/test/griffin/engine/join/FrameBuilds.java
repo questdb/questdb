@@ -214,7 +214,9 @@ final class FrameBuilds {
         return build.freeze(frames);
     }
 
-    /** The row count of every open frame, in frame order, as the operator hands a build that keeps every row. */
+    /**
+     * The row count of every open frame, in frame order, as the operator hands a build that keeps every row.
+     */
     static LongList frameRowCounts(HashJoinBuildFrames frames) {
         final LongList rowCounts = new LongList();
         for (int frameIndex = 0; frameIndex < frames.getFrameCount(); frameIndex++) {

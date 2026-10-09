@@ -156,12 +156,16 @@ public final class HashJoinGroupByKeys {
         return probeTypes.getQuick(key);
     }
 
-    /** The type the map stores, which is neither side's type when the two reconcile to a third. */
+    /**
+     * The type the map stores, which is neither side's type when the two reconcile to a third.
+     */
     public int getType(int key) {
         return types.getQuick(key);
     }
 
-    /** True when any key is a SYMBOL pair, whose probe keys translate into the build's domain. */
+    /**
+     * True when any key is a SYMBOL pair, whose probe keys translate into the build's domain.
+     */
     public boolean hasTranslatedSymbol() {
         for (int key = 0, n = size(); key < n; key++) {
             if (isTranslatedSymbol(key)) {
@@ -171,42 +175,58 @@ public final class HashJoinGroupByKeys {
         return false;
     }
 
-    /** The build side writes its STRING key as a VARCHAR, because the probe side is a VARCHAR. */
+    /**
+     * The build side writes its STRING key as a VARCHAR, because the probe side is a VARCHAR.
+     */
     public boolean isBuildStringAsVarchar(int key) {
         return buildStringAsVarchar.get(key);
     }
 
-    /** The build side writes its TIMESTAMP key in nanos, because the probe side is in nanos. */
+    /**
+     * The build side writes its TIMESTAMP key in nanos, because the probe side is in nanos.
+     */
     public boolean isBuildTimestampAsNanos(int key) {
         return buildTimestampAsNanos.get(key);
     }
 
-    /** True for the narrow INT layout: one INT pair, or one SYMBOL pair the probe translates. */
+    /**
+     * True for the narrow INT layout: one INT pair, or one SYMBOL pair the probe translates.
+     */
     public boolean isIntKeyed() {
         return size() == 1 && (types.getQuick(0) == ColumnType.INT || types.getQuick(0) == ColumnType.SYMBOL);
     }
 
-    /** The probe side writes its STRING key as a VARCHAR, because the build side is a VARCHAR. */
+    /**
+     * The probe side writes its STRING key as a VARCHAR, because the build side is a VARCHAR.
+     */
     public boolean isProbeStringAsVarchar(int key) {
         return probeStringAsVarchar.get(key);
     }
 
-    /** The probe side writes its TIMESTAMP key in nanos, because the build side is in nanos. */
+    /**
+     * The probe side writes its TIMESTAMP key in nanos, because the build side is in nanos.
+     */
     public boolean isProbeTimestampAsNanos(int key) {
         return probeTimestampAsNanos.get(key);
     }
 
-    /** Both sides write a SYMBOL key as its text, so keys from different dictionaries compare. */
+    /**
+     * Both sides write a SYMBOL key as its text, so keys from different dictionaries compare.
+     */
     public boolean isSymbolAsString(int key) {
         return symbolAsString.get(key);
     }
 
-    /** The single SYMBOL pair of the INT layout, whose probe keys translate into the build's domain. */
+    /**
+     * The single SYMBOL pair of the INT layout, whose probe keys translate into the build's domain.
+     */
     public boolean isSymbolKey() {
         return size() == 1 && types.getQuick(0) == ColumnType.SYMBOL;
     }
 
-    /** A SYMBOL pair, whose probe keys translate into the build's domain instead of comparing as text. */
+    /**
+     * A SYMBOL pair, whose probe keys translate into the build's domain instead of comparing as text.
+     */
     public boolean isTranslatedSymbol(int key) {
         return types.getQuick(key) == ColumnType.SYMBOL;
     }

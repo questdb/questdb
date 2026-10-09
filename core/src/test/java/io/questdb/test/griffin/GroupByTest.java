@@ -1553,6 +1553,351 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByCursorSubQueryNestedInAggregateArgument() throws Exception {
+        // The aggregate argument holds a cursor sub-query whose own GROUP BY holds a second cursor
+        // sub-query in a key or in an aggregate argument. SqlCodeGenerator generates the second
+        // sub-query two generate() calls deep, while both GROUP BYs above it assemble their functions.
+        // Each of them must get its own key and value types back, not those of the hash join below.
+        assertMemoryLeak(() -> {
+            createCursorSubQueryTables();
+            final String hashJoinSet = "(SELECT r.c1::SYMBOL FROM tb2 r JOIN tc2 n ON n.cts = r.rts)";
+            final String intHashJoinSet = "(SELECT p.s FROM tsym p JOIN tb2 r ON r.c1 = p.v)";
+            // s IN ('10', '20', '30') splits tsym into two groups, their first symbols are '10' and '7'
+            final String functionKeySet = "(SELECT first(q.s) FROM tsym q GROUP BY q.s IN " + hashJoinSet + ")";
+            // one group per row, the sums for '10', '20' and '7' are 10, 20 and 0
+            final String columnKeySet = "(SELECT sum(CASE WHEN q.s IN " + intHashJoinSet + " THEN q.v ELSE 0 END)::SYMBOL FROM tsym q GROUP BY q.ts)";
+            for (boolean isParallel : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelGroupByEnabled(isParallel);
+                assertQuery("SELECT count() c, sum(CASE WHEN s IN " + functionKeySet + " THEN v ELSE 0 END) sv FROM tsym")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                c\tsv
+                                3\t17
+                                """);
+                assertQuery("SELECT v, sum(CASE WHEN s IN " + functionKeySet + " THEN 1 ELSE 0 END) n FROM tsym GROUP BY v ORDER BY v")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                v\tn
+                                7\t1
+                                10\t1
+                                20\t0
+                                """);
+                assertQuery("SELECT v, sum(CASE WHEN s IN " + columnKeySet + " THEN 1 ELSE 0 END) n FROM tsym GROUP BY v ORDER BY v")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                v\tn
+                                7\t0
+                                10\t1
+                                20\t1
+                                """);
+                // the scalar sub-query returns (10 + 20 + 0) / 2
+                assertQuery("SELECT s, sum(CASE WHEN v > (SELECT sum(CASE WHEN r.c1::SYMBOL IN " + intHashJoinSet + " THEN r.c1 ELSE 0 END) / 2 FROM tb2 r)"
+                        + " THEN v ELSE 0 END) a FROM tsym GROUP BY s ORDER BY s")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                s\ta
+                                10\t0
+                                20\t20
+                                7\t0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testGroupByCursorSubQueryNestedInHorizonJoin() throws Exception {
+        // HORIZON JOIN assembles its GROUP BY functions over the join. A cursor sub-query in a key or
+        // an aggregate argument runs a GROUP BY that holds a second cursor sub-query. Neither of the
+        // two may change the key and value types of the map above it.
+        assertMemoryLeak(() -> {
+            createCursorSubQueryTables();
+            execute("CREATE TABLE tsym2 (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tsym2 VALUES ('a', '2020-01-01T00:20'), ('b', '2020-01-01T01:20')");
+            final String hashJoinSet = "(SELECT r.c1::SYMBOL FROM tb2 r JOIN tc2 n ON n.cts = r.rts)";
+            final String intHashJoinSet = "(SELECT p.s FROM tsym p JOIN tb2 r ON r.c1 = p.v)";
+            // s IN ('10', '20', '30') splits tsym into two groups, their first symbols are '10' and '7'
+            final String functionKeySet = "(SELECT first(q.s) FROM tsym q GROUP BY q.s IN " + hashJoinSet + ")";
+            // one group per row, the sums for '10', '20' and '7' are 10, 20 and 0
+            final String columnKeySet = "(SELECT sum(CASE WHEN q.s IN " + intHashJoinSet + " THEN q.v ELSE 0 END)::SYMBOL FROM tsym q GROUP BY q.ts)";
+            final String horizon = " FROM tsym AS t HORIZON JOIN tsym2 AS p ON (t.s = p.s) RANGE FROM 0s TO 2s STEP 1s AS h";
+            for (boolean isParallel : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertQuery("SELECT h.offset / 1_000_000 k, sum(CASE WHEN t.s IN " + functionKeySet + " THEN t.v ELSE 0 END) c" + horizon + " ORDER BY k")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\tc
+                                0\t17
+                                1\t17
+                                2\t17
+                                """);
+                assertQuery("SELECT t.s IN " + functionKeySet + " k, count() c, sum(t.v) sv" + horizon + " ORDER BY k")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\tc\tsv
+                                false\t3\t60
+                                true\t6\t51
+                                """);
+                assertQuery("SELECT t.s IN " + columnKeySet + " k, count() c, sum(t.v) sv" + horizon + " ORDER BY k")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\tc\tsv
+                                false\t3\t21
+                                true\t6\t90
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testGroupByCursorSubQueryNestedInKey() throws Exception {
+        // The GROUP BY key holds a cursor sub-query whose own GROUP BY holds a second cursor sub-query
+        // in a key or in an aggregate argument. SqlCodeGenerator generates the second sub-query two
+        // generate() calls deep; its hash join or sort must not leave its key types, value types or
+        // sort columns in the map layout and key column filter of either GROUP BY above it.
+        assertMemoryLeak(() -> {
+            createCursorSubQueryTables();
+            final String hashJoinSet = "(SELECT r.c1::SYMBOL FROM tb2 r JOIN tc2 n ON n.cts = r.rts)";
+            final String intHashJoinSet = "(SELECT p.s FROM tsym p JOIN tb2 r ON r.c1 = p.v)";
+            final String sortSet = "(SELECT c1::SYMBOL FROM tb2 ORDER BY c1 DESC)";
+            final String hashJoinScalar = "(SELECT r.rts FROM tb2 r JOIN tc2 n ON n.cts = r.rts ORDER BY r.rts LIMIT 1)";
+            for (boolean isParallel : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelGroupByEnabled(isParallel);
+                // s IN ('10', '20', '30') splits tsym into two groups, their first symbols are '10' and '7'
+                assertQuery("SELECT s IN (SELECT first(q.s) FROM tsym q GROUP BY q.s IN " + hashJoinSet + ") k, count() c, sum(v) sv"
+                        + " FROM tsym GROUP BY k ORDER BY k")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\tc\tsv
+                                false\t1\t20
+                                true\t2\t17
+                                """);
+                // ts > 2020-01-01T00:20 splits tsym into two groups, their first symbols are '10' and '20'
+                assertQuery("SELECT s IN (SELECT first(q.s) FROM tsym q GROUP BY q.ts > " + hashJoinScalar + ") k, count() c, sum(v) sv"
+                        + " FROM tsym GROUP BY k ORDER BY k")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\tc\tsv
+                                false\t1\t7
+                                true\t2\t30
+                                """);
+                assertQuery("SELECT s, s IN (SELECT first(q.s) FROM tsym q GROUP BY q.s IN " + sortSet + ") k, count() c"
+                        + " FROM tsym GROUP BY s, k ORDER BY s")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                s\tk\tc
+                                10\ttrue\t1
+                                20\tfalse\t1
+                                7\ttrue\t1
+                                """);
+                // the scalar sub-query returns 10 + 20 + 0 - 15
+                assertQuery("SELECT v > (SELECT sum(CASE WHEN q.s IN " + hashJoinSet + " THEN q.v ELSE 0 END) - 15 FROM tsym q) k, count() c, sum(v) sv"
+                        + " FROM tsym GROUP BY k ORDER BY k")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\tc\tsv
+                                false\t2\t17
+                                true\t1\t20
+                                """);
+                // one group per row, the sums for '10', '20' and '7' are 10, 20 and 0
+                assertQuery("SELECT s IN (SELECT sum(CASE WHEN q.s IN " + intHashJoinSet + " THEN q.v ELSE 0 END)::SYMBOL FROM tsym q GROUP BY q.ts) k,"
+                        + " count() c, sum(v) sv FROM tsym GROUP BY k ORDER BY k")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\tc\tsv
+                                false\t1\t7
+                                true\t2\t30
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testGroupByCursorSubQueryNestedInSampleBy() throws Exception {
+        // SAMPLE BY, with and without the GROUP BY rewrite, holds a cursor sub-query whose own GROUP BY
+        // holds a second cursor sub-query. Without the rewrite, SAMPLE BY puts the bucket timestamp or
+        // the FILL(LINEAR) gap flag in the first map value before it assembles its functions, so the
+        // three levels have three different map layouts and each must build its map from its own.
+        assertMemoryLeak(() -> {
+            createCursorSubQueryTables();
+            final String hashJoinSet = "(SELECT r.c1::SYMBOL FROM tb2 r JOIN tc2 n ON n.cts = r.rts)";
+            final String intHashJoinSet = "(SELECT p.s FROM tsym p JOIN tb2 r ON r.c1 = p.v)";
+            final String hashJoinScalar = "(SELECT r.rts FROM tb2 r JOIN tc2 n ON n.cts = r.rts ORDER BY r.rts LIMIT 1)";
+            // s IN ('10', '20', '30') splits tsym into two groups, their first symbols are '10' and '7'
+            final String functionKeySet = "(SELECT first(q.s) FROM tsym q GROUP BY q.s IN " + hashJoinSet + ")";
+            // ts > 2020-01-01T00:20 splits tsym into two groups, their first symbols are '10' and '20'
+            final String scalarKeySet = "(SELECT first(q.s) FROM tsym q GROUP BY q.ts > " + hashJoinScalar + ")";
+            final String aggregate = "SELECT ts, sum(CASE WHEN s IN " + functionKeySet + " THEN v ELSE 0 END) a";
+            for (boolean isParallel : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelGroupByEnabled(isParallel);
+                assertQuery(aggregate + " FROM tsym SAMPLE BY 1h")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\ta
+                                2020-01-01T00:00:00.000000Z\t10
+                                2020-01-01T01:00:00.000000Z\t0
+                                2020-01-01T02:00:00.000000Z\t7
+                                """);
+                assertQuery(aggregate + " FROM tsym SAMPLE BY 30m FILL(NULL) ALIGN TO FIRST OBSERVATION")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\ta
+                                2020-01-01T00:00:00.000000Z\t10
+                                2020-01-01T00:30:00.000000Z\tnull
+                                2020-01-01T01:00:00.000000Z\t0
+                                2020-01-01T01:30:00.000000Z\tnull
+                                2020-01-01T02:00:00.000000Z\t7
+                                """);
+                assertQuery("SELECT ts, s, sum(CASE WHEN s IN " + functionKeySet + " THEN v ELSE 0 END) a"
+                        + " FROM tsym SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\ts\ta
+                                2020-01-01T00:00:00.000000Z\t10\t10
+                                2020-01-01T00:00:00.000000Z\t20\tnull
+                                2020-01-01T00:00:00.000000Z\t7\tnull
+                                2020-01-01T01:00:00.000000Z\t10\tnull
+                                2020-01-01T01:00:00.000000Z\t20\t0
+                                2020-01-01T01:00:00.000000Z\t7\tnull
+                                2020-01-01T02:00:00.000000Z\t10\tnull
+                                2020-01-01T02:00:00.000000Z\t20\tnull
+                                2020-01-01T02:00:00.000000Z\t7\t7
+                                """);
+                assertQuery("SELECT ts, sum(CASE WHEN s IN " + scalarKeySet + " THEN v ELSE 0 END) a FROM tsym SAMPLE BY 30m FILL(LINEAR)")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\ta
+                                2020-01-01T00:00:00.000000Z\t10
+                                2020-01-01T00:30:00.000000Z\t15
+                                2020-01-01T01:00:00.000000Z\t20
+                                2020-01-01T01:30:00.000000Z\t10
+                                2020-01-01T02:00:00.000000Z\t0
+                                """);
+                // Here the SAMPLE BY is the middle level. Its aggregate argument holds the hash join,
+                // and the GROUP BY key compares v with its first bucket, the c1 of the tb2 row at 00:20.
+                assertQuery("SELECT v > (SELECT a FROM (SELECT rts, sum(CASE WHEN c1::SYMBOL IN " + intHashJoinSet + " THEN c1 ELSE 0 END) a"
+                        + " FROM tb2 SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION) LIMIT 1) k, count() c, sum(v) sv FROM tsym GROUP BY k ORDER BY k")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\tc\tsv
+                                false\t2\t17
+                                true\t1\t20
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testGroupByCursorSubQueryNestedInWhereOfVectorizedGroupBy() throws Exception {
+        // The vectorized GROUP BY clears its key lists before it generates its base query. The
+        // sub-query runs a vectorized GROUP BY whose WHERE clause holds a second scalar sub-query
+        // with a vectorized GROUP BY of its own, so the key lists of two callers are in flight when
+        // SqlCodeGenerator generates the innermost one. The parallel GROUP BY stays on because only
+        // that path vectorizes.
+        assertMemoryLeak(() -> {
+            createCursorSubQueryTables();
+            // 2020-01-01T00:20, the vectorized GROUP BY has an INT key
+            final String innerScalar = "(SELECT m FROM (SELECT v, min(cts) m FROM tc2 GROUP BY v) ORDER BY m LIMIT 1)";
+            // Each sub-query reads the tb2 rows after 00:20. The first two return 2020-01-01T01:20,
+            // their vectorized GROUP BY has an INT key and an hour() key, respectively. The third one
+            // returns '20' and '30'.
+            final String intKeyScalar = "(SELECT m FROM (SELECT c1, min(rts) m FROM tb2 WHERE rts > " + innerScalar + " GROUP BY c1) ORDER BY c1 LIMIT 1)";
+            final String hourKeyScalar = "(SELECT m FROM (SELECT hour(rts) h, min(rts) m FROM tb2 WHERE rts > " + innerScalar + " GROUP BY h) ORDER BY h LIMIT 1)";
+            final String intKeySet = "(SELECT m::SYMBOL FROM (SELECT v, max(c1) m FROM tb2 WHERE rts > " + innerScalar + " GROUP BY v))";
+            final String vectorized = "vectorized: true";
+            sqlExecutionContext.setParallelGroupByEnabled(true);
+            assertQuery("SELECT v, count() c FROM tsym WHERE ts < " + intKeyScalar + " GROUP BY v ORDER BY v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(vectorized)
+                    .returns("""
+                            v\tc
+                            10\t1
+                            20\t1
+                            """);
+            assertQuery("SELECT count() c, sum(v) sv FROM tsym WHERE ts < " + intKeyScalar)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining(vectorized)
+                    .returns("""
+                            c\tsv
+                            2\t30
+                            """);
+            // the key types of the three GROUP BYs differ
+            assertQuery("SELECT s, count() c FROM tsym WHERE ts < " + hourKeyScalar + " GROUP BY s ORDER BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(vectorized)
+                    .returns("""
+                            s\tc
+                            10\t1
+                            20\t1
+                            """);
+            assertQuery("SELECT hour(ts) h, count() c FROM tsym WHERE ts < " + intKeyScalar + " GROUP BY h ORDER BY h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(vectorized)
+                    .returns("""
+                            h\tc
+                            0\t1
+                            1\t1
+                            """);
+            // The outer queries below do not vectorize; the sub-query in their WHERE clause, key or
+            // aggregate argument does.
+            assertQuery("SELECT ts, count() c FROM tsym WHERE ts < " + intKeyScalar + " SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tc
+                            2020-01-01T00:00:00.000000Z\t1
+                            2020-01-01T01:00:00.000000Z\t1
+                            """);
+            assertQuery("SELECT s IN " + intKeySet + " k, count() c, sum(v) sv FROM tsym GROUP BY k ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(vectorized)
+                    .returns("""
+                            k\tc\tsv
+                            false\t2\t17
+                            true\t1\t20
+                            """);
+            assertQuery("SELECT v, sum(CASE WHEN s IN " + intKeySet + " THEN 1 ELSE 0 END) n FROM tsym GROUP BY v ORDER BY v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(vectorized)
+                    .returns("""
+                            v\tn
+                            7\t0
+                            10\t0
+                            20\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testGroupByCursorSubQueryOverHashJoin() throws Exception {
         // A GROUP BY over a hash join with a cursor sub-query in a key or an aggregate argument, with
         // and without the fused hash join GROUP BY.

@@ -198,7 +198,9 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
         }
     }
 
-    /** Closes the execution's frame cursor. Only call once every probe and reader of the execution is closed. */
+    /**
+     * Closes the execution's frame cursor. Only call once every probe and reader of the execution is closed.
+     */
     public void clear() {
         Throwable failure = Misc.freeObjListAndKeepObjectsBestEffort(null, copyReaders);
         if (copyAddress != 0) {
@@ -284,12 +286,16 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
         return frameRowCounts.getQuick(frameIndex);
     }
 
-    /** Rows of every frame, before any row filter. */
+    /**
+     * Rows of every frame, before any row filter.
+     */
     public long getRowCount() {
         return rowCount;
     }
 
-    /** The open frame cursor, which serves the build input's symbol tables. */
+    /**
+     * The open frame cursor, which serves the build input's symbol tables.
+     */
     public SymbolTableSource getSymbolTableSource() {
         return frameCursor;
     }
@@ -314,7 +320,9 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
         pendingCopySize = 0;
     }
 
-    /** Releases what a copy reader decoded, once its thread has copied a frame's rows. */
+    /**
+     * Releases what a copy reader decoded, once its thread has copied a frame's rows.
+     */
     public void releaseCopyBuffers(int reader) {
         copyReaders.getQuick(reader).pool.releaseParquetBuffers();
     }
@@ -346,7 +354,9 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
         }
     }
 
-    /** Bytes that a copied value of this column type takes, or -1 for a type the copy cannot hold. */
+    /**
+     * Bytes that a copied value of this column type takes, or -1 for a type the copy cannot hold.
+     */
     private static int getCopySize(int type) {
         return switch (type) {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE, ColumnType.DECIMAL8 -> 1;
@@ -408,7 +418,8 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
                     reader.getDecimal256(col, reader.decimal256);
                     Decimal256.put(reader.decimal256, dest);
                 }
-                default -> throw new AssertionError("uncopyable hash join payload type: " + ColumnType.nameOf(payloadTypes[col]));
+                default ->
+                        throw new AssertionError("uncopyable hash join payload type: " + ColumnType.nameOf(payloadTypes[col]));
             }
         }
     }

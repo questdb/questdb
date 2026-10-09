@@ -95,7 +95,9 @@ public final class HashJoinGroupByBuildChoiceRecordCursorFactory extends Abstrac
         return alternate;
     }
 
-    /** The primary orientation, so that a walk down the base factories still finds a fused factory. */
+    /**
+     * The primary orientation, so that a walk down the base factories still finds a fused factory.
+     */
     @Override
     public RecordCursorFactory getBaseFactory() {
         return primary;
@@ -124,7 +126,9 @@ public final class HashJoinGroupByBuildChoiceRecordCursorFactory extends Abstrac
         return SCAN_DIRECTION_OTHER;
     }
 
-    /** Which orientation the last {@link #getCursor(SqlExecutionContext)} ran. */
+    /**
+     * Which orientation the last {@link #getCursor(SqlExecutionContext)} ran.
+     */
     @TestOnly
     public boolean isAlternateChosen() {
         return isAlternateChosen;

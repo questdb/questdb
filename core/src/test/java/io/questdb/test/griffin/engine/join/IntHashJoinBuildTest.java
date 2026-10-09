@@ -1307,7 +1307,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                         for (int probeKey : new int[]{0, 1, 2, 3, nil}) {
                             final int buildKey = view.translate(probeKey);
                             Assert.assertEquals(probeKey == 0 ? 3 : probeKey == 1 ? 0
-                                    : probeKey == 2 ? SymbolTable.VALUE_NOT_FOUND : nil, buildKey);
+                                                                    : probeKey == 2 ? SymbolTable.VALUE_NOT_FOUND : nil, buildKey);
                             probe.find(buildKey);
                             int matches = 0;
                             while (probe.hasNext()) {

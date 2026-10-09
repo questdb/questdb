@@ -165,7 +165,9 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
         CairoException.rethrowCleanupFailure(failure);
     }
 
-    /** Release execution state after draining slots and finishing output, also after failed init. */
+    /**
+     * Release execution state after draining slots and finishing output, also after failed init.
+     */
     public void cursorClosed() {
         Throwable failure = cursorClosed(null, keyFunctions);
         failure = cursorClosed(failure, groupByFunctions);

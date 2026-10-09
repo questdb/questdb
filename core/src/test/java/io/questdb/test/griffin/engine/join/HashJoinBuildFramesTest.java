@@ -578,7 +578,8 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
                 case ColumnType.TIMESTAMP -> sink.put(record.getTimestamp(col));
                 case ColumnType.FLOAT -> sink.put(record.getFloat(col));
                 case ColumnType.DOUBLE -> sink.put(record.getDouble(col));
-                case ColumnType.SYMBOL -> sink.put(record.getInt(col)).put(':').put(record.getSymA(col)).put(':').put(record.getSymB(col));
+                case ColumnType.SYMBOL ->
+                        sink.put(record.getInt(col)).put(':').put(record.getSymA(col)).put(':').put(record.getSymB(col));
                 case ColumnType.IPv4 -> sink.put(record.getIPv4(col));
                 case ColumnType.UUID -> sink.put(record.getLong128Lo(col)).put(':').put(record.getLong128Hi(col));
                 case ColumnType.LONG256 -> {

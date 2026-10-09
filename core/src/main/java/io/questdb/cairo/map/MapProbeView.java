@@ -75,10 +75,14 @@ public interface MapProbeView extends RecordSinkSPI, QuietCloseable {
      */
     MapValue findValueIn(Map map);
 
-    /** Allocated native bytes, including unused capacity. */
+    /**
+     * Allocated native bytes, including unused capacity.
+     */
     long getSizeInBytes();
 
-    /** Commits the staged key and returns the count of its raw bytes; see {@link #copyStagedKey(long)}. */
+    /**
+     * Commits the staged key and returns the count of its raw bytes; see {@link #copyStagedKey(long)}.
+     */
     long getStagedKeySize();
 
     /**
@@ -88,9 +92,13 @@ public interface MapProbeView extends RecordSinkSPI, QuietCloseable {
      */
     long hash();
 
-    /** Binds the tracker that charges whatever native memory the view stages keys in. */
+    /**
+     * Binds the tracker that charges whatever native memory the view stages keys in.
+     */
     void setMemoryTracker(@Nullable MemoryTracker tracker);
 
-    /** Discards the staged key and starts a new one. The view must already be bound to a map. */
+    /**
+     * Discards the staged key and starts a new one. The view must already be bound to a map.
+     */
     MapProbeView withKey();
 }

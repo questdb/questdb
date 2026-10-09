@@ -837,7 +837,9 @@ public class MapHashJoinPartitionedBuildTest extends AbstractCairoTest {
         }
     }
 
-    /** Counts the checks that partition tasks make, and cancels on the given one, counting from one; -1 never cancels. */
+    /**
+     * Counts the checks that partition tasks make, and cancels on the given one, counting from one; -1 never cancels.
+     */
     private static class PartitionCheckBreaker extends CountingSqlExecutionCircuitBreaker {
         private final int tripAt;
         private final StackWalker walker = StackWalker.getInstance();

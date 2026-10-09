@@ -47,7 +47,9 @@ import io.questdb.std.QuietCloseable;
  */
 public interface HashJoinPayloadSource {
 
-    /** A reader for one probe. The probe owns it: it closes it with every execution it ends. */
+    /**
+     * A reader for one probe. The probe owns it: it closes it with every execution it ends.
+     */
     Reader newReader();
 
     /**

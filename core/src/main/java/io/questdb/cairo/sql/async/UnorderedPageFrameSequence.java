@@ -416,7 +416,9 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         return frameCount;
     }
 
-    /** Rows of the frame, or, while a round runs, of the round's task with this index. */
+    /**
+     * Rows of the frame, or, while a round runs, of the round's task with this index.
+     */
     public long getFrameRowCount(int frameIndex) {
         final LongList roundTaskRowCounts = this.roundTaskRowCounts;
         return roundTaskRowCounts != null ? roundTaskRowCounts.getQuick(frameIndex) : frameRowCounts.getQuick(frameIndex);

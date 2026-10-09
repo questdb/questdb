@@ -69,7 +69,9 @@ final class HashJoinRowHeap implements Closeable {
     private long nextHandleBase;
     private long rowBytes;
 
-    /** A heap that stores row ids when the build has payload columns, and links alone otherwise. */
+    /**
+     * A heap that stores row ids when the build has payload columns, and links alone otherwise.
+     */
     HashJoinRowHeap(boolean hasPayload, long initialCapacity) {
         if (initialCapacity < 1 || initialCapacity > CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE) {
             throw new IllegalArgumentException("invalid hash join build capacity");
@@ -116,7 +118,9 @@ final class HashJoinRowHeap implements Closeable {
         rowBytes = rowCount * rowSize;
     }
 
-    /** Releases the rows and expires every probe of this execution. */
+    /**
+     * Releases the rows and expires every probe of this execution.
+     */
     @Override
     public void close() {
         rows.close();
@@ -125,7 +129,9 @@ final class HashJoinRowHeap implements Closeable {
         circuitBreaker = null;
     }
 
-    /** Ends mutation and returns the generation that this execution's probes assert against. */
+    /**
+     * Ends mutation and returns the generation that this execution's probes assert against.
+     */
     long freeze() {
         return ++generation;
     }
@@ -154,17 +160,23 @@ final class HashJoinRowHeap implements Closeable {
         return rowSize;
     }
 
-    /** Allocated native bytes, including unused capacity. */
+    /**
+     * Allocated native bytes, including unused capacity.
+     */
     long getSizeInBytes() {
         return rows.capacity;
     }
 
-    /** True when rows carry the id of their build row, which a payload reader positions at. */
+    /**
+     * True when rows carry the id of their build row, which a payload reader positions at.
+     */
     boolean hasRowId() {
         return hasRowId;
     }
 
-    /** Takes the handle base of one execution, so that handles never repeat across executions. */
+    /**
+     * Takes the handle base of one execution, so that handles never repeat across executions.
+     */
     long nextHandleBase() {
         if (nextHandleBase > Long.MAX_VALUE - rowBytes - 1) {
             throw CairoException.nonCritical().put("hash join handle capacity overflow");
@@ -174,7 +186,9 @@ final class HashJoinRowHeap implements Closeable {
         return handleBase;
     }
 
-    /** Binds the execution that charges and cancels this heap's allocations. */
+    /**
+     * Binds the execution that charges and cancels this heap's allocations.
+     */
     void of(@Nullable MemoryTracker memoryTracker, SqlExecutionCircuitBreaker circuitBreaker) {
         this.circuitBreaker = circuitBreaker;
         rows.of(memoryTracker, circuitBreaker);
@@ -202,7 +216,9 @@ final class HashJoinRowHeap implements Closeable {
         }
     }
 
-    /** Presizes the heap for a known row count, so that appends of that many rows do not grow it. */
+    /**
+     * Presizes the heap for a known row count, so that appends of that many rows do not grow it.
+     */
     void reserve(long rowCount) {
         circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         if (rowCount > (CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE - rowBytes) / rowSize) {
@@ -227,12 +243,16 @@ final class HashJoinRowHeap implements Closeable {
         return getRowId(rowsAddress + (ordinal << ROW_ID_ROW_SHIFT));
     }
 
-    /** The build row id of the row at this address; only a heap with row ids stores one. */
+    /**
+     * The build row id of the row at this address; only a heap with row ids stores one.
+     */
     static long getRowId(long rowAddress) {
         return Unsafe.getLong(getRowIdAddress(rowAddress));
     }
 
-    /** Where the row at this address stores its build row id; only a heap with row ids stores one. */
+    /**
+     * Where the row at this address stores its build row id; only a heap with row ids stores one.
+     */
     static long getRowIdAddress(long rowAddress) {
         return rowAddress + LINK_SIZE;
     }

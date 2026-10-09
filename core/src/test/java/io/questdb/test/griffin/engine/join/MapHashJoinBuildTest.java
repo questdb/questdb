@@ -757,7 +757,9 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
         return source;
     }
 
-    /** Stages a single LONG key column, as a generated sink over one LONG column would. */
+    /**
+     * Stages a single LONG key column, as a generated sink over one LONG column would.
+     */
     private static class LongKeySink implements RecordSink {
         @Override
         public void copy(Record r, RecordSinkSPI w) {
@@ -769,7 +771,9 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
         }
     }
 
-    /** Column 0 carries every key flavour, column 1 the payload value, which is also the row id. */
+    /**
+     * Column 0 carries every key flavour, column 1 the payload value, which is also the row id.
+     */
     private static class Source implements Record {
         private long longKey;
         private int payload;
@@ -836,7 +840,9 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
         }
     }
 
-    /** Replays rows whose LONG key is the row number and whose INT payload is ten times it. */
+    /**
+     * Replays rows whose LONG key is the row number and whose INT payload is ten times it.
+     */
     private static class SourceCursor implements RecordCursor {
         private final Source record = new Source();
         private final int rows;
@@ -901,7 +907,9 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
         }
     }
 
-    /** Stages a single STRING key column. */
+    /**
+     * Stages a single STRING key column.
+     */
     private static class StrKeySink implements RecordSink {
         @Override
         public void copy(Record r, RecordSinkSPI w) {
@@ -913,7 +921,9 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
         }
     }
 
-    /** One static dictionary, handing out an independent flyweight per request. */
+    /**
+     * One static dictionary, handing out an independent flyweight per request.
+     */
     private static class Symbols implements SymbolTableSource {
         private final ObjList<String> dictionary = new ObjList<>();
         private int newSymbolTableCalls;

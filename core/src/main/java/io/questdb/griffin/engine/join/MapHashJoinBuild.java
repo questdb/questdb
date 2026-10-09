@@ -147,7 +147,9 @@ public final class MapHashJoinBuild implements Closeable {
     private MemoryTracker memoryTracker;
     private boolean open;
 
-    /** A build with payload columns stores row ids for probes to read them through; see the class docs. */
+    /**
+     * A build with payload columns stores row ids for probes to read them through; see the class docs.
+     */
     @TestOnly
     public MapHashJoinBuild(
             CairoConfiguration configuration,
@@ -249,7 +251,9 @@ public final class MapHashJoinBuild implements Closeable {
         }
     }
 
-    /** The filtered twin of {@link #appendFrame(PageFrameMemoryRecord, RecordSink, long)}: appends the listed rows only. */
+    /**
+     * The filtered twin of {@link #appendFrame(PageFrameMemoryRecord, RecordSink, long)}: appends the listed rows only.
+     */
     public void appendFrame(PageFrameMemoryRecord record, RecordSink keySink, DirectLongList rows) {
         requireBuilding();
         try {
@@ -438,7 +442,9 @@ public final class MapHashJoinBuild implements Closeable {
         }
     }
 
-    /** Only call after every probe is drained and aggregate output is finished. */
+    /**
+     * Only call after every probe is drained and aggregate output is finished.
+     */
     @Override
     public void close() {
         if (frozen != null) {
@@ -455,7 +461,9 @@ public final class MapHashJoinBuild implements Closeable {
         circuitBreaker = null;
     }
 
-    /** Ends mutation of a build without payload columns. */
+    /**
+     * Ends mutation of a build without payload columns.
+     */
     public FrozenHashJoinBuild.RecordKeyed freeze() {
         return freeze(null);
     }
@@ -520,17 +528,23 @@ public final class MapHashJoinBuild implements Closeable {
         return partitions.getPartitionCount();
     }
 
-    /** Rows of this partition of a parallel build, once the partitions are planned. */
+    /**
+     * Rows of this partition of a parallel build, once the partitions are planned.
+     */
     public long getPartitionRowCount(int partition) {
         return partitions.getPartitionRowCount(partition);
     }
 
-    /** Rows the frames of a parallel build kept, once every frame is partitioned. */
+    /**
+     * Rows the frames of a parallel build kept, once every frame is partitioned.
+     */
     public long getPartitionedRowCount() {
         return partitions.getPartitionedRowCount();
     }
 
-    /** Rows that this frame of a parallel build keeps in this partition. */
+    /**
+     * Rows that this frame of a parallel build keeps in this partition.
+     */
     public long getSegmentRowCount(int frameIndex, int partition) {
         return partitions.getSegmentRowCount(frameIndex, partition);
     }
@@ -544,7 +558,9 @@ public final class MapHashJoinBuild implements Closeable {
         return partitions.getSegmentStart(frameIndex, partition);
     }
 
-    /** Allocated native bytes of the row heap, the key tables and a parallel build's tables, unused capacity included. */
+    /**
+     * Allocated native bytes of the row heap, the key tables and a parallel build's tables, unused capacity included.
+     */
     public long getSizeInBytes() {
         long size = heap.getSizeInBytes() + partitions.getSizeInBytes() + bucketOffsets.capacity;
         for (int i = 0, n = maps.size(); i < n; i++) {
@@ -563,7 +579,9 @@ public final class MapHashJoinBuild implements Closeable {
         return new KeyStager(newProbeView());
     }
 
-    /** Reopens a closed skeleton for a fresh execution. */
+    /**
+     * Reopens a closed skeleton for a fresh execution.
+     */
     public void open(@Nullable MemoryTracker memoryTracker, SqlExecutionCircuitBreaker circuitBreaker) {
         if (open) {
             throw new IllegalStateException("hash join build is already open");
@@ -904,7 +922,9 @@ public final class MapHashJoinBuild implements Closeable {
             view.close();
         }
 
-        /** Allocated native bytes of the scratch and the view, including unused capacity. */
+        /**
+         * Allocated native bytes of the scratch and the view, including unused capacity.
+         */
         public long getSizeInBytes() {
             return scratchCapacity + view.getSizeInBytes();
         }
@@ -936,7 +956,9 @@ public final class MapHashJoinBuild implements Closeable {
         }
     }
 
-    /** What both kinds of snapshot share: the frozen heap and the source its probes read payloads through. */
+    /**
+     * What both kinds of snapshot share: the frozen heap and the source its probes read payloads through.
+     */
     private abstract class AbstractFrozen implements FrozenHashJoinBuild.RecordKeyed {
         long generation;
         long handleBase;

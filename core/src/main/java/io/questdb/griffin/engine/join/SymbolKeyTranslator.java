@@ -109,7 +109,9 @@ public final class SymbolKeyTranslator implements QuietCloseable {
         private int cacheKeyCount;
         private SymbolTable probeKeyTable;
 
-        /** Both tables are borrowed views of this execution's sources; the caller keeps them alive. */
+        /**
+         * Both tables are borrowed views of this execution's sources; the caller keeps them alive.
+         */
         public void of(SymbolKeyTranslator translator, SymbolTable probeKeyTable, StaticSymbolTable buildKeyTable) {
             this.cacheAddress = translator.cacheAddress;
             this.cacheKeyCount = translator.cacheKeyCount;

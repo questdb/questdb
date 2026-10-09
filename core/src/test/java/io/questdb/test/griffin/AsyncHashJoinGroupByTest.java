@@ -2190,7 +2190,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         return rows;
     }
 
-    /** Fails the reduce task if the reducer takes the compiled path. */
+    /**
+     * Fails the reduce task if the reducer takes the compiled path.
+     */
     private static class PoisonCompiledFilter extends CompiledFilter {
         private int closeCount;
 
@@ -2207,7 +2209,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         }
     }
 
-    /** Counts stateful breaker checks and cancels at the given one. */
+    /**
+     * Counts stateful breaker checks and cancels at the given one.
+     */
     private static class BuildCheckBreaker extends CountingSqlExecutionCircuitBreaker {
         private final long failAt;
         private long checks;
@@ -2736,7 +2740,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         }
     }
 
-    /** Dedicated queue consumers also exercise no-affinity work stealing into acquired slots. */
+    /**
+     * Dedicated queue consumers also exercise no-affinity work stealing into acquired slots.
+     */
     private class Reducers implements Closeable {
         private final AtomicReference<Throwable> error = new AtomicReference<>();
         private final AtomicBoolean running = new AtomicBoolean(true);

@@ -1154,7 +1154,9 @@ public class OrderedMap implements Map, Reopenable {
             return lookup(orderedMap.heapAddr, orderedMap.offsetsAddr, orderedMap.mask);
         }
 
-        /** Allocated native bytes, including unused capacity. */
+        /**
+         * Allocated native bytes, including unused capacity.
+         */
         @Override
         public long getSizeInBytes() {
             return stagingCapacity;
@@ -1466,7 +1468,9 @@ public class OrderedMap implements Map, Reopenable {
             appendAddr += bytes;
         }
 
-        /** Discards the staged key and starts a new one. The view must already be bound. */
+        /**
+         * Discards the staged key and starts a new one. The view must already be bound.
+         */
         @Override
         public ProbeView withKey() {
             assert stagingAddr != 0 : "probe view is not bound to a map";

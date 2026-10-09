@@ -56,7 +56,9 @@ public interface FrozenHashJoinBuild {
      */
     long getRowId(long ordinal);
 
-    /** Allocated native bytes, including unused capacity. */
+    /**
+     * Allocated native bytes, including unused capacity.
+     */
     long getSizeInBytes();
 
     /**
@@ -68,7 +70,9 @@ public interface FrozenHashJoinBuild {
         return HashJoinRowHeap.getRowSize(hasPayload);
     }
 
-    /** A build whose probes look up a single INT key. */
+    /**
+     * A build whose probes look up a single INT key.
+     */
     interface IntKeyed extends FrozenHashJoinBuild {
         /**
          * Each acquired execution slot needs its own probe. Probes do not consult a circuit
@@ -82,7 +86,9 @@ public interface FrozenHashJoinBuild {
      * domain, so they take this shape too.
      */
     interface IntProbe extends Probe {
-        /** Replaces the current duplicate iterator, including on a miss. */
+        /**
+         * Replaces the current duplicate iterator, including on a miss.
+         */
         void find(int key);
 
         /**
@@ -117,10 +123,14 @@ public interface FrozenHashJoinBuild {
 
         boolean hasNext();
 
-        /** Advances the payload record and returns an opaque, execution-local handle. */
+        /**
+         * Advances the payload record and returns an opaque, execution-local handle.
+         */
         long next();
 
-        /** Positions the payload record without changing the duplicate iterator. */
+        /**
+         * Positions the payload record without changing the duplicate iterator.
+         */
         void recordAt(long handle);
 
         /**
@@ -130,7 +140,9 @@ public interface FrozenHashJoinBuild {
         void reopen();
     }
 
-    /** A build whose probes stage the key from a probe record through a {@link RecordSink}. */
+    /**
+     * A build whose probes stage the key from a probe record through a {@link RecordSink}.
+     */
     interface RecordKeyed extends FrozenHashJoinBuild {
         /**
          * Each acquired execution slot needs its own probe, and its own key sink: sinks hold
@@ -145,7 +157,9 @@ public interface FrozenHashJoinBuild {
      * columns of the probe record must match the build key's column order and types.
      */
     interface RecordProbe extends Probe {
-        /** Replaces the current duplicate iterator, including on a miss. */
+        /**
+         * Replaces the current duplicate iterator, including on a miss.
+         */
         void find(Record probeRecord);
 
         /**

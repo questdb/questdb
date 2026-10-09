@@ -96,13 +96,17 @@ public final class HashJoinGroupByCandidate {
         return joinModel.getJoinModels().getQuick(buildIndex);
     }
 
-    /** Borrowed ON predicate, safe to apply only to the physical build input. */
+    /**
+     * Borrowed ON predicate, safe to apply only to the physical build input.
+     */
     @Nullable
     public ExpressionNode getBuildOnFilter() {
         return buildOnFilter;
     }
 
-    /** Reconciled equality keys in sink order, with base-table column indexes. */
+    /**
+     * Reconciled equality keys in sink order, with base-table column indexes.
+     */
     public HashJoinGroupByKeys getKeys() {
         return keys;
     }
@@ -119,12 +123,16 @@ public final class HashJoinGroupByCandidate {
         return joinModel.getJoinModels().getQuick(1 - buildIndex);
     }
 
-    /** Base-table indexes, including columns used only by post-join filters. */
+    /**
+     * Base-table indexes, including columns used only by post-join filters.
+     */
     public IntList getRequiredBuildColumns() {
         return requiredBuildColumns;
     }
 
-    /** True when the build is the first input in join order: every RIGHT join, and an INNER join whose first table is smaller. */
+    /**
+     * True when the build is the first input in join order: every RIGHT join, and an INNER join whose first table is smaller.
+     */
     public boolean isInputSwapped() {
         return isInputSwapped;
     }
@@ -140,7 +148,9 @@ public final class HashJoinGroupByCandidate {
         return isKeyCapacityPresized;
     }
 
-    /** Exact implementations from HashJoinGroupByAggregates, not SQL names or supportsParallelism() alone. */
+    /**
+     * Exact implementations from HashJoinGroupByAggregates, not SQL names or supportsParallelism() alone.
+     */
     public static boolean supportsAggregate(Function function) {
         if (!isParallelSafe(function)) {
             return false;
@@ -157,7 +167,9 @@ public final class HashJoinGroupByCandidate {
         return HashJoinGroupByAggregates.isSupportedNullary(type);
     }
 
-    /** The fused scan reads page frames directly and does not support covering-index frame descriptors or their decode caches. */
+    /**
+     * The fused scan reads page frames directly and does not support covering-index frame descriptors or their decode caches.
+     */
     private static boolean supportsInputFactory(RecordCursorFactory factory) {
         for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
             if (current instanceof CoveringIndexRecordCursorFactory) {
@@ -682,7 +694,9 @@ public final class HashJoinGroupByCandidate {
             return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, metadata.getColumnName(index), 0, position);
         }
 
-        /** Row heap bytes of one build row: a link, plus a row id when any build column is required. */
+        /**
+         * Row heap bytes of one build row: a link, plus a row id when any build column is required.
+         */
         private long getBuildRowSize() {
             return FrozenHashJoinBuild.getRowSize(requiredBuildColumns.size() > 0);
         }

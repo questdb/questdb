@@ -56,7 +56,9 @@ public enum HashJoinBuildMode {
         }
     };
 
-    /** Every payload layout under every build mode. */
+    /**
+     * Every payload layout under every build mode.
+     */
     public static Collection<Object[]> parameters() {
         final Collection<Object[]> parameters = new ArrayList<>();
         for (HashJoinPayloadLayout layout : HashJoinPayloadLayout.values()) {
@@ -78,6 +80,8 @@ public enum HashJoinBuildMode {
         }
     }
 
-    /** Forces the mode through the build properties alone. */
+    /**
+     * Forces the mode through the build properties alone.
+     */
     public abstract void applyProperties(Overrides overrides);
 }
