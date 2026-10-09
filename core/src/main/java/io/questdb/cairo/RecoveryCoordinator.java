@@ -49,10 +49,9 @@ import io.questdb.std.str.Path;
  * <p>
  * Runs ONCE at engine startup, AFTER the table-name registry is loaded but BEFORE normal WAL apply
  * ({@code CheckWalTransactionsJob} -> {@code ApplyWal2TableJob}) runs for any table. For each
- * ADAPTIVE WAL table that recorded a durable epoch ({@code _snapshot} marker + immutable
- * {@code _meta.epoch}/{@code _txn.epoch}/{@code _cv.epoch} copies written by
- * {@link TableWriter#fsyncMaterializedState()}), it RESTORES the durable cut: publishes the
- * matching metadata and copies {@code _txn.epoch}->{@code _txn} / {@code _cv.epoch}->{@code _cv},
+ * ADAPTIVE WAL table that recorded a durable epoch (a save point file {@code _epoch.manifest.N} holding
+ * copies of {@code _meta}, {@code _txn} and {@code _cv}, the valid one with the higher cut selected), it
+ * RESTORES the durable cut: writes each saved copy over its live file where they differ,
  * fsyncing them (and the table dir) BEFORE proceeding, so the table
  * opens at exactly {@code epoch.{seqTxn,txn}}. The existing boot path then idempotently re-applies
  * {@code (epoch.seqTxn, frontier]} from the durable WAL. A table whose live files are already byte-for-byte
@@ -169,7 +168,7 @@ public class RecoveryCoordinator {
                         // WAL. An anchored table whose _meta exists but failed to read still aborts there: it
                         // may be left enrolled, and the writer that opens it once the read succeeds would take
                         // its lazily applied state as durable.
-                        if (adaptiveInstance && hasMetadataBoundEpoch(token, dir)) {
+                        if (adaptiveInstance && hasValidSavePoint(token, dir)) {
                             failIfRecoveryDisabled(token);
                             recoverTable(token, src, dst, dir, checkpointEnrollments);
                             continue;
@@ -244,8 +243,7 @@ public class RecoveryCoordinator {
                 continue;
             }
             try (TableMetadata metadata = engine.getTableMetadata(token);
-                 Path markerPath = new Path();
-                 SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                 Path markerPath = new Path()) {
                 // The baseline below fsyncs _meta, _cv and _txn, but not the column files they name. A marked
                 // table's columns are only as durable as the tenure or restore that wrote them kept them, which
                 // is not at all for a NOSYNC replica or an out-of-process restore. Flush them before the anchor
@@ -272,14 +270,14 @@ public class RecoveryCoordinator {
                         metadata.getPartitionBy(),
                         configuration.getMicrosecondClock().getTicks() / 1000L
                 );
-                markerPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
-                marker.of(markerPath.$());
-                if (!marker.tryLoad()) {
+                markerPath.of(configuration.getDbRoot()).concat(token);
+                final DurableEpochManifest.Candidate[] candidates = DurableEpochManifest.loadCandidates(ff, markerPath, markerPath.size(), token.getTableId());
+                if (candidates.length == 0) {
                     throw CairoException.critical(0)
-                            .put("checkpoint-restored adaptive baseline marker is invalid [table=")
+                            .put("checkpoint-restored adaptive baseline is invalid [table=")
                             .put(token.getTableName()).put(']');
                 }
-                pinRecoveredEpoch(token, marker.getEpochTxn(), marker.getEpochSeqTxn());
+                pinRecoveredEpoch(token, candidates[0].epochTxn, candidates[0].epochSeqTxn);
                 // Consume the restore marker only now: the baseline above is durable and validated, so a
                 // crash before this point simply re-enrols on the next start rather than losing the signal
                 // and refusing to boot.
@@ -304,30 +302,24 @@ public class RecoveryCoordinator {
         }
     }
 
-    private boolean hasAnchor(TableToken token, Path markerPath) {
-        tablePath(markerPath, token).concat(TableUtils.SNAPSHOT_FILE_NAME);
-        return ff.exists(markerPath.$());
-    }
-
-    private boolean hasMetadataBoundEpoch(TableToken token, Path markerPath) {
-        tablePath(markerPath, token).concat(TableUtils.SNAPSHOT_FILE_NAME);
-        if (!ff.exists(markerPath.$())) {
-            return false;
-        }
-        try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
-            marker.of(markerPath.$());
-            final SnapshotMarker.Candidate[] candidates = marker.loadCandidates();
-            for (int i = 0; i < candidates.length; i++) {
-                final SnapshotMarker.Candidate candidate = candidates[i];
-                if (candidate.formatVersion != SnapshotMarker.LEGACY_FORMAT_VERSION
-                        && DurableEpochManifest.isMetadataBound(configuration, token, candidate.generation)) {
-                    return true;
-                }
+    // Whether a save point file of either generation exists, published or not.
+    private boolean hasAnchor(TableToken token, Path dir) {
+        for (int generation = 0; generation < 2; generation++) {
+            tablePath(dir, token).concat(DurableEpochManifest.FILE_NAME).put('.').put(generation);
+            if (ff.exists(dir.$())) {
+                return true;
             }
-        } catch (Throwable ignored) {
-            return false;
         }
         return false;
+    }
+
+    private boolean hasValidSavePoint(TableToken token, Path dir) {
+        try {
+            tablePath(dir, token);
+            return DurableEpochManifest.loadCandidates(ff, dir, dir.size(), token.getTableId()).length > 0;
+        } catch (CairoException e) {
+            return false;
+        }
     }
 
     private boolean hasNonEmptyMetadataFile(TableToken token, Path metaPath) {
@@ -356,10 +348,10 @@ public class RecoveryCoordinator {
             TableToken token,
             Path src,
             int rootLen,
-            SnapshotMarker.Candidate[] candidates,
-            SnapshotMarker.Candidate ahead
+            DurableEpochManifest.Candidate[] candidates,
+            DurableEpochManifest.Candidate ahead
     ) {
-        for (SnapshotMarker.Candidate other : candidates) {
+        for (DurableEpochManifest.Candidate other : candidates) {
             if (other.generation != ahead.generation
                     && DurableEpochManifest.validateSections(configuration, token, src, rootLen, other.generation, other.epochSeqTxn, other.epochTxn)
                     && DurableEpochManifest.liveTxnEqualsSection(configuration, src, rootLen, other.generation)) {
@@ -435,7 +427,7 @@ public class RecoveryCoordinator {
      * point overwrites it, and the lineage guard refuses a start that a kill leaves inside the replay. A failed
      * removal leaves the table as it was before it.
      */
-    private void removeRejectedGeneration(TableToken token, Path dir, SnapshotMarker.Candidate rejected) {
+    private void removeRejectedGeneration(TableToken token, Path dir, DurableEpochManifest.Candidate rejected) {
         LOG.critical().$("removing adaptive save point that failed its content checks [table=").$(token)
                 .$(", generation=").$(rejected.generation)
                 .$(", epochSeqTxn=").$(rejected.epochSeqTxn)
@@ -689,23 +681,6 @@ public class RecoveryCoordinator {
     }
 
     /**
-     * The selector word is unchecksummed and may have reverted, or its selected generation may have failed
-     * payload validation. Re-publishes the generation recovery selected, which the table now sits on, before
-     * any later epoch can overwrite that last trustworthy payload as the nominally "inactive" generation.
-     */
-    private void republishSelectedGeneration(TableToken token, Path dir, SnapshotMarker.Candidate selected) {
-        tablePath(dir, token).concat(TableUtils.SNAPSHOT_FILE_NAME);
-        try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
-            marker.of(dir.$());
-            if (selected.generation == SnapshotMarker.LEGACY_GENERATION) {
-                marker.write(selected.epochSeqTxn, selected.epochTxn, selected.epochTs);
-            } else {
-                marker.write(selected.epochSeqTxn, selected.epochTxn, selected.epochTs, selected.generation);
-            }
-        }
-    }
-
-    /**
      * Last durable sequencer transaction for {@code token}, or {@code -1} when it cannot be established.
      * Read on the refusal path (see the lineage classification in {@link #recoverTable}) and when the live state
      * already matches the save point, to tell whether WAL passes ran after it.
@@ -722,71 +697,60 @@ public class RecoveryCoordinator {
     }
 
     private void recoverTable(TableToken token, Path src, Path dst, Path dir, ObjList<TableToken> enrollments) {
-        tablePath(dir, token).concat(TableUtils.SNAPSHOT_FILE_NAME);
-        if (!ff.exists(dir.$())) {
+        // A generation whose header was never written is a save point a crash interrupted before it was published.
+        tablePath(dir, token);
+        DurableEpochManifest.removeUnpublished(configuration, dir, dir.size(), token.getTableId());
+        if (!hasAnchor(token, dir)) {
             throw CairoException.critical(0)
-                    .put("adaptive epoch marker is absent; refusing unsafe live-state fallback [table=")
+                    .put("adaptive save point is absent; refusing unsafe live-state fallback [table=")
                     .put(token.getTableName()).put(']');
         }
 
-        SnapshotMarker.Candidate selected = null;
-        SnapshotMarker.Candidate ahead = null;
-        SnapshotMarker.Candidate rejected = null;
-        boolean repairMarkerSelector = false;
+        DurableEpochManifest.Candidate selected = null;
+        DurableEpochManifest.Candidate ahead = null;
+        DurableEpochManifest.Candidate rejected = null;
         boolean restored = false;
-        try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
-            tablePath(dir, token).concat(TableUtils.SNAPSHOT_FILE_NAME);
-            marker.of(dir.$());
-            final boolean selectorLoads = marker.tryLoad();
-            final boolean loadedFromSelector = marker.wasLoadedFromSelector();
-            final long selectorSeqTxn = selectorLoads ? marker.getEpochSeqTxn() : -1;
-            final long selectorTxn = selectorLoads ? marker.getEpochTxn() : -1;
-            final int selectorGeneration = selectorLoads ? marker.getGeneration() : SnapshotMarker.LEGACY_GENERATION;
-            final SnapshotMarker.Candidate[] candidates = marker.loadCandidates();
-            for (int i = 0; i < candidates.length; i++) {
-                final SnapshotMarker.Candidate candidate = candidates[i];
-                tablePath(src, token);
-                final int rootLen = src.size();
-                // The header and the section checksums first: a generation that fails them never touches the
-                // live files.
-                if (!DurableEpochManifest.validateSections(configuration, token, src, rootLen, candidate.generation, candidate.epochSeqTxn, candidate.epochTxn)) {
+        tablePath(dir, token);
+        final DurableEpochManifest.Candidate[] candidates = DurableEpochManifest.loadCandidates(ff, dir, dir.size(), token.getTableId());
+        for (int i = 0; i < candidates.length; i++) {
+            final DurableEpochManifest.Candidate candidate = candidates[i];
+            tablePath(src, token);
+            final int rootLen = src.size();
+            // The header and the section checksums first: a generation that fails them never touches the
+            // live files.
+            if (!DurableEpochManifest.validateSections(configuration, token, src, rootLen, candidate.generation, candidate.epochSeqTxn, candidate.epochTxn)) {
+                continue;
+            }
+            // The lineage guard reads the live _txn, so it runs before any section is written over it.
+            if (epochIsAheadOfLiveTxn(token, src, candidate)) {
+                // A fallback below leaves this generation listed first and the live _txn rewound to an older
+                // one. A live _txn equal to another valid generation's is that rewind: go on to it. A generation
+                // of this lineage is within its sequencer; one beyond it is discarded after the loop.
+                if (sequencerFrontierOrUnknown(token) >= candidate.epochSeqTxn
+                        && isLiveTxnSavedByOtherGeneration(token, src, rootLen, candidates, candidate)) {
+                    LOG.info().$("adaptive epoch ahead of live state is a rejected generation, skipping it [table=").$(token)
+                            .$(", epochSeqTxn=").$(candidate.epochSeqTxn).I$();
                     continue;
                 }
-                // The lineage guard reads the live _txn, so it runs before any section is written over it.
-                if (epochIsAheadOfLiveTxn(token, src, candidate)) {
-                    // A fallback below leaves this generation listed first and the live _txn rewound to an older
-                    // one. A live _txn equal to another valid generation's is that rewind: go on to it. A generation
-                    // of this lineage is within its sequencer; one beyond it is discarded after the loop.
-                    if (sequencerFrontierOrUnknown(token) >= candidate.epochSeqTxn
-                            && isLiveTxnSavedByOtherGeneration(token, src, rootLen, candidates, candidate)) {
-                        LOG.info().$("adaptive epoch ahead of live state is a rejected generation, skipping it [table=").$(token)
-                                .$(", epochSeqTxn=").$(candidate.epochSeqTxn).I$();
-                        continue;
-                    }
-                    ahead = candidate;
-                    break;
-                }
-                restored |= DurableEpochManifest.restoreLiveFiles(configuration, token, src, rootLen, candidate.generation);
-                // The content checks read files, so they run on the live files, which now equal the sections.
-                // A generation that fails them is a write-side bug; the other generation is restored over it.
-                if (epochCopiesValid(token, src, candidate)) {
-                    selected = candidate;
-                    repairMarkerSelector = !loadedFromSelector
-                            || selectorSeqTxn != candidate.epochSeqTxn
-                            || selectorTxn != candidate.epochTxn
-                            || selectorGeneration != candidate.generation;
-                    break;
-                }
-                if (contentMismatch) {
-                    rejected = candidate;
-                }
+                ahead = candidate;
+                break;
+            }
+            restored |= DurableEpochManifest.restoreLiveFiles(configuration, token, src, rootLen, candidate.generation);
+            // The content checks read files, so they run on the live files, which now equal the sections.
+            // A generation that fails them is a write-side bug; the other generation is restored over it.
+            if (epochCopiesValid(token, src, candidate)) {
+                selected = candidate;
+                break;
+            }
+            if (contentMismatch) {
+                rejected = candidate;
             }
         }
 
         // C2 (restore / checkpoint / PITR coexistence): a durable epoch is a PAST cut, so in one lineage the
         // live _txn is always at or ahead of it (lazy apply only advances _txn after an epoch is taken). If
         // the live _txn loads cleanly at a seqTxn BELOW this epoch, the table was rewound BENEATH a stale,
-        // higher-lineage epoch by a backup / checkpoint-recover / PITR restore that left _snapshot/.epoch
+        // higher-lineage epoch by a backup / checkpoint-recover / PITR restore that left the save point
         // behind (nothing on the restore path clears them). Rolling _txn forward to that epoch would
         // resurrect the discarded lineage and leave _txn ahead of the restored sequencer. REFUSE: the epoch
         // cannot be adopted, and the live state below it may be the result of writes the storage lost, so
@@ -841,13 +805,9 @@ public class RecoveryCoordinator {
         // NORMAL same-lineage past cut that recover() is meant to adopt (rewind _txn/_cv to the epoch, then
         // WAL-replay forward). Its safety rests entirely on the INVARIANT that every path which rewinds or
         // diverges the live _txn (a backup / checkpoint / PITR restore; a primary->replica demote) clears
-        // _snapshot/.epoch via TableSnapshotRestore -> RecoveryCoordinator.removeAdaptiveEpochArtifacts. So any
+        // the save point via TableSnapshotRestore -> RecoveryCoordinator.removeAdaptiveEpochArtifacts. So any
         // epoch that SURVIVES to this adoption point is necessarily the SAME lineage as the live _txn (a
         // legitimate fast-boot anchor), never a stale wrong-lineage one.
-
-        if (repairMarkerSelector) {
-            republishSelectedGeneration(token, dir, selected);
-        }
 
         // A clean shutdown leaves nothing to restore: the writer's close epoch saves the live files as they
         // stand, and nothing writes them after it. The comparison is exact, so any difference, a torn live file
@@ -941,7 +901,7 @@ public class RecoveryCoordinator {
      * cut, symbol count, versions) also sets {@link #contentMismatch}, and recovery removes this generation once
      * the previous one is restored.
      */
-    private boolean epochCopiesValid(TableToken token, Path scratch, SnapshotMarker.Candidate candidate) {
+    private boolean epochCopiesValid(TableToken token, Path scratch, DurableEpochManifest.Candidate candidate) {
         contentMismatch = false;
         final long markerEpochSeqTxn = candidate.epochSeqTxn;
         final int epochGeneration = candidate.generation;
@@ -984,7 +944,7 @@ public class RecoveryCoordinator {
             if (copySeqTxn != markerEpochSeqTxn
                     || txReader.getTxn() != candidate.epochTxn
                     || txReader.getMetadataVersion() != metadataVersion) {
-                LOG.error().$("adaptive epoch _txn identity does not match _snapshot marker [table=").$(token)
+                LOG.error().$("adaptive epoch _txn identity does not match its save point header [table=").$(token)
                         .$(", copySeqTxn=").$(copySeqTxn).$(", markerSeqTxn=").$(markerEpochSeqTxn)
                         .$(", copyTxn=").$(txReader.getTxn()).$(", markerTxn=").$(candidate.epochTxn).I$();
                 contentMismatch = true;
@@ -1082,8 +1042,7 @@ public class RecoveryCoordinator {
      * {@code _txn}: the live {@code _txn} loads cleanly from its latest A/B slot, and its {@code seqTxn} is
      * below {@code epochSeqTxn}. On a single lineage that cannot happen, because an epoch is a past cut and
      * lazy apply only advances {@code _txn} after it. It means a backup, checkpoint-recover or PITR restore
-     * rewound the table beneath a stale, higher-lineage epoch and did not clear {@code _snapshot}/{@code
-     * .epoch}.
+     * rewound the table beneath a stale, higher-lineage epoch and did not clear its save point.
      * <p>
      * The guard fails open. It returns {@code false} for any live {@code _txn} that does not load cleanly
      * from its latest slot, which lets recovery roll forward to the epoch. A torn, short or garbage
@@ -1095,7 +1054,7 @@ public class RecoveryCoordinator {
      * frontier: an epoch beyond it belongs to a re-seeded lineage and is discarded, and anything else fails
      * the startup closed. This method itself makes no such distinction.
      */
-    private boolean epochIsAheadOfLiveTxn(TableToken token, Path scratch, SnapshotMarker.Candidate candidate) {
+    private boolean epochIsAheadOfLiveTxn(TableToken token, Path scratch, DurableEpochManifest.Candidate candidate) {
         final long epochSeqTxn = candidate.epochSeqTxn;
         TxReader liveTxn = null;
         try {
@@ -1181,8 +1140,8 @@ public class RecoveryCoordinator {
     }
 
     /**
-     * Fail-closed removal of the adaptive durable-epoch anchor for ONE table — the {@code _snapshot}
-     * marker plus the save point files {@code _epoch.manifest.0} and {@code _epoch.manifest.1} — given
+     * Fail-closed removal of the adaptive durable-epoch anchor for ONE table — the save point files
+     * {@code _epoch.manifest.0} and {@code _epoch.manifest.1}, the older one first — given
      * {@code path} positioned at the table root and {@code tableRootLen} = the length of that table-root prefix.
      * <p>
      * Call this when the local materialized state has been SUPERSEDED by an external event and the on-disk
@@ -1200,6 +1159,8 @@ public class RecoveryCoordinator {
      * {@code path} trimmed back to the table root.
      */
     public static void removeAdaptiveEpochArtifacts(FilesFacade ff, Path path, int tableRootLen) {
+        final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(ff, path, tableRootLen, -1);
+        // The marker of older development layouts.
         removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.SNAPSHOT_FILE_NAME));
         // The separate copy files of older development layouts, left behind by a database written before them.
         removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.META_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX));
@@ -1209,7 +1170,16 @@ public class RecoveryCoordinator {
             removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.META_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation));
             removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation));
             removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation));
-            removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(DurableEpochManifest.FILE_NAME).put('.').put(generation));
+            if (saved.length < 1 || (saved[0].generation != generation && (saved.length < 2 || saved[1].generation != generation))) {
+                // Never published, or damaged: recovery selects neither.
+                removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(DurableEpochManifest.FILE_NAME).put('.').put(generation));
+            }
+        }
+        // The older save point goes first, and its removal is durable before the newer one goes: a crash in between
+        // must leave the newer one, never the older alone, whose WAL the purge floor may have released.
+        for (int i = saved.length - 1; i > -1; i--) {
+            removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(DurableEpochManifest.FILE_NAME).put('.').put(saved[i].generation));
+            DurableEpochManifest.fsyncDirectory(ff, path, tableRootLen);
         }
         path.trimTo(tableRootLen);
     }

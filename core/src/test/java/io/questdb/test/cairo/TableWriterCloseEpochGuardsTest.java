@@ -66,11 +66,11 @@ public class TableWriterCloseEpochGuardsTest extends AbstractCairoTest {
      * {@code CairoException.isDataSyncFailure} recognises (it walks the whole cause chain). This test pins
      * that rather than leaving it as an argument: swallowing here would let a writer close "cleanly" after
      * an epoch whose payloads never reached the device, and a later boot would then trust a
-     * {@code _snapshot} marker whose data is not actually durable.
+     * save point whose data is not actually durable.
      *
      * <p>Note the ordering that keeps this safe even so: {@code advanceDurableEpoch} writes into the
-     * INACTIVE ping-pong generation and publishes the {@code _snapshot} marker LAST, after the payload
-     * fsyncs. A failure part-way therefore leaves the previous generation authoritative — the epoch is
+     * INACTIVE ping-pong generation and writes its header LAST, after the payload fsyncs; the header
+     * publishes it. A failure part-way therefore leaves the previous generation authoritative — the epoch is
      * skipped, never corrupted.
      */
     @Test

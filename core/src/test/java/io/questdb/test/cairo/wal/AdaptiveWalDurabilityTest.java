@@ -25,10 +25,10 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
-import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -542,22 +542,12 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
 
             io.questdb.cairo.TableToken tt = engine.verifyTableName("tab_i");
 
-            // The marker and the durable epoch copies must all exist after the worker epoch fired.
-            try (io.questdb.std.str.Path p = new io.questdb.std.str.Path()) {
-                p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(io.questdb.cairo.TableUtils.SNAPSHOT_FILE_NAME);
-                Assert.assertTrue("_snapshot marker must exist", engine.getConfiguration().getFilesFacade().exists(p.$()));
-            }
+            // The save point and its copies must all exist after the worker epoch fired.
             assertEpochCopyExists(tt, io.questdb.cairo.TableUtils.TXN_FILE_NAME);
             assertEpochCopyExists(tt, io.questdb.cairo.TableUtils.COLUMN_VERSION_FILE_NAME);
 
-            // The marker's recorded epochSeqTxn must equal the applied seqTxn (2 inserts => seqTxn 2).
-            try (io.questdb.cairo.SnapshotMarker marker = new io.questdb.cairo.SnapshotMarker(engine.getConfiguration());
-                 io.questdb.std.str.Path p = new io.questdb.std.str.Path()) {
-                p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(io.questdb.cairo.TableUtils.SNAPSHOT_FILE_NAME);
-                marker.of(p.$());
-                Assert.assertTrue("marker must load", marker.tryLoad());
-                Assert.assertEquals("epochSeqTxn == applied seqTxn", 2L, marker.getEpochSeqTxn());
-            }
+            // The current save point's epochSeqTxn must equal the applied seqTxn (2 inserts => seqTxn 2).
+            Assert.assertEquals("epochSeqTxn == applied seqTxn", 2L, currentSavePoint(tt).epochSeqTxn);
 
             // The tracker published durableEpochSeqTxn = the applied seqTxn.
             io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
@@ -1110,22 +1100,21 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     private int readMarkerGeneration(TableToken token) {
-        try (io.questdb.std.str.Path p = new io.questdb.std.str.Path();
-             SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
-            p.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
-            marker.of(p);
-            Assert.assertTrue("durable epoch marker must load", marker.tryLoad());
-            return marker.getGeneration();
+        return currentSavePoint(token).generation;
+    }
+
+    private DurableEpochManifest.Candidate currentSavePoint(TableToken token) {
+        try (io.questdb.std.str.Path p = new io.questdb.std.str.Path()) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(token);
+            final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(engine.getConfiguration().getFilesFacade(), p, p.size(), token.getTableId());
+            Assert.assertTrue("a save point must exist", saved.length > 0);
+            return saved[0];
         }
     }
 
     private void assertEpochCopyExists(io.questdb.cairo.TableToken tt, String baseFileName) {
-        try (io.questdb.std.str.Path p = new io.questdb.std.str.Path();
-             SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
-            p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
-            marker.of(p);
-            Assert.assertTrue("durable epoch marker must load", marker.tryLoad());
-            final int generation = marker.getGeneration();
+        try (io.questdb.std.str.Path p = new io.questdb.std.str.Path()) {
+            final int generation = currentSavePoint(tt).generation;
             final io.questdb.std.FilesFacade ff = engine.getConfiguration().getFilesFacade();
             final long[] section = io.questdb.test.tools.TestUtils.savePointSection(ff, p, engine.getConfiguration().getDbRoot(), tt, generation, baseFileName);
             Assert.assertTrue("the save point must hold a copy of " + baseFileName + ": " + p, section[1] > 0);

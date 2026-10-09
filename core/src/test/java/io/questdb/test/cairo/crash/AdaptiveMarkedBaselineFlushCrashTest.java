@@ -28,7 +28,6 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -140,7 +139,7 @@ public class AdaptiveMarkedBaselineFlushCrashTest extends AbstractAdaptiveCrashT
             final int syncfsBeforeBoot = crashFf.syncfsCount();
             reboot(tokens);
             for (TableToken token : tokens) {
-                Assert.assertTrue(fileExists(token, TableUtils.SNAPSHOT_FILE_NAME));
+                Assert.assertTrue(fileExists(token, DurableEpochManifest.FILE_NAME + ".0"));
                 Assert.assertFalse(fileExists(token, RecoveryCoordinator.RESTORE_ENROL_FILE_NAME));
             }
             if (fsWideSyncfs) {
@@ -160,7 +159,7 @@ public class AdaptiveMarkedBaselineFlushCrashTest extends AbstractAdaptiveCrashT
                 drainWalQueue();
                 expectedRowCount++;
                 for (TableToken token : tokens) {
-                    Assert.assertTrue(fileExists(token, TableUtils.SNAPSHOT_FILE_NAME));
+                    Assert.assertTrue(fileExists(token, DurableEpochManifest.FILE_NAME + ".0"));
                 }
             }
 

@@ -189,8 +189,8 @@ public class WalSyscallCountTest extends AbstractCairoTest {
 
     /**
      * The sync calls of one periodic save point after its column flush: the live {@code _cv} and {@code _txn},
-     * then the generation's one file twice (its sections, then its header), the table directory and the
-     * {@code _snapshot} marker. Separate copies of {@code _meta}, {@code _cv} and {@code _txn} took three more.
+     * then the generation's one file twice (its sections, then its header, which publishes it). The generation
+     * rewritten here already held a valid header, so its name is durable and the table directory is not synced.
      */
     @Test
     public void testPeriodicSavePointSyncs() throws Exception {
@@ -228,10 +228,7 @@ public class WalSyscallCountTest extends AbstractCairoTest {
                             msyncSync
                             fsync _txn
                             fsync _epoch.manifest.0
-                            fsync _epoch.manifest.0
-                            fsyncAndClose x~1
-                            msyncSync
-                            fsync _snapshot""",
+                            fsync _epoch.manifest.0""",
                     String.join("\n", log.subList(columnFlushEnd + 1, log.size()))
             );
         });

@@ -27,12 +27,11 @@ package io.questdb.test.cairo.crash;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.RecoveryCoordinator;
-import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -71,7 +70,7 @@ import java.util.stream.Stream;
  * {@code TableWriter.syncColumns()} skips the per-column flush, so after a power cut the partition
  * columns can be NON-DURABLE while {@code _txn}/{@code _cv} were only msync'd. A durable epoch
  * ({@code TableWriter.fsyncMaterializedState()}, fired by the apply worker) forces those columns
- * durable and records a {@code _snapshot} marker so recovery can land on the cut.
+ * durable and publishes a save point so recovery can land on the cut.
  *
  * <p>This isolates the TABLE materialized-state durability (Task C roll-forward of the post-epoch
  * WAL is out of scope here). After {@code drainWalQueue} the table is caught up
@@ -87,11 +86,11 @@ import java.util.stream.Stream;
  * <h3>Scenarios</h3>
  * <ol>
  *   <li>{@link #testEpochMakesLazilyAppliedRowsDurable}: ADAPTIVE, lazily apply a row, fire a durable
- *       epoch, crash, reopen → the epoch'd row reads back correct and the {@code _snapshot} marker
+ *       epoch, crash, reopen → the epoch'd row reads back correct and the save point
  *       recorded exactly the cut's seqTxn (a self-consistent durable cut + anchor survives the cut).
  *       Run under per-inode journaling ({@code modelSharedJournal=false}).</li>
  *   <li>{@link #testNegativeControlWithoutEpochAnchorIsAbsent}: NEGATIVE CONTROL — the identical
- *       workload with epochs DISABLED records NO recovery anchor (no {@code _snapshot}, no save point
+ *       workload with epochs DISABLED records NO recovery anchor (no save point
  *       file), before AND after the crash. This is {@code advance()}'s
  *       reproducible contribution: the cut recovery would land on is simply not recorded. (Asserting
  *       column ROW-loss here is not reliable in this harness — see the test body + report.)</li>
@@ -294,6 +293,47 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
+     * A failure that does not poison the engine (a failed open, write or truncate) at every such call of a table's
+     * first periodic save point, then an O3 rewrite of the partitions it would have named, a partition purge, a WAL
+     * purge and a kill: the failed save point must not be selectable once the versions it names are gone.
+     */
+    @Test
+    public void testIoFailureInSavePointThenO3RewritePurgeAndKill() throws Exception {
+        runWithFaultFacade(() -> {
+            configureSavePoints();
+            for (int n = 1; n <= MAX_SWEEP; n++) {
+                final Scenario s = newScenario("io" + n);
+                insertRows(s, 0, 2);
+                insertRows(s, 1, 2);
+                drainWalQueue();
+                engine.releaseAllWalWriters();
+                markDurableBaseline();
+                faultFf.armIoFaultAt(n);
+                try {
+                    publishSavePoint(s);
+                } catch (CairoException | CairoError ignore) {
+                    // The save point the failure interrupted.
+                }
+                final boolean faulted = !faultFf.isIoFaultArmed();
+                s.firedAt = faulted ? faultFf.faultedOp : null;
+                faultFf.disarm();
+                // Rows before every existing row of both days: an O3 merge writes new partition versions.
+                insertRows(s, 0, 2, true, true, true);
+                insertRows(s, 1, 2, true, true, true);
+                drainWalQueue();
+                engine.releaseAllReaders();
+                purgePartitions();
+                purgeWal();
+                restartAndCheck(s, faulted ? "failure at I/O call " + n : "no failure", false);
+                if (!faulted) {
+                    break;
+                }
+            }
+            assertNoRowFailures();
+        });
+    }
+
+    /**
      * A power loss after every durability operation and after every deletion of a save-point removal: the exit a
      * non-adaptive restart performs on a table with two save points, whose WAL below the newer one was purged
      * under its floor.
@@ -322,6 +362,12 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                             }
                         };
                         final boolean crashed = deletions == 0 ? crashAtOperation(s, n, exit) : crashAfterRemoval(s, n, exit);
+                        if (!crashed && "sync".equals(exitMode)) {
+                            // Not judged: the SYNC replay rewrites a partition directory the rewind left on disk
+                            // and does not sync its entry, which the exit does not flush yet.
+                            dropScenario(s);
+                            break;
+                        }
                         final String label;
                         if (crashed) {
                             label = exitMode + " exit, power loss after " + (deletions == 0 ? "durability operation " : "deletion ") + n;
@@ -519,12 +565,12 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     private void assertMarkerSeqTxn(TableToken tt, long expectedSeqTxn) {
-        try (SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration());
-             Path p = new Path()) {
-            p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
-            marker.of(p.$());
-            Assert.assertTrue("epoch marker must exist + load", marker.tryLoad());
-            Assert.assertEquals("epoch marker seqTxn", expectedSeqTxn, marker.getEpochSeqTxn());
+        try (Path p = new Path()) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(tt);
+            final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(
+                    engine.getConfiguration().getFilesFacade(), p, p.size(), tt.getTableId());
+            Assert.assertTrue("a save point must exist", saved.length > 0);
+            Assert.assertEquals("save point seqTxn", expectedSeqTxn, saved[0].epochSeqTxn);
         }
     }
 
@@ -631,18 +677,19 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     private void insertRows(Scenario s, int day, int count) {
-        insertRows(s, day, count, true, false);
+        insertRows(s, day, count, true, false, false);
     }
 
     // Commits one WAL transaction. A row is expected back after a power loss only when its commit succeeded under
-    // a durable mode and `covered` says the durable frontier covers it.
-    private void insertRows(Scenario s, int day, int count, boolean covered, boolean mayFail) {
+    // a durable mode and `covered` says the durable frontier covers it. Rows at the day's start precede every row
+    // inserted otherwise.
+    private void insertRows(Scenario s, int day, int count, boolean covered, boolean mayFail, boolean atDayStart) {
         final StringBuilder sql = new StringBuilder("insert into ").append(s.table).append(" values ");
         final long[] ts = new long[count];
         final long[] v = new long[count];
         for (int i = 0; i < count; i++) {
             v[i] = ++nextRowId;
-            ts[i] = DAY0 + day * DAY + v[i] * 1_000_000L;
+            ts[i] = DAY0 + day * DAY + v[i] * (atDayStart ? 1L : 1_000_000L);
             sql.append(i > 0 ? ", " : "").append('(').append(ts[i]).append(", ").append(v[i]).append(')');
         }
         boolean committed = false;
@@ -686,40 +733,8 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         restart(s);
     }
 
-    // Judges one row: recovery after the power loss, the rows, a write after recovery, then a second power loss.
     private void powerLossAndCheck(Scenario s, String label) {
-        rowCount++;
-        String failure;
-        try {
-            powerLoss(s);
-            failure = recoverAndCheck(s);
-            if (failure == null) {
-                insertRows(s, 3, 1);
-                drainWalQueue();
-                failure = checkRows(s);
-                if (failure != null) {
-                    failure = "after a write that followed recovery, " + failure;
-                }
-            }
-            // A NOSYNC instance promises nothing for the state it applied after recovery.
-            if (failure == null && !"nosync".equals(commitMode)) {
-                powerLoss(s);
-                failure = recoverAndCheck(s);
-                if (failure != null) {
-                    failure = "after a second power loss, " + failure;
-                }
-            }
-        } catch (Throwable th) {
-            failure = "unexpected " + th;
-        }
-        final int trackedFiles = faultFf.trackedFileCount();
-        LOG.info().$("save point crash row [table=").$(s.table).$(", row=").$(label).$(", firedAt=").$(s.firedAt)
-                .$(", expected=").$(s.expected.size()).$(", optional=").$(s.optional.size())
-                .$(", result=").$(failure == null ? "ok" : failure).$(", trackedFiles=").$(trackedFiles).I$();
-        if (failure != null) {
-            rowFailures.add(s.table + " [" + label + ", at " + s.firedAt + "]: " + failure);
-        }
-        dropScenario(s);
+        restartAndCheck(s, label, true);
     }
 
     private void publishSavePoint(Scenario s) {
@@ -801,6 +816,50 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         engine.resetDurabilityFailure();
     }
 
+    // Judges one row: recovery after a power loss (or a kill, which keeps every file as it stands), the rows, a
+    // write after recovery, then a second power loss.
+    private void restartAndCheck(Scenario s, String label, boolean powerLoss) {
+        rowCount++;
+        String failure;
+        try {
+            if (powerLoss) {
+                powerLoss(s);
+            } else {
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                engine.releaseAllWalWriters();
+                restart(s);
+            }
+            failure = recoverAndCheck(s);
+            if (failure == null) {
+                insertRows(s, 3, 1);
+                drainWalQueue();
+                failure = checkRows(s);
+                if (failure != null) {
+                    failure = "after a write that followed recovery, " + failure;
+                }
+            }
+            // A NOSYNC instance promises nothing for the state it applied after recovery.
+            if (failure == null && !"nosync".equals(commitMode)) {
+                powerLoss(s);
+                failure = recoverAndCheck(s);
+                if (failure != null) {
+                    failure = "after a second power loss, " + failure;
+                }
+            }
+        } catch (Throwable th) {
+            failure = "unexpected " + th;
+        }
+        final int trackedFiles = faultFf.trackedFileCount();
+        LOG.info().$("save point crash row [table=").$(s.table).$(", row=").$(label).$(", firedAt=").$(s.firedAt)
+                .$(", expected=").$(s.expected.size()).$(", optional=").$(s.optional.size())
+                .$(", result=").$(failure == null ? "ok" : failure).$(", trackedFiles=").$(trackedFiles).I$();
+        if (failure != null) {
+            rowFailures.add(s.table + " [" + label + ", at " + s.firedAt + "]: " + failure);
+        }
+        dropScenario(s);
+    }
+
     private void runWithFaultFacade(TestUtils.LeakProneCode body) throws Exception {
         assumeCrashHarnessSupported();
         faultFf = new SavePointFaultFacade();
@@ -822,7 +881,7 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     private void tryInsertRows(Scenario s, int day, int count, boolean covered) {
-        insertRows(s, day, count, covered, true);
+        insertRows(s, day, count, covered, true, false);
     }
 
     @FunctionalInterface
@@ -840,6 +899,8 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         String faultedOp;
         String removedPath;
         private int faultAtOp = -1;
+        private int ioCalls;
+        private int ioFaultAt = -1;
         private boolean poweredOff;
         private int removalCrashAt = -1;
         private int removals;
@@ -920,6 +981,21 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         }
 
         @Override
+        public long openRO(LPSZ name) {
+            return ioFault("openRO", name) ? -1 : super.openRO(name);
+        }
+
+        @Override
+        public long openRONoCache(LPSZ name) {
+            return ioFault("openRONoCache", name) ? -1 : super.openRONoCache(name);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            return ioFault("openRW", name) ? -1 : super.openRW(name, opts);
+        }
+
+        @Override
         public boolean removeQuiet(LPSZ name) {
             final boolean removed = super.removeQuiet(name);
             if (removed && removalCrashAt > 0 && ++removals >= removalCrashAt) {
@@ -957,6 +1033,16 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
             }
         }
 
+        @Override
+        public boolean truncate(long fd, long size) {
+            return !ioFault("truncate", null) && super.truncate(fd, size);
+        }
+
+        @Override
+        public long write(long fd, long address, long len, long offset) {
+            return ioFault("write", null) ? -1 : super.write(fd, address, len, offset);
+        }
+
         void armCrashAfterRemoval(int removal) {
             removals = 0;
             removalCrashAt = removal;
@@ -966,9 +1052,17 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
             faultAtOp = op;
         }
 
+        // Fails the n-th open, write or truncate from now on, the way a full disk or a failed open does: no data-sync
+        // failure, so the engine is not poisoned.
+        void armIoFaultAt(int n) {
+            ioCalls = 0;
+            ioFaultAt = n;
+        }
+
         void disarm() {
             armCrashAt(-1);
             faultAtOp = -1;
+            ioFaultAt = -1;
             removalCrashAt = -1;
         }
 
@@ -993,6 +1087,10 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
             return faultAtOp > 0;
         }
 
+        boolean isIoFaultArmed() {
+            return ioFaultAt > 0;
+        }
+
         boolean isRemovalCrashArmed() {
             return removalCrashAt > 0;
         }
@@ -1007,6 +1105,15 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                 faultedOp = lastDurabilityOp();
                 throw CairoException.dataSyncFailure(EIO, operation);
             }
+        }
+
+        private boolean ioFault(String operation, LPSZ name) {
+            if (ioFaultAt > 0 && ++ioCalls >= ioFaultAt) {
+                ioFaultAt = -1;
+                faultedOp = operation + (name != null ? " " + Utf8String.newInstance(name) : "");
+                return true;
+            }
+            return false;
         }
     }
 

@@ -25,11 +25,11 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
-import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -136,7 +136,7 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
             try {
                 execute("create table no_anchor (ts timestamp, v long) timestamp(ts) partition by day wal");
                 final TableToken tt = engine.verifyTableName("no_anchor");
-                Assert.assertFalse("a replica must not publish an anchor", fileExists(tt, TableUtils.SNAPSHOT_FILE_NAME));
+                Assert.assertFalse("a replica must not publish an anchor", fileExists(tt, DurableEpochManifest.FILE_NAME + ".0"));
                 Assert.assertTrue("the enrolment marker must stand in for it", fileExists(tt, RecoveryCoordinator.RESTORE_ENROL_FILE_NAME));
                 Assert.assertEquals(CommitMode.ADAPTIVE, readEnrolledCommitMode(tt));
             } finally {
@@ -180,7 +180,7 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
             clearLikeOpenLoops(tt);
             insertAndRelease("enrol", 3, 5, true);
             Assert.assertEquals(CommitMode.ADAPTIVE, readEnrolledCommitMode(tt));
-            Assert.assertFalse("enrolment on a replica must not publish an anchor", fileExists(tt, TableUtils.SNAPSHOT_FILE_NAME));
+            Assert.assertFalse("enrolment on a replica must not publish an anchor", fileExists(tt, DurableEpochManifest.FILE_NAME + ".0"));
             drainPurgeJob();
             crashRestartAndAssertNoLoss(tt, false, 5);
         });
@@ -197,7 +197,7 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
             insertAndRelease("noclear", 1, 2, true);
             engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
             insertAndRelease("noclear", 3, 3, true);
-            Assert.assertFalse("the anchor must be gone before the replica applies on top of it", fileExists(tt, TableUtils.SNAPSHOT_FILE_NAME));
+            Assert.assertFalse("the anchor must be gone before the replica applies on top of it", fileExists(tt, DurableEpochManifest.FILE_NAME + ".0"));
             Assert.assertTrue("the enrolment marker must replace it", fileExists(tt, RecoveryCoordinator.RESTORE_ENROL_FILE_NAME));
             insertAndRelease("noclear", 4, 5, true);
             drainPurgeJob();
@@ -276,7 +276,7 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
             execute("alter table rb rebase wal");
             drainWalQueue();
             final TableToken tt = engine.verifyTableName("rb");
-            Assert.assertFalse("a clone made on a replica must not carry an anchor", fileExists(tt, TableUtils.SNAPSHOT_FILE_NAME));
+            Assert.assertFalse("a clone made on a replica must not carry an anchor", fileExists(tt, DurableEpochManifest.FILE_NAME + ".0"));
             Assert.assertTrue("the enrolment marker must stand in for it", fileExists(tt, RecoveryCoordinator.RESTORE_ENROL_FILE_NAME));
             Assert.assertEquals(CommitMode.ADAPTIVE, readEnrolledCommitMode(tt));
             insertAndRelease("rb", 3, 5, true);
@@ -344,13 +344,10 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
     }
 
     private static long readAnchorSeqTxn(TableToken tt) {
-        if (!fileExists(tt, TableUtils.SNAPSHOT_FILE_NAME)) {
-            return -1;
-        }
-        try (Path p = new Path(); SnapshotMarker marker = new SnapshotMarker(configuration)) {
-            p.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
-            marker.of(p.$());
-            return marker.tryLoad() ? marker.getEpochSeqTxn() : -1;
+        try (Path p = new Path()) {
+            p.of(configuration.getDbRoot()).concat(tt);
+            final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(configuration.getFilesFacade(), p, p.size(), tt.getTableId());
+            return saved.length > 0 ? saved[0].epochSeqTxn : -1;
         }
     }
 

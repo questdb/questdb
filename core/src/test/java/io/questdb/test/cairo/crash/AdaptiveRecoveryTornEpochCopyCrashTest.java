@@ -31,7 +31,6 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
-import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -274,8 +273,75 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
     }
 
     /**
+     * After a fallback from the newest generation, the first save point must write into the slot that does not
+     * hold the only good generation: both when the fallback removed the newest one (rejected on content) and when
+     * it kept it (its sections fail their checksums under a valid header). A power loss at every durability call
+     * of that save point must leave a state recovery accepts, with every row, and a second start must recover
+     * nothing.
+     */
+    @Test
+    public void testPowerLossAtEverySyncOfFirstSavePointAfterFallback() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        try {
+            Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
+            runWithCrashFacade(() -> {
+                final Set<Long> fdBaseline = new HashSet<>(crashFf.noCacheOpenFdsSnapshot());
+                for (int kind = 0; kind < 2; kind++) {
+                    final boolean keptNewest = kind == 1;
+                    final TableToken countToken = buildFallenBackTable(1000 * kind, keptNewest);
+                    final int opsBefore = crashFf.durabilityOpCount();
+                    takeSavePoint(countToken);
+                    final int n = crashFf.durabilityOpCount() - opsBefore;
+                    dropSweepTable(countToken);
+                    releaseEngineHandles();
+                    reclaimLingeringNonCacheFds(fdBaseline);
+                    Assert.assertTrue("the save point must make durability calls", n > 0);
+
+                    for (int k = 1; k <= n; k++) {
+                        final String context = "power loss at durability call " + k + " of " + n + " of the first save point after a fallback"
+                                + (keptNewest ? " that kept the newest generation" : " that removed the newest generation");
+                        final TableToken tt = buildFallenBackTable(1000 * kind + k, keptNewest);
+                        markDurableBaseline();
+                        crashFf.armCrashAt(crashFf.durabilityOpCount() + k);
+                        boolean fired = false;
+                        try {
+                            takeSavePoint(tt);
+                        } catch (CrashSimulationError expected) {
+                            fired = true;
+                        }
+                        Assert.assertTrue("crash point " + k + " of " + n + " never fired", fired);
+                        simulateRestart(new TableToken[]{tt});
+                        try {
+                            new RecoveryCoordinator(engine).recover();
+                        } catch (CairoException e) {
+                            Assert.fail(context + ": recovery refused: " + e.getFlyweightMessage());
+                        }
+                        final long events = TestUtils.getMetricValue(engine, RECOVERY_EVENTS);
+                        new RecoveryCoordinator(engine).recover();
+                        Assert.assertEquals(context + ": a second start must recover nothing", events, TestUtils.getMetricValue(engine, RECOVERY_EVENTS));
+                        engine.notifyWalTxnRepublisher(tt);
+                        drainWalQueue();
+                        Assert.assertFalse(context + ": table suspended", engine.getTableSequencerAPI().isSuspended(tt));
+                        assertRows(tt.getTableName(), K + M + 1, context);
+                        dropSweepTable(tt);
+                        releaseEngineHandles();
+                        reclaimLingeringNonCacheFds(fdBaseline);
+                    }
+                }
+                Files.getMmapCache().asyncMunmap();
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        }
+    }
+
+    /**
      * A crash at every durability call of two save points in a row: the first writes generation one, the
-     * second overwrites generation zero, which still holds the creation baseline its marker slot names.
+     * second overwrites generation zero, which still holds the creation baseline.
      * Whatever survives, recovery must start, keep every row, and find nothing to recover on a second start.
      */
     @Test
@@ -580,6 +646,25 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
         return tt;
     }
 
+    // A table whose start fell back from the newest generation, with the WAL replayed past it. The newest one is
+    // rejected on content (and removed), or, when kept, fails its section checksums under a valid header.
+    private TableToken buildFallenBackTable(int iteration, boolean keptNewest) throws Exception {
+        final TableToken tt = buildTableWithRejectedNewestGeneration(iteration, Rejection.SYMBOL_COUNT, Older.VALID, false);
+        if (keptNewest) {
+            corruptRange(tt, 0, TableUtils.TXN_FILE_NAME, true);
+        }
+        new RecoveryCoordinator(engine).recover();
+        Assert.assertEquals("the newest generation is kept only when its checksums fail", keptNewest, savePointFileExists(tt, 0));
+        Assert.assertEquals("the start must fall back to the older generation", K, readTxnSeqTxn(tt));
+        engine.notifyWalTxnRepublisher(tt);
+        drainWalQueue();
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tt));
+        assertRows(tt.getTableName(), K + M + 1, "after the fallback");
+        engine.releaseAllReaders();
+        // The writer the replay pooled stays open: the save point under test must not include a writer open.
+        return tt;
+    }
+
     /**
      * A table whose newest generation passes its checksums but fails one of recovery's content checks, as a
      * write-side bug leaves it (see {@link Rejection}). The older generation is at seqTxn K and is consistent
@@ -681,10 +766,6 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
                     forge.trimTo(forgeLen).concat(DurableEpochManifest.FILE_NAME).put(".0").$(),
                     live.trimTo(liveLen).concat(DurableEpochManifest.FILE_NAME).put(".0").$()
             ) >= 0);
-            try (SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
-                marker.of(live.trimTo(liveLen).concat(TableUtils.SNAPSHOT_FILE_NAME).$());
-                marker.write(seqTxn, txn, 2L, 0);
-            }
             if (older == Older.CONTENT_MISMATCH) {
                 try (TxReader tx = new TxReader(ff)) {
                     tx.ofRO(forgeOlder.trimTo(forgeOlderLen).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
@@ -737,9 +818,13 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
     }
 
     private void corruptRange(TableToken tt, String fileName, boolean flipOneByte) {
+        corruptRange(tt, 1, fileName, flipOneByte);
+    }
+
+    private void corruptRange(TableToken tt, int generation, String fileName, boolean flipOneByte) {
         final FilesFacade ff = engine.getConfiguration().getFilesFacade();
         try (Path p = new Path()) {
-            final long[] copy = savedCopy(p, tt, 1, fileName);
+            final long[] copy = savedCopy(p, tt, generation, fileName);
             Assert.assertTrue("the saved " + fileName + " must be non-empty", copy[1] > 0);
             final long offset = flipOneByte ? copy[0] + copy[1] / 2 : copy[0];
             final int len = flipOneByte ? 1 : (int) copy[1];
@@ -878,6 +963,12 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
         }
     }
 
+    private void takeSavePoint(TableToken tt) {
+        try (TableWriter w = getWriter(tt)) {
+            w.advanceDurableEpoch(3L);
+        }
+    }
+
     private void takeTwoSavePoints(TableToken tt) {
         try (TableWriter w = getWriter(tt)) {
             w.advanceDurableEpoch(1L);
@@ -953,7 +1044,7 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
     }
 
     private enum Rejection {
-        // The _txn and _cv sections are an earlier cut than the header and the marker name.
+        // The _txn and _cv sections are an earlier cut than the header names.
         CUT,
         // The header records a column version the _txn section does not.
         HEADER_VERSIONS,
@@ -981,8 +1072,11 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
             final String armed = suffix;
             if (armed != null) {
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + DurableEpochManifest.FILE_NAME + ".1")) {
-                    suffix = null;
-                } else if (Utf8s.endsWithAscii(name, armed) && isContentCheck()) {
+                    // The older generation's checks begin; reading only its header to order the two does not count.
+                    if (!isCalledFrom("readHeader")) {
+                        suffix = null;
+                    }
+                } else if (Utf8s.endsWithAscii(name, armed) && isCalledFrom("epochCopiesValid")) {
                     fired = true;
                     return -1;
                 }
@@ -999,8 +1093,8 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
             suffix = null;
         }
 
-        private static boolean isContentCheck() {
-            return StackWalker.getInstance().walk(frames -> frames.anyMatch(f -> "epochCopiesValid".equals(f.getMethodName())));
+        private static boolean isCalledFrom(String method) {
+            return StackWalker.getInstance().walk(frames -> frames.anyMatch(f -> method.equals(f.getMethodName())));
         }
     }
 

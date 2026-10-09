@@ -29,7 +29,6 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.LongHashSet;
 import io.questdb.std.str.LPSZ;
@@ -42,14 +41,12 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * A durable epoch generation is overwritten IN PLACE while its own marker record is still a live recovery
- * candidate. This proves that a crash part-way through that overwrite cannot be adopted.
+ * A durable epoch generation is overwritten IN PLACE while it is still the older valid save point. This proves
+ * that a crash part-way through that overwrite cannot be adopted.
  * <p>
- * The generations ping-pong, so the cut after next targets the generation the PREVIOUS marker slot still
- * names. {@link io.questdb.cairo.SnapshotMarker#loadCandidates()} returns BOTH slots, so that generation
- * remains selectable throughout. Its file is truncated, the new sections are written and synced, and only
- * then the header. A crash before the header lands leaves the new sections behind no valid header, so the
- * generation fails validation; the older marker record naming it cannot be matched against anything.
+ * The generations ping-pong, so the cut after next targets the older generation. Its file is truncated, the new
+ * sections are written and synced, and only then the header. A crash before the header lands leaves the new
+ * sections behind no valid header, so the generation is never selected.
  * <p>
  * The test pins the OUTCOME: with both generations unusable, recovery must refuse to open rather than adopt
  * the half-written generation or fall back to live state.
@@ -109,11 +106,11 @@ public class AdaptiveEpochGenerationOverwriteCrashTest extends AbstractCairoTest
                 }
                 Assert.assertTrue("the injected header failure never fired, so no half-written generation was "
                         + "created and this test proves nothing", ff.failures > 0);
-                Assert.assertEquals("the marker must still select the intact generation; the failed cut "
+                Assert.assertEquals("the intact generation must still be current; the failed cut "
                         + "publishes nothing", genB, activeGeneration(tt));
 
-                // Force recovery to CONSIDER the half-overwritten generation by making the intact one
-                // unusable. Without this the fallback path is never entered.
+                // Force recovery to CONSIDER the half-overwritten generation by damaging the intact one's
+                // sections. Without this the fallback path is never entered.
                 corruptGeneration(tt, genB);
 
                 engine.releaseAllWriters();
@@ -139,16 +136,11 @@ public class AdaptiveEpochGenerationOverwriteCrashTest extends AbstractCairoTest
 
     private int activeGeneration(TableToken tt) {
         try (Path p = new Path()) {
-            p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
-            final io.questdb.cairo.SnapshotMarker marker =
-                    new io.questdb.cairo.SnapshotMarker(engine.getConfiguration());
-            try {
-                marker.of(p.$());
-                Assert.assertTrue("the epoch marker must load", marker.tryLoad());
-                return marker.getGeneration();
-            } finally {
-                marker.close();
-            }
+            p.of(engine.getConfiguration().getDbRoot()).concat(tt);
+            final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(
+                    engine.getConfiguration().getFilesFacade(), p, p.size(), tt.getTableId());
+            Assert.assertTrue("a save point must exist", saved.length > 0);
+            return saved[0].generation;
         }
     }
 
@@ -159,9 +151,14 @@ public class AdaptiveEpochGenerationOverwriteCrashTest extends AbstractCairoTest
             final io.questdb.std.FilesFacade ff = engine.getConfiguration().getFilesFacade();
             final long fd = ff.openRW(p.$(), engine.getConfiguration().getWriterFileOpenOpts());
             Assert.assertTrue("must open the intact generation's save point file", fd > 0);
+            final long buf = io.questdb.std.Unsafe.malloc(1, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
             try {
-                Assert.assertTrue("truncate it so this generation is rejected", ff.truncate(fd, 0));
+                // Flip the first byte of the _txn section: the header stays valid, the section checksum fails.
+                Assert.assertEquals(1, ff.read(fd, buf, 1, DurableEpochManifest.FILE_SIZE));
+                io.questdb.std.Unsafe.getUnsafe().putByte(buf, (byte) ~io.questdb.std.Unsafe.getUnsafe().getByte(buf));
+                Assert.assertEquals(1, ff.write(fd, buf, 1, DurableEpochManifest.FILE_SIZE));
             } finally {
+                io.questdb.std.Unsafe.free(buf, 1, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
                 ff.close(fd);
             }
         }

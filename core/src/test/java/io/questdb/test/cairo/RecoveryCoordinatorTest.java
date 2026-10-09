@@ -35,7 +35,6 @@ import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
-import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.SymbolCountProvider;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -109,7 +108,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
                 final TableToken token = engine.verifyTableName("mode_flip");
                 try (Path path = new Path()) {
-                    path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                    path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(io.questdb.cairo.DurableEpochManifest.FILE_NAME + ".0");
                     Assert.assertFalse(
                             "precondition: a nosync-created table has no anchor",
                             TestFilesFacadeImpl.INSTANCE.exists(path.$())
@@ -134,7 +133,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 engine.releaseAllWriters();
 
                 try (Path path = new Path()) {
-                    path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                    path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(io.questdb.cairo.DurableEpochManifest.FILE_NAME + ".0");
                     Assert.assertTrue("enrollment must publish the anchor",
                             TestFilesFacadeImpl.INSTANCE.exists(path.$()));
                 }
@@ -193,7 +192,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                     new RecoveryCoordinator(engine).recover();
                     Assert.fail("expected an enrolled table with no anchor to be refused");
                 } catch (CairoException expected) {
-                    TestUtils.assertContains(expected.getFlyweightMessage(), "adaptive epoch marker is absent");
+                    TestUtils.assertContains(expected.getFlyweightMessage(), "adaptive save point is absent");
                 }
             });
         } finally {
@@ -392,17 +391,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
      */
     @Test
     public void testCleanRestartRestoresNothing() throws Exception {
-        assertCleanRestartRestoresNothing("clean_restart", false);
-    }
-
-    /**
-     * {@link #testCleanRestartRestoresNothing()} with the marker's unchecksummed selector reverted to the
-     * previous slot. Recovery has nothing to restore, but must still re-publish the generation the live
-     * state sits on, or a later epoch would overwrite it as the nominally inactive generation.
-     */
-    @Test
-    public void testCleanRestartWithRevertedSelectorRepairsSelector() throws Exception {
-        assertCleanRestartRestoresNothing("reverted_selector", true);
+        assertCleanRestartRestoresNothing("clean_restart");
     }
 
     /**
@@ -496,12 +485,12 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             try {
                 execute("create table schema_epoch (ts timestamp, v long) timestamp(ts) partition by day wal");
                 final TableToken token = engine.verifyTableName("schema_epoch");
-                Assert.assertTrue("creation epoch must bind its metadata payload",
-                        io.questdb.cairo.DurableEpochManifest.isMetadataBound(configuration, token, 0));
-                try (Path markerPath = new Path(); SnapshotMarker marker = new SnapshotMarker(configuration)) {
-                    markerPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
-                    marker.of(markerPath.$());
-                    Assert.assertEquals(SnapshotMarker.FORMAT_VERSION, marker.loadCandidates()[0].formatVersion);
+                try (Path markerPath = new Path()) {
+                    final int rootLen = markerPath.of(configuration.getDbRoot()).concat(token).size();
+                    final io.questdb.cairo.DurableEpochManifest.Candidate[] saved = io.questdb.cairo.DurableEpochManifest.loadCandidates(configuration.getFilesFacade(), markerPath, rootLen, token.getTableId());
+                    Assert.assertEquals("creation must publish generation zero", 1, saved.length);
+                    Assert.assertTrue("creation epoch must bind its metadata payload", io.questdb.cairo.DurableEpochManifest.validateSections(
+                            configuration, token, markerPath, rootLen, 0, saved[0].epochSeqTxn, saved[0].epochTxn));
                 }
                 execute("alter table schema_epoch add column extra long");
                 drainWalQueue();
@@ -571,17 +560,17 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 engine.releaseAllWriters();
                 engine.releaseAllReaders();
                 try (Path p = new Path()) {
-                    p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
-                    Assert.assertTrue("creation baseline marker must exist", engine.getConfiguration().getFilesFacade().exists(p.$()));
+                    p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(io.questdb.cairo.DurableEpochManifest.FILE_NAME + ".0");
+                    Assert.assertTrue("creation baseline must exist", engine.getConfiguration().getFilesFacade().exists(p.$()));
                     engine.getConfiguration().getFilesFacade().remove(p.$());
-                    Assert.assertFalse("marker removal must succeed", engine.getConfiguration().getFilesFacade().exists(p.$()));
+                    Assert.assertFalse("save point removal must succeed", engine.getConfiguration().getFilesFacade().exists(p.$()));
                 }
 
                 try {
                     new RecoveryCoordinator(engine).recover();
                     Assert.fail("recovery without a trustworthy baseline must fail");
                 } catch (CairoException expected) {
-                    Assert.assertTrue(expected.getFlyweightMessage().toString().contains("marker is absent"));
+                    Assert.assertTrue(expected.getFlyweightMessage().toString().contains("save point is absent"));
                 }
             } finally {
                 setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
@@ -812,10 +801,9 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             try {
                 execute("create table baseline (ts timestamp, v long) timestamp(ts) partition by day wal");
                 final TableToken token = engine.verifyTableName("baseline");
-                try (Path p = new Path(); SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
-                    p.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
-                    marker.of(p.$());
-                    SnapshotMarker.Candidate[] candidates = marker.loadCandidates();
+                try (Path p = new Path()) {
+                    p.of(engine.getConfiguration().getDbRoot()).concat(token);
+                    io.questdb.cairo.DurableEpochManifest.Candidate[] candidates = io.questdb.cairo.DurableEpochManifest.loadCandidates(engine.getConfiguration().getFilesFacade(), p, p.size(), token.getTableId());
                     Assert.assertEquals(1, candidates.length);
                     Assert.assertEquals(0, candidates[0].epochSeqTxn);
                     Assert.assertEquals(0, candidates[0].generation);
@@ -845,15 +833,6 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
                 new RecoveryCoordinator(engine).recover();
                 Assert.assertEquals("torn newest generation must fall back to creation baseline", 0, readTxnSeqTxn(token));
-                try (Path p = new Path(); SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
-                    p.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
-                    marker.of(p.$());
-                    Assert.assertTrue(marker.tryLoad());
-                    Assert.assertTrue("fallback recovery must repair the selector to the restored generation",
-                            marker.wasLoadedFromSelector());
-                    Assert.assertEquals(0L, marker.getEpochSeqTxn());
-                    Assert.assertEquals(0, marker.getGeneration());
-                }
             } finally {
                 setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
                 setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
@@ -1114,7 +1093,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
                 final TableToken tt = engine.verifyTableName("conv");
                 Assert.assertTrue("the converted table must carry its own anchor",
-                        epochArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME, ""));
+                        epochArtifactExists(tt, io.questdb.cairo.DurableEpochManifest.FILE_NAME + ".0", ""));
                 Assert.assertEquals("the conversion re-seeds the lineage at seqTxn 0", 0L, readTxnSeqTxn(tt));
 
                 engine.getTableSequencerAPI().resetForReboot(tt);
@@ -1298,7 +1277,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
                 Assert.assertEquals("the discarded anchor must not rewind the live cut", 0L, readTxnSeqTxn(tt));
                 Assert.assertTrue("the table must be re-enrolled with a replacement anchor",
-                        epochArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME, ""));
+                        epochArtifactExists(tt, io.questdb.cairo.DurableEpochManifest.FILE_NAME + ".0", ""));
                 try (io.questdb.cairo.TableReader reader = engine.getReader(tt)) {
                     Assert.assertEquals("rows must survive the discarded anchor", 2L, reader.size());
                 }
@@ -1353,7 +1332,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                     engine.releaseInactive();
                     Assert.assertEquals(0, ff.rename(table.$(), newer.$()));
                     Assert.assertEquals(0, ff.copyRecursive(backup, table, mkDirMode));
-                    for (String name : new String[]{TableUtils.SNAPSHOT_FILE_NAME, "_epoch.manifest.0", "_epoch.manifest.1"}) {
+                    for (String name : new String[]{"_epoch.manifest.0", "_epoch.manifest.1"}) {
                         to.of(table).concat(name);
                         ff.removeQuiet(to.$());
                         Assert.assertTrue(ff.copy(from.of(newer).concat(name).$(), to.$()) >= 0);
@@ -1507,12 +1486,10 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     /**
      * Copies every epoch artifact of {@code tt} aside ({@code restore == false}) or back into place
      * ({@code restore == true}), covering both ping-pong generations so the replanted state is exactly the
-     * one the marker selector described when it was taken.
+     * one taken.
      */
     private void copyEpochArtifacts(TableToken tt, boolean restore) {
-        final String[] names = {
-                TableUtils.SNAPSHOT_FILE_NAME, "_epoch.manifest.0", "_epoch.manifest.1"
-        };
+        final String[] names = {"_epoch.manifest.0", "_epoch.manifest.1"};
         for (int i = 0; i < names.length; i++) {
             final String live = names[i];
             final String saved = live + ".bak";
@@ -1555,8 +1532,9 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 engine.releaseAllWriters();
                 engine.releaseAllReaders();
 
-                // Precondition: both generations and the live files exist. The separate copy files of older
-                // development layouts are planted too: a database written before them may still hold them.
+                // Precondition: both generations and the live files exist. The marker and the separate copy files
+                // of older development layouts are planted too: a database written before them may still hold them.
+                copyTableFile(tt, TableUtils.TXN_FILE_NAME, TableUtils.SNAPSHOT_FILE_NAME);
                 Assert.assertTrue("marker present", epochArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME, ""));
                 final String[] copySuffixes = {TableUtils.EPOCH_COPY_SUFFIX, TableUtils.EPOCH_COPY_SUFFIX + ".0", TableUtils.EPOCH_COPY_SUFFIX + ".1"};
                 for (String suffix : copySuffixes) {
@@ -1610,7 +1588,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 final FilesFacade refusingFf = new TestFilesFacadeImpl() {
                     @Override
                     public boolean removeQuiet(LPSZ name) {
-                        if (Utf8s.containsAscii(name, TableUtils.SNAPSHOT_FILE_NAME)) {
+                        if (Utf8s.containsAscii(name, io.questdb.cairo.DurableEpochManifest.FILE_NAME)) {
                             return false;
                         }
                         return super.removeQuiet(name);
@@ -1620,7 +1598,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                     final int rootLen = p.of(configuration.getDbRoot()).concat(token).size();
                     try {
                         RecoveryCoordinator.removeAdaptiveEpochArtifacts(refusingFf, p, rootLen);
-                        Assert.fail("surviving marker must abort stale-lineage cleanup");
+                        Assert.fail("surviving save point must abort stale-lineage cleanup");
                     } catch (CairoException expected) {
                         TestUtils.assertContains(expected.getFlyweightMessage(),
                                 "could not remove stale adaptive epoch artifact");
@@ -2072,7 +2050,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         }
     }
 
-    private void assertCleanRestartRestoresNothing(String tableName, boolean isSelectorReverted) throws Exception {
+    private void assertCleanRestartRestoresNothing(String tableName) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         try {
             assertMemoryLeak(() -> {
@@ -2086,27 +2064,12 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 final long seqTxn = readTxnSeqTxn(tt);
                 final FilesFacade files = engine.getConfiguration().getFilesFacade();
                 final int generation;
-                try (Path p = new Path(); SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
-                    p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
-                    marker.of(p.$());
-                    Assert.assertTrue(marker.tryLoad());
-                    Assert.assertEquals("precondition: the close epoch names the live cut", seqTxn, marker.getEpochSeqTxn());
-                    generation = marker.getGeneration();
-                }
-                if (isSelectorReverted) {
-                    final long version;
-                    try (Path p = new Path()) {
-                        p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
-                        final long fd = files.openRO(p.$());
-                        Assert.assertTrue(fd > -1);
-                        try {
-                            version = files.readNonNegativeLong(fd, SnapshotMarker.OFFSET_VERSION);
-                        } finally {
-                            files.close(fd);
-                        }
-                    }
-                    Assert.assertTrue("precondition: the creation baseline left a previous slot", version > 0);
-                    pokeLong(files, tt, TableUtils.SNAPSHOT_FILE_NAME, SnapshotMarker.OFFSET_VERSION, version - 1);
+                try (Path p = new Path()) {
+                    p.of(engine.getConfiguration().getDbRoot()).concat(tt);
+                    final io.questdb.cairo.DurableEpochManifest.Candidate[] saved = io.questdb.cairo.DurableEpochManifest.loadCandidates(files, p, p.size(), tt.getTableId());
+                    Assert.assertTrue(saved.length > 0);
+                    Assert.assertEquals("precondition: the close epoch names the live cut", seqTxn, saved[0].epochSeqTxn);
+                    generation = saved[0].generation;
                 }
                 engine.getTableSequencerAPI().resetForReboot(tt);
 
@@ -2146,9 +2109,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 }
 
                 Assert.assertEquals("live files already at the epoch cut must not be rewritten", 0, rewrites.get());
-                if (!isSelectorReverted) {
-                    Assert.assertEquals("live files already at the epoch cut must not be fsynced", 0, fsyncs.get());
-                }
+                Assert.assertEquals("live files already at the epoch cut must not be fsynced", 0, fsyncs.get());
                 final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
                 Assert.assertEquals("a clean restart is not a recovery", 0L, tracker.getRecoveryIncarnation());
                 Assert.assertEquals("a clean restart is not a recovery",
@@ -2156,13 +2117,11 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 Assert.assertEquals("the epoch must still bound WAL purge", seqTxn, tracker.getDurableEpochSeqTxn());
                 Assert.assertTrue("the epoch must still be pinned", tracker.getPinnedEpochTxn() >= 0);
                 Assert.assertEquals(seqTxn, readTxnSeqTxn(tt));
-                try (Path p = new Path(); SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
-                    p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
-                    marker.of(p.$());
-                    Assert.assertTrue(marker.tryLoad());
-                    Assert.assertTrue("the selector must name the live generation", marker.wasLoadedFromSelector());
-                    Assert.assertEquals(seqTxn, marker.getEpochSeqTxn());
-                    Assert.assertEquals(generation, marker.getGeneration());
+                try (Path p = new Path()) {
+                    p.of(engine.getConfiguration().getDbRoot()).concat(tt);
+                    final io.questdb.cairo.DurableEpochManifest.Candidate[] saved = io.questdb.cairo.DurableEpochManifest.loadCandidates(files, p, p.size(), tt.getTableId());
+                    Assert.assertEquals("the live generation stays current", generation, saved[0].generation);
+                    Assert.assertEquals(seqTxn, saved[0].epochSeqTxn);
                 }
 
                 execute("INSERT INTO " + tableName + " VALUES ('2024-09-03T00:00:00.000000Z', 3)");

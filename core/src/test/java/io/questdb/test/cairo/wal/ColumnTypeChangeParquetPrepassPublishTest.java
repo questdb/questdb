@@ -25,7 +25,7 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.SnapshotMarker;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -70,11 +70,12 @@ public class ColumnTypeChangeParquetPrepassPublishTest extends AbstractCairoTest
             try (TableReader reader = getReader(token)) {
                 seqTxn = reader.getTxFile().getSeqTxn();
             }
-            try (Path path = new Path(); SnapshotMarker marker = new SnapshotMarker(configuration)) {
-                marker.of(path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME).$());
-                Assert.assertTrue("an adaptive epoch must exist after the ALTER", marker.tryLoad());
-                Assert.assertEquals("epoch must be cut at the ALTER's seqTxn", seqTxn, marker.getEpochSeqTxn());
-                Assert.assertEquals("epoch must be cut on the ALTER's single commit", txnBefore + 1, marker.getEpochTxn());
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(configuration.getFilesFacade(), path, path.size(), token.getTableId());
+                Assert.assertTrue("an adaptive epoch must exist after the ALTER", saved.length > 0);
+                Assert.assertEquals("epoch must be cut at the ALTER's seqTxn", seqTxn, saved[0].epochSeqTxn);
+                Assert.assertEquals("epoch must be cut on the ALTER's single commit", txnBefore + 1, saved[0].epochTxn);
             }
             Assert.assertFalse(
                     "the post-commit epoch moves the pin, so the parquet source dir is reclaimed inline",

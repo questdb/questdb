@@ -44,7 +44,6 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.IndexType;
-import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -2178,12 +2177,11 @@ public class CheckpointTest extends AbstractCairoTest {
             Assert.assertFalse(
                     "checkpoint recover must remove the stale save point before publishing a fresh baseline",
                     staleSavePointExists(token));
-            try (Path markerPath = new Path(); SnapshotMarker marker = new SnapshotMarker(configuration)) {
-                markerPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
-                marker.of(markerPath.$());
+            try (Path markerPath = new Path()) {
+                markerPath.of(configuration.getDbRoot()).concat(token);
                 Assert.assertTrue(
                         "runtime checkpoint recovery must publish a valid replacement baseline before cleanup",
-                        marker.tryLoad());
+                        DurableEpochManifest.loadCandidates(ff, markerPath, markerPath.size(), token.getTableId()).length > 0);
             }
         });
     }
@@ -2193,7 +2191,7 @@ public class CheckpointTest extends AbstractCairoTest {
             final String dbRoot = configuration.getDbRoot();
             final int s = src.of(dbRoot).concat(token).size();
             final int d = dst.of(dbRoot).concat(token).size();
-            // A generation-one save point file and a _snapshot marker; their content is irrelevant to the clear.
+            // A generation-one save point file and the marker of older layouts; their content is irrelevant to the clear.
             Assert.assertTrue(ff.copy(
                     src.trimTo(s).concat(TableUtils.TXN_FILE_NAME).$(),
                     dst.trimTo(d).concat(DurableEpochManifest.FILE_NAME).put(".1").$()) >= 0);
