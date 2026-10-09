@@ -175,8 +175,10 @@ public final class DurableEpochManifest {
      * first instant it is visible. Publishing after the rename instead would leave a window in which a boot
      * can find, and adopt, a dir whose anchors it cannot validate — and an adaptive table with no trustworthy
      * generation aborts startup rather than falling back to unverified live state.
+     *
+     * @return the txn the baseline names, for the caller to pin
      */
-    public static void publishInitialAt(
+    public static long publishInitialAt(
             CairoConfiguration configuration,
             TableToken tableToken,
             Path tableDirPath,
@@ -184,10 +186,10 @@ public final class DurableEpochManifest {
             int partitionBy,
             long nowMs
     ) {
-        publishBaseline(configuration, tableToken, tableDirPath, timestampType, partitionBy);
+        return publishBaseline(configuration, tableToken, tableDirPath, timestampType, partitionBy);
     }
 
-    private static void publishBaseline(
+    private static long publishBaseline(
             CairoConfiguration configuration,
             TableToken tableToken,
             @Nullable Path tableDirPath,
@@ -237,6 +239,7 @@ public final class DurableEpochManifest {
             }
             // Durable, name included, before table-name/sequencer registration.
             write(configuration, tableToken, tablePath, rootLen, 0, seqTxn, txn, columnVersion, metadataVersion);
+            return txn;
         }
     }
 

@@ -5000,7 +5000,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 // table-root files, exclude txn_seq/wal*), reset _txn/_meta for a fresh table, create the
                 // sequencer files, and (primary only) write the _rebase_new marker. The atomic rename below
                 // then carries the complete table into place.
-                WalUtils.cloneTableDirForRebase(
+                final long baselineTxn = WalUtils.cloneTableDirForRebase(
                         configuration,
                         getWalDirectoryPolicy(),
                         src.of(root).concat(oldToken),
@@ -5010,6 +5010,9 @@ public class CairoEngine implements Closeable, WriterSource {
                         localDurabilityPolicy.isLocalDurabilityEnabled(),
                         Misc.getThreadLocalSink()
                 );
+                if (baselineTxn > -1) {
+                    RecoveryCoordinator.pinPublishedBaseline(this, newToken, baselineTxn);
+                }
 
                 // Atomically move the completed clone into its final location.
                 // renameDurable: the fsyncDirDurable below is the covering barrier on POSIX, but it is a

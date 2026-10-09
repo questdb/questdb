@@ -995,6 +995,12 @@ public class RecoveryCoordinator {
         path.trimTo(tableRootLen);
     }
 
+    // Pins the generation-zero save point a conversion to WAL or a REBASE WAL clone publishes outside a writer: it
+    // names the table's partitions, and a writer pins only the save points it publishes itself.
+    static void pinPublishedBaseline(CairoEngine engine, TableToken token, long baselineTxn) {
+        new RecoveryCoordinator(engine).pinRecoveredEpoch(token, baselineTxn, 0, -1);
+    }
+
     // Releases the pin of the save point recovery restored, once the save point is removed.
     static void unpinEpoch(CairoEngine engine, TableToken token) {
         final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
