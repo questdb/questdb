@@ -32,9 +32,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * A {@link TestFilesFacadeImpl} that ATTRIBUTES every durability barrier to the FILE it acted on, so a
- * test can assert "{@code _txn} of THIS table was msync'd N times during this commit" rather than merely
- * counting anonymous barriers.
+ * A {@link TestFilesFacadeImpl} that attributes every durability barrier to the file it acted on, so a
+ * test can assert "{@code _txn} of this table was msync'd N times during this commit" rather than count
+ * anonymous barriers.
  *
  * <p>Attribution works in two hops, both of which the facade observes:
  * <ol>
@@ -43,15 +43,15 @@ import java.util.Map;
  * </ol>
  * {@code fsync}/{@code fdatasync}/{@code fsyncAndClose} are attributed directly by fd;
  * {@code msync(addr, len, ..)} is attributed by locating the mapping whose range contains {@code addr}.
- * {@code syncfs} is filesystem-wide and therefore counted separately under {@link #syncfsCount()} rather
+ * {@code syncfs} is filesystem-wide, so it is counted separately under {@link #syncfsCount()} rather
  * than charged to any single file.
  *
- * <p>Counters are keyed by FULL path and queried by substring, so a test can scope an assertion to one
- * table's directory ({@code msyncCount("t1~1/_txn")}) and not be polluted by the {@code _txn} of
- * telemetry or sibling tables.
+ * <p>Counters are keyed by full path and queried by substring, so a test can scope an assertion to one
+ * table's directory ({@code msyncCount("t1~1/_txn")}) without counting the {@code _txn} of telemetry or
+ * sibling tables.
  *
- * <p>It deliberately does NOT suppress any real syscall -- it observes and delegates, so the system under
- * test behaves exactly as in production.
+ * <p>The facade suppresses no real syscall: it observes and delegates, so the system under test behaves
+ * as in production.
  */
 public class SyncAttributingFilesFacade extends TestFilesFacadeImpl {
 
@@ -93,9 +93,9 @@ public class SyncAttributingFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * Every recorded barrier as {@code path xN}, one per line, msyncs then fsyncs. Not used by assertions --
-     * it is the diagnostic to print when a count assertion fails, since the usual cause is that the path you
-     * asserted on is spelled differently from the one the engine actually opened.
+     * Every recorded barrier as {@code path xN}, one per line, msyncs then fsyncs. A diagnostic to print when
+     * a count assertion fails; the usual cause is an asserted path spelled differently from the one the
+     * engine opened.
      */
     public synchronized String debugDump() {
         StringBuilder sb = new StringBuilder("\nMSYNC:\n");
@@ -275,19 +275,17 @@ public class SyncAttributingFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * Decode an {@link LPSZ} path to a String by its BYTES.
+     * Decode an {@link LPSZ} path to a String by its bytes.
      * <p>
      * Neither {@code name.toString()} nor {@code Utf8s.toString(name)} works here: {@code Path$PathLPSZ}
-     * does not override {@code Object.toString()} and {@code Utf8s.toString} simply delegates to it, so both
-     * yield an identity hash like {@code Path$PathLPSZ@6aca80d1}. Every counter would then be keyed by a
-     * unique nonsense string and every {@code contains()} lookup would silently return 0 -- a harness that
-     * reports "no barriers" for everything, which reads exactly like a passing "must not flush" assertion.
-     * Test paths are ASCII temp dirs, so a byte-wise decode is exact.
+     * does not override {@code Object.toString()} and {@code Utf8s.toString} delegates to it, so both yield
+     * an identity string. Every counter would then be keyed by a unique string and every {@code contains()}
+     * lookup would return 0, which reads like a passing "must not flush" assertion. Test paths are ASCII
+     * temp dirs, so a byte-wise decode is exact.
      * <p>
      * Separators are normalized to {@code '/'}: {@code Path} renders {@code '\'} on Windows, while every
-     * caller keys its counters with {@code '/'}-joined needles (as this class's own javadoc documents).
-     * Without the normalization every lookup silently returns 0 on Windows -- the "must not flush"
-     * assertions pass vacuously and the "must flush" assertions all fail.
+     * caller keys its counters with {@code '/'}-joined needles. Without the normalization every lookup
+     * returns 0 on Windows.
      */
     private static String pathToString(LPSZ name) {
         final int n = name.size();
