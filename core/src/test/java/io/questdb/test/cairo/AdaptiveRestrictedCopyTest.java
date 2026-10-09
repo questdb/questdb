@@ -45,22 +45,16 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * The adaptive durability path must never publish a file by WHOLE-FILE COPY onto a destination that
+ * The adaptive durability path must never publish a file by whole-file copy onto a destination that
  * already exists.
  * <p>
  * {@code FilesFacade.copy} is portable only when the destination is absent. On POSIX it is
  * {@code creat(O_TRUNC)} and silently replaces whatever is there; on Windows it is
- * {@code CopyFileW(.., bFailIfExists=TRUE)} and returns {@link Files#WINDOWS_ERROR_FILE_EXISTS}. Every
- * adaptive site that copies over a live file — the save point file of a REUSED A/B generation, and the
- * recovery roll-forward that restores {@code _meta}/{@code _txn}/{@code _cv} over the live ones — is
- * therefore green on Linux and dead on Windows:
- * <pre>
- * boot-essential component(s) failed [component=engine]: [80]
- * adaptive epoch roll-forward failed to restore metadata [table=sys.acl_links, src=..._meta.epoch.1, dst=..._meta]
- * </pre>
- * These tests run the same workloads on Linux behind a files facade that reproduces the Windows refusal,
- * so the divergence is caught where CI actually runs. They fail on the {@code ff.copy} implementation
- * they replaced, and fail with the refusal counter naming the file that was copied over.
+ * {@code CopyFileW(.., bFailIfExists=TRUE)} and returns {@link Files#WINDOWS_ERROR_FILE_EXISTS}. Two adaptive
+ * sites write over a live file: the save point file of a reused A/B generation, and the recovery roll-forward
+ * that restores {@code _meta}/{@code _txn}/{@code _cv} over the live ones. These tests run both workloads
+ * behind a files facade that reproduces the Windows refusal, so the failure shows on every platform, with the
+ * refusal counter naming the file that was copied over.
  */
 public class AdaptiveRestrictedCopyTest extends AbstractCairoTest {
 
@@ -75,7 +69,7 @@ public class AdaptiveRestrictedCopyTest extends AbstractCairoTest {
             execute("create table reused (ts timestamp, v long) timestamp(ts) partition by day wal");
             final TableToken tt = engine.verifyTableName("reused");
 
-            // Four epochs over an A/B pair: generations 1, 0, 1, 0 — the second and later writes land on a
+            // Four epochs over an A/B pair: generations 1, 0, 1, 0. The second and later writes land on a
             // generation whose payloads are already on disk, which is the case ff.copy refuses on Windows.
             for (int i = 0; i < 4; i++) {
                 execute("insert into reused values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ')');
@@ -126,9 +120,8 @@ public class AdaptiveRestrictedCopyTest extends AbstractCairoTest {
             new RecoveryCoordinator(engine).recover();
 
             assertNoRestrictedCopyRefusal(windowsFf);
-            // The live _txn said seven rows going in and the epoch's copy says three, so the restored bytes
-            // really did land on the live file. Replaying the lazy tail back on top of this cut is
-            // AdaptiveRecoveryRollForwardCrashTest's subject, not this one's.
+            // The live _txn holds seven rows going in and the epoch's copy holds three, so a count of three
+            // shows the restored bytes landed on the live file. This test does not replay the lazy tail.
             assertQuery("select count() from rollfwd").noRandomAccess().expectSize().returns("count\n3\n");
         } finally {
             AbstractCairoTest.ff = ffBefore;
