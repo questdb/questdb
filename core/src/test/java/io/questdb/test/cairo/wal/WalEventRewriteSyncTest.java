@@ -59,11 +59,11 @@ import java.util.Map;
  *   <li>ADD COLUMN SYMBOL rewrites the pending record in place. In SYNC and ADAPTIVE both {@code _event} and
  *   {@code _event.i} must get a device barrier holding the rewritten record before the txn is sequenced:
  *   once a sequencer record names the txn, no mix of original and rewritten files may be left for a power
- *   loss to expose. NOSYNC and ASYNC promise nothing across a power loss and pay no barrier. As in base,
- *   ASYNC msyncs both files once more with MS_ASYNC after the rewrite, and NOSYNC makes no call.</li>
+ *   loss to expose. NOSYNC and ASYNC promise nothing across a power loss and pay no barrier. ASYNC msyncs
+ *   both files once more with MS_ASYNC after the rewrite, and NOSYNC makes no call.</li>
  *   <li>A roll that moves the pending rows into a new segment re-creates the record there. Under ADAPTIVE it
  *   needs the same pre-sequencing barrier that the commit's own sync gave the old segment.</li>
- *   <li>Nothing else changes: the NO_TXN path pays exactly one extra MS_ASYNC per event file for a rewrite
+ *   <li>Nothing else is paid: the NO_TXN path pays exactly one extra MS_ASYNC per event file for a rewrite
  *   outside NOSYNC, plus one barrier per event file in SYNC and ADAPTIVE, and nothing for a column that is
  *   not rewritten, and the commits after the race pay exactly the per-commit grade of their mode.</li>
  * </ul>
