@@ -1182,6 +1182,31 @@ public class TxReader implements Closeable, Mutable {
         return attachedPartitions.getQuick(index + PARTITION_MASKED_SIZE_OFFSET) & PARTITION_SIZE_MASK;
     }
 
+    /**
+     * Whether the {@code _txn} image of {@code size} bytes at {@code addr} lists the partition version, in the area
+     * its version word selects. An image too short for that area counts as listing it.
+     */
+    static boolean imageListsPartition(long addr, long size, long partitionTimestamp, long partitionNameTxn) {
+        if (size < TX_BASE_HEADER_SIZE) {
+            return true;
+        }
+        final boolean isA = (Unsafe.getUnsafe().getLong(addr + TX_BASE_OFFSET_VERSION_64) & 1) == 0;
+        final long baseOffset = Unsafe.getUnsafe().getInt(addr + (isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32));
+        final int symbolsSize = Unsafe.getUnsafe().getInt(addr + (isA ? TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_B_32));
+        final int partitionsSize = Unsafe.getUnsafe().getInt(addr + (isA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_B_32));
+        final long lo = baseOffset + getPartitionTableSizeOffset(symbolsSize / Long.BYTES) + Integer.BYTES;
+        if (baseOffset < 0 || symbolsSize < 0 || partitionsSize < 0 || lo + partitionsSize > size) {
+            return true;
+        }
+        for (long p = addr + lo, hi = p + partitionsSize; p < hi; p += LONGS_PER_TX_ATTACHED_PARTITION * Long.BYTES) {
+            if (Unsafe.getUnsafe().getLong(p + PARTITION_TS_OFFSET * Long.BYTES) == partitionTimestamp
+                    && Unsafe.getUnsafe().getLong(p + PARTITION_NAME_TX_OFFSET * Long.BYTES) == partitionNameTxn) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     protected static boolean isPartitionOffset3Cleared(long word) {
         return word == -1L || word == 0L;
     }

@@ -86,8 +86,8 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
     /**
      * Recovery falls back to the older generation when the newest one is damaged on media or rejected on its
      * content, also after the WAL purge and the partition purge ran past the newest one. Both purges must keep what
-     * the older generation needs, the WAL after its cut and the partition versions it names, after appends and after
-     * an O3 rewrite between the two save points; the WAL before the older cut still goes.
+     * the older generation needs, the WAL after its cut and the partition versions it names, after appends, after
+     * an O3 rewrite and after a DROP PARTITION between the two save points; the WAL before the older cut still goes.
      */
     @Test
     public void testFallbackAfterPurgesKeepsEveryRow() throws Exception {
@@ -98,9 +98,10 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
             assertMemoryLeak(() -> {
                 int iteration = 0;
                 for (boolean rejectedOnContent : new boolean[]{false, true}) {
-                    for (boolean o3Rewrite : new boolean[]{false, true}) {
-                        final String context = (rejectedOnContent ? "rejected on content" : "damaged on media")
-                                + (o3Rewrite ? " after an O3 rewrite" : " after appends");
+                    for (String change : new String[]{"appends", "an O3 rewrite", "a DROP PARTITION"}) {
+                        final boolean o3Rewrite = change.equals("an O3 rewrite");
+                        final boolean dropped = change.equals("a DROP PARTITION");
+                        final String context = (rejectedOnContent ? "rejected on content" : "damaged on media") + " after " + change;
                         final String name = "p" + iteration++;
                         execute("create table " + name + " (ts timestamp, v long) timestamp(ts) partition by day wal");
                         final TableToken tt = engine.verifyTableName(name);
@@ -108,6 +109,9 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
                             // The O3 row lands inside the first day, which then gets a new partition version.
                             final String ts = i == 5 && o3Rewrite ? "2024-10-01T00:30" : i < 4 ? "2024-10-01T0" + i + ":00" : "2024-10-02T" + (10 + i) + ":00";
                             execute("insert into " + name + " values ('" + ts + ":00.000000Z', " + i + ")");
+                            if (i == 5 && dropped) {
+                                execute("alter table " + name + " drop partition list '2024-10-01'");
+                            }
                             if (i == 3 || i == 7) {
                                 drainWalQueue();
                                 takeSavePoint(tt);
@@ -133,12 +137,18 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
                         engine.getTableSequencerAPI().resetForReboot(tt);
                         new RecoveryCoordinator(engine).recover();
                         Assert.assertEquals(context + ": recovery falls back to the older generation", 4, readTxnSeqTxn(tt));
+                        final List<Long> restored = readVs(name);
+                        restored.sort(null);
+                        Assert.assertEquals(context + ": the older generation reads back", List.of(0L, 1L, 2L, 3L), restored);
+                        engine.releaseAllReaders();
                         engine.notifyWalTxnRepublisher(tt);
                         drainWalQueue();
                         Assert.assertFalse(context + ": table suspended", engine.getTableSequencerAPI().isSuspended(tt));
                         final List<Long> rows = readVs(name);
                         rows.sort(null);
-                        Assert.assertEquals(context, List.of(0L, 1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L, 11L), rows);
+                        Assert.assertEquals(context, dropped
+                                ? List.of(4L, 5L, 6L, 7L, 8L, 9L, 10L, 11L)
+                                : List.of(0L, 1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L, 11L), rows);
                         dropSweepTable(tt);
                         engine.releaseAllWriters();
                         engine.releaseAllReaders();
