@@ -33,6 +33,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.SymbolCountProvider;
@@ -437,6 +438,8 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 Assert.assertEquals("the conversion re-seeds the lineage at seqTxn 0", 0L, readTxnSeqTxn(tt));
                 copyEpochArtifacts(tt, true);
 
+                // A restart: a fresh scoreboard and tracker, so the conversion's baseline pin is gone.
+                engine.getTxnScoreboardPool().remove(tt);
                 engine.getTableSequencerAPI().resetForReboot(tt);
                 new RecoveryCoordinator(engine).recover();
                 Assert.assertEquals("the discarded save point must not rewind the live cut", 0L, readTxnSeqTxn(tt));
@@ -1218,6 +1221,80 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
             }
         });
+    }
+
+    /**
+     * The save point a REBASE WAL clone or a conversion to WAL publishes names the table's existing partitions, so it
+     * is pinned from the moment it is published: an O3 commit that rewrites such a partition before the next save
+     * point must not remove the version the save point names, and a kill then restores it and replays every row. The
+     * REBASE row stops after the purge: a restore of its save point does not replay the clone's seed transactions.
+     */
+    @Test
+    public void testRebaseAndConversionBaselinesKeepTheirPartitions() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        try {
+            assertMemoryLeak(() -> {
+                setCommitMode("adaptive");
+                // No periodic or close-time save point: the baseline stays the newest one.
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+                final String rows = "('2024-09-01T01:00:00.000000Z', 1), ('2024-09-01T02:00:00.000000Z', 2), ('2024-09-01T03:00:00.000000Z', 3)";
+                for (String name : new String[]{"rebased", "converted"}) {
+                    if (name.equals("rebased")) {
+                        execute("CREATE TABLE rebased (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        execute("INSERT INTO rebased VALUES " + rows);
+                        drainWalQueue();
+                        execute("ALTER TABLE rebased SUSPEND WAL");
+                        execute("ALTER TABLE rebased REBASE WAL");
+                        drainWalQueue();
+                    } else {
+                        execute("CREATE TABLE converted (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                        execute("INSERT INTO converted VALUES " + rows);
+                        execute("ALTER TABLE converted SET TYPE WAL");
+                        engine.releaseInactive();
+                        engine.load();
+                    }
+                    final TableToken tt = engine.verifyTableName(name);
+                    Assert.assertEquals(name + ": the baseline is the newest save point", 0, newestSavePointSeqTxn(tt));
+                    // An O3 row rewrites the partition the baseline names.
+                    execute("INSERT INTO " + name + " VALUES ('2024-09-01T00:30:00.000000Z', 0)");
+                    drainWalQueue();
+                    engine.releaseAllReaders();
+                    try (O3PartitionPurgeJob job = new O3PartitionPurgeJob(engine, 1)) {
+                        //noinspection StatementWithEmptyBody
+                        while (job.run()) {
+                        }
+                    }
+                    Assert.assertTrue(name + ": the partition version the save point names is kept",
+                            Files.exists(Paths.get(engine.getConfiguration().getDbRoot(), tt.getDirName(), "2024-09-01")));
+                    if (name.equals("rebased")) {
+                        continue;
+                    }
+                    // A kill: no close-time save point.
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+                    engine.getTxnScoreboardPool().remove(tt);
+                    engine.getTableSequencerAPI().resetForReboot(tt);
+                    new RecoveryCoordinator(engine).recover();
+                    engine.notifyWalTxnRepublisher(tt);
+                    drainWalQueue();
+                    Assert.assertFalse(name + ": table suspended", engine.getTableSequencerAPI().isSuspended(tt));
+                    assertQuery("SELECT v FROM " + name)
+                            .expectSize()
+                            .returns("""
+                                    v
+                                    0
+                                    1
+                                    2
+                                    3
+                                    """);
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        }
     }
 
     /**
@@ -2309,6 +2386,8 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 // Replant the pre-conversion anchor in full: the state an upgraded database arrives in.
                 copyEpochArtifacts(tt, true);
 
+                // A restart: a fresh scoreboard and tracker, so the conversion's baseline pin is gone.
+                engine.getTxnScoreboardPool().remove(tt);
                 engine.getTableSequencerAPI().resetForReboot(tt);
                 new RecoveryCoordinator(engine).recover();
 

@@ -531,6 +531,8 @@ public class RecoveryCoordinator {
             // The header and the section checksums first: a generation that fails them never touches the
             // live files.
             if (!DurableEpochManifest.validateSections(configuration, token, src, rootLen, candidate.generation, candidate.epochSeqTxn, candidate.epochTxn)) {
+                LOG.critical().$("adaptive save point failed its checksums, trying the other generation [table=").$(token)
+                        .$(", generation=").$(candidate.generation).$(", epochSeqTxn=").$(candidate.epochSeqTxn).I$();
                 continue;
             }
             // The lineage guard reads the live _txn, so it runs before any section is written over it.
@@ -613,6 +615,13 @@ public class RecoveryCoordinator {
             removeRejectedGeneration(token, dir, rejected);
         }
         final long epochSeqTxn = selected.epochSeqTxn;
+        // The other generation stays pinned too: a later recovery falls back to it if the selected one is damaged.
+        long otherEpochTxn = -1;
+        for (int i = 0; i < candidates.length; i++) {
+            if (candidates[i] != selected && candidates[i] != rejected) {
+                otherEpochTxn = candidates[i].epochTxn;
+            }
+        }
 
         // SYMMETRIC C2 (review Finding C2, second half). The guard above rejects an epoch AHEAD of the live
         // _txn. The reverse — a stale epoch BELOW a divergently-restored live _txn — is NOT (and cannot cheaply
@@ -634,7 +643,7 @@ public class RecoveryCoordinator {
             if (sequencerFrontierOrUnknown(token) > epochSeqTxn) {
                 removeUnnamedPostingGenerations(token, src);
             }
-            pinRecoveredEpoch(token, selected.epochTxn, epochSeqTxn);
+            pinRecoveredEpoch(token, selected.epochTxn, epochSeqTxn, otherEpochTxn);
             LOG.info().$("adaptive epoch matches live state, nothing to restore [table=").$(token)
                     .$(", epochSeqTxn=").$(epochSeqTxn).I$();
             return true;
@@ -654,16 +663,17 @@ public class RecoveryCoordinator {
         // (not on no-op/skip/absent-marker/torn-copy paths). The tracker is initialised lazily on
         // first WAL apply, but the object itself always exists (getSeqTxnTracker creates it).
         final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
-        pinRecoveredEpoch(token, selected.epochTxn, epochSeqTxn);
+        pinRecoveredEpoch(token, selected.epochTxn, epochSeqTxn, otherEpochTxn);
         tracker.bumpRecoveryIncarnation();
         engine.getMetrics().walMetrics().incrementRecoveryEvents();
         return true;
     }
 
-    private void pinRecoveredEpoch(TableToken token, long epochTxn, long epochSeqTxn) {
+    private void pinRecoveredEpoch(TableToken token, long epochTxn, long epochSeqTxn, long otherEpochTxn) {
         final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
         final long priorEpochTxn = tracker.getPinnedEpochTxn();
-        if (priorEpochTxn == epochTxn) {
+        final long priorOtherEpochTxn = tracker.getOtherPinnedEpochTxn();
+        if (priorEpochTxn == epochTxn && priorOtherEpochTxn == otherEpochTxn) {
             tracker.setDurableEpochSeqTxn(epochSeqTxn);
             return;
         }
@@ -672,6 +682,10 @@ public class RecoveryCoordinator {
         // ping-pong slot first, then release the old slot only after the new cut is protected.
         boolean slotA = priorEpochTxn < 0 || !priorSlotA;
         try (TxnScoreboard scoreboard = engine.getTxnScoreboard(token)) {
+            // A prior other pin holds the slot the recovered cut takes.
+            if (priorOtherEpochTxn >= 0) {
+                scoreboard.releaseTxn(priorSlotA ? TxnScoreboard.EPOCH_ID_B : TxnScoreboard.EPOCH_ID_A, priorOtherEpochTxn);
+            }
             int newSlotId = slotA ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B;
             if (!scoreboard.incrementTxn(newSlotId, epochTxn)) {
                 if (priorEpochTxn >= 0) {
@@ -693,11 +707,18 @@ public class RecoveryCoordinator {
                         priorEpochTxn
                 );
             }
+            // The other generation, which a later recovery falls back to if the selected one is damaged.
+            long pinnedOtherEpochTxn = otherEpochTxn;
+            if (otherEpochTxn >= 0 && !scoreboard.incrementTxn(slotA ? TxnScoreboard.EPOCH_ID_B : TxnScoreboard.EPOCH_ID_A, otherEpochTxn)) {
+                LOG.critical().$("could not pin the other adaptive save point, a fallback to it may miss partition versions [table=")
+                        .$(token).$(", epochTxn=").$(otherEpochTxn).I$();
+                pinnedOtherEpochTxn = -1;
+            }
             // Record the pin while this handle still keeps the scoreboard pooled. Once it closes, nothing may
             // reference the board, idle eviction can free it, and the pool seeds the replacement from this
             // record (SeqTxnTracker.restoreEpochPin). Recording it after the close would let a replacement
             // come up with the prior pin, or none, and leave the recovered cut unprotected.
-            tracker.setPinnedEpoch(epochTxn, slotA);
+            tracker.setPinnedEpoch(epochTxn, slotA, pinnedOtherEpochTxn);
         }
         tracker.setDurableEpochSeqTxn(epochSeqTxn);
     }
@@ -969,6 +990,12 @@ public class RecoveryCoordinator {
         path.trimTo(tableRootLen);
     }
 
+    // Pins the generation-zero save point a conversion to WAL or a REBASE WAL clone publishes outside a writer: it
+    // names the table's partitions, and a writer pins only the save points it publishes itself.
+    static void pinPublishedBaseline(CairoEngine engine, TableToken token, long baselineTxn) {
+        new RecoveryCoordinator(engine).pinRecoveredEpoch(token, baselineTxn, 0, -1);
+    }
+
     // Releases the pin of the save point recovery restored, once the save point is removed.
     static void unpinEpoch(CairoEngine engine, TableToken token) {
         final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
@@ -978,6 +1005,10 @@ public class RecoveryCoordinator {
         }
         try (TxnScoreboard scoreboard = engine.getTxnScoreboard(token)) {
             scoreboard.releaseTxn(tracker.isPinnedEpochSlotA() ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B, pinnedTxn);
+            final long otherTxn = tracker.getOtherPinnedEpochTxn();
+            if (otherTxn >= 0) {
+                scoreboard.releaseTxn(tracker.isPinnedEpochSlotA() ? TxnScoreboard.EPOCH_ID_B : TxnScoreboard.EPOCH_ID_A, otherTxn);
+            }
             // While this handle keeps the scoreboard pooled, as pinRecoveredEpoch records the pin.
             tracker.clearPinnedEpoch();
         }

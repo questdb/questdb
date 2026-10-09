@@ -144,7 +144,7 @@ public class AdaptiveIndexEpochCadenceTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSupersededValueFileReclaimedAtNextSavePoint() throws Exception {
+    public void testSupersededValueFileReclaimedAfterTwoSavePoints() throws Exception {
         Assume.assumeTrue(indexKind.startsWith("POSTING"));
         setUpAdaptive();
         // Retry a held purge on every job run, so a released one is removed on the next run.
@@ -156,7 +156,7 @@ public class AdaptiveIndexEpochCadenceTest extends AbstractCairoTest {
             try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
                 runPurgeJob(job);
                 final long pin = tracker.getPinnedEpochTxn();
-                Assert.assertEquals(List.of(), assertOnlyPinHolds(job, purges(job.getLogTableName()), pin));
+                Assert.assertEquals(List.of(), assertOnlyPinHolds(job, purges(job.getLogTableName()), pin, tracker.getOtherPinnedEpochTxn()));
                 final long epochsBefore = TestUtils.getMetricValue(engine, EPOCH_METRIC);
                 for (int pass = 0; pass < RECLAIM_PASSES; pass++) {
                     execute(passSql(pass));
@@ -165,7 +165,7 @@ public class AdaptiveIndexEpochCadenceTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals("inline save point", epochsBefore, TestUtils.getMetricValue(engine, EPOCH_METRIC));
                 Assert.assertEquals(pin, tracker.getPinnedEpochTxn());
-                final List<String> held = assertOnlyPinHolds(job, purges(job.getLogTableName()), pin);
+                final List<String> held = assertOnlyPinHolds(job, purges(job.getLogTableName()), pin, tracker.getOtherPinnedEpochTxn());
                 // A commit that takes the O3 path and appends to the partition the save point indexed reseals a
                 // covering index in place, superseding the .pv the save point reads: DEDUP sends every commit
                 // there, and so does a late row into the parquet partition. Elsewhere the reseal lands in a new
@@ -174,7 +174,8 @@ public class AdaptiveIndexEpochCadenceTest extends AbstractCairoTest {
                     Assert.assertFalse("no .pv of the save point superseded", held.isEmpty());
                 }
 
-                // The next periodic save point moves the pin past every held window.
+                // The next periodic save point keeps the prior one pinned, as recovery falls back to it if the new one
+                // is damaged; the one after it moves both pins past every held window.
                 node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 1);
                 execute(passSql(RECLAIM_PASSES));
                 drainWalQueue();
@@ -182,15 +183,24 @@ public class AdaptiveIndexEpochCadenceTest extends AbstractCairoTest {
                 runPurgeJob(job);
                 final long nextPin = tracker.getPinnedEpochTxn();
                 Assert.assertTrue(nextPin > pin);
-                Assert.assertEquals(List.of(), assertOnlyPinHolds(job, purges(job.getLogTableName()), nextPin));
+                Assert.assertEquals(pin, tracker.getOtherPinnedEpochTxn());
+                Assert.assertTrue("the older pin keeps what it held", assertOnlyPinHolds(job, purges(job.getLogTableName()), nextPin, pin).containsAll(held));
+                execute(passSql(RECLAIM_PASSES + 1));
+                drainWalQueue();
+                Assert.assertEquals("second periodic save point", epochsBefore + 2, TestUtils.getMetricValue(engine, EPOCH_METRIC));
+                runPurgeJob(job);
+                Assert.assertEquals(nextPin, tracker.getOtherPinnedEpochTxn());
+                // Only what the two current pins name may still be held; the pass after the first save point can
+                // supersede a file that save point names.
+                assertOnlyPinHolds(job, purges(job.getLogTableName()), tracker.getPinnedEpochTxn(), nextPin);
                 for (String file : held) {
-                    Assert.assertFalse("not removed after the save point: " + file, exists(file));
+                    Assert.assertFalse("not removed after the second save point: " + file, exists(file));
                 }
             }
-            assertQuery("SELECT count() FROM t").noRandomAccess().expectSize().returns("count\n" + (ROWS_PER_PASS * (RECLAIM_PASSES + 2) + 1) + "\n");
+            assertQuery("SELECT count() FROM t").noRandomAccess().expectSize().returns("count\n" + (ROWS_PER_PASS * (RECLAIM_PASSES + 3) + 1) + "\n");
             // The live index still answers for every value.
             assertQuery("SELECT count() FROM t WHERE s IN ('a', 'b', 'c', 'd')").noRandomAccess().expectSize()
-                    .returns("count\n" + (ROWS_PER_PASS * (RECLAIM_PASSES + 2) + 1) + "\n");
+                    .returns("count\n" + (ROWS_PER_PASS * (RECLAIM_PASSES + 3) + 1) + "\n");
         });
     }
 
@@ -201,11 +211,11 @@ public class AdaptiveIndexEpochCadenceTest extends AbstractCairoTest {
 
     // Asserts that exactly the purges whose window holds the pin wait, with their .pv still on disk, and
     // that every other purge is done. Returns the held .pv files.
-    private static List<String> assertOnlyPinHolds(PostingSealPurgeJob job, List<Purge> purges, long pin) {
+    private static List<String> assertOnlyPinHolds(PostingSealPurgeJob job, List<Purge> purges, long pin, long otherPin) {
         final List<String> held = new ArrayList<>();
         for (int i = 0, n = purges.size(); i < n; i++) {
             final Purge purge = purges.get(i);
-            if (purge.fromTxn <= pin && pin < purge.toTxn) {
+            if ((purge.fromTxn <= pin && pin < purge.toTxn) || (purge.fromTxn <= otherPin && otherPin < purge.toTxn)) {
                 Assert.assertFalse("purge done under the pin " + pin + ": " + purge, purge.completed);
                 Assert.assertTrue("removed under the pin " + pin + ": " + purge, exists(purge.file));
                 held.add(purge.file);

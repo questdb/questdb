@@ -147,7 +147,8 @@ public class WalUtils {
      * Under ADAPTIVE the clone gets its own generation-zero anchor, unless {@code localDurabilityEnabled} is
      * false (a replica, which keeps no save point).
      */
-    public static void cloneTableDirForRebase(
+    // Returns the txn of the save point published for the clone, or -1 when none is.
+    public static long cloneTableDirForRebase(
             CairoConfiguration configuration,
             WalDirectoryPolicy walDirectoryPolicy,
             Path srcDir,
@@ -241,8 +242,9 @@ public class WalUtils {
         // rename below carries a table that is self-consistent from the first instant it is visible: a boot
         // that finds the published dir - as the live table after the registry swap, or as a crash-orphan the
         // root-directory scan adopts - can always validate its epoch instead of refusing to start.
+        long baselineTxn = -1;
         if (configuration.getCommitMode() == CommitMode.ADAPTIVE && localDurabilityEnabled) {
-            DurableEpochManifest.publishInitialAt(
+            baselineTxn = DurableEpochManifest.publishInitialAt(
                     configuration,
                     newToken,
                     dstDir.trimTo(dstLen),
@@ -276,6 +278,7 @@ public class WalUtils {
             syncStagingTreeDurable(ff, dstDir, configuration.getWriterFileOpenOpts());
             dstDir.trimTo(dstLen);
         }
+        return baselineTxn;
     }
 
     // Recursively make every file under {@code dir} device-durable (full-range MS_SYNC msync + fdatasync of the

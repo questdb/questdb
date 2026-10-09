@@ -95,8 +95,8 @@ public class AdaptiveCommitModeFlipCrashTest extends AbstractCrashConsistencyTes
      * applies only under ADAPTIVE), the WAL that rewind needs is gone. That is the loss
      * {@code AdaptiveUpgradeCompatTest#testDowngradeThenRebootPreservesDataAndIgnoresStaleEpoch} guards.
      *
-     * <p>So the writer that opens after the roll-forward reconciles the table and clears the enrolment. This
-     * test proves the whole sequence: crash adaptive, flip to nosync, recover, keep writing under nosync,
+     * <p>So the start that rolls the table forward also takes it out of adaptive: recovery makes it durable and
+     * removes its save point. This test proves the whole sequence: crash adaptive, flip to nosync, recover, keep writing under nosync,
      * purge the WAL under the nosync floor, restart again — everything survives, and the second restart is
      * not relying on the epoch at all.
      */

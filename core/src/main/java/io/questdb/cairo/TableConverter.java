@@ -197,7 +197,7 @@ public class TableConverter {
                                 // non-adaptive instance publishes nothing.
                                 path.trimTo(rootLen).concat(dirNameSink);
                                 if (walEnabled && configuration.getCommitMode() == CommitMode.ADAPTIVE) {
-                                    DurableEpochManifest.publishInitialAt(
+                                    final long baselineTxn = DurableEpochManifest.publishInitialAt(
                                             configuration,
                                             token,
                                             path,
@@ -205,6 +205,7 @@ public class TableConverter {
                                             convertedPartitionBy,
                                             configuration.getMicrosecondClock().getTicks() / 1000L
                                     );
+                                    RecoveryCoordinator.pinPublishedBaseline(engine, token, baselineTxn);
                                 }
 
                                 convertedTables.add(token);
