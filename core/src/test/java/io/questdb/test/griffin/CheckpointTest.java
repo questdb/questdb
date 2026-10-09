@@ -2143,18 +2143,13 @@ public class CheckpointTest extends AbstractCairoTest {
 
     @Test
     public void testCheckpointRecoverClearsStaleAdaptiveEpochAnchor() throws Exception {
-        // Pinned, not inherited: the assertion that recovery PUBLISHES a replacement baseline only holds
-        // under ADAPTIVE -- RecoveryCoordinator skips any table that is neither configured adaptive nor
-        // enrolled adaptive, so under a nosync sweep the fabricated anchor is deleted and never replaced
-        // and marker.tryLoad() fails. Pinned rather than skipped so this keeps running under every sweep.
+        // Pinned rather than skipped, so it runs under every sweep: only a writer on an adaptive instance enrols
+        // the restored table.
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        // A checkpoint/PITR restore-over-existing rewrites _txn/_cv (restoreTableFiles) but the checkpoint
-        // does NOT capture the adaptive durable-epoch trio (_snapshot/_txn.epoch/_cv.epoch). Left in place,
-        // the destination's stale anchor survives into the RecoveryCoordinator pass that runs next in
-        // completeInit -- and RecoveryCoordinator does NOT lineage-check the epoch (only checksum + marker
-        // self-consistency), so it could rewind the freshly-restored _txn/_cv back to the stale cut
-        // (wrong lineage / corruption). checkpoint recover must clear the trio, symmetric to the ENT
-        // backup path (BackupRestoreAgent.removeStaleMetadataFiles).
+        // A checkpoint restore over an existing table rewrites _txn and _cv but does not capture the save point. A
+        // save point left in place would let recovery rewind the restored files to a cut of another lineage, so
+        // checkpoint recover removes it. The restored table then has no save point, so it is not enrolled: the
+        // restore syncs its files, and its next writer enrols it.
         assertMemoryLeak(() -> {
             execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
             execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
@@ -2165,8 +2160,8 @@ public class CheckpointTest extends AbstractCairoTest {
             final TableToken token = engine.getTableTokenIfExists("test");
             Assert.assertNotNull(token);
 
-            // Fabricate a stale adaptive durable-epoch anchor at the table root (a table that had run in
-            // adaptive commit mode). The checkpoint does not carry it, so a restore-over-existing leaves it.
+            // Fabricate a stale save point at the table root (a table that had run in adaptive commit mode). The
+            // checkpoint does not carry it, so a restore-over-existing leaves it.
             fabricateStaleEpochTrio(token);
             Assert.assertTrue("precondition: fabricated epoch trio must exist", staleSavePointExists(token));
 
@@ -2179,19 +2174,37 @@ public class CheckpointTest extends AbstractCairoTest {
                 execute("checkpoint release");
             }
 
-            Assert.assertFalse(
-                    "checkpoint recover must remove the stale save point before publishing a fresh baseline",
-                    staleSavePointExists(token));
-            // The table's first writer enrols it again at the restored cut, so any save point names the live cut.
-            try (Path path = new Path(); TxReader txReader = new TxReader(ff)) {
-                final int rootLen = path.of(configuration.getDbRoot()).concat(token).size();
-                final DurableEpochManifest.Candidate[] savePoints = DurableEpochManifest.loadCandidates(ff, path, rootLen, token.getTableId());
-                if (savePoints.length > 0) {
-                    txReader.ofRO(path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
-                    Assert.assertTrue(txReader.unsafeLoadAll());
-                    Assert.assertEquals("a save point must name the restored cut", txReader.getSeqTxn(), savePoints[0].epochSeqTxn);
-                    Assert.assertEquals("a save point must name the restored cut", txReader.getTxn(), savePoints[0].epochTxn);
-                }
+            Assert.assertFalse("checkpoint recover must remove the stale save point", staleSavePointExists(token));
+            try (Path tablePath = new Path()) {
+                tablePath.of(configuration.getDbRoot()).concat(token);
+                Assert.assertFalse(
+                        "the restored table has no save point until its next writer",
+                        DurableEpochManifest.exists(ff, tablePath, tablePath.size())
+                );
+                assertQuery("select * from test")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tname\tval
+                                2023-09-20T12:00:00.000000Z\ta\t10
+                                """);
+
+                execute("insert into test values ('2023-09-21T12:00:00.000000Z', 'b', 20);");
+                drainWalQueue();
+                Assert.assertTrue(
+                        "the next writer enrols the restored table with a valid save point",
+                        DurableEpochManifest.loadCandidates(ff, tablePath, tablePath.size(), token.getTableId()).length > 0
+                );
+                assertQuery("select * from test")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tname\tval
+                                2023-09-20T12:00:00.000000Z\ta\t10
+                                2023-09-21T12:00:00.000000Z\tb\t20
+                                """);
             }
         });
     }
