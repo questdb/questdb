@@ -35,18 +35,12 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * A {@code _txn} that names more symbol columns than {@code _meta} declares must fail with something that
- * says so, naming the table and both counts.
- * <p>
- * The two are views of the same list: {@code _txn}'s symbol area is written from
- * {@code denseSymbolMapWriters}, and that list is rebuilt from {@code _meta}'s live symbol columns on every
- * open. They disagree only when the two files come from different table shapes, as after recovery restores a
- * durable epoch. Without the guard the {@code TableWriter} constructor (initLastPartition -> performRecovery
- * -> rollbackSymbolTables) throws a bare {@code "Array index out of range: N"} from {@code ObjList.get},
- * naming neither the table nor the mismatch.
- * <p>
- * The test builds the mismatch by putting an earlier {@code _meta}, one that predates a symbol column, back
- * over the live one, with its metadataVersion re-stamped so nothing rejects it for another reason.
+ * A {@code _txn} that names more symbol columns than {@code _meta} declares fails with an error naming the
+ * table and both counts, not a bare {@code "Array index out of range: N"} from the {@code TableWriter}
+ * constructor's symbol rollback. The two counts disagree only when the files come from different table shapes,
+ * as after recovery restores a durable epoch. The test builds the mismatch by putting an earlier {@code _meta},
+ * one that predates a symbol column, back over the live one, with its metadataVersion re-stamped so nothing
+ * rejects it for another reason.
  */
 public class TableWriterSymbolCountMismatchTest extends AbstractCairoTest {
 
