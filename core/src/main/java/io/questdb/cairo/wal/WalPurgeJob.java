@@ -599,8 +599,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         // adaptive that is a refused conversion to non-WAL, which keeps its save point for the next start.
         final int commitMode = engine.getConfiguration().getCommitMode();
         final int purgeFloorMode = LocalDurabilityPolicy.resolveCommitMode(commitMode, engine.getLocalDurabilityPolicy());
-        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-        if (purgeFloorMode == CommitMode.ADAPTIVE || tracker.getPinnedEpochTxn() > -1) {
+        final SeqTxnTracker tracker = purgeFloorMode == CommitMode.ADAPTIVE
+                ? engine.getTableSequencerAPI().getTxnTracker(tableToken)
+                : engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken);
+        if (tracker != null && (purgeFloorMode == CommitMode.ADAPTIVE || tracker.getPinnedEpochTxn() > -1)) {
             safeToPurgeTxn = Math.min(safeToPurgeTxn, tracker.getDurableEpochSeqTxn());
         } else if (commitMode == CommitMode.ADAPTIVE && !tableToken.isView()) {
             // Views are skipped, as recovery skips them.
