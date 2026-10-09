@@ -13306,15 +13306,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // A failed _txn flush that stopped the engine, then a restart without a power loss, leaves the page cache
     // holding a _txn the device never got, and the device's _txn may name a partition version this one does not.
     // Under SYNC the open therefore makes _txn durable before it removes any version. ADAPTIVE restores _txn from
-    // its durable epoch copy at boot, and NOSYNC and ASYNC promise nothing on a power loss. From here on the versions
-    // on disk agree with a durable state, so the partition purge job may act on the table; a writer on a private
-    // root (COPY staging) does not vouch for it.
+    // the save point recovery selected, so there the open makes that save point's header durable first. NOSYNC and
+    // ASYNC promise nothing on a power loss. From here on the versions on disk agree with a durable state, so the
+    // partition purge job may act on the table; a writer on a private root (COPY staging) does not vouch for it.
     private void purgeUnusedPartitionsAtOpen(boolean isPrivateRoot) {
         if (PartitionBy.isPartitioned(partitionBy)) {
             try {
                 ff.iterateDir(path.$(), removePartitionDirsNotAttached);
-                if (partitionRemoveCandidates.size() > 0 && effectiveCommitMode == CommitMode.SYNC) {
-                    txWriter.rewriteAndFsync();
+                if (partitionRemoveCandidates.size() > 0) {
+                    if (effectiveCommitMode == CommitMode.SYNC) {
+                        txWriter.rewriteAndFsync();
+                    } else if (!isPrivateRoot && effectiveCommitMode == CommitMode.ADAPTIVE && tableToken.isWal() && metadata.isWalEnabled()) {
+                        rewriteSelectedSavePointHeader();
+                    }
                 }
                 if (!isPrivateRoot && (effectiveCommitMode == CommitMode.SYNC || effectiveCommitMode == CommitMode.ADAPTIVE)) {
                     engine.markPartitionPurgeSafe(tableToken);
@@ -14848,6 +14852,39 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // truncate _meta file exactly, the file size never changes.
             // Metadata updates are written to a new file and then swapped by renaming.
             ddlMem.close(true, Vm.TRUNCATE_TO_POINTER);
+        }
+    }
+
+    // Writes the header of the save point this table stands on (the one its pin names) over itself and syncs it. A
+    // failed header sync leaves a save point only in the page cache; a restart without a power loss selects it, and
+    // a power loss then brings back the older save point, which may name a version the open is about to remove. The
+    // write matters: a failed writeback leaves the page clean, and a bare sync would write nothing.
+    private void rewriteSelectedSavePointHeader() {
+        final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(ff, path.trimTo(pathSize), pathSize, tableToken.getTableId());
+        if (saved.length == 0) {
+            return;
+        }
+        int generation = saved[0].generation;
+        final long pinnedEpochTxn = engine.getTableSequencerAPI().getTxnTracker(tableToken).getPinnedEpochTxn();
+        for (int i = 0; i < saved.length; i++) {
+            if (saved[i].epochTxn == pinnedEpochTxn) {
+                generation = saved[i].generation;
+                break;
+            }
+        }
+        path.trimTo(pathSize).concat(DurableEpochManifest.FILE_NAME).put('.').put(generation);
+        final long fd = TableUtils.openRW(ff, path.$(), LOG, CairoConfiguration.O_NONE);
+        final long header = Unsafe.malloc(DurableEpochManifest.FILE_SIZE, MemoryTag.NATIVE_TABLE_WRITER);
+        try {
+            if (ff.read(fd, header, DurableEpochManifest.FILE_SIZE, 0) != DurableEpochManifest.FILE_SIZE
+                    || ff.write(fd, header, DurableEpochManifest.FILE_SIZE, 0) != DurableEpochManifest.FILE_SIZE) {
+                throw CairoException.critical(ff.errno()).put("could not rewrite adaptive save point header [path=").put(path).put(']');
+            }
+            ff.fsyncDurable(fd);
+        } finally {
+            Unsafe.free(header, DurableEpochManifest.FILE_SIZE, MemoryTag.NATIVE_TABLE_WRITER);
+            ff.close(fd);
+            path.trimTo(pathSize);
         }
     }
 

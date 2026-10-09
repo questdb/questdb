@@ -264,6 +264,11 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         assertFailedHeaderSyncKeepsData(true, false);
     }
 
+    @Test
+    public void testFailedHeaderSyncThenRestartWriterOpenThenPowerLoss() throws Exception {
+        assertFailedHeaderSyncKeepsData(true, true);
+    }
+
     /**
      * A data-sync fault at every durability operation of an O3 write whose apply takes a save point; the operation
      * completes on disk and then reports the error. Later O3 rewrites, a partition purge and a WAL purge follow
