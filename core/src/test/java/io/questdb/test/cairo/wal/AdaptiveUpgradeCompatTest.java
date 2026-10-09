@@ -47,6 +47,7 @@ import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TxnCorruptionUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -145,6 +146,123 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
                     Assert.assertEquals("pre-enrolment meta must read the record as UNSET (field gated away)",
                             CommitMode.UNSET, md.getEnrolledCommitMode());
                 }
+            }
+        });
+    }
+
+    /**
+     * A {@code _meta} written by a development build that kept the enrolment record (minor format version 3, the
+     * record at byte 53) loads, reads, takes writes and a schema change, and survives a restart, under ADAPTIVE and
+     * NOSYNC. The offsets and values are spelled out because the constants that name them are not part of the format
+     * any more once the record goes.
+     */
+    @Test
+    public void testDevelopmentMetaWithEnrolmentRecordLoads() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String mode : new String[]{"adaptive", "nosync"}) {
+                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+                final String name = "dev_meta_" + mode;
+                execute("create table " + name + " (ts timestamp, v long) timestamp(ts) partition by day wal");
+                execute("insert into " + name + " values ('2024-01-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                final TableToken token = engine.verifyTableName(name);
+                releaseHandles();
+                final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
+                    final int minorVersionField = peekInt(ff, path.$(), TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
+                    // The low short is the field's checksum over the metadata version and column count; keep it.
+                    pokeInt(ff, path.$(), TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION,
+                            Numbers.encodeLowHighShorts(Numbers.decodeLowShort(minorVersionField), (short) 3));
+                    pokeInt(ff, path.$(), 53, CommitMode.ADAPTIVE);
+                }
+
+                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
+                engine.getTxnScoreboardPool().remove(token);
+                engine.getTableSequencerAPI().resetForReboot(token);
+                new RecoveryCoordinator(engine).recover();
+                engine.notifyWalTxnRepublisher(token);
+                drainWalQueue();
+                execute("insert into " + name + " values ('2024-01-02T00:00:00.000000Z', 2)");
+                execute("alter table " + name + " add column c int");
+                execute("insert into " + name + " values ('2024-01-03T00:00:00.000000Z', 3, 7)");
+                drainWalQueue();
+                Assert.assertFalse(mode + ": the table must not be suspended", engine.getTableSequencerAPI().isSuspended(token));
+                releaseHandles();
+                engine.getTxnScoreboardPool().remove(token);
+                engine.getTableSequencerAPI().resetForReboot(token);
+                new RecoveryCoordinator(engine).recover();
+                assertQuery("select * from " + name)
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tv\tc
+                                2024-01-01T00:00:00.000000Z\t1\tnull
+                                2024-01-02T00:00:00.000000Z\t2\tnull
+                                2024-01-03T00:00:00.000000Z\t3\t7
+                                """);
+            }
+        });
+    }
+
+    /**
+     * A table directory as a released version leaves it: {@code _txn} areas without checksum stamps, {@code _meta}
+     * below the enrolment format, no save point. Its files read as unverified, never torn: an ADAPTIVE start enrols
+     * the table at its live cut with a valid save point, a NOSYNC start opens it as it is, and both read every row
+     * and take writes.
+     */
+    @Test
+    public void testReleasedTableDirectoryReadsUnverifiedInEveryMode() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String mode : new String[]{"adaptive", "nosync"}) {
+                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                final String name = "released_" + mode;
+                execute("create table " + name + " (ts timestamp, v long) timestamp(ts) partition by day wal");
+                execute("insert into " + name + " values ('2024-01-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                execute("insert into " + name + " values ('2024-01-02T00:00:00.000000Z', 2)");
+                drainWalQueue();
+                final TableToken token = engine.verifyTableName(name);
+                releaseHandles();
+                TxnCorruptionUtils.makeAreasLookLegacy(engine, name);
+                final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+                try (Path path = new Path()) {
+                    final int tablePathLen = path.of(configuration.getDbRoot()).concat(token).size();
+                    path.concat(TableUtils.META_FILE_NAME);
+                    final int minorVersionField = peekInt(ff, path.$(), TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
+                    pokeInt(ff, path.$(), TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION,
+                            Numbers.encodeLowHighShorts(Numbers.decodeLowShort(minorVersionField), TableUtils.META_FORMAT_MINOR_VERSION_TABLE_FORMAT));
+                    path.trimTo(tablePathLen).concat(DurableEpochManifest.FILE_NAME).put(".0");
+                    Assert.assertFalse("precondition: no save point", ff.exists(path.$()));
+                    path.trimTo(tablePathLen).concat(DurableEpochManifest.FILE_NAME).put(".1");
+                    Assert.assertFalse("precondition: no save point", ff.exists(path.$()));
+                }
+
+                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
+                engine.getTxnScoreboardPool().remove(token);
+                engine.getTableSequencerAPI().resetForReboot(token);
+                new RecoveryCoordinator(engine).recover();
+                try (io.questdb.cairo.TableWriter writer = getWriter(token)) {
+                    Assert.assertNotNull(writer);
+                }
+                if ("adaptive".equals(mode)) {
+                    final DurableEpochManifest.Candidate savePoint = currentSavePoint(token);
+                    Assert.assertNotNull("an adaptive start enrols the released table", savePoint);
+                    Assert.assertEquals("at its live cut", readLiveSeqTxn(token), savePoint.epochSeqTxn);
+                }
+                execute("insert into " + name + " values ('2024-01-03T00:00:00.000000Z', 3)");
+                drainWalQueue();
+                Assert.assertFalse(mode + ": the table must not be suspended", engine.getTableSequencerAPI().isSuspended(token));
+                assertQuery("select * from " + name)
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tv
+                                2024-01-01T00:00:00.000000Z\t1
+                                2024-01-02T00:00:00.000000Z\t2
+                                2024-01-03T00:00:00.000000Z\t3
+                                """);
+                releaseHandles();
             }
         });
     }

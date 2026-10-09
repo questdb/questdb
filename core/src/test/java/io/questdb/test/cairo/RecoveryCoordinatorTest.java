@@ -1064,6 +1064,52 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     /**
+     * The creation baselines other than CREATE: an {@code ALTER TABLE ... REBASE WAL} clone and a conversion to WAL
+     * each leave the new table with a valid save point at its live cut, and a restart accepts it and keeps every row.
+     */
+    @Test
+    public void testRebaseCloneAndConversionToWalLeaveValidCreationBaseline() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        try {
+            assertMemoryLeak(() -> {
+                setCommitMode("adaptive");
+                execute("CREATE TABLE rebased (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO rebased VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                execute("ALTER TABLE rebased SUSPEND WAL");
+                execute("ALTER TABLE rebased REBASE WAL");
+                drainWalQueue();
+                execute("CREATE TABLE converted (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("INSERT INTO converted VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                execute("ALTER TABLE converted SET TYPE WAL");
+                engine.releaseInactive();
+                engine.load();
+                for (String name : new String[]{"rebased", "converted"}) {
+                    final TableToken tt = engine.verifyTableName(name);
+                    Assert.assertTrue(name + ": a WAL table", tt.isWal());
+                    Assert.assertEquals(name + ": a valid save point at the live cut", readTxnSeqTxn(tt), newestSavePointSeqTxn(tt));
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+                    engine.getTxnScoreboardPool().remove(tt);
+                    engine.getTableSequencerAPI().resetForReboot(tt);
+                    new RecoveryCoordinator(engine).recover();
+                    engine.notifyWalTxnRepublisher(tt);
+                    drainWalQueue();
+                    assertQuery("SELECT * FROM " + name)
+                            .expectSize()
+                            .timestamp("ts")
+                            .returns("""
+                                    ts\tv
+                                    2024-09-01T00:00:00.000000Z\t1
+                                    """);
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    /**
      * A table-type conversion RESETS the WAL lineage: {@code TableConverter} zeroes {@code _txn.seqTxn}
      * and re-seeds {@code txn_seq} from txn 0. The durable epoch taken under the PREVIOUS lineage is then
      * unreachable, and left on disk it post-dates the live cut, which is a refusal that takes the whole
@@ -2182,6 +2228,15 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         }
     }
 
+    private long newestSavePointSeqTxn(TableToken tt) {
+        try (Path p = new Path()) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(tt);
+            final io.questdb.cairo.DurableEpochManifest.Candidate[] saved = io.questdb.cairo.DurableEpochManifest.loadCandidates(
+                    engine.getConfiguration().getFilesFacade(), p, p.size(), tt.getTableId());
+            return saved.length > 0 ? saved[0].epochSeqTxn : -1;
+        }
+    }
+
     private void assertMetaSwapFiles(TableToken tt, boolean hasMeta, boolean hasMetaPrev) {
         Assert.assertEquals("_meta exists", hasMeta, epochArtifactExists(tt, TableUtils.META_FILE_NAME, ""));
         Assert.assertEquals("_meta.prev exists", hasMetaPrev, epochArtifactExists(tt, TableUtils.META_PREV_FILE_NAME, ""));
@@ -2316,6 +2371,11 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             tx.unsafeLoadAll();
             return tx.getSeqTxn();
         }
+    }
+
+    private void setCommitMode(String mode) {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
+        Assert.assertEquals(mode, CommitMode.toString(engine.getConfiguration().getCommitMode()));
     }
 
     // Serves a stashed file in place of one live _meta while armed, so a save point taken meanwhile saves it.
