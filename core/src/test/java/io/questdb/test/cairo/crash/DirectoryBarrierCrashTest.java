@@ -496,6 +496,16 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
+    public void testSyncSwitchToParquetNonWalFailedTxnMsyncThenCrashReadsTable() throws Exception {
+        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, true);
+    }
+
+    @Test
+    public void testSyncSwitchToParquetNonWalFailedTxnMsyncThenRestartReadsTable() throws Exception {
+        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, false);
+    }
+
+    @Test
     public void testSyncSwitchToParquetNonWalSurvivesCrash() throws Exception {
         assertSyncSchemaChangeSurvivesCrash(false, this::stageParquetForSwitch, this::switchFirstPartitionToParquet, this::assertParquetPartitionNames);
     }
@@ -879,6 +889,32 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
      * @param isPowerLoss the power fails after the stop; otherwise the process restarts without a power loss
      */
     private void assertSyncConvertTxnMsyncFailureKeepsTable(boolean toNative, boolean isPowerLoss) throws Exception {
+        assertSyncConvertTxnMsyncFailureKeepsTable(
+                toNative ? this::convertFirstPartitionToParquet : null,
+                () -> execute("ALTER TABLE x CONVERT PARTITION TO " + (toNative ? "NATIVE" : "PARQUET") + " LIST '2024-01-01'"),
+                toNative ? "convertPartitionParquetToNative" : "convertPartitionNativeToParquet",
+                !toNative,
+                isPowerLoss
+        );
+    }
+
+    /**
+     * A change of the first partition's format fails the msync of its {@code _txn} under SYNC, and nothing of the
+     * new {@code _txn} reaches the device. The engine must stop and both versions of the partition must stay: a
+     * restart without a power loss reads it in the new format, a restart after a power loss in the old one.
+     *
+     * @param prepare        runs once the rows are inserted, before the durable baseline; null for none
+     * @param change         the change whose {@code _txn} msync fails
+     * @param operation      the {@code TableWriter} method of the change that commits the {@code _txn}
+     * @param isParquetAfter whether the change leaves the partition in parquet format
+     */
+    private void assertSyncConvertTxnMsyncFailureKeepsTable(
+            TestUtils.LeakProneCode prepare,
+            TestUtils.LeakProneCode change,
+            String operation,
+            boolean isParquetAfter,
+            boolean isPowerLoss
+    ) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         final var ff = new CrashFaultFilesFacade() {
             int failureCount;
@@ -886,7 +922,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
             @Override
             public void msync(long addr, long len, boolean async) {
-                if (isArmed && !async && isCalledFrom("commitTxWriter")) {
+                if (isArmed && !async && isCalledFrom("commitTxWriter") && isCalledFrom(operation)) {
                     isArmed = false;
                     failureCount++;
                     // nothing of the new _txn reaches the device
@@ -903,14 +939,14 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
                         ('2024-01-02T00:00:00.000000Z', 'b', 2.0),
                         ('2024-01-03T00:00:00.000000Z', 'a', 3.0)
                     """);
-            if (toNative) {
-                convertFirstPartitionToParquet();
+            if (prepare != null) {
+                prepare.run();
             }
             markDurableBaseline();
             Throwable failure = null;
             ff.isArmed = true;
             try {
-                execute("ALTER TABLE x CONVERT PARTITION TO " + (toNative ? "NATIVE" : "PARQUET") + " LIST '2024-01-01'");
+                change.run();
             } catch (Throwable th) {
                 failure = th;
             } finally {
@@ -930,7 +966,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
                 try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
                     Assert.assertEquals(
                             "the partition must be in the format the _txn names",
-                            toNative == isPowerLoss,
+                            isParquetAfter != isPowerLoss,
                             reader.getTxFile().isPartitionParquet(0)
                     );
                 }
@@ -1153,11 +1189,43 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
     }
 
+    private File firstPartitionDir() {
+        try (TableReader reader = engine.getReader(engine.verifyTableName("x")); Path path = new Path()) {
+            path.of(root).concat(reader.getTableToken().getDirName());
+            TableUtils.setPathForNativePartition(
+                    path,
+                    reader.getMetadata().getTimestampType(),
+                    reader.getPartitionedBy(),
+                    reader.getPartitionTimestampByIndex(0),
+                    reader.getPartitionNameTxnByIndex(0)
+            );
+            return new File(path.toString());
+        }
+    }
+
     private void runWithFacade(CrashFaultFilesFacade facade, TestUtils.LeakProneCode body) throws Exception {
         assumeCrashHarnessSupported();
         crashFf = facade;
         crashFf.setDbRoot(root);
         assertMemoryLeak(crashFf, body);
+    }
+
+    /**
+     * Leaves the real {@code data.parquet} and {@code _pm} of the first partition in its native partition
+     * directory, so that the switched partition reads back: converts the partition to parquet, keeps both files
+     * and converts it back.
+     */
+    private void stageConvertedParquetForSwitch() throws Exception {
+        convertFirstPartitionToParquet();
+        final File stageDir = temp.newFolder();
+        final String[] names = {TableUtils.PARQUET_PARTITION_NAME, TableUtils.PARQUET_METADATA_FILE_NAME};
+        for (String name : names) {
+            java.nio.file.Files.copy(new File(firstPartitionDir(), name).toPath(), new File(stageDir, name).toPath());
+        }
+        execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+        for (String name : names) {
+            java.nio.file.Files.copy(new File(stageDir, name).toPath(), new File(firstPartitionDir(), name).toPath());
+        }
     }
 
     /**
@@ -1206,7 +1274,8 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         try (TableWriter writer = getWriter("x")) {
             final long partitionTimestamp = writer.getTxWriter().getPartitionTimestampByIndex(0);
             Assert.assertTrue(writer.markPartitionParquetReady(partitionTimestamp));
-            Assert.assertEquals(TableWriter.SWITCH_OK, writer.switchNativePartitionWithParquet(partitionTimestamp, 0));
+            final long parquetFileSize = new File(firstPartitionDir(), TableUtils.PARQUET_PARTITION_NAME).length();
+            Assert.assertEquals(TableWriter.SWITCH_OK, writer.switchNativePartitionWithParquet(partitionTimestamp, parquetFileSize));
         }
     }
 

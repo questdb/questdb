@@ -4220,6 +4220,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
 
         int newPartitionDirLen = 0;
+        boolean isTxnWriteStarted = false;
         try {
             setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
             final int partitionDirLen = path.size();
@@ -4279,10 +4280,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
             txWriter.setPartitionParquet(partitionTimestamp, parquetFileSize);
             txWriter.bumpPartitionTableVersion();
+            isTxnWriteStarted = true;
             commitTxWriter();
         } catch (Throwable e) {
-            if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+            // A failed _txn msync does not undo the write: the page cache holds a _txn that names the new
+            // directory, so it stays. The old one is removed only after the commit, so a power loss finds it too.
+            if (newPartitionDirLen > 0 && !isTxnWriteStarted && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
                 LOG.error().$("could not remove partition dir [path=").$(other).I$();
+            }
+            // the stop also keeps the writer's rollback from purging the old version
+            if (CommitMode.isPowerLossDurable(effectiveCommitMode) && CairoException.isDataSyncFailure(e)) {
+                distressed = true;
+                engine.handleDataSyncFailure(e);
             }
             throw e;
         } finally {
