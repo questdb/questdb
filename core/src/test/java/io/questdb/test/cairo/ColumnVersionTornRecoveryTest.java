@@ -71,16 +71,13 @@ import static io.questdb.cairo.TableUtils.*;
 
 /**
  * A power loss can leave {@code _cv} unable to serve the column version that an intact {@code _txn} record
- * names. Part of the live area keeps what its page held before the commit that wrote it, or the whole file
- * stays one commit behind {@code _txn}. Commit N is then not durable as a whole, even though its {@code _txn}
- * record is.
+ * names: part of its live area keeps its pre-commit page, or the whole file stays one commit behind.
  * <p>
  * Each test builds such an image from page-cache snapshots and restarts on it. The table continues from commit
- * N-1 when that commit's column versions and every file they name are still on disk: WAL apply replays commit
- * N, a non-WAL table loses it. Otherwise the writer refuses to open without changing a byte, and a WAL table is
- * suspended with an actionable error. Either way the WAL writer keeps accepting rows. Tables enrolled in
- * adaptive commit mode never reach that code: startup recovery restores their {@code _txn} and {@code _cv}
- * from the durable epoch, and the adaptive runs check that the end state is the same.
+ * N-1 when that commit's column versions and the files they name are on disk: WAL apply replays commit N, a
+ * non-WAL table loses it. Otherwise the writer refuses to open without changing a byte and a WAL table is
+ * suspended with an actionable error; the WAL writer keeps accepting rows either way. Adaptive tables restore
+ * {@code _txn} and {@code _cv} from the durable epoch at startup, and their runs check the same end state.
  */
 @RunWith(Parameterized.class)
 public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
