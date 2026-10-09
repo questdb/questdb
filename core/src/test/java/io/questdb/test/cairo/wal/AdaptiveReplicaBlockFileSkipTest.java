@@ -43,33 +43,18 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * S5.1 Task 5: the apply-path materialized-view / view-definition {@code BlockFileWriter} writes
- * ({@code _mv.s} refresh state, {@code _mv} definition) are role-aware — a replica
- * ({@link LocalDurabilityPolicy#REPLICA_SKIP}) skips their fsync (they are a rebuildable cache of
- * object-store truth), while a primary / single-node (default {@link LocalDurabilityPolicy#ALWAYS_ON})
- * keeps it. {@code cairo.commit.mode=adaptive} is kept on throughout so the writes are otherwise
- * sync-eligible — exactly like {@code AdaptiveReplicaEpochSkipTest} — so the ONLY thing that can
- * suppress the sync is the new {@code LocalDurabilityPolicy.resolveCommitMode} gate at each site, not
- * the commit-mode cadence.
+ * The apply-path {@code BlockFileWriter} writes of a materialized view's refresh state ({@code _mv.s}) and
+ * definition ({@code _mv}) follow the node's role: a replica ({@link LocalDurabilityPolicy#REPLICA_SKIP})
+ * skips their fsync, since they are a rebuildable cache, while a primary or single node
+ * ({@link LocalDurabilityPolicy#ALWAYS_ON}) keeps it. The commit mode stays adaptive throughout, so only the
+ * {@code LocalDurabilityPolicy.resolveCommitMode} gate at each site can suppress the sync. The CREATE-time
+ * definition writes in {@code SequencerMetadata.create} stay durable on every role.
  *
- * <p>(a) MUST-HAVE: {@code _mv.s} mat-view refresh-state skip-vs-sync (the frequent path, written by
- * {@code ApplyWal2TableJob.updateMatViewRefreshState} on every base-table-triggered refresh).
- * <p>(b) {@code _mv} mat-view definition skip-vs-sync (written by {@code TableWriter.updateMatViewDefinition},
- * driven here via {@code ALTER MATERIALIZED VIEW ... SET REFRESH LIMIT ...}).
- * <p>(c) {@code _view} plain-view definition — DEFERRED, not dedicated-tested here. Investigated and
- * confirmed genuinely intractable as a single-node OSS unit test: {@code CREATE VIEW}/{@code ALTER VIEW}
- * apply SYNCHRONOUSLY on the primary via {@code SqlCompilerImpl.executeCreateView}/{@code alterViewExecution}
- * -> {@code CairoEngine.replaceViewDefinition}, which writes {@code _view} immediately using
- * {@code SqlCompilerImpl}'s OWN separate {@code BlockFileWriter} field (constructed once per compiler
- * instance from the raw config commit mode) — never touching {@code ApplyWal2TableJob}'s
- * {@code VIEW_DEFINITION} case. That case only fires when a REPLICA replays the WAL event the primary
- * already wrote; there is no single-node OSS SQL path that drives it. The edit is still made there
- * (see the comment on that call site) since the mechanism is identical to (a)/(b); end-to-end
- * {@code _view} coverage requires real replication and is left to the view-replication suite.
+ * <p>The plain-view definition ({@code _view}) has no test here: on a single node {@code CREATE VIEW} and
+ * {@code ALTER VIEW} write it through {@code SqlCompilerImpl}'s own {@code BlockFileWriter}, and the apply-path
+ * site runs only when a replica replays the event, so covering it needs replication.
  */
 public class AdaptiveReplicaBlockFileSkipTest extends AbstractCairoTest {
-
-    // ---------- (a) _mv.s mat-view refresh state ----------
 
     @Test
     public void testReplicaSkipMatViewStateNoSync() throws Exception {
@@ -91,7 +76,7 @@ public class AdaptiveReplicaBlockFileSkipTest extends AbstractCairoTest {
                         0, trackFf.getSyncCount()
                 );
 
-                // Visibility is unaffected — skipping the fsync doesn't skip the write itself.
+                // Visibility is unaffected: skipping the fsync does not skip the write itself.
                 assertQuery("select sym, price from price_1h")
                         .noLeakCheck()
                         .expectSize()
@@ -133,8 +118,6 @@ public class AdaptiveReplicaBlockFileSkipTest extends AbstractCairoTest {
         });
     }
 
-    // ---------- (b) _mv mat-view definition ----------
-
     @Test
     public void testReplicaSkipMatViewDefinitionNoSync() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
@@ -156,7 +139,7 @@ public class AdaptiveReplicaBlockFileSkipTest extends AbstractCairoTest {
                         0, trackFf.getSyncCount()
                 );
 
-                // Visibility is unaffected — the new definition is readable regardless of the sync skip.
+                // Visibility is unaffected: the new definition is readable without the sync.
                 assertQuery("select refresh_limit, refresh_limit_unit from materialized_views")
                         .noLeakCheck()
                         .noRandomAccess()
@@ -189,19 +172,13 @@ public class AdaptiveReplicaBlockFileSkipTest extends AbstractCairoTest {
         });
     }
 
-    // ---------- (d) SequencerMetadata.create definition waiver (review Finding 5.1) ----------
-
     /**
-     * Finding 5.1 (waiver — the DELIBERATE opposite of (a)/(b)): the CREATE-time view/mat-view DEFINITION
-     * writes in {@code SequencerMetadata.create} ({@code txn_seq/_mv}, {@code txn_seq/_view}) use the RAW
-     * configured commit mode DELIBERATELY — they are intentionally NOT routed through
-     * {@code LocalDurabilityPolicy.resolveCommitMode} the way the apply-side sites in (a)/(b) are. A view
-     * definition is structural DDL (not the lazily-applied column data the durable epoch protects), so it
-     * must stay durable under {@code commitMode != NOSYNC} REGARDLESS of role. This test pins that: even with
-     * {@link LocalDurabilityPolicy#REPLICA_SKIP} installed and {@code cairo.commit.mode=adaptive} (the ONLY mode
-     * {@code resolveCommitMode} would downgrade to NOSYNC on a replica), {@code CREATE MATERIALIZED VIEW}
-     * still fsyncs the sequencer's {@code _mv} definition. If a future change wrongly routed this site through
-     * the policy, the sync would vanish under REPLICA_SKIP and this test would fail.
+     * The CREATE-time view and mat-view definition writes in {@code SequencerMetadata.create}
+     * ({@code txn_seq/_mv}, {@code txn_seq/_view}) use the configured commit mode, not
+     * {@code LocalDurabilityPolicy.resolveCommitMode}: a view definition is structural DDL, not lazily applied
+     * column data, so it stays durable under any mode but NOSYNC on every role. With
+     * {@link LocalDurabilityPolicy#REPLICA_SKIP} and adaptive, the one combination {@code resolveCommitMode}
+     * downgrades, {@code CREATE MATERIALIZED VIEW} still syncs the sequencer's {@code _mv}.
      */
     @Test
     public void testSequencerMetaCreateMatViewDefinitionStaysDurableRegardlessOfRole() throws Exception {
@@ -215,10 +192,8 @@ public class AdaptiveReplicaBlockFileSkipTest extends AbstractCairoTest {
                 trackFf.reset(); // isolate the CREATE MATERIALIZED VIEW below
                 execute("create materialized view price_1h as select sym, last(price) as price, ts from base_price sample by 1h");
 
-                // Under REPLICA_SKIP + adaptive, every POLICY-AWARE (resolveCommitMode) site downgrades to
-                // NOSYNC and does NOT sync — so ANY _mv sync here comes from a RAW-commitMode (waiver) site.
-                // Assert specifically that SequencerMetadata.create's sequencer-dir (txn_seq) _mv was synced:
-                // the definition stays durable regardless of role.
+                // Under REPLICA_SKIP and adaptive every resolveCommitMode site downgrades to NOSYNC, so a sync
+                // of the sequencer-dir (txn_seq) _mv comes from SequencerMetadata.create's configured mode.
                 boolean seqMvSynced = false;
                 for (String p : trackFf.getSyncedPaths()) {
                     if (p.contains(WalUtils.SEQ_DIR) && p.endsWith(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME)) {
@@ -237,19 +212,12 @@ public class AdaptiveReplicaBlockFileSkipTest extends AbstractCairoTest {
         });
     }
 
-    // ---------- (c) _view plain-view definition: DEFERRED, see class javadoc ----------
-
     /**
      * A FilesFacade that counts every {@code msync}/{@code fdatasync} call whose resolved file path
-     * ends with the given {@code targetFileSuffix} — e.g. {@link MatViewState#MAT_VIEW_STATE_FILE_NAME}
-     * ({@code _mv.s}) or {@link MatViewDefinition#MAT_VIEW_DEFINITION_FILE_NAME} ({@code _mv}).
-     *
-     * <p>Same fd/mmap-address tracking technique as {@code AdaptiveWalDurabilityTest.TableSyncTrackingFacade}:
-     * tracks fd -> path (on open), addr -> fd (on mmap), then resolves msync(addr)/fdatasync(fd) to a
-     * path and counts it iff the path ends with the target suffix. {@code BlockFileWriter.commit()}
-     * syncs via {@code MemoryCMARW.sync()} -> {@code FilesFacade.msync}, so {@code msync} is the one
-     * that actually fires in practice; {@code fdatasync} is tracked too for robustness / parity with
-     * the existing facade.
+     * ends with the given {@code targetFileSuffix}, e.g. {@link MatViewState#MAT_VIEW_STATE_FILE_NAME}
+     * ({@code _mv.s}) or {@link MatViewDefinition#MAT_VIEW_DEFINITION_FILE_NAME} ({@code _mv}). It maps
+     * fd -> path on open and addr -> fd on mmap to resolve each sync to a path.
+     * {@code BlockFileWriter.commit()} syncs through {@code MemoryCMARW.sync()} -> {@code FilesFacade.msync}.
      */
     static class BlockFileSyncTrackingFacade extends TestFilesFacadeImpl {
         private final Map<Long, Long> addrToFd = new HashMap<>();
