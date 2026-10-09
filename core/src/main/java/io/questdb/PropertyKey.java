@@ -228,6 +228,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_JIT_DEBUG_ENABLED("cairo.sql.jit.debug.enabled"),
     CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD("cairo.sql.jit.max.in.list.size.threshold"),
     CAIRO_SQL_JIT_SYMBOL_IN_BITSET_ENABLED("cairo.sql.jit.symbol.in.bitset.enabled"),
+    CAIRO_SQL_JIT_SYMBOL_EMPTY_CONSTANT_ENABLED("cairo.sql.jit.symbol.empty.constant.enabled"),
     CAIRO_SQL_SYMBOL_IN_BITSET_ENABLED("cairo.sql.symbol.in.bitset.enabled"),
     CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS("cairo.sql.symbol.in.bitset.max.keys"),
     CAIRO_WRITER_FO_OPTS("cairo.writer.fo_opts"),

@@ -1698,6 +1698,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 "cairo.file.descriptor.cache.enabled\tQDB_CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                 "cairo.sql.jit.max.in.list.size.threshold\tQDB_CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD\t10\tdefault\tfalse\ttrue\n" +
                 "cairo.sql.jit.symbol.in.bitset.enabled\tQDB_CAIRO_SQL_JIT_SYMBOL_IN_BITSET_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                "cairo.sql.jit.symbol.empty.constant.enabled\tQDB_CAIRO_SQL_JIT_SYMBOL_EMPTY_CONSTANT_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                 "cairo.sql.symbol.in.bitset.enabled\tQDB_CAIRO_SQL_SYMBOL_IN_BITSET_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                 "cairo.sql.symbol.in.bitset.max.keys\tQDB_CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS\t16777216\tdefault\tfalse\tfalse\n" +
                 "cairo.auto.scale.symbol.capacity\tQDB_CAIRO_AUTO_SCALE_SYMBOL_CAPACITY\ttrue\tdefault\tfalse\tfalse\n" +

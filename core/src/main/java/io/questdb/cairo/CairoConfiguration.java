@@ -1492,6 +1492,14 @@ public interface CairoConfiguration {
     boolean isSqlJitSymbolInBitsetEnabled();
 
     /**
+     * Compiles a SYMBOL column compared with the empty string ('') into the JIT filter instead of
+     * falling back to the Java filter.
+     */
+    default boolean isSqlJitSymbolEmptyConstantEnabled() {
+        return true;
+    }
+
+    /**
      * Whether the Java {@code symbol IN (...)} function tests membership with a bitset over the
      * symbol keys rather than with a hash set probe.
      */

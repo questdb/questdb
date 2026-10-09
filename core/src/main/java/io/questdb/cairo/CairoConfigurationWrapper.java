@@ -1935,6 +1935,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlJitSymbolEmptyConstantEnabled() {
+        return getDelegate().isSqlJitSymbolEmptyConstantEnabled();
+    }
+
+    @Override
     public boolean isSqlSymbolInBitsetEnabled() {
         return getDelegate().isSqlSymbolInBitsetEnabled();
     }

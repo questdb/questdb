@@ -5611,7 +5611,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final int len = token.length();
         final CharSequence symbol;
         if (Chars.isQuoted(token)) {
-            if (len < 3) {
+            // '' is the empty string, which a SYMBOL column may hold as a value of its own (NULL is
+            // not ''): keyOf("") resolves it like any other value, and to no key when the table has
+            // no '', exactly as EqSymStrFunctionFactory's ConstCheckColumnFunc resolves it
+            if (len < 3 && (len != 2 || negated || !executionContext.getCairoEngine().getConfiguration().isSqlJitSymbolEmptyConstantEnabled())) {
                 throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
             }
             sink.clear();
