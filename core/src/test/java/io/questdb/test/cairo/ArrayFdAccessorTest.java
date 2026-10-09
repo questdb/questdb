@@ -47,16 +47,11 @@ import java.nio.ByteBuffer;
 import static io.questdb.cairo.arr.ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES;
 
 /**
- * Unit tests for {@link ArrayTypeDriver#getDataVectorSizeAtFromFd(io.questdb.std.FilesFacade, long, long)}.
- * <p>
- * Focuses on the monotonicity-based torn-write guard:
- * <ol>
- *   <li>Healthy null-prefix: [NULL, NULL, real, real] must not throw: the real entries
- *       have offset=0 because the two NULLs wrote no data bytes, so data-end(row-1)=0
- *       and 0 &lt; 0 is false.</li>
- *   <li>Torn tail: zeroing the last entry's offset bytes must throw with a message
- *       containing "Invalid data offset read from array aux file".</li>
- * </ol>
+ * Tests the monotonicity-based torn-write guard of
+ * {@link ArrayTypeDriver#getDataVectorSizeAtFromFd(io.questdb.std.FilesFacade, long, long)}. A null prefix
+ * [NULL, NULL, real, real] does not throw: the nulls write no data bytes, so the first real entry's offset 0
+ * equals the data end before it. Zeroing the last entry's offset bytes throws "Invalid data offset read from
+ * array aux file".
  */
 public class ArrayFdAccessorTest extends AbstractTest {
 
