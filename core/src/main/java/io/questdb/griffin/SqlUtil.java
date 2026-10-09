@@ -1164,6 +1164,9 @@ public class SqlUtil {
         return value;
     }
 
+    // Float representation of 2^31 (exclusive upper bound for INT).
+    // Integer.MAX_VALUE (2147483647) converted to float rounds up to 2^31 (2147483648.0f).
+    // Using '<' against 2^31 ensures boundary values just above INT range fail with inconvertibleValue.
     @SuppressWarnings("unused")
     // used by the row copier
     public static int implicitCastFloatAsInt(float value) {
