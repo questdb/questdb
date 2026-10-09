@@ -25,9 +25,8 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.SnapshotMarker;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.FilesFacade;
@@ -103,13 +102,13 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
             final long baselineEpochSeqTxn;
             final long baselineEpochTxn;
             final int baselineGeneration;
-            try (Path markerPath = new Path(); SnapshotMarker marker = new SnapshotMarker(configuration)) {
-                markerPath.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
-                marker.of(markerPath);
-                Assert.assertTrue("adaptive enrollment baseline marker must load", marker.tryLoad());
-                baselineEpochSeqTxn = marker.getEpochSeqTxn();
-                baselineEpochTxn = marker.getEpochTxn();
-                baselineGeneration = marker.getGeneration();
+            try (Path markerPath = new Path()) {
+                markerPath.of(configuration.getDbRoot()).concat(tt);
+                final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(configuration.getFilesFacade(), markerPath, markerPath.size(), tt.getTableId());
+                Assert.assertTrue("adaptive enrollment baseline must load", saved.length > 0);
+                baselineEpochSeqTxn = saved[0].epochSeqTxn;
+                baselineEpochTxn = saved[0].epochTxn;
+                baselineGeneration = saved[0].generation;
             }
 
             // The demote-in-window policy. Installing it changes the policy version, so the batch first asks it
@@ -152,14 +151,14 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
                         0L, tracker.getLastEpochTs());
 
                 // Safe legacy enrollment may have published an epoch-0 baseline before this window. The
-                // demoted node must not advance or replace that marker.
-                try (Path markerPath = new Path(); SnapshotMarker marker = new SnapshotMarker(configuration)) {
-                    markerPath.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
-                    marker.of(markerPath);
-                    Assert.assertTrue("enrollment baseline marker must remain loadable", marker.tryLoad());
-                    Assert.assertEquals(baselineEpochSeqTxn, marker.getEpochSeqTxn());
-                    Assert.assertEquals(baselineEpochTxn, marker.getEpochTxn());
-                    Assert.assertEquals(baselineGeneration, marker.getGeneration());
+                // demoted node must not advance or replace that save point.
+                try (Path markerPath = new Path()) {
+                    markerPath.of(configuration.getDbRoot()).concat(tt);
+                    final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(configuration.getFilesFacade(), markerPath, markerPath.size(), tt.getTableId());
+                    Assert.assertTrue("enrollment baseline must remain loadable", saved.length > 0);
+                    Assert.assertEquals(baselineEpochSeqTxn, saved[0].epochSeqTxn);
+                    Assert.assertEquals(baselineEpochTxn, saved[0].epochTxn);
+                    Assert.assertEquals(baselineGeneration, saved[0].generation);
                 }
 
                 // Visibility is unaffected — lazy apply still wrote the columns.

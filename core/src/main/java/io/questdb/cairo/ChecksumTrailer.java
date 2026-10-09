@@ -27,7 +27,7 @@ package io.questdb.cairo;
 /**
  * The one way this codebase expresses "checksummed area present / absent / torn".
  * <p>
- * Three hand-rolled variants of this existed: {@code _cv} and {@link SnapshotMarker} gate presence on
+ * Three hand-rolled variants of this existed: {@code _cv} and the save point marker gate presence on
  * a 64-bit MAGIC, and {@code _txn} on a bare {@code stored == 0} sentinel. The bare sentinel is the weak one: it cannot tell a legacy
  * record from one whose checksum slot was zeroed by a torn write, which is exactly the state a
  * partial page write leaves behind.

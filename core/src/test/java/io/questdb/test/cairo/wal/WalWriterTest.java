@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnVersionReader;
@@ -5734,7 +5735,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 final FilesFacade ff = configuration.getFilesFacade();
                 try (Path path = new Path()) {
-                    path.of(configuration.getDbRoot()).concat(newToken).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                    path.of(configuration.getDbRoot()).concat(newToken).concat(DurableEpochManifest.FILE_NAME + ".0");
                     Assert.assertFalse("a nosync clone publishes no anchor", ff.exists(path.$()));
                 }
                 try (TableReaderMetadata md = new TableReaderMetadata(configuration, newToken)) {

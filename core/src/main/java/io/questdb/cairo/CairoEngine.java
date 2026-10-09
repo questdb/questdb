@@ -1383,7 +1383,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // is loaded (so tables are enumerable) but BEFORE any WAL apply (CheckWalTransactionsJob ->
         // ApplyWal2TableJob) or table open: for each adaptive WAL table with a durable epoch it rewinds
         // _txn/_cv to the epoch cut so the boot path idempotently re-applies (epoch.seqTxn, frontier]
-        // from the durable WAL. No-op for non-adaptive engines and for tables without a _snapshot.
+        // from the durable WAL. No-op for non-adaptive engines and for tables without a save point.
         new RecoveryCoordinator(this, checkpointAgent.hasRecoveredCheckpoint()).recover();
         // Only now is it safe to remove the restore trigger/checkpoint. Until every missing adaptive baseline
         // above is durable, a crash must leave enough evidence for the next startup to repeat restoration.

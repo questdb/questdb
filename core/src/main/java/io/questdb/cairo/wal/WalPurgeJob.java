@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
-import io.questdb.cairo.SnapshotMarker;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
@@ -122,7 +122,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         path.close();
         anchorPath.close();
         if (anchorScratch != 0) {
-            anchorScratch = Unsafe.free(anchorScratch, SnapshotMarker.FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            anchorScratch = Unsafe.free(anchorScratch, DurableEpochManifest.FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -699,16 +699,17 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     /**
-     * The oldest cut recovery could rewind this table to from the anchor on disk, or {@link Long#MAX_VALUE}
-     * when there is no anchor. Read from the marker file itself rather than from the tracker: this covers anchors
-     * that no epoch of this process published, such as one left by a demote clear that failed.
+     * The oldest cut recovery could rewind this table to from the save points on disk, or {@link Long#MAX_VALUE}
+     * when there is none: the lowest seqTxn a valid generation header names. Read from the files rather than from
+     * the tracker: this covers save points no epoch of this process published, such as one left by a demote clear
+     * that failed.
      */
     private long readAnchorFloorSeqTxn() {
         if (anchorScratch == 0) {
-            anchorScratch = Unsafe.malloc(SnapshotMarker.FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            anchorScratch = Unsafe.malloc(DurableEpochManifest.FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
-        anchorPath.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.SNAPSHOT_FILE_NAME);
-        final long floor = SnapshotMarker.readLowestEpochSeqTxn(ff, anchorPath.$(), anchorScratch);
+        anchorPath.of(configuration.getDbRoot()).concat(tableToken);
+        final long floor = DurableEpochManifest.readLowestSeqTxn(ff, anchorPath, anchorPath.size(), tableToken.getTableId(), anchorScratch);
         if (floor != Long.MAX_VALUE) {
             LOG.debug().$("keeping WAL from the adaptive anchor while local durability is disabled [table=").$(tableToken)
                     .$(", anchorSeqTxn=").$(floor)

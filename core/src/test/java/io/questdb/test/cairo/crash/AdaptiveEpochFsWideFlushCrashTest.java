@@ -171,7 +171,7 @@ public class AdaptiveEpochFsWideFlushCrashTest extends AbstractCrashConsistencyT
      * parquet runs {@code closeActivePartition(false)} — which nulls EVERY column fd — immediately before
      * {@code advanceDurableEpoch}. The batched {@code syncColumnsBatchedSync} sourced its {@code syncfs} fd
      * from an open column and, finding none, no-op'd the fs-wide flush while still stamping
-     * {@code _txn.epoch}/{@code _cv.epoch} + the marker past the just-converted rows -> silent loss.
+     * a save point past the just-converted rows -> silent loss.
      */
     @Test
     public void testConvertLastPartitionEpochFsWideBatched() throws Exception {
@@ -319,7 +319,7 @@ public class AdaptiveEpochFsWideFlushCrashTest extends AbstractCrashConsistencyT
                 // closeActivePartition(false) -> EVERY column fd == -1, then advanceDurableEpoch ->
                 // fsyncMaterializedState. With the bug the epoch's syncfs sources its fd from an open column,
                 // finds none, and NO-OPs -> syncfsCount does NOT move, yet the epoch still stamps
-                // _txn.epoch/_cv.epoch + the marker past the just-converted rows (the silent-loss window). The
+                // a save point past the just-converted rows (the silent-loss window). The
                 // fix sources the syncfs fd from the stable _txn fd, so the fs-wide flush fires regardless.
                 //
                 // NB: this is the MECHANISM proof (the fs-wide flush fires with all columns closed). The

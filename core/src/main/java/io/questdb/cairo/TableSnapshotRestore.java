@@ -549,7 +549,7 @@ public class TableSnapshotRestore implements QuietCloseable {
         } else {
             // Clear any stale adaptive durable-epoch anchor at the destination BEFORE laying down the
             // restored _txn/_cv. A checkpoint/PITR restore-over-existing rewrites _txn/_cv, but a checkpoint
-            // does NOT capture the epoch trio (_snapshot/_txn.epoch/_cv.epoch), so the destination's own
+            // does NOT capture the save point files (_epoch.manifest.0/1), so the destination's own
             // pre-restore anchor would survive. Left in place, RecoveryCoordinator (which runs next in
             // CairoEngine.completeInit and does NOT lineage-check the epoch) could rewind the freshly-restored
             // _txn/_cv back to that stale cut. Symmetric to BackupRestoreAgent.removeStaleMetadataFiles (#23).

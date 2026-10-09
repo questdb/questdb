@@ -33,7 +33,6 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
-import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
@@ -173,7 +172,7 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
                 );
                 pokeInt(ff, path.$(), TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION, downgraded);
 
-                path.trimTo(tablePathLen).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                path.trimTo(tablePathLen).concat(DurableEpochManifest.FILE_NAME + ".0");
                 Assert.assertFalse("legacy precondition: no adaptive marker", ff.exists(path.$()));
             }
 
@@ -186,7 +185,7 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
             engine.releaseInactive();
 
             try (Path path = new Path(); TableReaderMetadata metadata = new TableReaderMetadata(configuration, token)) {
-                path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                path.of(configuration.getDbRoot()).concat(token).concat(DurableEpochManifest.FILE_NAME + ".0");
                 Assert.assertTrue("opening the writer must publish the enrollment baseline", ff.exists(path.$()));
                 metadata.loadMetadata();
                 Assert.assertEquals(CommitMode.ADAPTIVE, metadata.getEnrolledCommitMode());
@@ -220,7 +219,7 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
             // The checkpoint-aware startup must do more than grant a one-process exemption: it publishes a
             // bound baseline that an immediately following ordinary startup can validate and recover.
             new RecoveryCoordinator(engine, true).recover();
-            assertArtifactExists(token, TableUtils.SNAPSHOT_FILE_NAME);
+            assertArtifactExists(token, DurableEpochManifest.FILE_NAME + ".0");
             new RecoveryCoordinator(engine, false).recover();
             try (TableReader reader = engine.getReader(token)) {
                 Assert.assertEquals(1L, reader.size());
@@ -317,7 +316,7 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
             final TableToken tt = engine.verifyTableName("d");
 
             // Adaptive took a durable epoch: the trio is on disk.
-            assertArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME);
+            assertArtifactExists(tt, DurableEpochManifest.FILE_NAME + ".0");
             assertCurrentEpochArtifactExists(tt, TableUtils.TXN_FILE_NAME);
             assertCurrentEpochArtifactExists(tt, TableUtils.COLUMN_VERSION_FILE_NAME);
 
@@ -337,7 +336,7 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
             }
 
             // Leftover artifacts remain, inert (nothing on the live path opens them).
-            assertArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME);
+            assertArtifactExists(tt, DurableEpochManifest.FILE_NAME + ".0");
             assertCurrentEpochArtifactExists(tt, TableUtils.TXN_FILE_NAME);
         });
     }
@@ -368,7 +367,7 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
             execute("insert into dr values ('2024-04-01T01:00:00.000000Z', 2)");
             drainWalQueue();
             final TableToken tt = engine.verifyTableName("dr");
-            assertArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME);
+            assertArtifactExists(tt, DurableEpochManifest.FILE_NAME + ".0");
             Assert.assertTrue("adaptive must have recorded a durable epoch", readMarkerEpochSeqTxn(tt) > 0);
 
             // Downgrade the instance and reboot on it. The first writer to open the table reconciles it out
@@ -412,7 +411,7 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
             // Non-vacuity: the stale epoch marker is STILL present, unchanged, and STILL behind the live
             // seqTxn — a roll-forward WOULD have rewound to it (and, with WAL purged, been lossy). Data
             // survived => recovery skipped it.
-            assertArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME);
+            assertArtifactExists(tt, DurableEpochManifest.FILE_NAME + ".0");
             Assert.assertEquals("the stale epoch marker must be unchanged (inert), not advanced/purged",
                     frozenEpoch, readMarkerEpochSeqTxn(tt));
             Assert.assertTrue("stale epoch must remain behind the live seqTxn",
@@ -536,7 +535,7 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
     // ------------------------------------------------------------------------------------------------
 
     /**
-     * Write a loadable {@code _snapshot} marker and copy the live {@code _txn}/{@code _cv} to {@code .epoch}.
+     * Write a {@code _snapshot} file of older layouts and copy the live {@code _txn}/{@code _cv} to {@code .epoch}.
      */
     private void fabricateEpochArtifacts(TableToken tt) {
         final FilesFacade ff = configuration.getFilesFacade();
@@ -549,13 +548,9 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
             src.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
             dst.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.COLUMN_VERSION_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX);
             Assert.assertTrue("copy _cv.epoch", ff.copy(src.$(), dst.$()) >= 0);
-            // _snapshot marker (a loadable one — the stronger "even a loadable marker is ignored" claim).
-            final long seqTxn = engine.getTableSequencerAPI().getTxnTracker(tt).getSeqTxn();
+            // The _snapshot marker of older layouts, holding a copy of _txn: nothing reads it any more.
             dst.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
-            try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
-                marker.of(dst);
-                marker.write(Math.max(1, seqTxn), Math.max(1, seqTxn), 1_000_000L);
-            }
+            Assert.assertTrue("copy _snapshot", ff.copy(src.$(), dst.$()) >= 0);
         }
     }
 
@@ -575,21 +570,22 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
         }
     }
 
-    private long readMarkerEpochSeqTxn(TableToken tt) {
-        try (Path p = new Path(); SnapshotMarker marker = new SnapshotMarker(configuration)) {
-            p.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
-            marker.of(p);
-            Assert.assertTrue("marker must load", marker.tryLoad());
-            return marker.getEpochSeqTxn();
+    private DurableEpochManifest.Candidate currentSavePoint(TableToken tt) {
+        try (Path p = new Path()) {
+            p.of(configuration.getDbRoot()).concat(tt);
+            final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(configuration.getFilesFacade(), p, p.size(), tt.getTableId());
+            Assert.assertTrue("a save point must exist", saved.length > 0);
+            return saved[0];
         }
     }
 
+    private long readMarkerEpochSeqTxn(TableToken tt) {
+        return currentSavePoint(tt).epochSeqTxn;
+    }
+
     private void assertCurrentEpochArtifactExists(TableToken tt, CharSequence baseFileName) {
-        try (Path markerPath = new Path(); SnapshotMarker marker = new SnapshotMarker(configuration)) {
-            markerPath.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
-            marker.of(markerPath);
-            Assert.assertTrue("marker must load", marker.tryLoad());
-            final int generation = marker.getGeneration();
+        try (Path markerPath = new Path()) {
+            final int generation = currentSavePoint(tt).generation;
             assertArtifactExists(tt, DurableEpochManifest.FILE_NAME + "." + generation);
             final long[] section = TestUtils.savePointSection(configuration.getFilesFacade(), markerPath, configuration.getDbRoot(), tt, generation, baseFileName.toString());
             Assert.assertTrue("the save point must hold a copy of " + baseFileName, section[1] > 0);

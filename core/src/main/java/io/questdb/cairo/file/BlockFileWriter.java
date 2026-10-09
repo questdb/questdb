@@ -120,7 +120,7 @@ public class BlockFileWriter implements Closeable {
         // fallback to the previous region even though it is still intact on disk. These files hold view and
         // mat-view DEFINITIONS, structural DDL nothing can re-derive, so refusing the file loses the object.
         //
-        // This barrier makes a durable version word imply durable region bytes, matching what SnapshotMarker
+        // This barrier makes a durable version word imply durable region bytes, matching what the save point
         // and the _cv/_txn pair already guarantee. Cost is one extra msync of a few-KB file per commit; the
         // warmest caller (per-refresh mat-view state) already performs far heavier IO around it.
         if (commitMode != CommitMode.NOSYNC) {

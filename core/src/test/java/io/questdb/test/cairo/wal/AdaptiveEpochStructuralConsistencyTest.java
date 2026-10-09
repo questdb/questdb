@@ -25,8 +25,8 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -107,20 +107,14 @@ public class AdaptiveEpochStructuralConsistencyTest extends AbstractCairoTest {
      */
     private void assertEpochCopiesAgreeOnSymbolCount(TableToken token) {
         try (Path path = new Path()) {
-            path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
-            final SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration());
-            final int generation;
-            try {
-                marker.of(path.$());
-                if (!marker.tryLoad() || marker.getGeneration() == SnapshotMarker.LEGACY_GENERATION) {
-                    // No metadata-bound epoch was published. Legitimate: the cut is best-effort, and
-                    // declining to publish is exactly what the fix does in the structural window.
-                    return;
-                }
-                generation = marker.getGeneration();
-            } finally {
-                marker.close();
+            path.of(engine.getConfiguration().getDbRoot()).concat(token);
+            final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(engine.getConfiguration().getFilesFacade(), path, path.size(), token.getTableId());
+            if (saved.length == 0) {
+                // No epoch was published. Legitimate: the cut is best-effort, and declining to publish is exactly
+                // what the fix does in the structural window.
+                return;
             }
+            final int generation = saved[0].generation;
 
             final FilesFacade ff = engine.getConfiguration().getFilesFacade();
             final CharSequence dbRoot = engine.getConfiguration().getDbRoot();

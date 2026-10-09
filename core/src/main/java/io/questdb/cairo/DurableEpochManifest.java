@@ -29,8 +29,10 @@ import org.jetbrains.annotations.Nullable;
  * One save point generation of one table, in one file: a {@link #FILE_SIZE}-byte header, then byte copies
  * (sections) of the live {@code _txn}, {@code _cv} and {@code _meta}, in that order. The header binds the
  * sections to one table and cut and carries the size and checksum of each, so every reader rejects a file whose
- * sections did not all land. A generation is adopted only once the {@code _snapshot} marker names it, and the
- * marker is written after this file's final fsync.
+ * sections did not all land. A table has two generations, {@code 0} and {@code 1}; of those whose header is valid,
+ * the one with the higher (seqTxn, txn) is the current save point, and a new one is always written into the other.
+ * The header is written last, once the sections and the file's name are durable, so its fsync publishes the
+ * generation.
  */
 public final class DurableEpochManifest {
     public static final String FILE_NAME = "_epoch.manifest";
@@ -38,12 +40,119 @@ public final class DurableEpochManifest {
     public static final int FILE_SIZE = 120;
     private static final int BODY_SIZE = 104;
     private static final int FORMAT_VERSION = 3;
+    private static final int HEADER_ABSENT = 0;
+    private static final int HEADER_DAMAGED = 2;
+    private static final int HEADER_UNPUBLISHED = 1;
+    private static final int HEADER_VALID = 3;
     private static final Log LOG = LogFactory.getLog(DurableEpochManifest.class);
     private static final int OFFSET_CV_SIZE = 64;
     private static final int OFFSET_META_SIZE = 80;
+    private static final int OFFSET_SEQ_TXN = 24;
+    private static final int OFFSET_TXN = 32;
     private static final int OFFSET_TXN_SIZE = 48;
 
     private DurableEpochManifest() {
+    }
+
+    // Whether a save point file of either generation exists, published or not. Leaves the path at the table root.
+    public static boolean exists(FilesFacade ff, Path tablePath, int rootLen) {
+        final boolean exists = ff.exists(tablePath.trimTo(rootLen).concat(FILE_NAME).put(".0").$())
+                || ff.exists(tablePath.trimTo(rootLen).concat(FILE_NAME).put(".1").$());
+        tablePath.trimTo(rootLen);
+        return exists;
+    }
+
+    /**
+     * The generations whose header is valid, the current one (the higher seqTxn, then txn) first. Reads only the
+     * headers; {@link #validateSections} checks the rest. A {@code tableId} of {@code -1} accepts any table.
+     */
+    public static Candidate[] loadCandidates(FilesFacade ff, Path tablePath, int rootLen, int tableId) {
+        final long scratch = Unsafe.malloc(FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Candidate current = null;
+            Candidate other = null;
+            for (int generation = 0; generation < 2; generation++) {
+                tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
+                if (readHeader(ff, tablePath, tableId, generation, scratch) == HEADER_VALID) {
+                    final Candidate candidate = new Candidate(
+                            Unsafe.getUnsafe().getLong(scratch + OFFSET_SEQ_TXN),
+                            Unsafe.getUnsafe().getLong(scratch + OFFSET_TXN),
+                            generation
+                    );
+                    if (current == null) {
+                        current = candidate;
+                    } else if (candidate.epochSeqTxn > current.epochSeqTxn
+                            || (candidate.epochSeqTxn == current.epochSeqTxn && candidate.epochTxn > current.epochTxn)) {
+                        other = current;
+                        current = candidate;
+                    } else {
+                        other = candidate;
+                    }
+                }
+            }
+            if (current == null) {
+                return new Candidate[0];
+            }
+            return other == null ? new Candidate[]{current} : new Candidate[]{current, other};
+        } finally {
+            Unsafe.free(scratch, FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            tablePath.trimTo(rootLen);
+        }
+    }
+
+    /**
+     * The lowest seqTxn a valid generation of the table names, {@link Long#MAX_VALUE} when there is none, or
+     * {@code 0} when a header cannot be read. For threads other than the table's writer.
+     *
+     * @param scratch native memory of at least {@link #FILE_SIZE} bytes, owned by the caller
+     */
+    public static long readLowestSeqTxn(FilesFacade ff, Path tablePath, int rootLen, int tableId, long scratch) {
+        long lowest = Long.MAX_VALUE;
+        try {
+            for (int generation = 0; generation < 2; generation++) {
+                tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
+                if (readHeader(ff, tablePath, tableId, generation, scratch) == HEADER_VALID) {
+                    lowest = Math.min(lowest, Unsafe.getUnsafe().getLong(scratch + OFFSET_SEQ_TXN));
+                }
+            }
+        } catch (CairoException e) {
+            return 0;
+        } finally {
+            tablePath.trimTo(rootLen);
+        }
+        return lowest;
+    }
+
+    /**
+     * Removes each generation file whose header was never written (no magic, an older format, shorter than a
+     * header): a write a crash interrupted, never published. Syncs the directory once after a removal. A
+     * generation with magic but an invalid header is damaged and stays.
+     *
+     * @return whether a file was removed
+     */
+    public static boolean removeUnpublished(CairoConfiguration configuration, Path tablePath, int rootLen, int tableId) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final long scratch = Unsafe.malloc(FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+        boolean removed = false;
+        try {
+            for (int generation = 0; generation < 2; generation++) {
+                tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
+                if (readHeader(ff, tablePath, tableId, generation, scratch) == HEADER_UNPUBLISHED) {
+                    if (!ff.removeQuiet(tablePath.$())) {
+                        throw CairoException.critical(ff.errno()).put("could not remove unpublished adaptive save point [path=").put(tablePath).put(']');
+                    }
+                    LOG.info().$("removed unpublished adaptive save point [path=").$(tablePath).I$();
+                    removed = true;
+                }
+            }
+        } finally {
+            Unsafe.free(scratch, FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            tablePath.trimTo(rootLen);
+        }
+        if (removed) {
+            fsyncDirectory(configuration, tablePath, rootLen);
+        }
+        return removed;
     }
 
     public static void publishInitial(
@@ -53,7 +162,7 @@ public final class DurableEpochManifest {
             int partitionBy,
             long nowMs
     ) {
-        publishBaseline(configuration, tableToken, null, timestampType, partitionBy, nowMs, true);
+        publishBaseline(configuration, tableToken, null, timestampType, partitionBy, true);
     }
 
     /**
@@ -73,7 +182,7 @@ public final class DurableEpochManifest {
             int partitionBy,
             long nowMs
     ) {
-        publishBaseline(configuration, tableToken, tableDirPath, timestampType, partitionBy, nowMs, true);
+        publishBaseline(configuration, tableToken, tableDirPath, timestampType, partitionBy, true);
     }
 
     /**
@@ -152,7 +261,7 @@ public final class DurableEpochManifest {
             int partitionBy,
             long nowMs
     ) {
-        publishBaseline(configuration, tableToken, null, timestampType, partitionBy, nowMs, false);
+        publishBaseline(configuration, tableToken, null, timestampType, partitionBy, false);
     }
 
     private static void publishBaseline(
@@ -161,7 +270,6 @@ public final class DurableEpochManifest {
             @Nullable Path tableDirPath,
             int timestampType,
             int partitionBy,
-            long nowMs,
             boolean requireInitialSeqTxn
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
@@ -205,15 +313,8 @@ public final class DurableEpochManifest {
                 throw CairoException.critical(0).put("initial adaptive baseline is not at sequencer transaction zero [table=")
                         .put(tableToken.getTableName()).put(", seqTxn=").put(seqTxn).put(']');
             }
+            // Durable, name included, before table-name/sequencer registration.
             write(configuration, tableToken, tablePath, rootLen, 0, seqTxn, txn, columnVersion, metadataVersion);
-            fsyncDirectory(configuration, tablePath, rootLen);
-            try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
-                tablePath.trimTo(rootLen).concat(TableUtils.SNAPSHOT_FILE_NAME);
-                marker.of(tablePath.$()).write(seqTxn, txn, nowMs, 0);
-            }
-            // _snapshot is newly created for generation zero. Its own fsync does not make the parent
-            // directory entry durable, so publish that dentry before table-name/sequencer registration.
-            fsyncDirectory(configuration, tablePath, rootLen);
             if (requireInitialSeqTxn) {
                 // CREATE and the REBASE staging clone only. A checkpoint/backup restore or a replica demote
                 // also publishes a baseline here, but those tables are not necessarily adaptive and their
@@ -230,7 +331,7 @@ public final class DurableEpochManifest {
      * {@code TableWriter} to open it does not have to enroll it — which would rewrite {@code _meta} and bump
      * the metadata version of every newly created adaptive table.
      *
-     * <p>Runs AFTER the marker is published and its directory entry is durable, never before. That ordering
+     * <p>Runs AFTER the save point is published and its directory entry is durable, never before. That ordering
      * is what makes the write safe to do in place: once the anchor exists, EVERY outcome of this 4-byte
      * write is correct. The new value is correct because the anchor it speaks for is on disk. The old value
      * (UNSET) is correct because it only means "not enrolled yet", and the next writer to open the table
@@ -316,24 +417,6 @@ public final class DurableEpochManifest {
             ff.close(fd);
         }
         tablePath.trimTo(rootLen);
-    }
-
-    public static boolean isMetadataBound(CairoConfiguration configuration, TableToken tableToken, int generation) {
-        if (generation < 0) {
-            return false;
-        }
-        final FilesFacade ff = configuration.getFilesFacade();
-        try (Path manifest = new Path()) {
-            manifest.of(configuration.getDbRoot()).concat(tableToken).concat(FILE_NAME).put('.').put(generation);
-            if (!ff.exists(manifest.$()) || ff.length(manifest.$()) < 16) {
-                return false;
-            }
-            try (MemoryCMR mem = Vm.getCMRInstance(ff, manifest.$(), 16, MemoryTag.MMAP_TABLE_READER)) {
-                return mem.getLong(0) == TableUtils.SNAPSHOT_CHECKSUM_MAGIC && mem.getInt(8) >= FORMAT_VERSION;
-            }
-        } catch (Throwable e) {
-            return false;
-        }
     }
 
     /**
@@ -455,12 +538,12 @@ public final class DurableEpochManifest {
     }
 
     /**
-     * Saves the live {@code _txn}, {@code _cv} and {@code _meta} as generation {@code generation}. Truncates the
-     * file, writes the three sections after the header, fsyncs them, then writes the header in one call and
-     * fsyncs again. A crash before the header lands leaves a file with no valid header, which recovery skips.
-     * What keeps a crash from exposing a header over sections that did not land is the section checksums in the
-     * header and the caller publishing the marker only after this returns, not the fsync between the two.
-     * The caller holds the table, so the live files do not change meanwhile.
+     * Saves the live {@code _txn}, {@code _cv} and {@code _meta} as generation {@code generation} and publishes it.
+     * Truncates the file, writes the three sections after the header and fsyncs them, syncs the directory unless
+     * the file already held a valid header (whose name a sync before that header made durable), then writes the
+     * header in one call and fsyncs it to the device. That fsync is the publish point: a crash before the header
+     * lands leaves a file with no header, which is never selected, and nothing that can fail without poisoning the
+     * engine follows it. The caller holds the table, so the live files do not change meanwhile.
      */
     public static void write(
             CairoConfiguration configuration,
@@ -480,7 +563,10 @@ public final class DurableEpochManifest {
         // at _epoch.manifest.<generation> made the next concat build a nonexistent directory. See
         // DurableEpochPathRestoreTest.
         try {
+            header = Unsafe.calloc(FILE_SIZE, MemoryTag.NATIVE_TABLE_WRITER);
             tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
+            final boolean nameDurable = readHeader(ff, tablePath, tableToken.getTableId(), generation, header) == HEADER_VALID;
+            Vect.memset(header, FILE_SIZE, 0);
             fd = TableUtils.openRW(ff, tablePath.$(), LOG, CairoConfiguration.O_NONE);
             if (fd == -1) {
                 throw CairoException.critical(ff.errno()).put("could not open adaptive epoch manifest [path=").put(tablePath).put(']');
@@ -488,19 +574,21 @@ public final class DurableEpochManifest {
             if (!ff.truncate(fd, 0)) {
                 throw CairoException.critical(ff.errno()).put("could not truncate adaptive epoch manifest [path=").put(tablePath).put(']');
             }
-            header = Unsafe.calloc(FILE_SIZE, MemoryTag.NATIVE_TABLE_WRITER);
             long offset = FILE_SIZE;
             offset = writeSection(ff, tablePath, rootLen, TableUtils.TXN_FILE_NAME, fd, offset, header + OFFSET_TXN_SIZE);
             offset = writeSection(ff, tablePath, rootLen, TableUtils.COLUMN_VERSION_FILE_NAME, fd, offset, header + OFFSET_CV_SIZE);
             writeSection(ff, tablePath, rootLen, TableUtils.META_FILE_NAME, fd, offset, header + OFFSET_META_SIZE);
             ff.fsync(fd);
+            if (!nameDurable) {
+                fsyncDirectory(configuration, tablePath, rootLen);
+            }
 
             Unsafe.getUnsafe().putLong(header, TableUtils.SNAPSHOT_CHECKSUM_MAGIC);
             Unsafe.getUnsafe().putInt(header + 8, FORMAT_VERSION);
             Unsafe.getUnsafe().putInt(header + 12, generation);
             Unsafe.getUnsafe().putInt(header + 16, tableToken.getTableId());
-            Unsafe.getUnsafe().putLong(header + 24, seqTxn);
-            Unsafe.getUnsafe().putLong(header + 32, txn);
+            Unsafe.getUnsafe().putLong(header + OFFSET_SEQ_TXN, seqTxn);
+            Unsafe.getUnsafe().putLong(header + OFFSET_TXN, txn);
             Unsafe.getUnsafe().putLong(header + 40, columnVersion);
             Unsafe.getUnsafe().putLong(header + 96, metadataVersion);
             Unsafe.getUnsafe().putLong(header + BODY_SIZE, TableUtils.SNAPSHOT_CHECKSUM_MAGIC);
@@ -509,7 +597,7 @@ public final class DurableEpochManifest {
             if (ff.write(fd, header, FILE_SIZE, 0) != FILE_SIZE) {
                 throw CairoException.critical(ff.errno()).put("could not write adaptive epoch manifest header [path=").put(tablePath).put(']');
             }
-            ff.fsync(fd);
+            ff.fsyncDurable(fd);
         } finally {
             if (header != 0) {
                 Unsafe.free(header, FILE_SIZE, MemoryTag.NATIVE_TABLE_WRITER);
@@ -532,11 +620,14 @@ public final class DurableEpochManifest {
      * wrap a side effect that is not platform-specific. See {@code DurableEpochPathRestoreTest}.
      */
     public static void fsyncDirectory(CairoConfiguration configuration, Path tablePath, int rootLen) {
+        fsyncDirectory(configuration.getFilesFacade(), tablePath, rootLen);
+    }
+
+    public static void fsyncDirectory(FilesFacade ff, Path tablePath, int rootLen) {
         try {
             if (Os.isWindows()) {
                 return; // no directory fsync on Windows -- but the caller still gets its path back
             }
-            final FilesFacade ff = configuration.getFilesFacade();
             tablePath.trimTo(rootLen).slash$();
             final long fd = TableUtils.openRONoCache(ff, tablePath.$(), LOG);
             if (fd == -1) {
@@ -646,6 +737,16 @@ public final class DurableEpochManifest {
         fsyncDirectory(configuration, dirPath, dirLen);
     }
 
+    // Whether the header at `addr` is whole and names this generation and table (any table for a tableId of -1).
+    private static boolean isHeaderValid(long addr, int generation, int tableId) {
+        return Unsafe.getUnsafe().getLong(addr) == TableUtils.SNAPSHOT_CHECKSUM_MAGIC
+                && Unsafe.getUnsafe().getInt(addr + 8) == FORMAT_VERSION
+                && Unsafe.getUnsafe().getInt(addr + 12) == generation
+                && (tableId == -1 || Unsafe.getUnsafe().getInt(addr + 16) == tableId)
+                && Unsafe.getUnsafe().getLong(addr + BODY_SIZE) == TableUtils.SNAPSHOT_CHECKSUM_MAGIC
+                && Unsafe.getUnsafe().getLong(addr + BODY_SIZE + 8) == TableUtils.calculateCvAreaChecksum(addr, BODY_SIZE);
+    }
+
     private static boolean liveFileEquals(FilesFacade ff, Path tablePath, int rootLen, String name, long sectionAddr, long sectionSize) {
         tablePath.trimTo(rootLen).concat(name);
         try {
@@ -661,6 +762,34 @@ public final class DurableEpochManifest {
         } finally {
             tablePath.trimTo(rootLen);
         }
+    }
+
+    // Reads the header of generation `generation` (at `path`) into `scratch` and classifies it. A header is written in
+    // one call after its sections are durable, so a file without magic, of an older format or shorter than a header
+    // was never published, and one with magic that fails a check is damaged.
+    private static int readHeader(FilesFacade ff, Path path, int tableId, int generation, long scratch) {
+        final long fd = ff.openRO(path.$());
+        if (fd < 0) {
+            if (Files.isErrnoFileDoesNotExist(ff.errno())) {
+                return HEADER_ABSENT;
+            }
+            throw CairoException.critical(ff.errno()).put("could not open adaptive save point [path=").put(path).put(']');
+        }
+        final long bytesRead;
+        try {
+            bytesRead = ff.read(fd, scratch, FILE_SIZE, 0);
+        } finally {
+            ff.close(fd);
+        }
+        if (bytesRead < 0) {
+            throw CairoException.critical(ff.errno()).put("could not read adaptive save point [path=").put(path).put(']');
+        }
+        if (bytesRead < FILE_SIZE
+                || Unsafe.getUnsafe().getLong(scratch) != TableUtils.SNAPSHOT_CHECKSUM_MAGIC
+                || Unsafe.getUnsafe().getInt(scratch + 8) < FORMAT_VERSION) {
+            return HEADER_UNPUBLISHED;
+        }
+        return isHeaderValid(scratch, generation, tableId) ? HEADER_VALID : HEADER_DAMAGED;
     }
 
     private static void restoreSection(
@@ -721,15 +850,10 @@ public final class DurableEpochManifest {
                 return false;
             }
             try (MemoryCMR mem = Vm.getCMRInstance(ff, tablePath.$(), fileSize, MemoryTag.MMAP_TABLE_READER)) {
-                if (mem.getLong(0) != TableUtils.SNAPSHOT_CHECKSUM_MAGIC
-                        || mem.getInt(8) != FORMAT_VERSION
-                        || mem.getInt(12) != generation
-                        || mem.getInt(16) != tableToken.getTableId()
-                        || mem.getLong(24) != seqTxn
-                        || mem.getLong(32) != txn
-                        || (checkVersions && (mem.getLong(40) != columnVersion || mem.getLong(96) != metadataVersion))
-                        || mem.getLong(BODY_SIZE) != TableUtils.SNAPSHOT_CHECKSUM_MAGIC
-                        || mem.getLong(BODY_SIZE + 8) != TableUtils.calculateCvAreaChecksum(mem.addressOf(0), BODY_SIZE)) {
+                if (!isHeaderValid(mem.addressOf(0), generation, tableToken.getTableId())
+                        || mem.getLong(OFFSET_SEQ_TXN) != seqTxn
+                        || mem.getLong(OFFSET_TXN) != txn
+                        || (checkVersions && (mem.getLong(40) != columnVersion || mem.getLong(96) != metadataVersion))) {
                     return false;
                 }
                 final long txnSize = mem.getLong(OFFSET_TXN_SIZE);
@@ -771,5 +895,17 @@ public final class DurableEpochManifest {
             tablePath.trimTo(rootLen);
         }
         return offset + size;
+    }
+
+    public static final class Candidate {
+        public final long epochSeqTxn;
+        public final long epochTxn;
+        public final int generation;
+
+        private Candidate(long epochSeqTxn, long epochTxn, int generation) {
+            this.epochSeqTxn = epochSeqTxn;
+            this.epochTxn = epochTxn;
+            this.generation = generation;
+        }
     }
 }

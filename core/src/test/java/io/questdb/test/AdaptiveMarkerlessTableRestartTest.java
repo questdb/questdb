@@ -27,10 +27,10 @@ package io.questdb.test;
 
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -75,9 +75,9 @@ public class AdaptiveMarkerlessTableRestartTest extends AbstractBootstrapTest {
                 try (Path path = new Path()) {
                     path.of(serverMain.getEngine().getConfiguration().getDbRoot())
                             .concat(serverMain.getEngine().verifyTableName("x"))
-                            .concat(TableUtils.SNAPSHOT_FILE_NAME);
+                            .concat(DurableEpochManifest.FILE_NAME + ".0");
                     Assert.assertTrue(
-                            "SQL CREATE is expected to leave a durable epoch marker",
+                            "SQL CREATE is expected to leave a durable save point",
                             TestFilesFacadeImpl.INSTANCE.exists(path.$())
                     );
                 }
@@ -106,7 +106,7 @@ public class AdaptiveMarkerlessTableRestartTest extends AbstractBootstrapTest {
                 try (Path path = new Path()) {
                     path.of(serverMain.getEngine().getConfiguration().getDbRoot())
                             .concat(serverMain.getEngine().verifyTableName("z"))
-                            .concat(TableUtils.SNAPSHOT_FILE_NAME);
+                            .concat(DurableEpochManifest.FILE_NAME + ".0");
                     Assert.assertTrue(
                             "TestUtils.createTable must leave the same durable epoch anchor as the engine's"
                                     + " create path, or the table cannot survive a restart",

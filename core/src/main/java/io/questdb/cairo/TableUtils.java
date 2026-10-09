@@ -211,8 +211,8 @@ public final class TableUtils {
      */
     public static final String TXN_FILE_NAME = "_txn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
-    // Per-table epoch marker file: records the last durably committed epoch (epochSeqTxn, epochTxn, ts).
-    // Resides in the table directory as a sibling of _txn and _cv. NOT to be confused with the legacy
+    // Per-table save point marker of older development layouts, only ever removed now. Resided in the table
+    // directory as a sibling of _txn and _cv. NOT to be confused with the legacy
     // checkpoint snapshot file (CHECKPOINT_LEGACY_META_FILE_NAME = "_snapshot"), which lives inside the
     // .checkpoint directory and has a completely different format.
     public static final String SNAPSHOT_FILE_NAME = "_snapshot";

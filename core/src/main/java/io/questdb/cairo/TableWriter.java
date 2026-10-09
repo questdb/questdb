@@ -303,10 +303,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final LongList partitionRemovalsAfterSavePoint = new LongList();
     private final LongList partitionRemoveCandidates = new LongList();
     private final Path path;
-    // Adaptive durable-epoch marker + its scratch path, lazily created on the first
-    // advanceDurableEpoch() call (only adaptive WAL tables ever advance an epoch).
+    // Scratch path for the save point and enrolment marker file names.
     private final Path durableEpochSnapshotPath = new Path();
-    private SnapshotMarker durableEpochMarker;
     private final int pathRootSize;
     private final int pathSize;
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
@@ -3905,8 +3903,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * replica tenure left marked and without an anchor gets its baseline before anything is applied lazily.
      */
     private void publishAnchorForMarkedTable() {
-        durableEpochSnapshotPath.of(path.trimTo(pathSize)).concat(TableUtils.SNAPSHOT_FILE_NAME);
-        if (ff.exists(durableEpochSnapshotPath.$())) {
+        if (DurableEpochManifest.loadCandidates(ff, path.trimTo(pathSize), pathSize, tableToken.getTableId()).length > 0) {
             return;
         }
         durableEpochSnapshotPath.of(path.trimTo(pathSize)).concat(RecoveryCoordinator.RESTORE_ENROL_FILE_NAME);
@@ -3934,13 +3931,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private boolean replaceAnchorWithEnrolmentMarker() {
         try {
-            durableEpochSnapshotPath.of(path.trimTo(pathSize)).concat(TableUtils.SNAPSHOT_FILE_NAME);
-            if (ff.exists(durableEpochSnapshotPath.$())) {
-                // Drop this writer's own mapping of the marker first: Windows refuses to delete a mapped file.
-                // advanceDurableEpoch() maps it again for the next epoch.
-                if (durableEpochMarker != null) {
-                    durableEpochMarker.close();
-                }
+            if (DurableEpochManifest.exists(ff, path.trimTo(pathSize), pathSize)) {
                 RecoveryCoordinator.replaceAnchorWithEnrolmentMarker(configuration, path.trimTo(pathSize), pathSize);
                 LOG.info().$("replaced adaptive durable epoch anchor with the enrolment marker, local durability is disabled [table=")
                         .$(tableToken).I$();
@@ -4016,34 +4007,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long expectedSeqTxn = getSeqTxn();
         final long expectedTxn = getTxn();
         boolean valid = false;
-        // Build from THIS writer's own root, not configuration.getDbRoot(): a writer can be opened against
-        // a different root (CopyImportTask constructs one under the SQL COPY work directory), and there the
-        // dbRoot-derived path names a directory that does not exist -- SnapshotMarker.of() then fails ENOENT
-        // and aborts the whole parallel import. `path` is already root + tableToken.
-        durableEpochSnapshotPath.of(path.trimTo(pathSize)).concat(TableUtils.SNAPSHOT_FILE_NAME);
-        if (ff.exists(durableEpochSnapshotPath.$())) {
-            try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
-                marker.of(durableEpochSnapshotPath.$());
-                final SnapshotMarker.Candidate[] candidates = marker.loadCandidates();
-                for (int i = 0; i < candidates.length; i++) {
-                    final SnapshotMarker.Candidate candidate = candidates[i];
-                    if (candidate.epochSeqTxn == expectedSeqTxn
-                            && candidate.epochTxn == expectedTxn
-                            && DurableEpochManifest.validate(
-                            configuration,
-                            tableToken,
-                            path.trimTo(pathSize),
-                            pathSize,
-                            candidate.generation,
-                            candidate.epochSeqTxn,
-                            candidate.epochTxn,
-                            txWriter.getColumnVersion(),
-                            txWriter.getMetadataVersion()
-                    )) {
-                        valid = true;
-                        break;
-                    }
-                }
+        // Built from THIS writer's own root: a writer can be opened against a different root (CopyImportTask
+        // constructs one under the SQL COPY work directory). `path` is already root + tableToken.
+        final DurableEpochManifest.Candidate[] candidates = DurableEpochManifest.loadCandidates(ff, path.trimTo(pathSize), pathSize, tableToken.getTableId());
+        for (int i = 0; i < candidates.length; i++) {
+            final DurableEpochManifest.Candidate candidate = candidates[i];
+            if (candidate.epochSeqTxn == expectedSeqTxn
+                    && candidate.epochTxn == expectedTxn
+                    && DurableEpochManifest.validate(
+                    configuration,
+                    tableToken,
+                    path.trimTo(pathSize),
+                    pathSize,
+                    candidate.generation,
+                    candidate.epochSeqTxn,
+                    candidate.epochTxn,
+                    txWriter.getColumnVersion(),
+                    txWriter.getMetadataVersion()
+            )) {
+                valid = true;
+                break;
             }
         }
         path.trimTo(pathSize);
@@ -7709,7 +7692,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(ddlMem);
         Misc.free(other);
         dirFsyncPath = Misc.free(dirFsyncPath);
-        durableEpochMarker = Misc.free(durableEpochMarker);
         Misc.free(durableEpochSnapshotPath);
         Misc.free(todoMem);
         Misc.free(attachMetaMem);
@@ -9000,11 +8982,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean isColumnVersionServing(long columnVersion) {
         final long cvVersion = columnVersionWriter.getVersion();
         return (cvVersion == columnVersion || cvVersion - 1 == columnVersion) && columnVersionWriter.isAreaIntact(columnVersion);
-    }
-
-    private boolean isDurableEpochAnchored() {
-        durableEpochSnapshotPath.of(path.trimTo(pathSize)).concat(TableUtils.SNAPSHOT_FILE_NAME);
-        return ff.exists(durableEpochSnapshotPath.$());
     }
 
     private boolean isEmptyTable() {
@@ -14917,7 +14894,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private void rollbackToPreviousTxn(boolean isTxnTorn) {
         final long txn = txWriter.getTornLiveVersion();
-        if (metadata.getEnrolledCommitMode() == CommitMode.ADAPTIVE && isDurableEpochAnchored()) {
+        if (metadata.getEnrolledCommitMode() == CommitMode.ADAPTIVE && DurableEpochManifest.exists(ff, path.trimTo(pathSize), pathSize)) {
             // Startup recovery restores an anchored table's _txn and _cv from its durable epoch before anything
             // opens the table, so it has no torn area to find; do not second-guess that cut from here. A table
             // enrolled without an anchor (a replica's, marked for enrolment) has no such cut: its live state is
@@ -16207,33 +16184,41 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return false;
         }
 
-        // Select the INACTIVE generation before writing anything. A failed attempt can damage only that
-        // generation; the marker continues to select the previous complete generation.
-        if (durableEpochMarker == null) {
-            durableEpochMarker = new SnapshotMarker(configuration);
+        // A failed sequencer flush fenced the durable frontier: the log may have lost pages no later flush brings
+        // back, so no save point may name a cut past it until the process restarts.
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        if (tracker.isDurableFrontierFenced()) {
+            LOG.info().$("adaptive durable epoch skipped: durable frontier is fenced [table=").$(tableToken).I$();
+            return false;
         }
-        // Build from THIS writer's own root, not configuration.getDbRoot(): a writer can be opened against
-        // a different root (CopyImportTask constructs one under the SQL COPY work directory), and there the
-        // dbRoot-derived path names a directory that does not exist -- SnapshotMarker.of() then fails ENOENT
-        // and aborts the whole parallel import. `path` is already root + tableToken.
-        durableEpochSnapshotPath.of(path.trimTo(pathSize)).concat(TableUtils.SNAPSHOT_FILE_NAME);
-        durableEpochMarker.of(durableEpochSnapshotPath.$());
-        final int epochGeneration = durableEpochMarker.tryLoad()
-                && durableEpochMarker.getGeneration() != SnapshotMarker.LEGACY_GENERATION
-                ? 1 - durableEpochMarker.getGeneration()
-                : 0;
+
+        // Write the generation that is not current, chosen before anything is written: a failed attempt can damage
+        // only that one. Current is the generation the table stands on, the one its pin names (recovery pins the
+        // generation it selected, each publish its own), else the valid one with the higher (seqTxn, txn). After a
+        // fallback from a newer generation that kept a valid header, the pin keeps this from overwriting the only
+        // good one. Build from THIS writer's own root, not configuration.getDbRoot(): a writer can be opened
+        // against a different root (CopyImportTask constructs one under the SQL COPY work directory). `path` is
+        // already root + tableToken.
+        final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(ff, path.trimTo(pathSize), pathSize, tableToken.getTableId());
+        int currentGeneration = saved.length > 0 ? saved[0].generation : -1;
+        for (int i = 0; i < saved.length; i++) {
+            if (saved[i].epochTxn == tracker.getPinnedEpochTxn()) {
+                currentGeneration = saved[i].generation;
+                break;
+            }
+        }
+        final int epochGeneration = currentGeneration < 0 ? 0 : 1 - currentGeneration;
 
         // Step 1: make the materialized state fully durable. Capture the applied cut before flushing it; the
         // writer is held, so this frontier cannot move.
         final long epochSeqTxn = getSeqTxn();
         fsyncMaterializedState();
 
-        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
         if (epochSeqTxn > 0) {
             // An epoch must never post-date the durable sequencer. This matters on macOS/Windows, where the
             // materialized-state fallback fsyncs table files individually rather than issuing Linux syncfs:
             // apply can reach a W>0 transaction while its shared sequencer barrier is still pending. Make the
-            // sequencer prefix through this applied cut durable before the marker/purge floor can publish it.
+            // sequencer prefix through this applied cut durable before the save point/purge floor can publish it.
             // On Linux, fsyncMaterializedState() already issued filesystem-wide syncfs; avoid a second device
             // flush there. Private adaptive WAL files are durable before sequencing, so the shared barrier is
             // sufficient. A mode-enrollment baseline also needs this for older NOSYNC sequencer records.
@@ -16243,47 +16228,44 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             tracker.setLocalDurableSeqTxn(epochSeqTxn);
         }
 
-        // Save the live _txn, _cv and _meta into the inactive generation's file, bound to this table and cut.
+        // Step 2: reserve the NEW epoch pin BEFORE the save point is published. A busy target slot must leave the
+        // current save point authoritative; publishing first could make recovery select a save point whose
+        // partition versions were never protected from concurrent purge.
         final long epochTxn = getTxn();
-        DurableEpochManifest.write(
-                configuration,
-                tableToken,
-                path.trimTo(pathSize),
-                pathSize,
-                epochGeneration,
-                epochSeqTxn,
-                epochTxn,
-                txWriter.getColumnVersion(),
-                txWriter.getMetadataVersion()
-        );
-        fsyncEpochDirectory();
-
-        // Step 2: reserve the NEW epoch pin BEFORE the durable marker selects it. A busy target slot must
-        // leave the old marker authoritative; publishing the marker first could make recovery select an
-        // epoch whose partition version was never protected from concurrent purge.
         final long priorEpochTxn = tracker.getPinnedEpochTxn();
         final boolean priorSlotA = tracker.isPinnedEpochSlotA();
         // First epoch uses slot A; thereafter alternate to the free slot.
         final boolean newSlotA = priorEpochTxn < 0 || !priorSlotA;
         final int newSlotId = newSlotA ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B;
         if (!txnScoreboard.incrementTxn(newSlotId, epochTxn)) {
-            // Do NOT release the prior pin; leave the prior marker/frontier intact and retry later.
+            // Do NOT release the prior pin; leave the current save point and frontier intact and retry later.
             LOG.error().$("epoch pin slot busy, skipping epoch publish [table=").$(tableToken)
                     .$(", epochTxn=").$(epochTxn).$(", slotA=").$(newSlotA).I$();
             return false;
         }
 
-        // Step 3: write + fsync the _snapshot marker (the hard crash boundary) LAST. If marker publication
-        // fails, undo only the newly reserved pin; the prior marker and pin remain authoritative.
+        // Step 3: save the live _txn, _cv and _meta into the target generation; its header fsync publishes it. A
+        // failure before that leaves the target without a valid header, so undo only the newly reserved pin; a
+        // failed fsync of the header poisons the engine, which stops every rewrite the pin would guard.
         try {
             checkDistressed();
-            durableEpochMarker.write(epochSeqTxn, epochTxn, nowMs, epochGeneration);
+            DurableEpochManifest.write(
+                    configuration,
+                    tableToken,
+                    path.trimTo(pathSize),
+                    pathSize,
+                    epochGeneration,
+                    epochSeqTxn,
+                    epochTxn,
+                    txWriter.getColumnVersion(),
+                    txWriter.getMetadataVersion()
+            );
         } catch (Throwable th) {
             txnScoreboard.releaseTxn(newSlotId, epochTxn);
             throw th;
         }
 
-        // Step 4: complete the ping-pong handover only after the new marker is durable.
+        // Step 4: complete the ping-pong handover only after the new save point is durable.
         if (priorEpochTxn >= 0 && !(priorSlotA == newSlotA && priorEpochTxn == epochTxn)) {
             txnScoreboard.releaseTxn(priorSlotA ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B, priorEpochTxn);
         }
@@ -16460,13 +16442,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         LOG.error().$("could not advance durable epoch after ").$(operation)
                 .$(" [table=").$(tableToken).$(", e=").$(failure).I$();
-    }
-
-    private void fsyncEpochDirectory() {
-        // No platform guard here: fsyncDirectory is a no-op on Windows by itself, and it restores the path
-        // on every platform. Guarding the CALL also skipped the trim, which is how a stale
-        // _epoch.manifest.<generation> suffix survived into the next consumer of `path` on Windows only.
-        DurableEpochManifest.fsyncDirectory(configuration, path.trimTo(pathSize), pathSize);
     }
 
     private void fsyncTableDirAfterMetadataRename() {
