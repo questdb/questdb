@@ -53,16 +53,11 @@ import java.util.Collection;
 import java.util.List;
 
 /**
- * Under ADAPTIVE, an apply pass takes no inline save point (durable epoch) for an index, not even when it
- * publishes a posting-index reseal purge. A purge waits only while its window holds the pin of the last save
- * point, that is for a superseded {@code .pv} the save point still reads; that file stays on disk until the
- * next periodic save point moves the pin, and the purge job then removes it. Every other purge completes at
- * once.
- * <p>
- * Covers every index kind a symbol column can carry, with and without DEDUP, for in-order appends that
- * cross partition boundaries, late rows into a native partition, and late rows into a parquet partition.
- * Late rows into a native partition reseal a posting index on every pass, so those runs always publish
- * purges.
+ * Under ADAPTIVE, an apply pass takes no inline save point (durable epoch) for an index, even when it
+ * publishes a posting-index reseal purge. A purge waits only for a superseded {@code .pv} the last save point
+ * still reads, until the next periodic save point moves the pin; every other purge completes at once. Covers
+ * every index kind of a symbol column, with and without DEDUP, for in-order appends across partitions and
+ * late rows into native and parquet partitions (late rows into a native partition always publish purges).
  */
 @RunWith(Parameterized.class)
 public class AdaptiveIndexEpochCadenceTest extends AbstractCairoTest {
