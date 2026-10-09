@@ -2043,4 +2043,14 @@ public class InsertCastTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(expected);
     }
+    @Test
+    public void testFloatJustAboveIntRangeIsRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f (v FLOAT)");
+            execute("CREATE TABLE i (v INT)");
+            // as a FLOAT, 2147483647.0 rounds up to 2^31, one above the largest INT
+            execute("INSERT INTO f VALUES (2147483647.0)");
+            assertException("INSERT INTO i SELECT v FROM f", 0, "inconvertible value");
+        });
+    }
 }
