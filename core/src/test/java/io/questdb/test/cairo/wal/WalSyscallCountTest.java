@@ -62,11 +62,12 @@ import java.util.stream.Stream;
 
 /**
  * The file system calls of a 1-row WAL commit and of the WAL apply pass that applies it, outside ADAPTIVE.
- * NOSYNC, ASYNC and SYNC must make exactly the calls the base version makes (OSS {@code d3b877cc}, measured
- * with this test): the same kinds, the same number of times, on the same files. A file that rides along
- * with every commit or every apply pass shows up here as extra opens, maps and msyncs. The apply pass is
- * measured on fixed-size columns and again with STRING, VARCHAR (not inlined) and ARRAY columns, whose data
- * file length the segment-length guard checks against the last aux entry: a read of that entry shows up here.
+ * NOSYNC, ASYNC and SYNC must make the calls the base version (the WAL without ADAPTIVE) makes: the same
+ * kinds, the same number of times, on the same files, except the one extra SYNC msync noted in
+ * {@code expected}. A file that rides along with every commit or every apply pass shows up here as extra
+ * opens, maps and msyncs. The apply pass runs on fixed-size columns and again with STRING, VARCHAR (not
+ * inlined) and ARRAY columns, whose data file length the segment-length guard checks against the last aux
+ * entry: a read of that entry shows up here.
  * <p>
  * In every mode, ADAPTIVE included, a WAL table keeps only files the base version writes in its WAL segments
  * and in {@code txn_seq}. A file written through a mapping makes no system call on a NOSYNC commit, so only
@@ -252,7 +253,7 @@ public class WalSyscallCountTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES (1000000, 1)");
             drainWalQueue();
             try (TableWriter writer = getWriter("x")) {
-                // A writer's first save point also flushes every partition; measure the next one.
+                // A writer's first save point also flushes every partition; the test counts the next one.
                 writer.advanceDurableEpoch(1L);
                 ff.startSyncLog();
                 writer.advanceDurableEpoch(2L);
@@ -304,15 +305,14 @@ public class WalSyscallCountTest extends AbstractCairoTest {
     private static String expected(String commitMode, boolean isV2, boolean isCommit, boolean isVarSize) {
         if (isCommit) {
             // A V2 commit in SYNC msyncs the open part file ahead of the header: one more than base, which
-            // synced the header alone and left the record it publishes to writeback.
+            // syncs the header alone and leaves the record it publishes to writeback.
             return switch (commitMode) {
                 case "async" -> "calls: msyncAsync=5; opened: ";
                 case "sync" -> "calls: msyncSync=" + (isV2 ? 6 : 5) + "; opened: ";
                 default -> "calls: ; opened: ";
             };
         }
-        // The var-size columns add six files to open, close and sync, and three maps; base reads none of them
-        // (measured on d3b877cc).
+        // The var-size columns add six files to open, close and sync, and three maps; base reads none of them.
         final int files = isVarSize ? 6 : 0;
         final String msyncs = switch (commitMode) {
             case "async" -> " msyncAsync=" + (3 + files);
