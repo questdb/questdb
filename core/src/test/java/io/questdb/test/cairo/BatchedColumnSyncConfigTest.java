@@ -33,14 +33,8 @@ import org.junit.Test;
  * Verifies the {@code cairo.adaptive.epoch.column.sync.batched} operator override drives
  * {@link io.questdb.cairo.CairoConfiguration#isAdaptiveEpochColumnSyncBatched()}, the gate
  * {@code TableWriter.syncColumns} consults to choose the batched SYNC flush or the per-file
- * {@code msync(MS_SYNC)} fallback.
- *
- * <p>The test harness builds its config with fast_commit detection off (the production
- * {@code loadAdditionalConfigurations} flag is false under tests), so the getter returns exactly the
- * property value here, whatever the machine's filesystem. The
- * {@code propertyEnabled AND FastCommitCheck != ENABLED} composition that the production config layers
- * on top is covered by {@code FastCommitCheckTest} (the detection half) and asserted structurally in
- * {@code PropServerConfigurationTest}.
+ * {@code msync(MS_SYNC)} fallback. The test harness builds its config with fast_commit detection off, so
+ * the getter returns exactly the property value, whatever the machine's filesystem.
  */
 public class BatchedColumnSyncConfigTest extends AbstractCairoTest {
 
