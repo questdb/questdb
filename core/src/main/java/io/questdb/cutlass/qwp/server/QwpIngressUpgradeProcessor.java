@@ -478,10 +478,9 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // Resolve durable-ack tier negotiation before sizing the 101 response,
         // since the X-QWP-Durable-Ack confirmation header affects the response
         // size. An opted-in client whose requested tier set this server cannot
-        // grant in full (registry disabled entirely, or a tier the registry
-        // does not offer) receives a 101 with NO confirmation header at all --
-        // fail-loud, so the client can react instead of waiting forever for
-        // durable-ack frames that will never arrive.
+        // grant in full (registry disabled, or a tier the registry does not
+        // offer) receives a 101 without the confirmation header, so it can fail
+        // at once instead of waiting for durable-ack frames that never arrive.
         Utf8Sequence durableAckHeader = requestHeader.getHeader(
                 QwpIngressHttpProcessor.HEADER_X_QWP_REQUEST_DURABLE_ACK);
         boolean durableAckWebSocketProtocolRequested = QwpIngressHttpProcessor.containsWebSocketProtocol(
@@ -490,10 +489,9 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         int requestedTiers = DurabilityTier.fromHeaderValue(durableAckHeader);
         if (durableAckWebSocketProtocolRequested) {
             // The browser subprotocol token carries no tier parameter, so it
-            // requests exactly what the legacy "true" header requests:
-            // REPLICATED, confirmed with the historical "enabled" token. A
-            // browser therefore cannot ask for the weaker "local" tier. When
-            // both carriers arrive, the requested sets combine.
+            // requests what the legacy "true" header requests: REPLICATED,
+            // confirmed with the "enabled" token. A browser cannot ask for the
+            // "local" tier. When both carriers arrive, the requested sets combine.
             requestedTiers |= DurabilityTier.REPLICATED | DurabilityTier.LEGACY_TRUE;
         }
         DurableAckRegistry ackRegistry = engine.getDurableAckRegistry();
@@ -501,20 +499,18 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         if (requestedTiers == DurabilityTier.NONE || !ackRegistry.isEnabled()) {
             grantedTiers = DurabilityTier.NONE;
         } else {
-            // All-or-nothing: grant the full requested set, or nothing. Never
-            // grant a subset -- a client that asked for "replicated" must not
-            // be silently downgraded to a local-only guarantee. The legacy
-            // "true" request means REPLICATED (its shipped meaning), so an OSS
-            // server denies it, exactly as released servers do.
+            // All or nothing: grant the full requested set or nothing, so a
+            // client that asked for "replicated" is never downgraded to a
+            // local-only guarantee. The legacy "true" request means REPLICATED,
+            // so an OSS server denies it, as released servers do.
             grantedTiers = ackRegistry.isTierSetAvailable(requestedTiers & DurabilityTier.TIERS_MASK)
                     ? requestedTiers
                     : DurabilityTier.NONE;
         }
         boolean durableAckEnabled = grantedTiers != DurabilityTier.NONE;
         // Echo the granted set ("local", "replicated" or "local,replicated");
-        // a legacy "true" grant echoes the historical "enabled" token so
-        // released clients see a byte-identical response. Omit the header
-        // entirely when nothing was granted.
+        // a legacy "true" grant echoes "enabled", the token released clients
+        // expect. Omit the header when nothing is granted.
         Utf8Sequence durableAckConfirmToken = DurabilityTier.responseToken(grantedTiers);
         // Echo the subprotocol whenever it was offered, enabled or not. The
         // token confirms the browser negotiation dialect, NOT the capability:
@@ -2680,14 +2676,13 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // frontier runs ahead of the replicated one, so its progress frame is
         // the earlier signal. A blocked send parks with the stream marker set
         // (see setSendingLocalDurableAck); the RESUME_DURABLE_ACK continuation
-        // re-enters trySendDurableAck, which re-collects both streams
-        // idempotently and sends whatever remains.
-        // KNOWN GAP (Ent follow-up): the composite RESUME_DURABLE_ACK_THEN_*
-        // continuations complete only the parked frame. A parked LOCAL frame
-        // with a close deferred behind it would resume into the close without
-        // the final primary (replicated) ack. OSS cannot grant both tiers, so
-        // this path is unreachable until Ent enables LOCAL|REPLICATED grants;
-        // the Ent change must extend those continuations.
+        // re-enters trySendDurableAck, which re-collects both streams and sends
+        // whatever remains.
+        // Limitation: the composite RESUME_DURABLE_ACK_THEN_* continuations
+        // complete only the parked frame, so a parked LOCAL frame with a close
+        // deferred behind it would close without the final replicated ack. OSS
+        // cannot grant both tiers; Enterprise must extend those continuations
+        // before it grants LOCAL|REPLICATED.
         CharSequenceLongHashMap localProgress = state.getLocalDurableProgressSnapshot();
         if (localProgress.size() > 0) {
             state.setSendingLocalDurableAck(true);

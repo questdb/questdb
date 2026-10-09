@@ -206,24 +206,18 @@ public interface CairoConfiguration {
     int getCommitMode();
 
     /**
-     * Minimum interval, in milliseconds, between adaptive durable epochs for a single table. Under
-     * {@link CommitMode#ADAPTIVE} the apply worker fires a durable epoch
-     * ({@link TableWriter#advanceDurableEpoch(long)}) at most once per this interval per table, right after an apply
-     * batch commits while it still holds the writer. {@code 0} fires on every apply batch.
+     * Minimum interval, in milliseconds, between durable epochs of one table under {@link CommitMode#ADAPTIVE}.
+     * The apply worker advances the epoch ({@link TableWriter#advanceDurableEpoch(long)}) at most once per
+     * interval per table, right after an apply batch commits while it still holds the writer. {@code 0} advances
+     * it on every apply batch.
      *
-     * <p>A NEGATIVE value DISABLES adaptive epochs entirely (including the {@link #getAdaptiveEpochMaxRows()}
-     * row cap). This is NOT a routine opt-out: with no epoch the {@code WalPurgeJob} retention floor is gone,
-     * so <b>WAL retention is unbounded</b> (the WAL below the frontier is never purged and grows with ingest)
-     * and <b>recovery falls back to full WAL replay from the base</b> (boot time grows with the retained WAL).
-     * Use only as a deliberate operator opt-out / test isolation.
+     * <p>A negative value disables adaptive epochs, including the {@link #getAdaptiveEpochMaxRows()} cap. With no
+     * epoch there is no {@code WalPurgeJob} retention floor: the WAL is never purged and grows with ingest, and
+     * recovery replays the whole WAL. It is a deliberate opt-out for operators and tests.
      *
-     * <p><b>Intentional default divergence (not a bug):</b> this interface default is {@code 1000} ms — the
-     * value used by embedded {@code CairoConfiguration}s and tests — whereas the SERVER default (the
-     * {@code cairo.adaptive.epoch.interval} property in {@code PropServerConfiguration}) is {@code 60000} ms.
-     * The server can afford the longer interval because {@link #getAdaptiveEpochMaxRows()} does the
-     * safety-bounding under load (an epoch also fires once the un-epoched applied-row backlog hits the cap),
-     * so the interval only has to bound the IDLE case; embedded/test configs keep the shorter 1000 ms backstop.
-     * See {@code docs/adaptive-commit-mode.md} §6 ("Why the interval could move from 1000 ms to 60000 ms").
+     * <p>This default (1000 ms) serves embedded configurations and tests. The server default of
+     * {@code cairo.adaptive.epoch.interval} is 60000 ms: {@link #getAdaptiveEpochMaxRows()} bounds the backlog
+     * under load, so the interval only has to bound the idle case.
      *
      * @return the minimum per-table durable-epoch interval in milliseconds; negative disables epochs
      */
@@ -232,8 +226,8 @@ public interface CairoConfiguration {
     }
 
     /**
-     * The maximum rows applied to a table since its last durable epoch before an epoch is FORCED,
-     * independent of {@link #getAdaptiveEpochIntervalMs()}. Bounds both post-epoch WAL retention (the
+     * The maximum rows applied to a table since its last durable epoch before the apply worker advances the
+     * epoch, independent of {@link #getAdaptiveEpochIntervalMs()}. Bounds both post-epoch WAL retention (the
      * {@code WalPurgeJob} floor is the epoch) and post-crash recovery-replay lag, so the interval can be
      * long without either growing unbounded. {@code <= 0} disables the cap (interval-only cadence).
      *
@@ -244,39 +238,29 @@ public interface CairoConfiguration {
     }
 
     /**
-     * The adaptive GROUP-COMMIT window in MICROSECONDS (the RPO knob,
-     * {@code cairo.adaptive.commit.group.window}). Default {@code 50_000} (50ms): under
-     * {@link CommitMode#ADAPTIVE}, {@code commit0} first makes the writer-private segment/events
-     * durable, then returns after the shared sequencer record is page-cache visible but not yet
-     * device-durable. The shared sequencer fdatasync is BATCHED across commits within this window —
-     * bounded to {@code <= W} even when commits stop, by the background flusher in
-     * {@code WalPurgeJob}. A crash loses only commits whose batch fdatasync had not completed (RPO
-     * {@code <= W}); a torn tail is handled by the integrity CRCs + recovery frontier. {@code
-     * localDurableSeqTxn} (the durable-ack frontier) advances ONLY when the sequencer batch fdatasync
-     * completes, so a durable-ack'd txn always survives a crash.
+     * The adaptive group-commit window in microseconds ({@code cairo.adaptive.commit.group.window}). Under
+     * {@link CommitMode#ADAPTIVE}, {@code commit0} makes the writer's own segment files durable, then returns
+     * once the shared sequencer record is in the page cache. The sequencer fdatasync is batched across the
+     * commits within the window, and the {@code WalPurgeJob} flusher bounds it to the window when commits stop.
+     * A crash loses only commits whose batch fdatasync had not completed. {@code localDurableSeqTxn}, the
+     * durable-ack frontier, advances only when that fdatasync completes, so a durably acknowledged txn
+     * survives a crash.
      *
-     * <p>Set {@code 0} to keep today's fully synchronous fsync-before-return instead: every acked
-     * WAL commit is fdatasync-durable before {@code commit0} returns (zero loss), at
-     * {@code sync}-class per-commit latency.
+     * <p>{@code 0} fdatasyncs each commit before {@code commit0} returns: no loss, at {@code sync} latency. A
+     * negative value counts as {@code 0}. Other modes ignore the setting. The mat-view refresh WAL
+     * ({@link io.questdb.cairo.wal.ViewWalWriter}) fdatasyncs every commit regardless.
      *
-     * <p>Has effect only under ADAPTIVE; other modes ignore it. A negative value is treated as {@code 0}.
-     * Note: mat-view refresh WAL ({@link io.questdb.cairo.wal.ViewWalWriter}) is exempt from this setting
-     * and keeps a per-commit fdatasync (strictly more durable; mat-view refresh has its own flush cadence).
-     *
-     * @return the adaptive group-commit window in microseconds; default {@code 50_000} (50ms,
-     * bounded-RPO batching); {@code 0} = synchronous, zero-loss
+     * @return the group-commit window in microseconds; {@code 0} commits synchronously
      */
     default long getAdaptiveCommitGroupWindowUs() {
         return 50_000;
     }
 
     /**
-     * Whether the adaptive durable-epoch RECOVERY ROLL-FORWARD runs at engine startup (Plan 3 Task C).
-     * When {@code true} (default) {@link RecoveryCoordinator} rewinds each adaptive WAL table with a
-     * durable epoch to its {@code _txn.epoch}/{@code _cv.epoch} cut before the boot WAL apply re-derives
-     * the rest. A negative-control test hook; setting it {@code false} makes startup fail closed when
-     * an adaptive table is encountered, rather than exposing materialized state that may be torn ahead
-     * of the last epoch. It has no effect when every table is non-adaptive.
+     * Whether startup recovery ({@link RecoveryCoordinator}) restores each WAL table that has a save point
+     * from it, before WAL apply replays the transactions after it. When {@code false}, startup refuses a table
+     * that has a save point rather than expose applied state that may be torn. It exists for tests and has no
+     * effect on tables without a save point.
      *
      * @return {@code true} to run the adaptive epoch roll-forward on startup
      */
@@ -286,8 +270,8 @@ public interface CairoConfiguration {
 
     /**
      * Whether a clean {@link io.questdb.cairo.TableWriter} close flushes a final durable epoch over any
-     * committed-but-un-epoched tail (ADAPTIVE only). When {@code true} (default), a graceful close --
-     * idle-eviction or shutdown -- advances the durable epoch to the committed frontier, so a restart
+     * committed tail the last epoch does not cover (ADAPTIVE only). When {@code true} (default), a graceful
+     * close, on idle eviction or shutdown, advances the durable epoch to the committed frontier, so a restart
      * lands there with nothing to roll forward. When {@code false}, the tail is left for the next boot's
      * idempotent WAL replay, bounded by the epoch cadence ({@link #getAdaptiveEpochIntervalMs()} /
      * {@link #getAdaptiveEpochMaxRows()}). No effect under non-ADAPTIVE commit modes.
@@ -1285,19 +1269,13 @@ public interface CairoConfiguration {
     int getWriterTickRowsCountMod();
 
     /**
-     * Governs the adaptive durable-epoch materialized-state column flush strategy (batched
-     * {@code syncfs} vs per-file {@code msync}+{@code syncfs}); fast_commit-aware. When
-     * {@code true} (the default), an adaptive durable-epoch flush batches the per-column device
-     * flushes into ~one (msync-async + sync_file_range + a single {@code _cv} fsync). When
-     * {@code false}, it falls back to the proven per-file {@code msync(MS_SYNC)} baseline —
-     * slower, but durable on every filesystem.
+     * Whether the adaptive durable epoch batches its column flushes (start writeback of every column, drain
+     * it, then one {@code syncfs}) instead of flushing each file with {@code msync(MS_SYNC)}, which is slower
+     * but durable on every filesystem. Controlled by {@code cairo.adaptive.epoch.column.sync.batched}.
      *
-     * <p>This is the operator override / safety valve, controlled by
-     * {@code cairo.adaptive.epoch.column.sync.batched} (default {@code true}). The production
-     * configuration ANDs this property with a fast_commit check (see {@link FastCommitCheck}):
-     * the batched path is disabled when the DB-root ext4 filesystem has {@code fast_commit}
-     * enabled, where the batched path's within-page durability is not guaranteed. The property
-     * remains the reliable control when detection is {@link FastCommitCheck#UNKNOWN}.
+     * <p>The server configuration ANDs the property with {@link FastCommitCheck}: the batched path is off when
+     * the db root is on ext4 with {@code fast_commit}, where its within-page durability is not guaranteed. The
+     * property remains the control when detection returns {@link FastCommitCheck#UNKNOWN}.
      *
      * @return {@code true} if the batched adaptive durable-epoch column flush should be used
      */
@@ -1315,17 +1293,16 @@ public interface CairoConfiguration {
     /**
      * Whether an ADAPTIVE WAL commit drains writeback across its whole segment before taking barriers.
      * <p>
-     * The commit already msyncs every column and {@code _event} file to the page cache and then
-     * {@code fdatasync}s each one. Those fdatasyncs each do writeback AND a journal force, serially. This
-     * inserts one {@code sync_file_range(WRITE|WAIT_AFTER)} pass between the two, so the device writes every
-     * file back concurrently and the fdatasyncs that follow are left with little more than the journal
-     * force. Measured on XFS/NVMe, 13 files at the real commit size: 2.5 ms -> 1.7 ms.
-     *
-     * <p>Purely ADVISORY: {@code sync_file_range} journals NO metadata, so it can never be the barrier --
-     * every file still gets its own {@code fdatasync}, which is what journals the extent conversions an
-     * {@code ftruncate}-preallocated mmap append creates. Relying on it as a barrier is the documented
-     * ext4 data-loss trap. Because it is advisory, a filesystem where it does nothing (ZFS, gated by
-     * {@link io.questdb.std.FilesFacade#isSyncFileRangeEffective(io.questdb.std.str.Utf8Sequence)}) simply loses the speedup.
+     * The commit msyncs every column and {@code _event} file to the page cache and then {@code fdatasync}s
+     * each one, and each fdatasync does writeback and a journal force serially. One
+     * {@code sync_file_range(WRITE|WAIT_AFTER)} pass between the two lets the device write all files back
+     * concurrently, which leaves the fdatasyncs little more than the journal force.
+     * <p>
+     * The pass is advisory: {@code sync_file_range} journals no metadata, so it is never the barrier. Every
+     * file still gets its own {@code fdatasync}, which journals the extent conversions of an
+     * {@code ftruncate}-preallocated mmap append. Where the call does nothing (ZFS, see
+     * {@link io.questdb.std.FilesFacade#isSyncFileRangeEffective(io.questdb.std.str.Utf8Sequence)}) the commit
+     * only loses the speedup.
      *
      * @return {@code true} if the drain pass should run
      */

@@ -73,9 +73,8 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN = PARTITIONS_SLOT_OFFSET_FORMAT + 1;
     private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
-    // Retry attempts that must pass with NO version change before a torn live area is called terminal
-    // rather than contention. Must be a power of 2. Sub-millisecond in practice, so the diagnosis is
-    // effectively immediate, yet far longer than any single commit's publish window.
+    // Retries that must pass with no version change before a torn live area counts as terminal rather
+    // than contention. A power of 2. Far longer than any commit's publish window, yet still a short wait.
     private static final int TORN_DIAGNOSIS_WINDOW = 1 << 16;
     private final BitSet activeColumns = new BitSet();
     private final MillisecondClock clock;
@@ -576,7 +575,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
-     * Name txn of a partition, i.e. which VERSION of the directory this reader sees. The scrub needs it
+     * Name txn of a partition, that is, which version of the directory this reader sees. The scrub needs it
      * to address exactly the version its reader has pinned.
      */
     public long getPartitionNameTxnByIndex(int partitionIndex) {
@@ -1501,12 +1500,11 @@ public class TableReader implements Closeable, SymbolTableSource {
                         path.trimTo(rootLen);
                         pathGenParquetPartition(partitionIndex, partitionNameTxn);
                         if (ff.exists(path.$())) {
-                            // Truncated-file guard: the _pm we just read says the data file is
-                            // parquetFileSize bytes, so a SHORTER file on disk is a torn/partial
-                            // write, not a legitimate state. Fail loudly rather than mmap past the
-                            // end. Deliberately INSIDE the exists() branch: a remote partition may
-                            // legitimately have no local data file (length -1), and that case must
-                            // reach the stubbing paths below rather than be reported as "too short".
+                            // Truncated-file guard: the _pm just read says the data file is
+                            // parquetFileSize bytes, so a shorter file on disk is a torn write. Fail
+                            // rather than mmap past its end. The check sits inside the exists() branch
+                            // because a remote partition may have no local data file (length -1), and
+                            // that case must reach the stubbing paths below.
                             final long parquetActualLength = ff.length(path.$());
                             if (parquetFileSize > parquetActualLength) {
                                 throw CairoException.critical(0)
@@ -1689,17 +1687,11 @@ public class TableReader implements Closeable, SymbolTableSource {
             // This is unlucky, sequences have changed while we were reading transaction data
             // We must discard and try again
             count++;
-            // A torn live area is TERMINAL: the fallback record acquireTxn keeps refusing carries the
-            // previous version, and no amount of waiting repairs that. The deadline below used to be the
-            // only way out, which makes the diagnosis unreachable whenever the clock cannot advance — a
-            // frozen test clock turned a millisecond error into a 20-minute CI timeout.
-            //
-            // Telling it apart from contention needs more than one sample: unsafeIsLiveAreaTorn only
-            // brackets its OWN two version reads, so under a commit storm it can report on a window this
-            // loop would otherwise have ridden out (it failed testAddColumnPartitionConcurrentCreateReader
-            // when consulted eagerly). A live writer always publishes by bumping the version, so require
-            // the version to be UNCHANGED across a whole window of attempts: then there is no writer to
-            // wait for, and a torn area is the answer rather than a guess.
+            // A torn live area is terminal: the fallback record that acquireTxn keeps refusing carries the
+            // previous version, and waiting does not repair it. One sample cannot tell it from contention,
+            // because unsafeIsLiveAreaTorn brackets only its own two version reads. A live writer always
+            // publishes by bumping the version, so the area counts as torn only when the version stays
+            // unchanged across a whole window of retries. This check does not need the clock to advance.
             if ((count & (TORN_DIAGNOSIS_WINDOW - 1)) == 0) {
                 final long versionNow = txFile.unsafeReadVersion();
                 if (versionNow == tornWindowVersion && txFile.unsafeIsLiveAreaTorn()) {
@@ -1708,13 +1700,12 @@ public class TableReader implements Closeable, SymbolTableSource {
                 tornWindowVersion = versionNow;
             }
             if (clock.getTicks() > deadline) {
-                // A reader that cannot advance is normally contention. It is not when the live _txn area is
-                // torn: TxReader detects the bad checksum and correctly falls back to the intact previous
-                // A/B area, but that area carries the previous txn, which a live scoreboard refuses — so
-                // this loop spins out. Reporting a timeout then sends an operator hunting for reader
-                // contention when what they have is a corrupt _txn. Name it. Diagnosis runs only here, on
-                // a read that has already failed, so the healthy path pays nothing. (Reached when the load
-                // itself keeps failing, rather than succeeding onto the fallback handled above.)
+                // A reader that cannot advance is normally contention, but not when the live _txn area is
+                // torn: TxReader falls back to the intact previous A/B area, whose txn a live scoreboard
+                // refuses, so this loop spins out. Report the torn _txn by name rather than a timeout. The
+                // check runs only on a read that has already failed, so the healthy path pays nothing. This
+                // branch covers a load that keeps failing; the window check above covers one that succeeds
+                // onto the fallback.
                 if (txFile.unsafeIsLiveAreaTorn()) {
                     throw tornLiveAreaException();
                 }
@@ -2061,13 +2052,13 @@ public class TableReader implements Closeable, SymbolTableSource {
             return true;
         }
         // A duration, unlike the absolute deadline readTxnSlow() and reloadMetadata() take. A consistent _cv
-        // that lands BEHIND the version _txn names is terminal - a torn live area or a file that lags the
+        // that lands behind the version _txn names is terminal - a torn live area or a file that lags the
         // transaction - and the reader throws it by name in there, without waiting on any clock.
         columnVersionReader.readSafe(clock, configuration.getSpinLockTimeout(), columnVersion);
         if (columnVersionReader.getVersion() == columnVersion) {
             return true;
         }
-        // _cv is AHEAD of the _txn record we loaded: a commit in flight has published _cv but not yet _txn.
+        // _cv is ahead of the _txn record we loaded: a commit in flight has published _cv but not yet _txn.
         // That one is worth waiting for, on this reload's deadline, then _txn is re-read.
         if (clock.getTicks() > deadline) {
             throw CairoException.critical(0).put("Column Version read timeout [src=reader, table=").put(tableToken)

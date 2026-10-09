@@ -247,19 +247,17 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         LPSZ path2 = Path.getThreadLocal2(configuration.getDbRoot())
                 .concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion + 1).$();
         // renameDurable, not rename: the fsyncDirDurable below is what publishes this new name, and it is a
-        // no-op on a restricted (Windows) file system -- so there the durable rename IS the barrier.
+        // no-op on a restricted (Windows) file system, where the durable rename is the barrier.
         if (ff.renameDurable(path.$(), path2) == Files.FILES_RENAME_OK) {
             LOG.info().$("compacted tables file [path=").$(path2).I$();
             lastFileVersion++;
             currentOffset = newAppendOffset;
-            // RENAME != PUBLISH. The rename above and the unlink below are two namespace changes in the same
-            // directory, and neither is durable until the directory itself is fsynced -- so a power loss
-            // between them may persist the unlink while losing the new version's dentry, leaving NO registry
-            // file. That is not a recoverable-by-retry state: the registry is the pointer store every name
-            // resolves through, and the directory-scan fallback cannot tell a dropped-but-unpurged table from
-            // a live one, so dropped tables come back. Fsync the db root first; after it at least one version
-            // is durably present. Fail-stop by design (see TableUtils.fsyncDirDurable): if this barrier
-            // cannot be taken, we must not proceed to unlink the only durable copy.
+            // The rename above and the unlink below are two namespace changes in one directory, and neither is
+            // durable until the directory is fsynced, so a power loss between them may persist the unlink and
+            // lose the new version's entry, leaving no registry file. Every name resolves through the registry,
+            // and the directory-scan fallback cannot tell a dropped but unpurged table from a live one, so
+            // dropped tables would come back. Fsync the db root first, so at least one version is durable.
+            // Fail-stop (see TableUtils.fsyncDirDurable): without this barrier the unlink must not run.
             TableUtils.fsyncDirDurable(ff, path.trimTo(pathRootLen).$());
             // best effort to remove old files, but we don't care if it fails
             path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(lastFileVersion - 1);

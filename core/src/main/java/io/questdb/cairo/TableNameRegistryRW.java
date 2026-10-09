@@ -148,7 +148,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             final String dbLogName = engine.getConfiguration().getDbLogName();
             newToken = new TableToken(tableName, newDirName, dbLogName, newTableId, type, isWal, isSystem, isProtected, isPublic);
 
-            // Metadata cache first (unsafe, can throw) — mirrors registerName ordering.
+            // Metadata cache first (unsafe, can throw), in registerName's order.
             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.dropTable(oldToken);
                 metadataCacheSwapped = true;
@@ -165,20 +165,17 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             dirNameToTableTokenMap.put(oldToken.getDirName(), ReverseTableMapItem.ofDropped(oldToken));
             dirNameToTableTokenMap.put(newDirName, ReverseTableMapItem.of(newToken));
 
-            // Publish: the logical name now resolves to the new dir. Queryable from this moment.
+            // Publish: from here the name resolves to the new dir and the table is queryable.
             published = tableNameToTableTokenMap.replace(tableName, LOCKED_DROP_TOKEN, newToken);
             assert published;
             return newToken;
         } finally {
             if (!published && !durablyCommitted) {
-                // Mid-swap failure BEFORE the durable commit: the on-disk registry still describes the old
-                // table, so every in-memory effect has to be undone, newest first.
-                //
-                // The metadata cache matters as much as the name: dropTable(oldToken) has already run by the
-                // time hydrateTable(newToken) can throw, so restoring only the name would leave a registered,
-                // queryable table with no cache entry. Rolling the cache back is best-effort and must never
-                // mask the original failure, hence the swallow — the name restore below is what keeps the
-                // table reachable either way, and a missing cache entry re-hydrates on next access.
+                // A failure before the durable commit: the registry on disk still describes the old table, so
+                // undo every in-memory effect, newest first. dropTable(oldToken) has run by the time
+                // hydrateTable(newToken) can throw, so the metadata cache is rolled back too. That rollback is
+                // best-effort and must not mask the original failure: the name restore below keeps the table
+                // resolvable, and a missing cache entry re-hydrates on next access.
                 if (metadataCacheSwapped) {
                     try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                         if (newToken != null) {
@@ -195,9 +192,9 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
                 // (mirrors registerName's finally-unlock intent).
                 tableNameToTableTokenMap.replace(tableName, LOCKED_DROP_TOKEN, oldToken);
             }
-            // A failure AFTER logSwapTable is deliberately NOT rolled back: the durable registry already
-            // reads "old dropped, new registered", so resurrecting the old name in memory would contradict
-            // what the next reload() produces. Only the publish replace() remains, and it cannot fail while
+            // A failure after logSwapTable is not rolled back: the durable registry already reads "old
+            // dropped, new registered", and restoring the old name in memory would contradict what the next
+            // reload() produces. Only the publish replace() remains, and it cannot fail while
             // this thread holds LOCKED_DROP_TOKEN.
         }
     }

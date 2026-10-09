@@ -47,7 +47,7 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolTenant<TableReaderMetadataTenantImpl>, Closeable {
     private static final Log LOG = LogFactory.getLog(TableReaderMetadataTenantImpl.class);
-    // Retry attempts that must pass with NO version change before a torn live area is called terminal
+    // Retries that must pass with no version change before a torn live area is called terminal
     // rather than contention. Must be a power of 2. Mirrors TableReader.TORN_DIAGNOSIS_WINDOW.
     private static final int TORN_DIAGNOSIS_WINDOW = 1 << 16;
     private final MillisecondClock clock;
@@ -212,11 +212,10 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
             // This is unlucky, sequences have changed while we were reading transaction data
             // We must discard and try again
             count++;
-            // Same terminal case, and the same discriminator, as TableReader.readTxnSlow: the load lands on
-            // the A/B fallback whose version trails the file's, acquireTxn can never accept it, and the
-            // deadline that used to end this spin cannot arrive at all when the clock is frozen. A live
-            // writer always publishes by bumping the version, so only call it torn once a whole window of
-            // attempts has passed with the version unchanged.
+            // Same terminal case and discriminator as TableReader.readTxnSlow: the load lands on the A/B
+            // fallback whose version trails the file's, which acquireTxn never accepts, and a frozen clock
+            // never reaches the deadline. A live writer always publishes by bumping the version, so call the
+            // area torn only once a whole window of retries passes with the version unchanged.
             if ((count & (TORN_DIAGNOSIS_WINDOW - 1)) == 0) {
                 final long versionNow = txFile.unsafeReadVersion();
                 if (versionNow == tornWindowVersion && txFile.unsafeIsLiveAreaTorn()) {
@@ -225,10 +224,9 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
                 tornWindowVersion = versionNow;
             }
             if (clock.getTicks() > deadline) {
-                // Same diagnosis as TableReader.readTxnSlow: a torn live _txn area leaves this loop spinning
-                // on the intact-but-older fallback record, which from here is indistinguishable from
-                // contention. Name the corruption rather than blaming the load. (Reached when the load
-                // itself keeps failing, rather than succeeding onto the fallback handled above.)
+                // Same diagnosis as TableReader.readTxnSlow, for a load that keeps failing: a torn live _txn
+                // area leaves this loop spinning on the older fallback record. Name the corruption rather than
+                // report contention.
                 if (txFile.unsafeIsLiveAreaTorn()) {
                     throw tornLiveAreaException();
                 }

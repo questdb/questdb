@@ -9170,17 +9170,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         } else {
                             incrementalRefresh(instance, lastSeqTxn, seqTxn, false);
                         }
-                        // Stamp the cadence with nowUs -- the instant this cycle READ the clock and
-                        // decided the flush was due -- not with a fresh read taken after the drain.
-                        // A fresh read charges the cadence for the drain's own duration, so FLUSH
-                        // EVERY 100ms with a 160ms drain actually flushes every 260ms: the interval
-                        // drifts by the work it is meant to schedule around. It also breaks outright
-                        // against a clock that jumps DURING the drain, which is how the frozen test
-                        // clock in LiveViewReplicationTest#testReplicateLiveViewOverDedupBase wedged
-                        // a view forever: the drain straddled the test's clock advance, the trailing
-                        // read stamped the POST-advance instant, and every later cycle then computed
-                        // nowUs - lastFlushUs == 0 against a clock that never moves again, so
-                        // flushDue stayed false and the view never processed another base commit.
+                        // Stamp the cadence with nowUs, the instant this cycle read the clock and
+                        // found the flush due, not with a fresh read taken after the drain. A
+                        // fresh read charges the cadence for the drain's own duration, so the interval
+                        // drifts by the work it schedules around. With a clock that jumps during the
+                        // drain and then stands still, a fresh read would also keep
+                        // nowUs - lastFlushUs at 0, and the view would never flush again.
                         instance.setLastFlushTimeUs(nowUs);
                     }
                 }

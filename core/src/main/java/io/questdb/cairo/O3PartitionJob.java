@@ -616,12 +616,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         isRewrite
                 );
 
-                // Data before metadata: fsync the parquet DATA file before the
+                // Data before metadata: fsync the parquet data file before the
                 // _pm header is published below, so a power loss cannot leave a
                 // committed _pm pointing at data-file bytes still in the page
-                // cache. Still required after master's two-barrier rework of
-                // commitParquetMeta: both of its barriers target _pm (footer,
-                // then header) and neither touches the data file.
+                // cache. Both barriers of commitParquetMeta target _pm (footer,
+                // then header), not the data file.
                 if (isSync) {
                     final long parquetNameTxn = isRewrite ? txn : srcNameTxn;
                     path.of(pathToTable);
@@ -639,11 +638,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // unchanged and a pinned reader can walk back to the committed
                 // footer (see commit_parquet_meta).
                 //
-                // isSync, NOT the instance-global mode master passed here: _pm is
-                // a STRUCTURAL site, so it stays eager under ADAPTIVE (never the
-                // apply-path lazy gate), but the mode it reads must be the writer's
-                // own grade -- a table held at SYNC pending adaptive enrolment still
-                // has to take the barrier here.
+                // isSync is the writer's own grade, not the instance-wide mode: _pm
+                // is a structural site, eager under ADAPTIVE, and a table held at
+                // SYNC until it enrols in adaptive still takes the barrier here.
                 partitionUpdater.commitParquetMeta(isSync);
             } catch (Throwable e) {
                 if (isRewrite) {
@@ -3704,13 +3701,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // entry would be undroppable, surfacing stale rows.
                         // No-op on BitmapIndexWriter.
                         indexWriter.setNextTxnAtSeal(tableWriter.getTxn() + 1L);
-                        // Publish the table's EFFECTIVE commit mode before either commit path below. These
-                        // writers come from TableWriter's o3BasketPool, so they are POOLED and reused, and
-                        // setCommitMode is not reset by of(): without setting it here the flush grade would
-                        // depend on whether this particular instance had previously passed through
-                        // O3CopyJob (which does set it). The pool is per-TableWriter so a stale value is
-                        // always the SAME table's mode and never wrong, but a durability gate must not vary
-                        // with pool reuse order.
+                        // Set the table's effective commit mode before either commit path below. These writers
+                        // come from TableWriter's o3BasketPool and of() does not reset the mode, so without this
+                        // the flush grade would depend on whether the pooled instance last passed through
+                        // O3CopyJob, which sets it.
                         indexWriter.setCommitMode(tableWriter.getEffectiveCommitMode());
                         if (IndexType.isPosting(indexType)) {
                             // commitDense may seal (spill-driven reseal), rotating the
