@@ -372,7 +372,7 @@ public class TransitiveFilterTest extends AbstractCairoTest {
                                     Hash Join Light
                                       condition: r.k=l.k
                                         Async JIT Filter workers: 1
-                                          filter: (k=1 and k=2)
+                                          filter: (k=2 and k=1)
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: lp_trans_l
@@ -434,7 +434,7 @@ public class TransitiveFilterTest extends AbstractCairoTest {
                                         Hash Join Light
                                           condition: r.k=l.k
                                             Async JIT Filter workers: 1
-                                              filter: (k=1 and k=2)
+                                              filter: (k=2 and k=1)
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: lp_trans_l

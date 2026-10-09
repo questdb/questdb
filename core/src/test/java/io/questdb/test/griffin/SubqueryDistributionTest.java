@@ -28,8 +28,6 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.engine.QueryProgress;
-import io.questdb.griffin.engine.SubqueryScopeRecordCursorFactory;
 import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -37,14 +35,13 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * An uncorrelated sub-query is evaluated at most once per execution and all its consumers read that one value: a
- * sub-query the optimiser distributes into several places shares its rows, a non-deterministic sub-query yields the
- * same value everywhere, every execution of a cached factory evaluates it again, and a sub-query with a single
- * consumer keeps streaming.
+ * Every consumer of a sub-query evaluates its own copy of it, so the optimiser distributes a predicate over a
+ * sub-query into several places only when the sub-query's plan proves that every evaluation within one execution
+ * yields the same rows; a predicate over any other sub-query keeps a single consumer.
  */
-public class SharedSubqueryEvaluationTest extends AbstractCairoTest {
-    private static final String SHARED_BOUND = "SELECT ts FROM (SELECT ts FROM a UNION ALL SELECT ts FROM b) WHERE ts > (SELECT max(ts) FROM c)";
-    private static final String SHARED_BOUND_ROWS = """
+public class SubqueryDistributionTest extends AbstractCairoTest {
+    private static final String DISTRIBUTED_BOUND = "SELECT ts FROM (SELECT ts FROM a UNION ALL SELECT ts FROM b) WHERE ts > (SELECT max(ts) FROM c)";
+    private static final String DISTRIBUTED_BOUND_ROWS = """
             ts
             1970-01-01T00:00:00.000026Z
             1970-01-01T00:00:00.000027Z
@@ -59,7 +56,7 @@ public class SharedSubqueryEvaluationTest extends AbstractCairoTest {
             """;
 
     @Test
-    public void testCachedFactoryEvaluatesSharedSubqueryOnEveryExecution() throws Exception {
+    public void testCachedFactoryEvaluatesDistributedSubqueryOnEveryExecution() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             assertQuery("SELECT count() FROM (SELECT ts FROM a UNION ALL SELECT ts FROM b) WHERE ts > (SELECT max(ts) FROM c)")
@@ -81,21 +78,7 @@ public class SharedSubqueryEvaluationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCursorClosedEarlyReleasesSharedRows() throws Exception {
-        assertMemoryLeak(() -> {
-            createTables();
-            try (
-                    RecordCursorFactory factory = select(SHARED_BOUND);
-                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-            ) {
-                Assert.assertTrue(cursor.hasNext());
-            }
-            assertQuery(SHARED_BOUND).noLeakCheck().noRandomAccess().returns(SHARED_BOUND_ROWS);
-        });
-    }
-
-    @Test
-    public void testFailureDuringSharedEvaluation() throws Exception {
+    public void testFailureDuringDistributedEvaluation() throws Exception {
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         assertMemoryLeak(() -> {
             createTables();
@@ -110,26 +93,14 @@ public class SharedSubqueryEvaluationTest extends AbstractCairoTest {
                     TestFaultFunctionFactory.disarm();
                 }
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    assertCursor(SHARED_BOUND_ROWS, cursor, factory.getMetadata(), true);
+                    assertCursor(DISTRIBUTED_BOUND_ROWS, cursor, factory.getMetadata(), true);
                 }
             }
         });
     }
 
     @Test
-    public void testMemoryLimitDuringSharedEvaluation() throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 1024);
-        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, 1);
-        assertMemoryLeak(() -> {
-            createTables();
-            assertQuery("SELECT ts FROM (SELECT ts FROM a UNION ALL SELECT ts FROM b) WHERE ts > (SELECT x::TIMESTAMP FROM long_sequence(10_000))")
-                    .noLeakCheck()
-                    .failsWith("breached");
-        });
-    }
-
-    @Test
-    public void testNestedSubqueryOfSharedSubquery() throws Exception {
+    public void testNestedSubqueryOfDistributedSubquery() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             assertQuery("SELECT count() FROM (SELECT ts FROM a UNION ALL SELECT ts FROM b) "
@@ -145,14 +116,14 @@ public class SharedSubqueryEvaluationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonDeterministicBoundDistributedIntoParallelFilters() throws Exception {
+    public void testNonDeterministicBoundIsNotDistributedIntoParallelFilters() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             final String sql = "SELECT count_distinct(ts) distinct_ts, count() matched FROM (SELECT ts FROM a UNION ALL SELECT ts FROM b) "
                     + "WHERE ts::LONG = (SELECT rnd_long(1, 30, 0) FROM long_sequence(1))";
             assertQuery(sql)
                     .noLeakCheck()
-                    .assertsPlanContaining("Async Filter workers: 1", "Frame forward scan on: a", "Frame forward scan on: b");
+                    .assertsPlanNotContaining("Async Filter workers: 1\n");
             for (int i = 0; i < 10; i++) {
                 assertQuery(sql)
                         .noLeakCheck()
@@ -167,14 +138,14 @@ public class SharedSubqueryEvaluationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonDeterministicBoundDistributedIntoSetBranches() throws Exception {
+    public void testNonDeterministicBoundIsNotDistributedIntoSetBranches() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             final String sql = "SELECT count_distinct(ts) distinct_ts, count() matched FROM (SELECT ts FROM a UNION ALL SELECT ts FROM b) "
                     + "WHERE ts = (SELECT rnd_long(1, 30, 0)::TIMESTAMP FROM long_sequence(1))";
             assertQuery(sql)
                     .noLeakCheck()
-                    .assertsPlanContaining("Interval forward scan on: a", "Interval forward scan on: b");
+                    .assertsPlanNotContaining("Interval forward scan on: a", "Interval forward scan on: b");
             for (int i = 0; i < 10; i++) {
                 assertQuery(sql)
                         .noLeakCheck()
@@ -189,20 +160,18 @@ public class SharedSubqueryEvaluationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOnlyMultiConsumerSubqueriesShareRows() throws Exception {
+    public void testStableBoundIsDistributedIntoSetBranches() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            try (RecordCursorFactory factory = select(SHARED_BOUND)) {
-                Assert.assertTrue(unwrap(factory) instanceof SubqueryScopeRecordCursorFactory);
-            }
-            try (RecordCursorFactory factory = select("SELECT ts FROM a WHERE ts > (SELECT max(ts) FROM c)")) {
-                Assert.assertFalse(unwrap(factory) instanceof SubqueryScopeRecordCursorFactory);
-            }
+            assertQuery(DISTRIBUTED_BOUND)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Interval forward scan on: a", "Interval forward scan on: b");
+            assertQuery(DISTRIBUTED_BOUND).noLeakCheck().noRandomAccess().returns(DISTRIBUTED_BOUND_ROWS);
         });
     }
 
     @Test
-    public void testSharedSubqueryUnderGroupBy() throws Exception {
+    public void testSubqueryUnderGroupBy() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             assertQuery("SELECT s, count() FROM (SELECT s, ts FROM a UNION ALL SELECT s, ts FROM b) "
@@ -219,7 +188,7 @@ public class SharedSubqueryEvaluationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTopKOverParallelGroupBySubqueryIsDistributed() throws Exception {
+    public void testTopKOverParallelGroupBySubqueryIsNotDistributed() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             sqlExecutionContext.setParallelGroupByEnabled(true);
@@ -227,7 +196,7 @@ public class SharedSubqueryEvaluationTest extends AbstractCairoTest {
                     + "WHERE ts > (SELECT max(last_ts) FROM (SELECT s, max(ts) last_ts FROM a GROUP BY s ORDER BY last_ts LIMIT 2))";
             assertQuery(sql)
                     .noLeakCheck()
-                    .assertsPlanContaining("Interval forward scan on: a", "Interval forward scan on: b");
+                    .assertsPlanNotContaining("Interval forward scan on: a", "Interval forward scan on: b");
             assertQuery(sql)
                     .noLeakCheck()
                     .noRandomAccess()
@@ -246,9 +215,5 @@ public class SharedSubqueryEvaluationTest extends AbstractCairoTest {
         execute("INSERT INTO a SELECT ('S' || (x % 3))::SYMBOL, x, x::TIMESTAMP FROM long_sequence(30)");
         execute("INSERT INTO b SELECT ('S' || (x % 3))::SYMBOL, x, x::TIMESTAMP FROM long_sequence(30)");
         execute("INSERT INTO c VALUES (25::TIMESTAMP)");
-    }
-
-    private static RecordCursorFactory unwrap(RecordCursorFactory factory) {
-        return factory instanceof QueryProgress ? factory.getBaseFactory() : factory;
     }
 }

@@ -1273,7 +1273,7 @@ final class FilterPushdownPass implements Mutable {
         LogicalPlan input = scan;
         for (LogicalPlan filter = aggregate.getSharedSource().getInput(); filter != source; filter = filter.inputAt(0)) {
             final BoundExpression predicate = ((FilterPlan) filter).getPredicate();
-            if (LogicalPlans.readsOnly(predicate, mapping.getOutput())) {
+            if (LogicalPlans.isStableWithinExecution(predicate) && LogicalPlans.readsOnly(predicate, mapping.getOutput())) {
                 final FilterPlan copy = filters.next().of(input, context.getRewriter().copyRemappedColumns(predicate, mapping), predicate.getPosition());
                 copy.deriveOutput();
                 input = copy;
@@ -1300,14 +1300,6 @@ final class FilterPushdownPass implements Mutable {
             return;
         }
         final ObjList<JoinInput> ordered = join.getOrderedInputs();
-        if (ordered.size() == 0) {
-            assert join.getInputs().size() == 2;
-            ordered.addAll(join.getInputs());
-            final JoinInput slave = ordered.getQuick(1);
-            if (slave.getJoinType() == JoinKind.CROSS && slave.getMasterKeyColumnIds().size() > 0) {
-                slave.setJoinType(JoinKind.INNER);
-            }
-        }
         for (int i = 0, n = ordered.size(); i < n; i++) {
             final JoinInput step = ordered.getQuick(i);
             final BoundExpression keyFilter = step.getKeyFilter();

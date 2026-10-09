@@ -90,7 +90,7 @@ public class LogicalPlanPrinterTest extends AbstractCairoTest {
                                 columns: [sym, price]
                             INNER q
                               keys: [q.sym = t.sym]
-                              on: q.qty > t.price
+                              filter: q.qty > t.price
                               Scan
                                 table: quotes
                                 columns: [sym, qty]

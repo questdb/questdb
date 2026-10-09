@@ -117,6 +117,7 @@ public final class PlanVerifier {
     private OutputSchema aliasScope;
     private BoundExpression expressionRoot;
     private boolean isDependentStepAllowed;
+    private boolean isJoinUnordered;
     private LogicalPlan node;
     private String pass;
     private LogicalPlan root;
@@ -152,7 +153,15 @@ public final class PlanVerifier {
      * Verifies the binder's output, where a dependent join step still reads the inputs before it through outer columns.
      */
     public boolean verifyBound(LogicalPlan root) {
-        return check(root, "SqlBinder.bind", true);
+        return verifyBound(root, "SqlBinder.bind");
+    }
+
+    /**
+     * Verifies the output of a pass that runs before decorrelation, where a dependent join step still reads the inputs
+     * before it through outer columns.
+     */
+    public boolean verifyBound(LogicalPlan root, String pass) {
+        return check(root, pass, true);
     }
 
     private static int occurrences(BoundExpression tree, BoundExpression node) {
@@ -436,8 +445,22 @@ public final class PlanVerifier {
         }
         final ObjList<JoinInput> steps = ordered.size() > 0 ? ordered : inputs;
         joinScope.clear();
+        isJoinUnordered = join.getGraph() != null;
         for (int i = 0, n = steps.size(); i < n; i++) {
             joinStep(steps.getQuick(i));
+        }
+        if (isJoinUnordered) {
+            isJoinUnordered = false;
+            scope = joinScope;
+            for (int i = 0, n = steps.size(); i < n; i++) {
+                stepPredicates(steps.getQuick(i));
+            }
+            site = "join graph conjuncts";
+            final ObjList<BoundExpression> residuals = join.getGraph().getResiduals();
+            for (int i = 0, n = residuals.size(); i < n; i++) {
+                predicate(residuals.getQuick(i));
+            }
+            predicate(join.getGraph().getConstantFilter());
         }
         site = null;
         final OutputSchema output = join.getOutput();
@@ -451,7 +474,8 @@ public final class PlanVerifier {
             }
         }
         if (output.getTimestampIndex() >= 0
-                && output.getTimestampColumnId() != steps.getQuick(0).getSourceOutput().getTimestampColumnId()) {
+                && (join.getGraph() != null && !join.getGraph().isFirstInputLeading()
+                || output.getTimestampColumnId() != steps.getQuick(0).getSourceOutput().getTimestampColumnId())) {
             fail(JOIN_TIMESTAMP, output.getTimestampColumnId());
         }
         if (join.getFilterConjunctOrigins().size() != join.getFilterConjuncts().size()) {
@@ -524,12 +548,9 @@ public final class PlanVerifier {
         }
         joinScope.addColumnsFrom(source);
         scope = joinScope;
-        site = "ON residual";
-        predicate(step.getOnResidual());
-        site = "post-join filter";
-        predicate(step.getPostJoinFilter());
-        site = "key filter";
-        predicate(step.getKeyFilter());
+        if (!isJoinUnordered) {
+            stepPredicates(step);
+        }
         if (step.getOutput().getColumnCount() > 0 && !sameColumns(step.getOutput(), joinScope)) {
             fail(JOIN_SCOPE);
         }
@@ -733,6 +754,15 @@ public final class PlanVerifier {
         site = "sort keys";
         resolveAll(keys);
         forwards(sort, SORT_TIMESTAMP);
+    }
+
+    private void stepPredicates(JoinInput step) {
+        site = "ON residual";
+        predicate(step.getOnResidual());
+        site = "post-join filter";
+        predicate(step.getPostJoinFilter());
+        site = "key filter";
+        predicate(step.getKeyFilter());
     }
 
     private void timestampColumn(int columnId) {

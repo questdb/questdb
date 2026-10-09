@@ -87,7 +87,7 @@ public class JoinFilterPushdownTest extends AbstractCairoTest {
                             lid	rid
                             1	11
                             """,
-                    1, 1, true, false, false);
+                    1, 1, false, true, false);
             assertOptimised("SELECT l.id lid,r.id rid FROM lp_join_push_l l JOIN lp_join_push_r r "
                             + "ON l.k=r.k AND l.id>0 AND r.id>0 ORDER BY lid,rid", """
                             lid	rid

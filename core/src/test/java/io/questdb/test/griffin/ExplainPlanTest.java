@@ -5405,11 +5405,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             SelectedRecord
                                 Hash Left Outer Join Light
-                                  condition: related_event.id=e.last_event_id and related_event.entity_id=e.id
+                                  condition: related_event.entity_id=e.id and related_event.id=e.last_event_id
                                   symbolKeyJoin: true
                                   filter: related_event.event_type='terminal'
                                     Hash Left Outer Join Light
-                                      condition: decision_event.created_at=e.created_at and decision_event.entity_id=e.id
+                                      condition: decision_event.entity_id=e.id and decision_event.created_at=e.created_at
                                       symbolKeyJoin: true
                                       filter: decision_event.event_type='decision'
                                         DeferredSingleSymbolFilterPageFrame
@@ -5545,11 +5545,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             SelectedRecord
                                 Hash Left Outer Join Light
-                                  condition: related_event.id=e.last_event_id and related_event.entity_id=e.id
+                                  condition: related_event.entity_id=e.id and related_event.id=e.last_event_id
                                   symbolKeyJoin: true
                                   filter: related_event.event_type='terminal'
                                     Hash Left Outer Join Light
-                                      condition: decision_event.created_at=e.created_at and decision_event.entity_id=e.id
+                                      condition: decision_event.entity_id=e.id and decision_event.created_at=e.created_at
                                       symbolKeyJoin: true
                                       filter: decision_event.event_type='decision'
                                         DeferredSingleSymbolFilterPageFrame
@@ -7049,17 +7049,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Count
-                                Filter filter: T1.event<T2.event
-                                    Cross Join
-                                        Hash Join Light
-                                          condition: T3.created=T2.created
+                                Hash Join Light
+                                  condition: T3.created=T2.created
+                                    Filter filter: T1.event<T2.event
+                                        Cross Join
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: test
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: test
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: test
+                                    Hash
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: test

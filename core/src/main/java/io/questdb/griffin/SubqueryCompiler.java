@@ -45,8 +45,7 @@ interface SubqueryCompiler {
     RecordCursorFactory compileSubqueryFactory(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException;
 
     /**
-     * The factory one consumer of an optimised sub-query reads in the current generation scope; worker clones pass
-     * {@code isConsumer} false. The caller owns the factory.
+     * Generates a new factory of an optimised sub-query for one of its consumers; the caller owns the factory.
      */
-    RecordCursorFactory generateSubqueryConsumer(Subquery subquery, boolean isConsumer, SqlExecutionContext executionContext) throws SqlException;
+    RecordCursorFactory generateSubquery(Subquery subquery, SqlExecutionContext executionContext) throws SqlException;
 }

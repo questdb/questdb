@@ -1799,10 +1799,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             VirtualRecord
                               functions: [1]
                                 Hash Left Outer Join Light
-                                  condition: ep.WorkflowEventId=el.Id and ep.CreateDate=el.CreateDate
+                                  condition: ep.CreateDate=el.CreateDate and ep.WorkflowEventId=el.Id
                                   filter: ep.ActionTypeId=8
                                     Hash Left Outer Join Light
-                                      condition: ep0.WorkflowEventId=el.Id and ep0.CreateDate=el.CreateDate
+                                      condition: ep0.CreateDate=el.CreateDate and ep0.WorkflowEventId=el.Id
                                       filter: (ep0.ActionTypeId=13 and ep0.Message='2')
                                         Async JIT Filter workers: 1
                                           filter: (UserId=19 and TenantId=24024 and EventTypeId=1)
@@ -1846,10 +1846,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               functions: [1]
                                 Filter filter: ((el.UserId=19 and el.TenantId=24024 and el.EventTypeId=1 and el.CreateDate>=2016-01-01T00:00:00.000000Z) and 2016-01-01T10:00:00.000000Z>=el.CreateDate)
                                     Hash Right Outer Join Light
-                                      condition: ep.WorkflowEventId=el.Id and ep.CreateDate=el.CreateDate
+                                      condition: ep.CreateDate=el.CreateDate and ep.WorkflowEventId=el.Id
                                       filter: ep.ActionTypeId=8
                                         Hash Right Outer Join Light
-                                          condition: ep0.WorkflowEventId=el.Id and ep0.CreateDate=el.CreateDate
+                                          condition: ep0.CreateDate=el.CreateDate and ep0.WorkflowEventId=el.Id
                                           filter: (ep0.ActionTypeId=13 and ep0.Message='2')
                                             PageFrame
                                                 Row forward scan
@@ -1890,10 +1890,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               functions: [1]
                                 Filter filter: ((el.UserId=19 and el.TenantId=24024 and el.EventTypeId=1 and el.CreateDate>=2016-01-01T00:00:00.000000Z) and 2016-01-01T10:00:00.000000Z>=el.CreateDate)
                                     Hash Full Outer Join Light
-                                      condition: ep.WorkflowEventId=el.Id and ep.CreateDate=el.CreateDate
+                                      condition: ep.CreateDate=el.CreateDate and ep.WorkflowEventId=el.Id
                                       filter: ep.ActionTypeId=8
                                         Hash Full Outer Join Light
-                                          condition: ep0.WorkflowEventId=el.Id and ep0.CreateDate=el.CreateDate
+                                          condition: ep0.CreateDate=el.CreateDate and ep0.WorkflowEventId=el.Id
                                           filter: (ep0.ActionTypeId=13 and ep0.Message='2')
                                             PageFrame
                                                 Row forward scan
@@ -1940,14 +1940,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                       table: WorkflowEvent
                                       columns: [CreateDate, Id, TenantId, UserId, EventTypeId]
                                 INNER ep0
-                                  keys: [ep0.WorkflowEventId = el.Id, ep0.CreateDate = el.CreateDate]
+                                  keys: [ep0.CreateDate = el.CreateDate, ep0.WorkflowEventId = el.Id]
                                   Filter
                                     predicate: and(ep0.ActionTypeId = 13, ep0.Message = '2')
                                     Scan
                                       table: WorkflowEventAction
                                       columns: [CreateDate, WorkflowEventId, ActionTypeId, Message]
                                 INNER ep
-                                  keys: [ep.WorkflowEventId = el.Id, ep.CreateDate = el.CreateDate]
+                                  keys: [ep.CreateDate = el.CreateDate, ep.WorkflowEventId = el.Id]
                                   Filter
                                     predicate: ep.ActionTypeId = 8
                                     Scan

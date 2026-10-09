@@ -254,11 +254,13 @@ final class ScanFactoryGenerator {
 
     private static PartitionFrameCursorFactory newFrames(ScanPlan scan, RuntimeIntrinsicIntervalModel intervalModel,
                                                          RecordMetadata readerMetadata, int order) {
-        return intervalModel == null
+        final PartitionFrameCursorFactory frames = intervalModel == null
                 ? new FullPartitionFrameCursorFactory(scan.getTableToken(), scan.getMetadataVersion(), readerMetadata, order,
                 scan.getViewName(), scan.getViewPosition(), scan.isUpdate())
                 : new IntervalPartitionFrameCursorFactory(scan.getTableToken(), scan.getMetadataVersion(), intervalModel,
                 readerMetadata.getTimestampIndex(), readerMetadata, order, scan.getViewName(), scan.getViewPosition(), scan.isUpdate());
+        frames.setAuthorizedColumnIndexes(scan.getAuthorizedColumnIndexes());
+        return frames;
     }
 
     private static int sortedSymbolIndexKey(ScanPlan scan, RuntimeIntrinsicIntervalModel intervalModel, BoundExpression residual,

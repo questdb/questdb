@@ -43,7 +43,6 @@ import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinSlave;
-import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
@@ -574,31 +573,6 @@ final class TemporalJoinBinder {
             }
         }
         return -1;
-    }
-
-    /**
-     * Returns whether an inner ON conjunct declared at {@code originPosition} binds at the join of the
-     * input at {@code target} instead. That holds when the target precedes the origin, the origin join is
-     * not a reordering barrier, the target is an ASOF, LT or SPLICE join, and no join between them can
-     * null master rows.
-     */
-    static boolean isTemporalAnchor(ObjList<JoinInput> ordered, int target, int originPosition) {
-        if (target >= originPosition || JoinOrderSolver.isBarrier(ordered.getQuick(originPosition).getJoinType())) {
-            return false;
-        }
-        switch (ordered.getQuick(target).getJoinType()) {
-            case ASOF, LT, SPLICE -> {
-            }
-            default -> {
-                return false;
-            }
-        }
-        for (int i = target + 1; i < originPosition; i++) {
-            if (ordered.getQuick(i).getJoinType().isMasterNulling()) {
-                return false;
-            }
-        }
-        return true;
     }
 
     static void rejectWindowJoinSlaveColumn(ExpressionNode expression, OutputSchema master, WindowJoinPlan plan) throws SqlException {

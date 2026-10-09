@@ -114,7 +114,7 @@ final class ColumnPruningPass implements Mutable {
     private static boolean isCountInputMaterialized(LogicalPlan input) {
         while (true) {
             switch (input) {
-                case JoinPlan _, SetOperationPlan _ -> {
+                case SetOperationPlan _ -> {
                     return true;
                 }
                 case ProjectPlan project -> {

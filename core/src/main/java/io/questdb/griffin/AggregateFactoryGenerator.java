@@ -856,6 +856,7 @@ final class AggregateFactoryGenerator {
                 frames = new FullPartitionFrameCursorFactory(scan.getTableToken(), scan.getMetadataVersion(), frameMetadata,
                         ORDER_ASC, scan.getViewName(), scan.getViewPosition(), scan.isUpdate());
             }
+            frames.setAuthorizedColumnIndexes(scan.getAuthorizedColumnIndexes());
             final PartitionFrameCursorFactory ownedFrames = frames;
             frames = null;
             return new PostingIndexDistinctRecordCursorFactory(output, ownedFrames, index, 0, indexes);

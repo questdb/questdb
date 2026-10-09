@@ -69,6 +69,11 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      */
     ExpressionNode parseExpression(CharSequence expression) throws SqlException;
 
+    /**
+     * Generates the query this compiler prepared last, which {@code queryModel} is the model of: the statement
+     * {@link #generateExecutionModel} or {@code compile} returned. Recompiles the statement when a table it reads
+     * changed since it was prepared.
+     */
     RecordCursorFactory generateSelectWithRetries(
             @Transient QueryModel queryModel,
             @Nullable @Transient InsertModel insertModel,

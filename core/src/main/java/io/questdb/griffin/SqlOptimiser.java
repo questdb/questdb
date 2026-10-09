@@ -55,6 +55,7 @@ final class SqlOptimiser implements Mutable {
     private final OptimiserContext context;
     private final DecorrelationPass decorrelation;
     private final FilterPushdownPass filterPushdown;
+    private final JoinOrderPass joinOrder;
     private final NegativeLimitReversalPass negativeLimitReversal;
     private final ProjectionMergePass projectionMerge;
     private final TimestampEndpointPass timestampEndpoint;
@@ -69,7 +70,8 @@ final class SqlOptimiser implements Mutable {
     /**
      * Allocates plan nodes from the given pools, whose owner empties them once the optimised plan and
      * every nested sub-query plan it optimised are no longer used. Expression rewrites allocate from
-     * {@code rewriter}, which shares the pools of {@code functionBinder}, the binder that produces the plans.
+     * {@code rewriter}, which shares the pools of {@code functionBinder}, the binder that produces the plans;
+     * {@code joinOrderSolver} orders the joins whose graphs that binder collected.
      */
     SqlOptimiser(
             CharacterStore characterStore,
@@ -81,6 +83,7 @@ final class SqlOptimiser implements Mutable {
             BoundExpressionRewriter rewriter,
             FunctionBinder functionBinder,
             FunctionInstantiator instantiator,
+            JoinOrderSolver joinOrderSolver,
             TableFunctionSources functionSources
     ) {
         context = new OptimiserContext(rewriter, functionBinder, instantiator, functionSources);
@@ -90,6 +93,7 @@ final class SqlOptimiser implements Mutable {
         final ObjectPool<LimitPlan> limits = planNodes.limits;
         final ObjectPool<ProjectPlan> projects = planNodes.projects;
         final ObjectPool<SortPlan> sorts = planNodes.sorts;
+        joinOrder = new JoinOrderPass(context, filters, joinOrderSolver, tmpConjuncts);
         decorrelation = new DecorrelationPass(context, planNodes, characterStore, tmpExpressions, tmpConjuncts, tmpIndexes, tmpValues,
                 tmpKeys, tmpPlans, tmpSchema, tmpSteps);
         timestampEndpoint = new TimestampEndpointPass(constants, limits, sorts);
@@ -131,6 +135,8 @@ final class SqlOptimiser implements Mutable {
         clear();
         context.of(nextColumnId, executionContext);
         assert verifier.verifyBound(root);
+        joinOrder.orderJoins(root);
+        assert verifier.verifyBound(root, "join order");
         LogicalPlan plan = decorrelation.decorrelate(root);
         assert verifier.verify(plan, "decorrelation");
 

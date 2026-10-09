@@ -105,6 +105,12 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
         return false;
     }
 
+    /**
+     * Sets the table indexes, in reporting order, of the columns the query references; opening a cursor checks the
+     * SELECT permission on them as well as on the columns the cursor reads.
+     */
+    void setAuthorizedColumnIndexes(IntList columnIndexes);
+
     void setPushdownFilterCondition(
             long partitionTableVersion,
             @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions

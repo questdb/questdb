@@ -629,6 +629,18 @@ public final class FunctionBinder implements Mutable {
     }
 
     /**
+     * Timestamp interval analysis binds a sub-query BETWEEN bound pair low bound first.
+     */
+    private void bindTimestampBetweenLowerBound(ExpressionNode node, SqlExecutionContext executionContext) throws SqlException {
+        final ExpressionNode lo = findTimestampBetweenLowerBound(node);
+        if (lo != null) {
+            final BindScope scope = ctx.scope();
+            scope.boundLowerBound = subqueryCompiler.bindSubquery(lo.queryModel, lo.position, executionContext);
+            scope.boundLowerBoundNode = lo;
+        }
+    }
+
+    /**
      * The leaf mark of the call whose arguments are being bound: its leaves follow it in the preparation.
      */
     private int callLeafMark() {
@@ -765,18 +777,6 @@ public final class FunctionBinder implements Mutable {
             }
         }
         return isMatchable ? null : BooleanConstant.FALSE;
-    }
-
-    /**
-     * Timestamp interval analysis binds a sub-query BETWEEN bound pair low bound first.
-     */
-    private void bindTimestampBetweenLowerBound(ExpressionNode node, SqlExecutionContext executionContext) throws SqlException {
-        final ExpressionNode lo = findTimestampBetweenLowerBound(node);
-        if (lo != null) {
-            final BindScope scope = ctx.scope();
-            scope.boundLowerBound = subqueryCompiler.bindSubquery(lo.queryModel, lo.position, executionContext);
-            scope.boundLowerBoundNode = lo;
-        }
     }
 
     /**
@@ -943,10 +943,10 @@ public final class FunctionBinder implements Mutable {
             return expression;
         }
         if (expression instanceof CursorExpression cursor && function instanceof BooleanSubQueryFunction) {
-            return nextCursor().ofBoolean(cursor, functionFlags(function));
+            return nextCursor().ofBoolean(cursor, functionFlags(function) & (cursor.getFunctionFlags() | ~BoundExpression.STABLE_WITHIN_EXECUTION));
         }
         if (ColumnType.isArray(function.getType()) && expression instanceof FunctionExpression call
-                && (call.getDataType() != function.getType() || call.getFunctionFlags() != functionFlags(function))) {
+                && (call.getDataType() != function.getType() || call.getFunctionFlags() != callFlags(function, call.getArguments()))) {
             ctx.tmpArguments.clear();
             ctx.tmpPositions.clear();
             try {
@@ -955,7 +955,7 @@ public final class FunctionBinder implements Mutable {
                     ctx.tmpPositions.add(call.getArgumentPosition(i));
                 }
                 return ctx.planNodes.functions.next().of(call.getOverload(), ctx.tmpArguments, ctx.tmpPositions,
-                        function.getType(), functionFlags(function), call.getPosition());
+                        function.getType(), callFlags(function, ctx.tmpArguments), call.getPosition());
             } finally {
                 ctx.tmpArguments.clear();
                 ctx.tmpPositions.clear();
@@ -1298,6 +1298,14 @@ public final class FunctionBinder implements Mutable {
         }
     }
 
+    static int callFlags(Function function, ObjList<BoundExpression> arguments) {
+        int flags = functionFlags(function);
+        for (int i = 0, n = arguments.size(); i < n; i++) {
+            flags &= arguments.getQuick(i).getFunctionFlags() | ~BoundExpression.STABLE_WITHIN_EXECUTION;
+        }
+        return flags;
+    }
+
     static int findColumn(ExpressionNode node, OutputSchema input, CharSequence inputAlias) {
         final CharSequence name = node.token;
         final int dot = Chars.indexOfLastUnquoted(name, '.');
@@ -1625,7 +1633,7 @@ public final class FunctionBinder implements Mutable {
                 expression = arguments.getQuick(function == first ? 0 : 1);
             } else {
                 expression = ctx.planNodes.functions.next().of(overload, arguments, argumentPositions,
-                        function.getType(), functionFlags(function), node.position);
+                        function.getType(), callFlags(function, arguments), node.position);
             }
             pushCall(node, expression);
             return function;

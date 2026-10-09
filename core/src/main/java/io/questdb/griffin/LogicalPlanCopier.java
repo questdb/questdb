@@ -259,6 +259,9 @@ final class LogicalPlanCopier implements Mutable {
         if (project.hasTimestampDeclaration()) {
             clone.markTimestampDeclaration();
         }
+        if (project.isImplied()) {
+            clone.markImplied();
+        }
         return clone;
     }
 
@@ -283,6 +286,9 @@ final class LogicalPlanCopier implements Mutable {
     private ScanPlan cloneScan(ScanPlan scan) {
         final ScanPlan clone = planNodes.scans.next().of(scan.getTableToken(), scan.getMetadataVersion(), scan.getPosition(), scan.isUpdate());
         clone.getIndexedColumnIds().addAll(scan.getIndexedColumnIds());
+        clone.getReferencedColumnIndexes().addAll(scan.getReferencedColumnIndexes());
+        clone.getReferencedColumnNames().addAll(scan.getReferencedColumnNames());
+        clone.getReferencedColumnPositions().addAll(scan.getReferencedColumnPositions());
         clone.getSourceColumnIndexes().addAll(scan.getSourceColumnIndexes());
         clone.setHints(scan.getHints());
         clone.setRandomAccess(scan.isRandomAccess());

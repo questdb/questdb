@@ -29,7 +29,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 
 /**
- * Sources retain occurrence order; optimization selects execution order separately.
+ * Sources retain occurrence order; the optimiser selects the execution order of a join that carries a
+ * {@link JoinGraph} and places the graph's filter conjuncts.
  */
 public final class JoinPlan extends LogicalPlan {
     public static final ObjectFactory<JoinPlan> FACTORY = JoinPlan::new;
@@ -37,6 +38,7 @@ public final class JoinPlan extends LogicalPlan {
     private final ObjList<BoundExpression> filterConjuncts = new ObjList<>();
     private final ObjList<JoinInput> inputs = new ObjList<>();
     private final ObjList<JoinInput> orderedInputs = new ObjList<>();
+    private JoinGraph graph;
     private boolean hasExplicitTimestamp;
 
     @Override
@@ -46,6 +48,7 @@ public final class JoinPlan extends LogicalPlan {
         filterConjuncts.clear();
         inputs.clear();
         orderedInputs.clear();
+        graph = null;
         hasExplicitTimestamp = false;
     }
 
@@ -61,6 +64,13 @@ public final class JoinPlan extends LogicalPlan {
      */
     public ObjList<BoundExpression> getFilterConjuncts() {
         return filterConjuncts;
+    }
+
+    /**
+     * The graph binding left for the optimiser to order the join by, or null once the join is ordered.
+     */
+    public JoinGraph getGraph() {
+        return graph;
     }
 
     public ObjList<JoinInput> getInputs() {
@@ -103,6 +113,10 @@ public final class JoinPlan extends LogicalPlan {
 
     public void setExplicitTimestamp(boolean hasExplicitTimestamp) {
         this.hasExplicitTimestamp = hasExplicitTimestamp;
+    }
+
+    public void setGraph(JoinGraph graph) {
+        this.graph = graph;
     }
 
     private JoinInput inputOccurrenceAt(int index) {

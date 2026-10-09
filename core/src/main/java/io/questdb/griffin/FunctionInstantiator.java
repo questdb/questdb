@@ -627,7 +627,7 @@ public final class FunctionInstantiator implements Mutable {
      * An owned factory of the sub-query for a consumer that reads it directly.
      */
     RecordCursorFactory generateSubquery(CursorExpression cursor, SqlExecutionContext executionContext) throws SqlException {
-        return compiler.generateSubqueryConsumer(cursor.getSubquery(), workerCloneDepth == 0, executionContext);
+        return compiler.generateSubquery(cursor.getSubquery(), executionContext);
     }
 
     /**
@@ -645,8 +645,9 @@ public final class FunctionInstantiator implements Mutable {
             parkedSubqueries.remove(parked);
             return function;
         }
-        if (bindingDepth > 0) {
-            // Binding builds against the output metadata; the generator rebuilds the root.
+        if (bindingDepth > 0 || workerCloneDepth > 0) {
+            // Binding builds against the output metadata, and the generator rebuilds the root. A worker clone
+            // inherits its owner's sub-query value and never opens the sub-query.
             return new CursorFunction(cursor.getSubquery().getOutputMetadata());
         }
         return new CursorFunction(generateSubquery(cursor, executionContext));

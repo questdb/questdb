@@ -384,6 +384,16 @@ public final class BoundExpressionRewriter implements Mutable {
     }
 
     /**
+     * The filter combined with constant conjuncts: a constant false joins as a literal, a constant true drops out.
+     */
+    BoundExpression combineConstantFilter(BoundExpression filter, BoundExpression constantFilter, int position) throws SqlException {
+        if (constantFilter instanceof ConstantExpression constant) {
+            return constant.getLongValue() == 0 ? combineConjunction(filter, constant.markLiteral(), position) : filter;
+        }
+        return combineConjunction(filter, constantFilter, position);
+    }
+
+    /**
      * Describes the argument-free window function {@code name}, such as {@code row_number}, without preparing
      * it; the generator builds windows under their final window context.
      */

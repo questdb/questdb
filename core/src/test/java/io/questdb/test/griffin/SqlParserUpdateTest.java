@@ -221,9 +221,11 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
                           columns: [1 AS tt]
                           Join
                             Master tblx
-                              Scan
-                                table: tblx
-                                columns: [x]
+                              Filter
+                                predicate: tblx.x > 10
+                                Scan
+                                  table: tblx
+                                  columns: [x]
                             INNER y
                               keys: [y.y = tblx.x]
                               filter: false

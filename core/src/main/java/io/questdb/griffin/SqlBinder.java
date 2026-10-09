@@ -62,6 +62,7 @@ import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
@@ -70,7 +71,6 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.BindContext.*;
 import static io.questdb.griffin.OrderBinder.*;
@@ -83,9 +83,11 @@ final class SqlBinder implements Mutable {
     private final FunctionParser functionParser;
     private final ObjectPool<LowerCaseCharSequenceObjHashMap<CharSequence>> hintScopes;
     private final JoinBinder joinBinder;
+    private final JoinOrderSolver joinOrder;
     private final LateralBinder lateralBinder;
     private final OrderBinder orderBinder;
     private final PivotBinder pivotBinder;
+    private final IntIntHashMap referencePositions = new IntIntHashMap();
     private final SampleByBinder sampleByBinder;
     private final TemporalJoinBinder temporalJoinBinder;
     private final IntList tmpOutputColumns = new IntList();
@@ -121,7 +123,8 @@ final class SqlBinder implements Mutable {
                 functionSources, tmpIndexes);
         this.windowBinder = new WindowBinder(ctx, functionParser);
         this.lateralBinder = new LateralBinder(ctx, this, configuration.getSqlModelPoolCapacity());
-        this.joinBinder = new JoinBinder(ctx, this, configuration, lateralBinder, tmpIds, tmpIndexes, tmpValues, tmpSlaveKeys);
+        this.joinOrder = new JoinOrderSolver(planNodePools, tmpIds, tmpIndexes, tmpValues, tmpSlaveKeys);
+        this.joinBinder = new JoinBinder(ctx, this, configuration, lateralBinder, joinOrder);
         this.sampleByBinder = new SampleByBinder(ctx, this, configuration, functionParser, emptySchema, windowBinder, joinBinder);
         this.orderBinder = new OrderBinder(ctx, emptySchema, sampleByBinder);
         this.aggregateBinder = new AggregateBinder(ctx, this, configuration, orderBinder, sampleByBinder);
@@ -145,37 +148,6 @@ final class SqlBinder implements Mutable {
         updateBinder.clear();
         predicateSource = null;
         parserCallback = null;
-    }
-
-    private static LogicalPlan columnSource(LogicalPlan plan, int id) {
-        while (true) {
-            switch (plan) {
-                case ProjectPlan project -> {
-                    final int index = project.getOutput().getColumnIndexById(id);
-                    if (index < 0) {
-                        throw new IllegalStateException("predicate column is outside its projection");
-                    }
-                    if (!(project.getExpressions().getQuick(index) instanceof ColumnExpression column)) {
-                        return plan;
-                    }
-                    id = column.getColumnId();
-                    plan = project.getInput();
-                }
-                case FilterPlan _, SortPlan _ -> plan = plan.inputAt(0);
-                case JoinPlan join -> {
-                    final JoinInput source = join.getInputs().getQuick(joinColumnSource(join, id));
-                    if (source.getUnnest() != null) {
-                        return plan;
-                    }
-                    plan = source.getInput();
-                }
-                default -> {
-                    // LIMIT, grouping, DISTINCT and set operators define their own
-                    // predicate scope. Existing timestamp provenance also stops here.
-                    return plan;
-                }
-            }
-        }
     }
 
     /**
@@ -300,7 +272,9 @@ final class SqlBinder implements Mutable {
             final CharSequence alias = entry.toImmutable();
             final JoinInput step = ctx.planNodes.joinInputs.next().of(record, JoinKind.CROSS, alias, position);
             join.getInputs().add(step);
-            join.getOrderedInputs().add(step);
+            if (join.getGraph() == null) {
+                join.getOrderedInputs().add(step);
+            }
             joinBinder.addJoinOutput(join, record.getOutput(), alias);
         }
         for (int i = 0, n = scope.cursorNodes.size(); i < n; i++) {
@@ -417,6 +391,9 @@ final class SqlBinder implements Mutable {
             sourcePlan = bindSource(source, executionContext);
         }
         ctx.promoteNoArgFunctions(model, sourcePlan.getOutput(), source.getJoinModels().size() > 1 ? null : sourceAlias(source));
+        if (source.getSampleBy() != null) {
+            ctx.retainImplicitTimestamp(sourcePlan);
+        }
         final boolean isSampleByCursor = source.getSampleBy() != null && SampleByBinder.requiresSampleByCursor(source);
         final SampleByPlan sampleBy = isSampleByCursor ? sampleByBinder.bindSampleBy(model, source, sourcePlan, executionContext) : null;
         final BoundExpression sampleByBucket = source.getSampleBy() == null || isSampleByCursor ? null
@@ -496,6 +473,9 @@ final class SqlBinder implements Mutable {
             sourcePlan = input;
         }
         final ProjectPlan project = ctx.planNodes.projects.next().of(input, model.getModelPosition());
+        if (model.isArtificialStar()) {
+            project.markImplied();
+        }
         bindScope.sourceProjectionIndexes.setAll(sourcePlan.getOutput().getColumnCount(), -1);
         final OutputSchema referenceScope = hasWindows ? windowReferenceScope(model, sourcePlan.getOutput())
                 : windowBinder.hasProjectionReferences(model, sourcePlan.getOutput()) ? projectionReferenceScope(sourcePlan.getOutput()) : null;
@@ -909,7 +889,7 @@ final class SqlBinder implements Mutable {
                 return true;
             }
             final int id = output.getColumnId(ctx.bindColumnIndex(expression, output, alias));
-            final LogicalPlan origin = columnSource(input, id);
+            final LogicalPlan origin = LogicalPlans.columnSource(input, id);
             if (predicateSource == null) {
                 predicateSource = origin;
             }
@@ -1005,6 +985,18 @@ final class SqlBinder implements Mutable {
             hints |= ScanPlan.HINT_PRE_TOUCH;
         }
         return hints;
+    }
+
+    private void markReferencedColumns(LogicalPlan plan) {
+        if (plan instanceof ScanPlan scan && scan.getViewName() == null) {
+            scan.markReferencedColumns(referencePositions);
+        }
+        for (int i = 0, n = plan.inputCount(); i < n; i++) {
+            final LogicalPlan input = plan.inputAt(i);
+            if (input != null) {
+                markReferencedColumns(input);
+            }
+        }
     }
 
     private CharSequence uniqueCursorName(CharSequence name, OutputSchema output) {
@@ -1156,7 +1148,11 @@ final class SqlBinder implements Mutable {
     LogicalPlan bind(QueryModel model, SqlParserCallback parserCallback, SqlExecutionContext executionContext) throws SqlException {
         this.parserCallback = parserCallback;
         joinBinder.collectHintAliases(model);
-        return model.isUpdate() ? updateBinder.bind(model, executionContext) : bindQuery(model, executionContext);
+        final LogicalPlan plan = model.isUpdate() ? updateBinder.bind(model, executionContext) : bindQuery(model, executionContext);
+        referencePositions.clear();
+        LogicalPlans.collectReferencedColumnIds(plan, referencePositions);
+        markReferencedColumns(plan);
+        return plan;
     }
 
     /**
@@ -1358,10 +1354,10 @@ final class SqlBinder implements Mutable {
         return ctx.functionInstantiator;
     }
 
-    @TestOnly
-    int getJoinEqualityCapacity() {
-        return joinBinder.getJoinEqualityCapacity();
+    JoinOrderSolver getJoinOrderSolver() {
+        return joinOrder;
     }
+
 
     /**
      * The first column id the bound plan does not use.

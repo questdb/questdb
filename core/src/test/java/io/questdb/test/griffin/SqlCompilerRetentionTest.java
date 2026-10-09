@@ -306,6 +306,7 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
             }
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 compileAndClose(compiler, sql);
+                compiler.clear();
                 Assert.assertEquals(ceiling, compiler.getJoinEqualityCapacity());
 
                 compileAndClose(compiler, "SELECT a.k0 FROM a JOIN b ON a.k0 = b.k0 JOIN c ON b.k1 = c.k1");

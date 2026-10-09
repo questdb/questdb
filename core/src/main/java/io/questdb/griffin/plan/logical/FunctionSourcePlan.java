@@ -35,6 +35,7 @@ public final class FunctionSourcePlan extends LogicalPlan {
     private final OutputSchema recordSchema = new OutputSchema();
     private final IntList sourceColumnIndexes = new IntList();
     private boolean hasExternalDataSource;
+    private boolean isDeterministic;
     private boolean isProjectable;
     private CharSequence recordName;
 
@@ -44,6 +45,7 @@ public final class FunctionSourcePlan extends LogicalPlan {
         recordSchema.clear();
         sourceColumnIndexes.clear();
         hasExternalDataSource = false;
+        isDeterministic = false;
         isProjectable = false;
         recordName = null;
     }
@@ -81,6 +83,13 @@ public final class FunctionSourcePlan extends LogicalPlan {
     }
 
     /**
+     * True when every cursor the source opens within one execution yields the same rows in the same order.
+     */
+    public boolean isDeterministic() {
+        return isDeterministic;
+    }
+
+    /**
      * True when the source reads only the columns its output keeps, so pruning saves work.
      */
     public boolean isProjectable() {
@@ -95,6 +104,10 @@ public final class FunctionSourcePlan extends LogicalPlan {
     @Override
     public void replaceInput(int index, LogicalPlan input) {
         throw new IndexOutOfBoundsException("function source has no input: " + index);
+    }
+
+    public void setDeterministic(boolean isDeterministic) {
+        this.isDeterministic = isDeterministic;
     }
 
     public void setExternalDataSource(boolean hasExternalDataSource) {

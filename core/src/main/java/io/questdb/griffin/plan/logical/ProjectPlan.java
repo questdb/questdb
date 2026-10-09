@@ -34,6 +34,7 @@ public final class ProjectPlan extends UnaryPlan {
     private final IntList updateTargetTypes = new IntList();
     private boolean hasPrunedComputedColumns;
     private boolean hasTimestampDeclaration;
+    private boolean isImplied;
 
     @Override
     public void clear() {
@@ -42,6 +43,7 @@ public final class ProjectPlan extends UnaryPlan {
         updateTargetTypes.clear();
         hasPrunedComputedColumns = false;
         hasTimestampDeclaration = false;
+        isImplied = false;
     }
 
     public ObjList<BoundExpression> getExpressions() {
@@ -67,6 +69,18 @@ public final class ProjectPlan extends UnaryPlan {
 
     public boolean hasTimestampDeclaration() {
         return hasTimestampDeclaration;
+    }
+
+    /**
+     * True when the query text names none of the projection's columns: it stands for a bare table name, which SQL
+     * reads as the table rather than as {@code SELECT *}.
+     */
+    public boolean isImplied() {
+        return isImplied;
+    }
+
+    public void markImplied() {
+        isImplied = true;
     }
 
     public void markTimestampDeclaration() {

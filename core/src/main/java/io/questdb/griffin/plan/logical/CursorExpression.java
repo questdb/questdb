@@ -29,9 +29,9 @@ import io.questdb.std.ObjectFactory;
 
 /**
  * A sub-query used as a function argument: the statement's {@link Subquery}, whose plan's output schema types the
- * consumer. Every copy of the expression shares the sub-query. The generator generates the sub-query once per statement
- * and evaluates it at most once per execution, so its value is stable within an execution by construction
- * ({@link BoundExpression#STABLE_WITHIN_EXECUTION}).
+ * consumer. Each consumer evaluates its own generated copy of the sub-query, so the expression is
+ * {@link BoundExpression#STABLE_WITHIN_EXECUTION} only when the sub-query's plan proves that every evaluation within
+ * one execution yields the same rows.
  */
 public final class CursorExpression extends BoundExpression {
     public static final ObjectFactory<CursorExpression> FACTORY = CursorExpression::new;
@@ -56,7 +56,7 @@ public final class CursorExpression extends BoundExpression {
     }
 
     public CursorExpression of(Subquery subquery, int position) {
-        return of(subquery, ColumnType.CURSOR, STABLE_WITHIN_EXECUTION, position);
+        return of(subquery, ColumnType.CURSOR, subquery.isStable() ? STABLE_WITHIN_EXECUTION : 0, position);
     }
 
     public CursorExpression ofBoolean(CursorExpression cursor, int functionFlags) {

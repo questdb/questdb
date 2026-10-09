@@ -27,6 +27,9 @@ package io.questdb.griffin;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.JoinDependency;
+import io.questdb.griffin.plan.logical.JoinEquality;
+import io.questdb.griffin.plan.logical.JoinGraph;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
@@ -36,94 +39,118 @@ import io.questdb.std.IntSortedList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
-import org.jetbrains.annotations.TestOnly;
 
 /**
- * The binding-time join-order constraint solver. The binder feeds it equi-join keys, ordering
- * constraints and late inputs, then binds the remaining predicates, types and designated timestamps
- * against the step order it selects. Every returned list is borrowed until clear(); no syntax or
- * runtime resources are retained.
+ * The join order of a join of more than two inputs. Binding collects the join's equalities, ordering constraints,
+ * lateral dependencies and late inputs into the join's {@link JoinGraph}, merges the equalities that key one input on
+ * one column, and checks that the join semantics admit an order ({@link #prepare()}). The optimiser selects the order
+ * from the graph, with the first input first when it leads, and publishes the keys, join types and ordered inputs
+ * ({@link #order(JoinPlan)}). Dependencies and equalities come from the statement's plan-node pools; every other
+ * list is borrowed until {@link #clear()}.
  */
 final class JoinOrderSolver implements Mutable {
     private final ObjList<JoinKind> bestJoinTypes = new ObjList<>();
     private final IntList bestOrder;
     private final IntList candidateOrder = new IntList();
-    private final ObjectPool<Context> contextPool;
-    private final ObjList<Context> contexts = new ObjList<>();
-    private final ObjList<IntHashSet> dependencies = new ObjList<>();
-    private final ObjectPool<IntHashSet> dependencyPool;
-    private final ObjectPool<Equality> equalityPool;
+    private final ObjList<IntHashSet> children = new ObjList<>();
+    private final ObjectPool<IntHashSet> childrenPool;
+    private final ObjectPool<JoinDependency> dependencyPool;
+    private final ObjectPool<JoinEquality> equalityPool;
+    private final IntList inCounts = new IntList();
     private final ObjList<JoinKind> joinTypes = new ObjList<>();
-    private final IntList lateInputs = new IntList();
     private final IntHashSet markedIndexes;
-    private final IntList orderingConstraints = new IntList();
+    private final ObjList<JoinEquality> movedKeys = new ObjList<>();
     private final IntList pendingSources = new IntList();
     private final IntSortedList ready = new IntSortedList();
     private final IntList roots;
-    private final ObjList<Equality> sourceFilters = new ObjList<>();
-    private final ObjList<Context> stagedContexts = new ObjList<>();
+    private final IntList semanticEdges = new IntList();
+    private final ObjList<JoinEquality> sourceFilters = new ObjList<>();
+    private final ObjList<JoinDependency> stagedDependencies = new ObjList<>();
     private final IntList stagedIndexes;
-    private boolean isOrdered;
+    private ObjList<JoinDependency> dependencies;
+    private JoinGraph graph;
+    private boolean isCollecting;
     private JoinPlan join;
 
     /**
-     * Borrows the compiler's leaf temporaries as temporary lists of {@link #order()}.
+     * Borrows {@code markedIndexes}, {@code stagedIndexes}, {@code bestOrder} and {@code roots} as temporaries of
+     * one call and leaves them empty.
      */
-    JoinOrderSolver(int maxRetainedContexts, IntHashSet markedIndexes, IntList stagedIndexes, IntList bestOrder, IntList roots) {
+    JoinOrderSolver(PlanNodePools planNodes, IntHashSet markedIndexes, IntList stagedIndexes, IntList bestOrder, IntList roots) {
+        this.childrenPool = new ObjectPool<>(IntHashSet::new, 4, planNodes.maxRetainedJoinContexts);
+        this.dependencyPool = planNodes.joinDependencies;
+        this.equalityPool = planNodes.joinEqualities;
         this.markedIndexes = markedIndexes;
         this.stagedIndexes = stagedIndexes;
         this.bestOrder = bestOrder;
         this.roots = roots;
-        this.contextPool = new ObjectPool<>(Context::new, 8, maxRetainedContexts);
-        this.dependencyPool = new ObjectPool<>(IntHashSet::new, 4, maxRetainedContexts);
-        this.equalityPool = new ObjectPool<>(Equality::new, 8, maxRetainedContexts);
-    }
-
-    @TestOnly
-    int getEqualityCapacity() {
-        return equalityPool.getCapacity();
     }
 
     @Override
     public void clear() {
+        bestJoinTypes.clear();
+        bestOrder.clear();
         candidateOrder.clear();
-        contextPool.clear();
-        contexts.clear();
-        dependencies.clear();
-        dependencyPool.clear();
-        equalityPool.clear();
+        children.clear();
+        childrenPool.clear();
+        inCounts.clear();
         joinTypes.clear();
-        lateInputs.clear();
-        orderingConstraints.clear();
+        markedIndexes.clear();
+        movedKeys.clear();
         pendingSources.clear();
         ready.clear();
+        roots.clear();
+        semanticEdges.clear();
         sourceFilters.clear();
-        stagedContexts.clear();
-        isOrdered = false;
+        stagedDependencies.clear();
+        stagedIndexes.clear();
+        dependencies = null;
+        graph = null;
+        isCollecting = false;
         join = null;
     }
 
-    private void addContext(Context context) {
-        final Context previous = contexts.getQuick(context.slave);
-        contexts.setQuick(context.slave, previous == null ? context : merge(previous, context));
+    private static JoinEquality findKey(JoinDependency dependency, JoinEquality key) {
+        final ObjList<JoinEquality> keys = dependency.getKeys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final JoinEquality candidate = keys.getQuick(i);
+            if (candidate.getLeftColumnId() == key.getLeftColumnId() && candidate.getRightColumnId() == key.getRightColumnId()
+                    || candidate.getLeftColumnId() == key.getRightColumnId() && candidate.getRightColumnId() == key.getLeftColumnId()) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    private void addContext(JoinDependency dependency) {
+        final int slave = dependency.getSlave();
+        final JoinDependency previous = dependencies.getQuick(slave);
+        dependencies.setQuick(slave, previous == null ? dependency : merge(previous, dependency));
+    }
+
+    private void addKey(JoinDependency dependency, JoinEquality key) {
+        final int parent = Math.min(key.getLeftSource(), key.getRightSource());
+        dependency.getKeys().add(key);
+        dependency.getParents().add(parent);
+        link(parent, dependency.getSlave());
     }
 
     private void addParent(int parent, int child) {
-        Context context = contexts.getQuick(child);
-        if (context == null) {
-            context = contextPool.next();
-            context.slave = child;
-            contexts.setQuick(child, context);
+        JoinDependency dependency = dependencies.getQuick(child);
+        if (dependency == null) {
+            dependency = dependencyPool.next().of(child);
+            dependencies.setQuick(child, dependency);
         }
-        context.parents.add(parent);
+        dependency.getParents().add(parent);
         link(parent, child);
     }
 
-    private void addUnnestDependencies(BoundExpression expression, int source) {
+    private void addUnnestEdges(BoundExpression expression, int source, IntList edges) {
         if (expression instanceof ColumnExpression column) {
             for (int i = 0; i < source; i++) {
                 if (join.getInputs().getQuick(i).getSourceOutput().getColumnIndexById(column.getColumnId()) >= 0) {
-                    addParent(i, source);
+                    edges.add(i);
+                    edges.add(source);
                     return;
                 }
             }
@@ -131,17 +158,84 @@ final class JoinOrderSolver implements Mutable {
         }
         if (expression instanceof FunctionExpression function) {
             for (int i = 0, n = function.getArgumentCount(); i < n; i++) {
-                addUnnestDependencies(function.argumentAt(i), source);
+                addUnnestEdges(function.argumentAt(i), source, edges);
             }
         }
     }
 
-    private boolean crossesBarrier(Context context) {
-        int first = context.slave;
-        for (int i = 0, n = context.parents.size(); i < n; i++) {
-            first = Math.min(first, context.parents.get(i));
+    /**
+     * Appends the source to the candidate order, readies the inputs that waited for it alone, and returns its cost.
+     */
+    private int appendToOrder(int source) {
+        candidateOrder.add(source);
+        final IntHashSet sourceChildren = children.getQuick(source);
+        for (int i = 0, n = sourceChildren.size(); i < n; i++) {
+            final int child = sourceChildren.get(i);
+            if (dependencies.getQuick(child) != null) {
+                final int inCount = inCounts.getQuick(child) - 1;
+                inCounts.setQuick(child, inCount);
+                if (inCount == 0) {
+                    ready.add(child);
+                }
+            }
         }
-        for (int i = first; i <= context.slave; i++) {
+        return joinTypes.getQuick(source) == JoinKind.CROSS ? 10 : 5;
+    }
+
+    /**
+     * The edges the join semantics impose whatever the keys: ordering constraints, lateral dependencies, the
+     * master of a temporal or UNNEST step, the inputs an UNNEST reads, the parents of an outer or temporal step,
+     * and the outer or temporal input an INNER or CROSS step's key reads.
+     */
+    private void collectSemanticEdges() {
+        semanticEdges.clear();
+        semanticEdges.addAll(graph.getOrderingConstraints());
+        semanticEdges.addAll(graph.getLateralDependencies());
+        for (int i = 1, n = joinTypes.size(); i < n; i++) {
+            final JoinKind type = joinTypes.getQuick(i);
+            if (!isBarrier(type)) {
+                final JoinDependency dependency = dependencies.getQuick(i);
+                if (dependency != null) {
+                    final ObjList<JoinEquality> keys = dependency.getKeys();
+                    for (int k = 0, count = keys.size(); k < count; k++) {
+                        final int other = keys.getQuick(k).getOtherSource(i);
+                        if (isBarrier(joinTypes.getQuick(other))) {
+                            semanticEdges.add(other);
+                            semanticEdges.add(i);
+                        }
+                    }
+                }
+                continue;
+            }
+            if (type.isTemporal() || type == JoinKind.UNNEST) {
+                semanticEdges.add(0);
+                semanticEdges.add(i);
+            }
+            if (type == JoinKind.UNNEST) {
+                final ObjList<BoundExpression> expressions = join.getInputs().getQuick(i).getUnnest().getExpressions();
+                for (int k = 0, count = expressions.size(); k < count; k++) {
+                    addUnnestEdges(expressions.getQuick(k), i, semanticEdges);
+                }
+            }
+            final JoinDependency dependency = dependencies.getQuick(i);
+            if (dependency != null) {
+                final IntHashSet parents = dependency.getParents();
+                for (int k = 0, count = parents.size(); k < count; k++) {
+                    semanticEdges.add(parents.get(k));
+                    semanticEdges.add(i);
+                }
+            }
+        }
+    }
+
+    private boolean crossesBarrier(JoinDependency dependency) {
+        final int slave = dependency.getSlave();
+        int first = slave;
+        final IntHashSet parents = dependency.getParents();
+        for (int i = 0, n = parents.size(); i < n; i++) {
+            first = Math.min(first, parents.get(i));
+        }
+        for (int i = first; i <= slave; i++) {
             if (isBarrier(joinTypes.getQuick(i))) {
                 return true;
             }
@@ -149,46 +243,48 @@ final class JoinOrderSolver implements Mutable {
         return false;
     }
 
-    private void emit(Equality a, boolean isLeftA, Equality b, boolean isLeftB, int deletedIndex) {
+    private void emit(JoinEquality a, boolean isLeftA, JoinEquality b, boolean isLeftB, int deletedIndex) {
         markedIndexes.add(deletedIndex);
-        final int leftSource = isLeftA ? a.leftSource : a.rightSource;
-        final int leftId = isLeftA ? a.leftColumnId : a.rightColumnId;
-        final int rightSource = isLeftB ? b.leftSource : b.rightSource;
-        final int rightId = isLeftB ? b.leftColumnId : b.rightColumnId;
+        final int leftSource = isLeftA ? a.getLeftSource() : a.getRightSource();
+        final int leftId = isLeftA ? a.getLeftColumnId() : a.getRightColumnId();
+        final int rightSource = isLeftB ? b.getLeftSource() : b.getRightSource();
+        final int rightId = isLeftB ? b.getLeftColumnId() : b.getRightColumnId();
         if (leftSource == rightSource && leftId == rightId) {
-            b.addOwners(a.originalOwners);
+            b.addOwners(a.getOwners());
             return;
         }
-        final Equality equality = equalityPool.next();
-        equality.of(leftSource, leftId, isLeftA ? a.leftName : a.rightName, isLeftA ? a.leftPosition : a.rightPosition,
-                rightSource, rightId, isLeftB ? b.leftName : b.rightName, isLeftB ? b.leftPosition : b.rightPosition);
-        equality.addOwners(a.originalOwners);
-        equality.addOwners(b.originalOwners);
+        final JoinEquality equality = equalityPool.next().of(
+                leftSource, leftId, isLeftA ? a.getLeftName() : a.getRightName(), isLeftA ? a.getLeftPosition() : a.getRightPosition(),
+                rightSource, rightId, isLeftB ? b.getLeftName() : b.getRightName(), isLeftB ? b.getLeftPosition() : b.getRightPosition()
+        );
+        equality.addOwners(a.getOwners());
+        equality.addOwners(b.getOwners());
         if (leftSource == rightSource) {
             sourceFilters.add(equality);
         } else {
-            final Context context = contextPool.next();
-            context.slave = Math.max(leftSource, rightSource);
-            context.parents.add(Math.min(leftSource, rightSource));
-            context.keys.add(equality);
-            stagedContexts.add(context);
+            final JoinDependency dependency = dependencyPool.next().of(Math.max(leftSource, rightSource));
+            dependency.getParents().add(Math.min(leftSource, rightSource));
+            dependency.getKeys().add(equality);
+            stagedDependencies.add(dependency);
         }
     }
 
     private boolean hasOrderingConstraint(int parent, int child) {
-        for (int i = 0, n = orderingConstraints.size(); i < n; i += 2) {
-            if (orderingConstraints.getQuick(i) == parent && orderingConstraints.getQuick(i + 1) == child) {
+        final IntList constraints = graph.getOrderingConstraints();
+        for (int i = 0, n = constraints.size(); i < n; i += 2) {
+            if (constraints.getQuick(i) == parent && constraints.getQuick(i + 1) == child) {
                 return true;
             }
         }
         return false;
     }
 
-    private boolean hasOtherDependencyPath(Context source, int target) {
+    private boolean hasOtherDependencyPath(JoinDependency source, int target) {
         pendingSources.clear();
         markedIndexes.clear();
-        for (int i = 0, n = source.parents.size(); i < n; i++) {
-            final int parent = source.parents.get(i);
+        final IntHashSet sourceParents = source.getParents();
+        for (int i = 0, n = sourceParents.size(); i < n; i++) {
+            final int parent = sourceParents.get(i);
             if (parent != target) {
                 pendingSources.add(parent);
             }
@@ -201,10 +297,11 @@ final class JoinOrderSolver implements Mutable {
                 return true;
             }
             if (markedIndexes.add(parent)) {
-                final Context context = contexts.getQuick(parent);
-                if (context != null) {
-                    for (int i = 0, n = context.parents.size(); i < n; i++) {
-                        pendingSources.add(context.parents.get(i));
+                final JoinDependency dependency = dependencies.getQuick(parent);
+                if (dependency != null) {
+                    final IntHashSet parents = dependency.getParents();
+                    for (int i = 0, n = parents.size(); i < n; i++) {
+                        pendingSources.add(parents.get(i));
                     }
                 }
             }
@@ -213,94 +310,189 @@ final class JoinOrderSolver implements Mutable {
     }
 
     private void link(int parent, int child) {
-        dependencies.getQuick(parent).add(child);
+        children.getQuick(parent).add(child);
     }
 
-    private Context merge(Context a, Context b) {
-        assert a.slave == b.slave;
+    private void linkDependencies() {
+        for (int i = 0, n = children.size(); i < n; i++) {
+            children.getQuick(i).clear();
+        }
+        for (int i = 0, n = dependencies.size(); i < n; i++) {
+            final JoinDependency dependency = dependencies.getQuick(i);
+            if (dependency != null) {
+                final IntHashSet parents = dependency.getParents();
+                for (int k = 0, count = parents.size(); k < count; k++) {
+                    link(parents.get(k), i);
+                }
+            }
+        }
+    }
+
+    private JoinDependency merge(JoinDependency a, JoinDependency b) {
+        assert a.getSlave() == b.getSlave();
         if (crossesBarrier(a) || crossesBarrier(b)) {
             // Equality transitivity must not move a later INNER key into an
             // earlier outer match or a filter on its preserved input.
-            b.keys.addAll(a.keys);
-            b.parents.addAll(a.parents);
-            return b;
+            final ObjList<JoinEquality> keys = b.getKeys();
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                final JoinEquality key = keys.getQuick(i);
+                final JoinEquality same = findKey(a, key);
+                if (same == null) {
+                    a.getKeys().add(key);
+                } else {
+                    same.addOwners(key.getOwners());
+                }
+            }
+            a.getParents().addAll(b.getParents());
+            return a;
         }
         markedIndexes.clear();
-        final Context result = contextPool.next();
-        result.slave = a.slave;
-        for (int i = 0, n = b.keys.size(); i < n; i++) {
-            final Equality next = b.keys.getQuick(i);
-            for (int k = 0, count = a.keys.size(); k < count; k++) {
-                final Equality previous = a.keys.getQuick(k);
-                if (previous.leftColumnId == next.leftColumnId) {
+        final ObjList<JoinEquality> aKeys = a.getKeys();
+        final ObjList<JoinEquality> bKeys = b.getKeys();
+        for (int i = 0, n = bKeys.size(); i < n; i++) {
+            final JoinEquality next = bKeys.getQuick(i);
+            for (int k = 0, count = aKeys.size(); k < count; k++) {
+                final JoinEquality previous = aKeys.getQuick(k);
+                if (previous.getLeftColumnId() == next.getLeftColumnId()) {
                     emit(previous, false, next, false, k);
                     break;
-                } else if (previous.rightColumnId == next.leftColumnId) {
+                } else if (previous.getRightColumnId() == next.getLeftColumnId()) {
                     emit(previous, true, next, false, k);
                     break;
-                } else if (previous.leftColumnId == next.rightColumnId) {
+                } else if (previous.getLeftColumnId() == next.getRightColumnId()) {
                     emit(previous, false, next, true, k);
                     break;
-                } else if (previous.rightColumnId == next.rightColumnId) {
+                } else if (previous.getRightColumnId() == next.getRightColumnId()) {
                     emit(previous, true, next, true, k);
                     break;
                 }
             }
-            result.keys.add(next);
-            final int parent = Math.min(next.leftSource, next.rightSource);
-            result.parents.add(parent);
-            link(parent, result.slave);
         }
-        for (int i = 0, n = a.keys.size(); i < n; i++) {
-            final Equality previous = a.keys.getQuick(i);
-            final int parent = Math.min(previous.leftSource, previous.rightSource);
-            if (markedIndexes.contains(i)) {
-                if (result.parents.excludes(parent)) {
-                    dependencies.getQuick(parent).remove(result.slave);
-                }
-            } else {
-                result.keys.add(previous);
-                result.parents.add(parent);
-                link(parent, result.slave);
+        final JoinDependency result = dependencyPool.next().of(a.getSlave());
+        for (int i = 0, n = aKeys.size(); i < n; i++) {
+            if (!markedIndexes.contains(i)) {
+                addKey(result, aKeys.getQuick(i));
+            }
+        }
+        for (int i = 0, n = bKeys.size(); i < n; i++) {
+            addKey(result, bKeys.getQuick(i));
+        }
+        for (int i = 0, n = aKeys.size(); i < n; i++) {
+            final JoinEquality previous = aKeys.getQuick(i);
+            final int parent = Math.min(previous.getLeftSource(), previous.getRightSource());
+            if (markedIndexes.contains(i) && result.getParents().excludes(parent)) {
+                children.getQuick(parent).remove(result.getSlave());
             }
         }
         return result;
     }
 
-    private Context moveClauses(Context from, Context to) {
-        final Context retained = contextPool.next();
-        retained.slave = from.slave;
+    private JoinDependency moveClauses(JoinDependency from, JoinDependency to) {
+        final JoinDependency retained = dependencyPool.next().of(from.getSlave());
         int nextPosition = 0;
-        for (int i = 0, n = from.keys.size(); i < n; i++) {
-            final Context target;
+        final ObjList<JoinEquality> keys = from.getKeys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final JoinDependency target;
             if (nextPosition < stagedIndexes.size() && i == stagedIndexes.getQuick(nextPosition)) {
                 target = to;
                 nextPosition++;
             } else {
                 target = retained;
             }
-            final Equality key = from.keys.getQuick(i);
-            target.keys.add(key);
-            final int parent = key.leftSource == target.slave ? key.rightSource : key.leftSource;
-            target.parents.add(parent);
-            // Old reverse edges may remain; only a context's current parent
+            final JoinEquality key = keys.getQuick(i);
+            target.getKeys().add(key);
+            final int parent = key.getOtherSource(target.getSlave());
+            target.getParents().add(parent);
+            // Old reverse edges may remain; only a dependency's current parent
             // count admits it to the queue.
-            link(parent, target.slave);
+            link(parent, target.getSlave());
         }
         return retained;
+    }
+
+    private void of(JoinPlan join, JoinGraph graph) {
+        clear();
+        this.join = join;
+        this.graph = graph;
+        this.dependencies = graph.getDependencies();
+        final ObjList<JoinInput> inputs = join.getInputs();
+        for (int i = 0, n = inputs.size(); i < n; i++) {
+            children.add(childrenPool.next());
+            joinTypes.add(inputs.getQuick(i).getJoinType());
+        }
+    }
+
+    /**
+     * Orders by the edges the join semantics impose alone and keys every INNER or CROSS step by the equalities whose
+     * other input the order joins earlier: the fallback when no candidate of the cost search orders the keys. A key
+     * that reads an outer or temporal input stays where it is.
+     */
+    private void orderBySemantics() {
+        movedKeys.clear();
+        for (int i = 1, n = dependencies.size(); i < n; i++) {
+            final JoinDependency dependency = dependencies.getQuick(i);
+            if (dependency != null && !isBarrier(joinTypes.getQuick(i))) {
+                dependencies.setQuick(i, null);
+                final ObjList<JoinEquality> keys = dependency.getKeys();
+                for (int k = 0, count = keys.size(); k < count; k++) {
+                    final JoinEquality key = keys.getQuick(k);
+                    final int other = key.getOtherSource(i);
+                    if (isBarrier(joinTypes.getQuick(other))) {
+                        addParent(other, i);
+                        dependencies.getQuick(i).getKeys().add(key);
+                    } else {
+                        movedKeys.add(key);
+                    }
+                }
+            }
+        }
+        final IntList lateral = graph.getLateralDependencies();
+        for (int i = 0, n = lateral.size(); i < n; i += 2) {
+            addParent(lateral.getQuick(i), lateral.getQuick(i + 1));
+        }
+        final IntList constraints = graph.getOrderingConstraints();
+        for (int i = 0, n = constraints.size(); i < n; i += 2) {
+            if (!isBarrier(joinTypes.getQuick(constraints.getQuick(i + 1)))) {
+                addParent(constraints.getQuick(i), constraints.getQuick(i + 1));
+            }
+        }
+        linkDependencies();
+        if (topologicalOrder() == Integer.MAX_VALUE) {
+            throw new IllegalStateException("join semantics admit no order");
+        }
+        for (int i = 0, n = movedKeys.size(); i < n; i++) {
+            final JoinEquality key = movedKeys.getQuick(i);
+            final boolean isLeftLater = position(key.getLeftSource()) > position(key.getRightSource());
+            final int slave = isLeftLater ? key.getLeftSource() : key.getRightSource();
+            addParent(isLeftLater ? key.getRightSource() : key.getLeftSource(), slave);
+            dependencies.getQuick(slave).getKeys().add(key);
+        }
+        for (int i = 1, n = joinTypes.size(); i < n; i++) {
+            if (!isBarrier(joinTypes.getQuick(i))) {
+                final JoinDependency dependency = dependencies.getQuick(i);
+                joinTypes.setQuick(i, dependency != null && dependency.getKeys().size() > 0 ? JoinKind.INNER : JoinKind.CROSS);
+            }
+        }
+        bestOrder.clear();
+        bestOrder.addAll(candidateOrder);
+    }
+
+    private int position(int source) {
+        return candidateOrder.indexOf(source, 0, candidateOrder.size());
     }
 
     private void reorder() {
         bestJoinTypes.clear();
         bestOrder.clear();
         roots.clear();
-        stagedContexts.clear();
-        for (int i = 0, n = contexts.size(); i < n; i++) {
-            final Context context = contexts.getQuick(i);
-            if (context == null || context.parents.size() == 0) {
+        stagedDependencies.clear();
+        for (int i = 0, n = dependencies.size(); i < n; i++) {
+            final JoinDependency dependency = dependencies.getQuick(i);
+            if (dependency == null || dependency.getParents().size() == 0) {
                 roots.add(i);
             }
         }
+        final IntList constraints = graph.getOrderingConstraints();
         int bestCost = Integer.MAX_VALUE;
         boolean hasCandidate = false;
         for (int candidate = 0, rootCount = roots.size(); candidate < rootCount; candidate++) {
@@ -314,7 +506,7 @@ final class JoinOrderSolver implements Mutable {
                         }
                         swap(target, from);
                     }
-                    for (int from = i + 1, n = contexts.size(); from < n; from++) {
+                    for (int from = i + 1, n = dependencies.size(); from < n; from++) {
                         if (isBarrier(joinTypes.getQuick(from))) {
                             break;
                         }
@@ -322,101 +514,114 @@ final class JoinOrderSolver implements Mutable {
                     }
                 }
             }
-            for (int i = 0, n = orderingConstraints.size(); i < n; i += 2) {
-                addParent(orderingConstraints.getQuick(i), orderingConstraints.getQuick(i + 1));
+            for (int i = 0, n = constraints.size(); i < n; i += 2) {
+                addParent(constraints.getQuick(i), constraints.getQuick(i + 1));
             }
             final int cost = topologicalOrder();
-            if (!hasCandidate || cost < bestCost) {
+            if (cost != Integer.MAX_VALUE && (!hasCandidate || cost < bestCost)) {
                 bestCost = cost;
                 hasCandidate = true;
                 bestOrder.clear();
                 bestOrder.addAll(candidateOrder);
                 bestJoinTypes.clear();
                 bestJoinTypes.addAll(joinTypes);
-                stagedContexts.clear();
-                for (int source = 0, n = contexts.size(); source < n; source++) {
-                    final Context context = contexts.getQuick(source);
-                    if (context == null) {
-                        stagedContexts.add(null);
+                stagedDependencies.clear();
+                for (int source = 0, n = dependencies.size(); source < n; source++) {
+                    final JoinDependency dependency = dependencies.getQuick(source);
+                    if (dependency == null) {
+                        stagedDependencies.add(null);
                     } else {
-                        final Context snapshot = contextPool.next();
-                        snapshot.slave = context.slave;
-                        snapshot.keys.addAll(context.keys);
-                        snapshot.parents.addAll(context.parents);
-                        stagedContexts.add(snapshot);
+                        final JoinDependency snapshot = dependencyPool.next().of(dependency.getSlave());
+                        snapshot.getKeys().addAll(dependency.getKeys());
+                        snapshot.getParents().addAll(dependency.getParents());
+                        stagedDependencies.add(snapshot);
                     }
                 }
             }
         }
-        // Candidate search mutates contexts. Publish the winning order's keys,
-        // not the final candidate's keys under an earlier candidate's order.
-        contexts.clear();
-        contexts.addAll(stagedContexts);
-        joinTypes.clear();
-        joinTypes.addAll(bestJoinTypes);
+        if (hasCandidate) {
+            // Candidate search mutates dependencies. Publish the winning order's keys,
+            // not the final candidate's keys under an earlier candidate's order.
+            dependencies.clear();
+            dependencies.addAll(stagedDependencies);
+            joinTypes.clear();
+            joinTypes.addAll(bestJoinTypes);
+        } else {
+            orderBySemantics();
+        }
     }
 
     private void requireCollecting() {
-        if (join == null || isOrdered) {
+        if (!isCollecting) {
             throw new IllegalStateException("join analysis is not collecting predicates");
         }
     }
 
     private void swap(int target, int source) {
-        final Context from = contexts.getQuick(source);
-        if (isBarrier(joinTypes.getQuick(target)) || from == null || !from.parents.contains(target)
+        final JoinDependency from = dependencies.getQuick(source);
+        if (target == 0 && graph.isFirstInputLeading() || isBarrier(joinTypes.getQuick(target)) || from == null || !from.getParents().contains(target)
                 || hasOrderingConstraint(target, source)) {
             return;
         }
         stagedIndexes.clear();
-        for (int i = 0, n = from.keys.size(); i < n; i++) {
-            final Equality key = from.keys.getQuick(i);
-            if (key.leftSource == target || key.rightSource == target) {
+        final ObjList<JoinEquality> keys = from.getKeys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final JoinEquality key = keys.getQuick(i);
+            if (key.getLeftSource() == target || key.getRightSource() == target) {
                 stagedIndexes.add(i);
             }
         }
-        if (stagedIndexes.size() > 0 && stagedIndexes.size() < from.keys.size() && !hasOtherDependencyPath(from, target)) {
+        if (stagedIndexes.size() > 0 && stagedIndexes.size() < keys.size() && !hasOtherDependencyPath(from, target)) {
             // Reversing a direct edge while another path reaches the same donor
             // would introduce a cycle. Only reverse an independent edge.
-            // An earlier donor may already have created this context. Reusing
+            // An earlier donor may already have created this dependency. Reusing
             // the root search's original null would discard its stolen keys.
-            Context targetContext = contexts.getQuick(target);
-            if (targetContext == null) {
-                targetContext = contextPool.next();
-                contexts.setQuick(target, targetContext);
+            JoinDependency targetDependency = dependencies.getQuick(target);
+            if (targetDependency == null) {
+                targetDependency = dependencyPool.next().of(target);
+                dependencies.setQuick(target, targetDependency);
             }
-            targetContext.slave = target;
-            contexts.setQuick(source, moveClauses(from, targetContext));
+            dependencies.setQuick(source, moveClauses(from, targetDependency));
             if (joinTypes.getQuick(target) == JoinKind.CROSS) {
                 joinTypes.setQuick(target, JoinKind.INNER);
             }
         }
     }
 
+    /**
+     * Kahn's order with the first input first; returns the order's cost, or {@link Integer#MAX_VALUE} when the
+     * dependencies are cyclic.
+     */
     private int topologicalOrder() {
         stagedIndexes.clear();
         candidateOrder.clear();
         pendingSources.clear();
         ready.clear();
-        for (int i = 0, n = contexts.size(); i < n; i++) {
-            final Context context = contexts.getQuick(i);
-            if (context == null || context.parents.size() == 0) {
-                if (dependencies.getQuick(i).size() > 0) {
+        final IntList lateInputs = graph.getLateInputs();
+        final boolean isFirstInputLeading = graph.isFirstInputLeading();
+        inCounts.setAll(dependencies.size(), 0);
+        for (int i = 0, n = dependencies.size(); i < n; i++) {
+            final JoinDependency dependency = dependencies.getQuick(i);
+            if (dependency != null && dependency.getParents().size() > 0) {
+                inCounts.setQuick(i, dependency.getParents().size());
+            } else if (i > 0 || !isFirstInputLeading) {
+                if (children.getQuick(i).size() > 0) {
                     ready.add(i);
                 } else {
                     stagedIndexes.add(i);
                 }
-            } else {
-                context.inCount = context.parents.size();
             }
         }
         int cost = 0;
+        if (isFirstInputLeading) {
+            cost += appendToOrder(0);
+        }
         int heldCount = 0;
         while (true) {
             final int source;
             if (ready.notEmpty()) {
                 source = ready.poll();
-                if (lateInputs.contains(source) && dependencies.getQuick(source).size() == 0) {
+                if (lateInputs.contains(source) && children.getQuick(source).size() == 0) {
                     pendingSources.add(source);
                     continue;
                 }
@@ -425,20 +630,10 @@ final class JoinOrderSolver implements Mutable {
             } else {
                 break;
             }
-            candidateOrder.add(source);
-            cost += joinTypes.getQuick(source) == JoinKind.CROSS ? 10 : 5;
-            final IntHashSet children = dependencies.getQuick(source);
-            for (int i = 0, n = children.size(); i < n; i++) {
-                final int child = children.get(i);
-                final Context context = contexts.getQuick(child);
-                if (context != null && --context.inCount == 0) {
-                    ready.add(child);
-                }
-            }
+            cost += appendToOrder(source);
         }
-        for (int i = 0, n = contexts.size(); i < n; i++) {
-            final Context context = contexts.getQuick(i);
-            if (context != null && context.inCount > 0) {
+        for (int i = 0, n = dependencies.size(); i < n; i++) {
+            if (dependencies.getQuick(i) != null && inCounts.getQuick(i) > 0) {
                 return Integer.MAX_VALUE;
             }
         }
@@ -447,7 +642,7 @@ final class JoinOrderSolver implements Mutable {
     }
 
     private void validateColumn(int source, int columnId) {
-        if (source < 0 || source >= contexts.size()
+        if (source < 0 || source >= dependencies.size()
                 || join.getInputs().getQuick(source).getSourceOutput().getColumnIndexById(columnId) < 0) {
             throw new IllegalArgumentException("join equality column is outside its source");
         }
@@ -455,17 +650,21 @@ final class JoinOrderSolver implements Mutable {
 
     private void validateOrder() {
         markedIndexes.clear();
+        if (graph.isFirstInputLeading() && bestOrder.getQuick(0) != 0) {
+            throw new IllegalStateException("the first join input is not ordered first");
+        }
         for (int i = 0, n = bestOrder.size(); i < n; i++) {
             final int source = bestOrder.getQuick(i);
             if (!markedIndexes.add(source)) {
                 throw new IllegalStateException("duplicate input in logical join order");
             }
-            final Context context = contexts.getQuick(source);
-            if (context != null) {
-                for (int k = 0, count = context.keys.size(); k < count; k++) {
-                    final Equality key = context.keys.getQuick(k);
-                    final int parent = key.leftSource == source ? key.rightSource : key.leftSource;
-                    if (key.leftSource != source && key.rightSource != source || parent == source || markedIndexes.excludes(parent)) {
+            final JoinDependency dependency = dependencies.getQuick(source);
+            if (dependency != null) {
+                final ObjList<JoinEquality> keys = dependency.getKeys();
+                for (int k = 0, count = keys.size(); k < count; k++) {
+                    final JoinEquality key = keys.getQuick(k);
+                    final int parent = key.getOtherSource(source);
+                    if (key.getLeftSource() != source && key.getRightSource() != source || parent == source || markedIndexes.excludes(parent)) {
                         throw new IllegalStateException("join key parent is not ordered before its slave");
                     }
                 }
@@ -483,6 +682,8 @@ final class JoinOrderSolver implements Mutable {
      */
     void addDependency(int parent, int child) {
         requireCollecting();
+        graph.getLateralDependencies().add(parent);
+        graph.getLateralDependencies().add(child);
         addParent(parent, child);
     }
 
@@ -501,15 +702,14 @@ final class JoinOrderSolver implements Mutable {
             int originalOnSource
     ) {
         requireCollecting();
-        if (originalOnSource < -1 || originalOnSource >= contexts.size()) {
+        if (originalOnSource < -1 || originalOnSource >= dependencies.size()) {
             throw new IllegalArgumentException("invalid join predicate origin");
         }
         validateColumn(leftSource, leftColumnId);
         validateColumn(rightSource, rightColumnId);
-        final Equality equality = equalityPool.next();
-        equality.of(leftSource, leftColumnId, leftName, leftPosition,
+        final JoinEquality equality = equalityPool.next().of(leftSource, leftColumnId, leftName, leftPosition,
                 rightSource, rightColumnId, rightName, rightPosition);
-        equality.originalOwners.add(originalOnSource);
+        equality.getOwners().add(originalOnSource);
         if (leftSource == rightSource) {
             // An original x=x remains a scalar predicate; only a tautology
             // derived from two already retained equalities can disappear.
@@ -520,12 +720,11 @@ final class JoinOrderSolver implements Mutable {
         if (leftSource > rightSource) {
             equality.reverse();
         }
-        final Context context = contextPool.next();
-        context.slave = equality.rightSource;
-        context.keys.add(equality);
-        context.parents.add(equality.leftSource);
-        addContext(context);
-        link(equality.leftSource, equality.rightSource);
+        final JoinDependency dependency = dependencyPool.next().of(equality.getRightSource());
+        dependency.getKeys().add(equality);
+        dependency.getParents().add(equality.getLeftSource());
+        addContext(dependency);
+        link(equality.getLeftSource(), equality.getRightSource());
     }
 
     /**
@@ -533,191 +732,157 @@ final class JoinOrderSolver implements Mutable {
      */
     void addLateInput(int source) {
         requireCollecting();
-        lateInputs.add(source);
+        graph.getLateInputs().add(source);
     }
 
     void addOrderingConstraint(int parent, int child) {
         requireCollecting();
         if (parent != child) {
-            orderingConstraints.add(parent);
-            orderingConstraints.add(child);
+            graph.getOrderingConstraints().add(parent);
+            graph.getOrderingConstraints().add(child);
         }
     }
 
-    ObjList<Equality> getSourceFilters() {
+    /**
+     * Starts collecting the predicates and constraints of the join into its graph.
+     */
+    void collect(JoinPlan join, JoinGraph graph) {
+        if (join.getOrderedInputs().size() != 0 || graph.getDependencies().size() != 0) {
+            throw new IllegalStateException("join order has already been selected");
+        }
+        of(join, graph);
+        for (int i = 0, n = join.getInputs().size(); i < n; i++) {
+            dependencies.add(null);
+        }
+        isCollecting = true;
+    }
+
+    /**
+     * The derived equalities between two columns of one input, which the join evaluates as filters.
+     */
+    ObjList<JoinEquality> getSourceFilters() {
         return sourceFilters;
     }
 
     boolean hasJoinDependency(int source) {
-        final Context context = contexts.getQuick(source);
-        if (context != null && context.parents.size() > 0 || dependencies.getQuick(source).size() > 0) {
+        final JoinDependency dependency = dependencies.getQuick(source);
+        if (dependency != null && dependency.getParents().size() > 0 || children.getQuick(source).size() > 0) {
             return true;
         }
-        for (int i = 0, n = orderingConstraints.size(); i < n; i++) {
-            if (orderingConstraints.getQuick(i) == source) {
+        final IntList constraints = graph.getOrderingConstraints();
+        for (int i = 0, n = constraints.size(); i < n; i++) {
+            if (constraints.getQuick(i) == source) {
                 return true;
             }
         }
         return false;
     }
 
-    void of(JoinPlan join) {
-        clear();
-        if (join.getOrderedInputs().size() != 0) {
-            throw new IllegalStateException("join order has already been selected");
-        }
-        for (int i = 0, n = join.getInputs().size(); i < n; i++) {
-            final JoinInput input = join.getInputs().getQuick(i);
-            final JoinKind type = input.getJoinType();
-            if (input.getMasterKeyColumnIds().size() != 0 || input.getSlaveKeyColumnIds().size() != 0) {
-                throw new IllegalStateException("join keys have already been published");
+    /**
+     * Selects the order of a join binding left a graph for, with its first input first when it leads, and publishes
+     * the keys, join types and ordered inputs; the caller places the graph's filter conjuncts. An input binding added
+     * after the graph joins as an unkeyed CROSS step.
+     */
+    void order(JoinPlan join) {
+        of(join, join.getGraph());
+        try {
+            for (int i = dependencies.size(), n = join.getInputs().size(); i < n; i++) {
+                dependencies.add(null);
             }
-            contexts.add(null);
-            dependencies.add(dependencyPool.next());
-            joinTypes.add(type);
+            linkDependencies();
+            for (int i = 0, n = dependencies.size(); i < n; i++) {
+                final JoinDependency dependency = dependencies.getQuick(i);
+                final JoinKind type = joinTypes.getQuick(i);
+                if (!isBarrier(type)) {
+                    joinTypes.setQuick(i, dependency != null && dependency.getParents().size() > 0 ? JoinKind.INNER : JoinKind.CROSS);
+                } else if (type.isTemporal()) {
+                    addParent(0, i);
+                } else if (type == JoinKind.UNNEST) {
+                    if (i == 0) {
+                        throw new IllegalStateException("UNNEST requires a master input");
+                    }
+                    addParent(0, i);
+                    final ObjList<BoundExpression> expressions = join.getInputs().getQuick(i).getUnnest().getExpressions();
+                    semanticEdges.clear();
+                    for (int k = 0, count = expressions.size(); k < count; k++) {
+                        addUnnestEdges(expressions.getQuick(k), i, semanticEdges);
+                    }
+                    for (int k = 0, count = semanticEdges.size(); k < count; k += 2) {
+                        addParent(semanticEdges.getQuick(k), i);
+                    }
+                }
+            }
+            reorder();
+            validateOrder();
+            final ObjList<JoinInput> inputs = join.getInputs();
+            for (int i = 0, n = bestOrder.size(); i < n; i++) {
+                final int source = bestOrder.getQuick(i);
+                final JoinInput input = inputs.getQuick(source);
+                input.setJoinType(joinTypes.getQuick(source));
+                final JoinDependency dependency = dependencies.getQuick(source);
+                if (dependency != null) {
+                    final ObjList<JoinEquality> keys = dependency.getKeys();
+                    for (int k = 0, count = keys.size(); k < count; k++) {
+                        final JoinEquality key = keys.getQuick(k);
+                        final boolean isLeftSlave = key.getLeftSource() == source;
+                        input.getMasterKeyColumnIds().add(isLeftSlave ? key.getRightColumnId() : key.getLeftColumnId());
+                        input.getSlaveKeyColumnIds().add(isLeftSlave ? key.getLeftColumnId() : key.getRightColumnId());
+                        input.getMasterKeyNames().add(isLeftSlave ? key.getRightName() : key.getLeftName());
+                        input.getSlaveKeyNames().add(isLeftSlave ? key.getLeftName() : key.getRightName());
+                        input.getKeyPositions().add(isLeftSlave ? key.getLeftPosition() : key.getRightPosition());
+                    }
+                }
+                join.getOrderedInputs().add(input);
+            }
+        } finally {
+            clear();
         }
-        this.join = join;
     }
 
     /**
-     * Selects once and publishes only key values and input identities; false when dependencies are cyclic.
+     * Merges the collected equalities that key one input on one column and returns whether the join semantics admit
+     * an order: the edges they impose whatever the keys are acyclic.
      */
-    boolean order() {
+    boolean prepare() {
         requireCollecting();
-        // Merging an emitted context can emit another equality at a lower
+        // Merging an emitted dependency can emit another equality at a lower
         // source ordinal. Drain the queue: a captured size silently loses those
         // equalities. The decreasing owner ordinal bounds this local revisit.
-        for (int i = 0; i < stagedContexts.size(); i++) {
-            addContext(stagedContexts.getQuick(i));
+        for (int i = 0; i < stagedDependencies.size(); i++) {
+            addContext(stagedDependencies.getQuick(i));
         }
-        // A newly emitted context may not have passed through addEquality.
-        // Derive every dependency from the surviving contexts before ordering.
-        for (int i = 0, n = dependencies.size(); i < n; i++) {
-            dependencies.getQuick(i).clear();
+        stagedDependencies.clear();
+        isCollecting = false;
+        collectSemanticEdges();
+        for (int i = 0, n = children.size(); i < n; i++) {
+            children.getQuick(i).clear();
         }
-        for (int i = 0, n = contexts.size(); i < n; i++) {
-            final Context context = contexts.getQuick(i);
-            if (context != null) {
-                for (int k = 0, count = context.parents.size(); k < count; k++) {
-                    link(context.parents.get(k), i);
+        final int count = dependencies.size();
+        inCounts.setAll(count, 0);
+        for (int i = 0, n = semanticEdges.size(); i < n; i += 2) {
+            if (children.getQuick(semanticEdges.getQuick(i)).add(semanticEdges.getQuick(i + 1))) {
+                inCounts.increment(semanticEdges.getQuick(i + 1));
+            }
+        }
+        ready.clear();
+        for (int i = 0; i < count; i++) {
+            if (inCounts.getQuick(i) == 0) {
+                ready.add(i);
+            }
+        }
+        int ordered = 0;
+        while (ready.notEmpty()) {
+            final IntHashSet sourceChildren = children.getQuick(ready.poll());
+            ordered++;
+            for (int i = 0, n = sourceChildren.size(); i < n; i++) {
+                final int child = sourceChildren.get(i);
+                final int inCount = inCounts.getQuick(child) - 1;
+                inCounts.setQuick(child, inCount);
+                if (inCount == 0) {
+                    ready.add(child);
                 }
             }
         }
-        for (int i = 0, n = contexts.size(); i < n; i++) {
-            final Context context = contexts.getQuick(i);
-            final JoinKind type = joinTypes.getQuick(i);
-            if (!isBarrier(type)) {
-                joinTypes.setQuick(i, context != null && context.parents.size() > 0 ? JoinKind.INNER : JoinKind.CROSS);
-            } else if (type.isTemporal()) {
-                addParent(0, i);
-            } else if (type == JoinKind.UNNEST) {
-                if (i == 0) {
-                    throw new IllegalStateException("UNNEST requires a master input");
-                }
-                addParent(0, i);
-                final ObjList<BoundExpression> expressions = join.getInputs().getQuick(i).getUnnest().getExpressions();
-                for (int k = 0, count = expressions.size(); k < count; k++) {
-                    addUnnestDependencies(expressions.getQuick(k), i);
-                }
-            }
-        }
-        reorder();
-        if (bestOrder.size() != contexts.size()) {
-            return false;
-        }
-        validateOrder();
-        final ObjList<JoinInput> inputs = join.getInputs();
-        for (int i = 0, n = bestOrder.size(); i < n; i++) {
-            final int source = bestOrder.getQuick(i);
-            final JoinInput input = inputs.getQuick(source);
-            input.setJoinType(joinTypes.getQuick(source));
-            final Context context = contexts.getQuick(source);
-            if (context != null) {
-                for (int k = 0, count = context.keys.size(); k < count; k++) {
-                    final Equality key = context.keys.getQuick(k);
-                    final boolean isLeftSlave = key.leftSource == source;
-                    input.getMasterKeyColumnIds().add(isLeftSlave ? key.rightColumnId : key.leftColumnId);
-                    input.getSlaveKeyColumnIds().add(isLeftSlave ? key.leftColumnId : key.rightColumnId);
-                    input.getMasterKeyNames().add(isLeftSlave ? key.rightName : key.leftName);
-                    input.getSlaveKeyNames().add(isLeftSlave ? key.leftName : key.rightName);
-                    input.getKeyPositions().add(isLeftSlave ? key.leftPosition : key.rightPosition);
-                }
-            }
-            join.getOrderedInputs().add(input);
-        }
-        isOrdered = true;
-        return true;
-    }
-
-    private static final class Context implements Mutable {
-        private final ObjList<Equality> keys = new ObjList<>();
-        private final IntHashSet parents = new IntHashSet(4);
-        private int inCount;
-        private int slave = -1;
-
-        @Override
-        public void clear() {
-            keys.clear();
-            parents.clear();
-            inCount = 0;
-            slave = -1;
-        }
-    }
-
-    static final class Equality implements Mutable {
-        final IntList originalOwners = new IntList();
-        int leftColumnId;
-        CharSequence leftName;
-        int leftPosition;
-        int leftSource;
-        int rightColumnId;
-        CharSequence rightName;
-        int rightPosition;
-        int rightSource;
-
-        @Override
-        public void clear() {
-            originalOwners.clear();
-            leftColumnId = rightColumnId = -1;
-            leftName = rightName = null;
-            leftPosition = rightPosition = -1;
-            leftSource = rightSource = -1;
-        }
-
-        private void addOwners(IntList owners) {
-            for (int i = 0, n = owners.size(); i < n; i++) {
-                final int owner = owners.getQuick(i);
-                if (originalOwners.indexOf(owner, 0, originalOwners.size()) < 0) {
-                    originalOwners.add(owner);
-                }
-            }
-        }
-
-        private void of(int leftSource, int leftColumnId, CharSequence leftName, int leftPosition,
-                        int rightSource, int rightColumnId, CharSequence rightName, int rightPosition) {
-            this.leftSource = leftSource;
-            this.leftColumnId = leftColumnId;
-            this.leftName = leftName;
-            this.leftPosition = leftPosition;
-            this.rightSource = rightSource;
-            this.rightColumnId = rightColumnId;
-            this.rightName = rightName;
-            this.rightPosition = rightPosition;
-        }
-
-        private void reverse() {
-            final int source = leftSource;
-            final int id = leftColumnId;
-            final CharSequence name = leftName;
-            final int position = leftPosition;
-            leftSource = rightSource;
-            leftColumnId = rightColumnId;
-            leftName = rightName;
-            leftPosition = rightPosition;
-            rightSource = source;
-            rightColumnId = id;
-            rightName = name;
-            rightPosition = position;
-        }
+        return ordered == count;
     }
 }

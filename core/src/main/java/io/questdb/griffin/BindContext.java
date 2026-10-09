@@ -29,8 +29,11 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.FilterPlan;
+import io.questdb.griffin.plan.logical.ForwardingPlan;
 import io.questdb.griffin.plan.logical.GroupingPlan;
-import io.questdb.griffin.plan.logical.JoinPlan;
+import io.questdb.griffin.plan.logical.LimitPlan;
+import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.std.Chars;
@@ -211,15 +214,6 @@ final class BindContext implements Mutable {
         }
         final CharSequence qualifier = input.hasColumnQualifiers() ? input.getColumnQualifier(index) : inputAlias;
         return Chars.equalsIgnoreCase(GenericLexer.unquote(expression.token.subSequence(0, dot)), qualifier);
-    }
-
-    static int joinColumnSource(JoinPlan join, int columnId) {
-        for (int i = 0, n = join.getInputs().size(); i < n; i++) {
-            if (join.getInputs().getQuick(i).getSourceOutput().getColumnIndexById(columnId) >= 0) {
-                return i;
-            }
-        }
-        throw new IllegalStateException("join column is outside its inputs");
     }
 
     /**
@@ -422,6 +416,41 @@ final class BindContext implements Mutable {
         final CharacterStoreEntry entry = characterStore.newEntry();
         entry.put(alias).put('.').put(name);
         return entry.toImmutable();
+    }
+
+    /**
+     * Carries the designated timestamp of the source under column projections, filters and limits that leave it out,
+     * as a hidden column, so that a temporal join or SAMPLE BY over them keeps its time.
+     */
+    void retainImplicitTimestamp(LogicalPlan plan) {
+        if (plan.getOutput().getTimestampIndex() >= 0) {
+            return;
+        }
+        if (plan instanceof ProjectPlan project) {
+            for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
+                if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression)) {
+                    return;
+                }
+            }
+            retainImplicitTimestamp(project.getInput());
+            final OutputSchema input = project.getInput().getOutput();
+            final int timestampIndex = input.getTimestampIndex();
+            if (timestampIndex >= 0) {
+                final int columnId = scope().nextColumnId++;
+                project.getExpressions().add(planNodes.columns.next().of(input.getColumnId(timestampIndex),
+                        input.getColumnType(timestampIndex), project.getPosition()));
+                // An implicit timestamp belongs to the record layout, never the
+                // enclosing query's SQL name scope or wildcard expansion.
+                project.getOutput().add(columnId, "", input.getColumnType(timestampIndex), input.getMetadata(timestampIndex), false);
+                project.getOutput().setTimestampIndex(project.getOutput().getColumnCount() - 1);
+                inheritTimestampBinding(input.getColumnId(timestampIndex), columnId);
+            }
+        } else if (plan instanceof FilterPlan || plan instanceof LimitPlan) {
+            retainImplicitTimestamp(plan.inputAt(0));
+            ((ForwardingPlan) plan).deriveOutput();
+        }
+        // Other operators establish their own ordering or equality contract.
+        // In particular, never enlarge a DISTINCT or set-operation tuple.
     }
 
     BindScope scope() {

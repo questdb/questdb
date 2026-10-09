@@ -43,9 +43,6 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.RecordArray;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableNameRegistry;
@@ -81,9 +78,6 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.StaleViewCheckFactory;
-import io.questdb.griffin.engine.SubqueryRecordCursorFactory;
-import io.questdb.griffin.engine.SubqueryResult;
-import io.questdb.griffin.engine.SubqueryScopeRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -224,8 +218,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final BindScopeStack scopes = new BindScopeStack();
     private final ObjectPool<ExpressionNode> sqlNodePool;
     private final ObjList<Subquery> subqueries = new ObjList<>();
-    private final ObjList<Subquery> subqueryResultKeys = new ObjList<>();
-    private final ObjList<SubqueryResult> subqueryResults = new ObjList<>();
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final IntHashSet tmpIds = new IntHashSet();
@@ -237,7 +229,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final VacuumColumnVersions vacuumColumnVersions;
     private final ObjList<CharSequence> views = new ObjList<>();
     protected CharSequence sqlText;
-    private QueryModel boundModel;
     private boolean closed = false;
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
@@ -246,7 +237,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
     private boolean isSingleQueryMode = true;
     private LogicalPlan root;
-    private int subqueryScopeStart = -1;
     private final SubqueryCompiler subqueryCompiler = new SubqueryCompiler() {
         @Override
         public Subquery bindSubquery(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
@@ -259,8 +249,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         @Override
-        public RecordCursorFactory generateSubqueryConsumer(Subquery subquery, boolean isConsumer, SqlExecutionContext executionContext) throws SqlException {
-            return SqlCompilerImpl.this.generateSubqueryConsumer(subquery, isConsumer, executionContext);
+        public RecordCursorFactory generateSubquery(Subquery subquery, SqlExecutionContext executionContext) throws SqlException {
+            return SqlCompilerImpl.this.generateSubquery(subquery, executionContext);
         }
     };
 
@@ -324,7 +314,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             functionSources = new TableFunctionSources(functionParser, planNodePools.functionSources);
             binder = newBinder(functionParser, scopes);
             optimiser = new SqlOptimiser(characterStore, planNodePools, tmpIds, tmpIndexes, tmpValues, tmpMasterKeys,
-                    binder.getExpressionRewriter(), binder.getFunctionBinder(), binder.getFunctionInstantiator(), functionSources);
+                    binder.getExpressionRewriter(), binder.getFunctionBinder(), binder.getFunctionInstantiator(), binder.getJoinOrderSolver(),
+                    functionSources);
         } catch (Throwable th) {
             close();
             throw th;
@@ -655,7 +646,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     @TestOnly
     public int getJoinEqualityCapacity() {
-        return binder.getJoinEqualityCapacity();
+        return planNodePools.joinEqualities.getCapacity();
     }
 
     @TestOnly
@@ -2343,12 +2334,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private int beginSubqueryScope() {
-        final int previousScopeStart = subqueryScopeStart;
-        subqueryScopeStart = subqueryResults.size();
-        return previousScopeStart;
-    }
-
     private Function bindStatementExpression(ExpressionNode expression, RecordMetadata metadata, int preferredType, SqlExecutionContext executionContext) throws SqlException {
         assert root == null;
         if (expression == null) {
@@ -2395,7 +2380,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void clearExceptSqlText() {
-        boundModel = null;
         Throwable failure = clearPlan(null);
         failure = Misc.clearBestEffort(failure, scopes);
         failure = Misc.clearBestEffort(failure, binder);
@@ -4157,6 +4141,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofSet();
     }
 
+    /**
+     * Binds, optimises and authorizes the query into the statement's plan, which {@link #generatePlan} generates and
+     * which stays readable until the compiler clears it.
+     */
     private void compileQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         assert model.getBottomUpColumns().size() > 0 || model.getNestedModel() == null;
         optimiser.clear();
@@ -4171,7 +4159,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             functionParser.swapSubqueryCompiler(previous);
         }
         optimise(executionContext);
-        boundModel = model;
     }
 
     private void compileRefresh(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
@@ -4937,16 +4924,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void endSubqueryScope(int previousScopeStart) {
-        for (int i = subqueryScopeStart, n = subqueryResults.size(); i < n; i++) {
-            subqueryResults.setQuick(i, null);
-            subqueryResultKeys.setQuick(i, null);
-        }
-        subqueryResults.setPos(subqueryScopeStart);
-        subqueryResultKeys.setPos(subqueryScopeStart);
-        subqueryScopeStart = previousScopeStart;
-    }
-
     private void enqueueCompileViews(ExecutionModel model) {
         final QueryModel queryModel = model.getQueryModel();
         if (queryModel == null) {
@@ -5685,7 +5662,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final RecordCursorFactory factory;
         try {
             factory = innerModel.getQueryModel() == null
-                    ? null : generateQueryFactory(innerModel.getQueryModel(), executionContext);
+                    ? null : generatePlan(executionContext);
         } finally {
             executionContext.setLiveViewCompile(false);
         }
@@ -5693,43 +5670,31 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Generates the statement's optimised plan; the sub-queries generate where their consumers first read them, once
-     * per statement. Closes every preparation generation did not adopt.
+     * Generates the plan {@link #compileQuery} prepared; every consumer of a sub-query generates its own copy of it.
+     * Closes every preparation generation did not adopt.
      */
     private RecordCursorFactory generatePlan(SqlExecutionContext executionContext) throws SqlException {
-        final int previousScopeStart = beginSubqueryScope();
+        final RecordCursorFactory factory;
         try {
-            final RecordCursorFactory factory;
-            try {
-                factory = codeGenerator.generate(root, binder.getFunctionInstantiator(), binder.getExpressionRewriter(), functionSources,
-                        executionContext);
-            } catch (Throwable th) {
-                final Throwable failure = closePrepared(th);
-                assert failure == th;
-                throw th;
-            }
-            final Throwable cleanup = closePrepared(null);
-            if (cleanup != null) {
-                Misc.free(factory, cleanup);
-                CairoException.rethrowCleanupFailure(cleanup);
-            }
-            return shareSubqueries(factory);
-        } finally {
-            endSubqueryScope(previousScopeStart);
+            factory = codeGenerator.generate(root, binder.getFunctionInstantiator(), binder.getExpressionRewriter(), functionSources,
+                    executionContext);
+        } catch (Throwable th) {
+            final Throwable failure = closePrepared(th);
+            assert failure == th;
+            throw th;
         }
-    }
-
-    private RecordCursorFactory generateQueryFactory(QueryModel selectQueryModel, SqlExecutionContext executionContext) throws SqlException {
-        if (selectQueryModel != boundModel || root == null) {
-            compileQuery(selectQueryModel, executionContext);
+        final Throwable cleanup = closePrepared(null);
+        if (cleanup != null) {
+            Misc.free(factory, cleanup);
+            CairoException.rethrowCleanupFailure(cleanup);
         }
-        return generatePlan(executionContext);
+        return factory;
     }
 
     /**
      * Generates a new, owned factory of an optimised sub-query.
      */
-    private RecordCursorFactory generateSubquery(Subquery subquery, SqlExecutionContext executionContext) throws SqlException {
+    RecordCursorFactory generateSubquery(Subquery subquery, SqlExecutionContext executionContext) throws SqlException {
         executionContext.pushTimestampRequiredFlag(false);
         boolean hasPushedWindowContext = false;
         final int depth = scopes.enter(subquery.getDepth());
@@ -6123,35 +6088,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
     }
 
-    /**
-     * Gives every sub-query of the current generation scope that more than one consumer evaluates native row storage,
-     * so that its consumers share one evaluation per execution, and wraps the factory in the scope that marks the
-     * executions. A sub-query with a single consumer keeps streaming. Frees the factory on failure.
-     */
-    private RecordCursorFactory shareSubqueries(RecordCursorFactory factory) {
-        ObjList<SubqueryResult> shared = null;
-        try {
-            for (int i = subqueryScopeStart, n = subqueryResults.size(); i < n; i++) {
-                final SubqueryResult result = subqueryResults.getQuick(i);
-                if (!result.isClosed() && result.getConsumerCount() > 1) {
-                    final RecordMetadata metadata = result.getBase().getMetadata();
-                    entityColumnFilter.of(metadata.getColumnCount());
-                    final RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, metadata, entityColumnFilter);
-                    result.share(new RecordArray(metadata, sink, configuration.getSqlHashJoinValuePageSize(),
-                            configuration.getSqlHashJoinValueMaxPages()));
-                    if (shared == null) {
-                        shared = new ObjList<>();
-                    }
-                    shared.add(result);
-                }
-            }
-            return shared != null ? new SubqueryScopeRecordCursorFactory(factory, shared) : factory;
-        } catch (Throwable th) {
-            Misc.free(factory, th);
-            throw th;
-        }
-    }
-
     private TableToken tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
         if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
             throw SqlException.tableDoesNotExist(position, tableName);
@@ -6415,7 +6351,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (!executionContext.allowNonDeterministicFunctions() && LogicalPlans.hasExternalDataSource(subqueryRoot)) {
             throw SqlException.nonDeterministicColumn(position, "sub-query", executionContext.isLiveViewCompile() ? "live view" : "materialized view");
         }
-        final Subquery subquery = planNodePools.subqueries.next().of(subqueryRoot, scope.nextColumnId, scopes.depth() + 1);
+        final Subquery subquery = planNodePools.subqueries.next().of(subqueryRoot, scope.nextColumnId, scopes.depth() + 1,
+                LogicalPlans.isResultStable(subqueryRoot, executionContext.isParallelGroupByEnabled()));
         subqueries.add(subquery);
         return subquery;
     }
@@ -6431,12 +6368,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             optimiseSubquery(subqueries.getQuick(i), executionContext);
         }
         subqueries.setPos(first);
-        final int previousScopeStart = beginSubqueryScope();
-        try {
-            return shareSubqueries(generateSubquery(subquery, executionContext));
-        } finally {
-            endSubqueryScope(previousScopeStart);
-        }
+        return generateSubquery(subquery, executionContext);
     }
 
     protected AlterOperationBuilder createAlterOperationBuilder() {
@@ -6448,7 +6380,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             SqlExecutionContext executionContext,
             boolean generateProgressLogger
     ) throws SqlException {
-        RecordCursorFactory factory = generateQueryFactory(selectQueryModel, executionContext);
+        RecordCursorFactory factory = generatePlan(executionContext);
         ObjList<ViewDefinition> views = selectQueryModel.getReferencedViews();
         if (views.size() > 0) {
             factory = new StaleViewCheckFactory(factory, views, engine);
@@ -6457,33 +6389,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return new QueryProgress(queryRegistry, sqlText, factory);
         } else {
             return factory;
-        }
-    }
-
-    /**
-     * The factory one consumer of the sub-query reads: a view of the sub-query's single factory in the current
-     * generation scope, which the first consumer generates. The caller owns the view; worker clones pass
-     * {@code isConsumer} false because they inherit their owner's value instead of evaluating the sub-query.
-     */
-    RecordCursorFactory generateSubqueryConsumer(Subquery subquery, boolean isConsumer, SqlExecutionContext executionContext) throws SqlException {
-        assert subqueryScopeStart >= 0 : "sub-query generated outside a generation scope";
-        for (int i = subqueryScopeStart, n = subqueryResultKeys.size(); i < n; i++) {
-            final SubqueryResult result = subqueryResults.getQuick(i);
-            if (subqueryResultKeys.getQuick(i) == subquery && !result.isClosed()) {
-                return new SubqueryRecordCursorFactory(result, isConsumer);
-            }
-        }
-        final RecordCursorFactory base = generateSubquery(subquery, executionContext);
-        SubqueryResult result = null;
-        try {
-            result = new SubqueryResult(base);
-            final RecordCursorFactory consumer = new SubqueryRecordCursorFactory(result, isConsumer);
-            subqueryResultKeys.add(subquery);
-            subqueryResults.add(result);
-            return consumer;
-        } catch (Throwable th) {
-            Misc.free(result != null ? result : base, th);
-            throw th;
         }
     }
 

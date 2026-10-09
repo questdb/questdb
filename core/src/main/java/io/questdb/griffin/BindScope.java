@@ -68,7 +68,6 @@ final class BindScope implements Mutable {
     final ObjList<QueryModel> hintAliasModels = new ObjList<>();
     final ObjList<CharSequence> hintAliases = new ObjList<>();
     final IntHashSet intrinsicTimestampColumnIds = new IntHashSet();
-    final ObjList<ExpressionNode> joinFilterNodes = new ObjList<>();
     final IntHashSet joinNativeTimestampIds = new IntHashSet();
     final ObjList<ExpressionNode> joinResidualNodes = new ObjList<>();
     final IntList joinResidualOrigins = new IntList();
@@ -160,7 +159,6 @@ final class BindScope implements Mutable {
         hintAliasModels.clear();
         hintAliases.clear();
         intrinsicTimestampColumnIds.clear();
-        joinFilterNodes.clear();
         joinNativeTimestampIds.clear();
         joinResidualNodes.clear();
         joinResidualOrigins.clear();

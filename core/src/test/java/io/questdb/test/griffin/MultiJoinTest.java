@@ -40,6 +40,36 @@ import java.util.Random;
 
 public class MultiJoinTest extends AbstractCairoTest {
     @Test
+    public void testCursorColumnJoinsAfterOrderedInputs() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrderTables();
+            assertQuery("SELECT a.v, information_schema._pg_expandarray(ARRAY[1.0, 2.0]) k FROM a, b, c WHERE b.id = c.id")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Cross Join
+                                    Hash Join Light
+                                      condition: c.id=b.id
+                                        Cross Join
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                    RecordAsAField
+                                        Empty table
+                            """)
+                    .returns("v\tk\n");
+        });
+    }
+
+    @Test
     public void testDerivedPredicatesGroupingOrderingAndLimits() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
@@ -224,6 +254,115 @@ public class MultiJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstInputLeadsJoinOfUnkeyedFirstInput() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrderTables();
+            assertQuery("SELECT a.v, b.w, c.u FROM a, b, c WHERE b.id = c.id")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: c.id=b.id
+                                    Cross Join
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                            """)
+                    .returns("""
+                            v\tw\tu
+                            1\t10\t100
+                            1\t20\t200
+                            2\t10\t100
+                            2\t20\t200
+                            """);
+            assertQuery("SELECT * FROM a, b, c WHERE b.id = c.id")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ats")
+                    .returns("""
+                            id\tv\tats\tid1\tw\tbts\tid2\tw1\tu\tcts
+                            7\t1\t2024-01-01T00:00:03.000000Z\t1\t10\t2024-01-01T00:00:01.000000Z\t1\t10\t100\t2024-01-01T00:00:05.000000Z
+                            7\t1\t2024-01-01T00:00:03.000000Z\t2\t20\t2024-01-01T00:00:02.000000Z\t2\t20\t200\t2024-01-01T00:00:06.000000Z
+                            8\t2\t2024-01-01T00:00:04.000000Z\t1\t10\t2024-01-01T00:00:01.000000Z\t1\t10\t100\t2024-01-01T00:00:05.000000Z
+                            8\t2\t2024-01-01T00:00:04.000000Z\t2\t20\t2024-01-01T00:00:02.000000Z\t2\t20\t200\t2024-01-01T00:00:06.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstInputTimestampSamplesJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrderTables();
+            assertQuery("SELECT ats, count() FROM a, b, c WHERE b.id = c.id SAMPLE BY 1s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ats")
+                    .returns("""
+                            ats\tcount
+                            2024-01-01T00:00:03.000000Z\t2
+                            2024-01-01T00:00:04.000000Z\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstInputWithoutTimestampDesignatesNone() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrderTables();
+            assertQuery("SELECT p.x, b.w FROM p CROSS JOIN b JOIN c ON b.id = c.id")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            x\tw
+                            1\t10
+                            1\t20
+                            2\t10
+                            2\t20
+                            """);
+            assertQuery("SELECT bts, count() FROM p CROSS JOIN b JOIN c ON b.id = c.id SAMPLE BY 1s")
+                    .noLeakCheck()
+                    .fails(0, "TIMESTAMP column is required but not provided");
+            assertQuery("SELECT bts, count() FROM b JOIN c ON b.id = c.id CROSS JOIN p SAMPLE BY 1s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("bts")
+                    .returns("""
+                            bts\tcount
+                            2024-01-01T00:00:01.000000Z\t2
+                            2024-01-01T00:00:02.000000Z\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testForwardOnReferenceCycleOrdersBySemantics() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrderTables();
+            final String expected = """
+                    v\tw\tu
+                    1\t10\t100
+                    1\t20\t200
+                    2\t10\t100
+                    2\t20\t200
+                    """;
+            assertQuery("SELECT a.v, b.w, c.u FROM a JOIN b ON b.id = c.id JOIN c ON c.u > a.v LEFT JOIN d ON d.id = a.id ORDER BY 1, 2")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT a.v, b.w, c.u FROM a JOIN c ON c.u > a.v JOIN b ON b.id = c.id LEFT JOIN d ON d.id = a.id ORDER BY 1, 2")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testGeneratedEqualityGraphsMatchTupleOracle() throws Exception {
         assertMemoryLeak(() -> {
             for (int i = 0; i < 5; i++) {
@@ -313,41 +452,41 @@ public class MultiJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLexicalWildcardOrderSurvivesPhysicalSourceReordering() throws Exception {
+    public void testLexicalWildcardOrderWithUnkeyedFirstSource() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
             {
-                // The disconnected a source executes after the b/c hash join,
-                // while SELECT * keeps a,b,c column order and names.
+                // The first source leads although no condition keys it, so the rows follow a,
+                // and SELECT * keeps a,b,c column order and names.
                 assertRows("SELECT * FROM lp_multi_a a CROSS JOIN lp_multi_b b JOIN lp_multi_c c ON b.k=c.k",
                         false,
                         """
                                 id	k	v	s	ts	id1	k1	v1	s1	ts1	id2	k2	v2	s2	ts2
                                 1	1	10	one	2020-01-01T00:00:00.000000Z	11	1	11	one	2020-01-01T00:00:00.000000Z	21	1	12	one	2020-01-01T00:00:00.000000Z
-                                2	2	20	two	2020-01-02T00:00:00.000000Z	11	1	11	one	2020-01-01T00:00:00.000000Z	21	1	12	one	2020-01-01T00:00:00.000000Z
-                                3	null	null		2020-01-03T00:00:00.000000Z	11	1	11	one	2020-01-01T00:00:00.000000Z	21	1	12	one	2020-01-01T00:00:00.000000Z
                                 1	1	10	one	2020-01-01T00:00:00.000000Z	12	2	21	two	2020-01-02T00:00:00.000000Z	22	2	22	two	2020-01-02T00:00:00.000000Z
-                                2	2	20	two	2020-01-02T00:00:00.000000Z	12	2	21	two	2020-01-02T00:00:00.000000Z	22	2	22	two	2020-01-02T00:00:00.000000Z
-                                3	null	null		2020-01-03T00:00:00.000000Z	12	2	21	two	2020-01-02T00:00:00.000000Z	22	2	22	two	2020-01-02T00:00:00.000000Z
                                 1	1	10	one	2020-01-01T00:00:00.000000Z	13	null	null		2020-01-03T00:00:00.000000Z	23	null	null		2020-01-03T00:00:00.000000Z
+                                2	2	20	two	2020-01-02T00:00:00.000000Z	11	1	11	one	2020-01-01T00:00:00.000000Z	21	1	12	one	2020-01-01T00:00:00.000000Z
+                                2	2	20	two	2020-01-02T00:00:00.000000Z	12	2	21	two	2020-01-02T00:00:00.000000Z	22	2	22	two	2020-01-02T00:00:00.000000Z
                                 2	2	20	two	2020-01-02T00:00:00.000000Z	13	null	null		2020-01-03T00:00:00.000000Z	23	null	null		2020-01-03T00:00:00.000000Z
+                                3	null	null		2020-01-03T00:00:00.000000Z	11	1	11	one	2020-01-01T00:00:00.000000Z	21	1	12	one	2020-01-01T00:00:00.000000Z
+                                3	null	null		2020-01-03T00:00:00.000000Z	12	2	21	two	2020-01-02T00:00:00.000000Z	22	2	22	two	2020-01-02T00:00:00.000000Z
                                 3	null	null		2020-01-03T00:00:00.000000Z	13	null	null		2020-01-03T00:00:00.000000Z	23	null	null		2020-01-03T00:00:00.000000Z
                                 """,
                         """
                                 SelectedRecord
-                                    Cross Join
-                                        Hash Join Light
-                                          condition: c.k=b.k
+                                    Hash Join Light
+                                      condition: c.k=b.k
+                                        Cross Join
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_multi_a
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: lp_multi_b
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: lp_multi_c
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: lp_multi_a
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_multi_c
                                 """);
                 assertRows("SELECT * FROM lp_multi_a a CROSS JOIN lp_multi_b b JOIN lp_multi_c c ON b.k=c.k "
                                 + "ORDER BY 1,6,11", false,
@@ -367,19 +506,19 @@ public class MultiJoinTest extends AbstractCairoTest {
                                 Encode sort
                                   keys: [id, id1, id2]
                                     SelectedRecord
-                                        Cross Join
-                                            Hash Join Light
-                                              condition: c.k=b.k
+                                        Hash Join Light
+                                          condition: c.k=b.k
+                                            Cross Join
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_multi_a
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: lp_multi_b
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: lp_multi_c
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_multi_a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_multi_c
                                 """);
                 assertRows("SELECT c.*,a.id aid,b.id bid FROM lp_multi_a a CROSS JOIN lp_multi_b b "
                                 + "JOIN lp_multi_c c ON b.k=c.k ORDER BY aid,bid,id", false,
@@ -399,19 +538,19 @@ public class MultiJoinTest extends AbstractCairoTest {
                                 Encode sort
                                   keys: [aid, bid, id]
                                     SelectedRecord
-                                        Cross Join
-                                            Hash Join Light
-                                              condition: c.k=b.k
+                                        Hash Join Light
+                                          condition: c.k=b.k
+                                            Cross Join
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_multi_a
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: lp_multi_b
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: lp_multi_c
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_multi_a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_multi_c
                                 """);
                 assertRows("SELECT a.id aid,b.id bid,c.id cid FROM lp_multi_a a CROSS JOIN lp_multi_b b "
                                 + "CROSS JOIN lp_multi_c c ORDER BY aid,bid,cid", false,
@@ -463,37 +602,37 @@ public class MultiJoinTest extends AbstractCairoTest {
                                 """);
             }
             {
-                // The disconnected a source executes after the b/c hash join,
-                // while SELECT * keeps a,b,c column order and names.
+                // The first source leads although no condition keys it, so the rows follow a,
+                // and SELECT * keeps a,b,c column order and names.
                 assertRows("SELECT * FROM lp_multi_a a CROSS JOIN lp_multi_b b JOIN lp_multi_c c ON b.k=c.k",
                         true,
                         """
                                 id	k	v	s	ts	id1	k1	v1	s1	ts1	id2	k2	v2	s2	ts2
                                 1	1	10	one	2020-01-01T00:00:00.000000Z	11	1	11	one	2020-01-01T00:00:00.000000Z	21	1	12	one	2020-01-01T00:00:00.000000Z
-                                2	2	20	two	2020-01-02T00:00:00.000000Z	11	1	11	one	2020-01-01T00:00:00.000000Z	21	1	12	one	2020-01-01T00:00:00.000000Z
-                                3	null	null		2020-01-03T00:00:00.000000Z	11	1	11	one	2020-01-01T00:00:00.000000Z	21	1	12	one	2020-01-01T00:00:00.000000Z
                                 1	1	10	one	2020-01-01T00:00:00.000000Z	12	2	21	two	2020-01-02T00:00:00.000000Z	22	2	22	two	2020-01-02T00:00:00.000000Z
-                                2	2	20	two	2020-01-02T00:00:00.000000Z	12	2	21	two	2020-01-02T00:00:00.000000Z	22	2	22	two	2020-01-02T00:00:00.000000Z
-                                3	null	null		2020-01-03T00:00:00.000000Z	12	2	21	two	2020-01-02T00:00:00.000000Z	22	2	22	two	2020-01-02T00:00:00.000000Z
                                 1	1	10	one	2020-01-01T00:00:00.000000Z	13	null	null		2020-01-03T00:00:00.000000Z	23	null	null		2020-01-03T00:00:00.000000Z
+                                2	2	20	two	2020-01-02T00:00:00.000000Z	11	1	11	one	2020-01-01T00:00:00.000000Z	21	1	12	one	2020-01-01T00:00:00.000000Z
+                                2	2	20	two	2020-01-02T00:00:00.000000Z	12	2	21	two	2020-01-02T00:00:00.000000Z	22	2	22	two	2020-01-02T00:00:00.000000Z
                                 2	2	20	two	2020-01-02T00:00:00.000000Z	13	null	null		2020-01-03T00:00:00.000000Z	23	null	null		2020-01-03T00:00:00.000000Z
+                                3	null	null		2020-01-03T00:00:00.000000Z	11	1	11	one	2020-01-01T00:00:00.000000Z	21	1	12	one	2020-01-01T00:00:00.000000Z
+                                3	null	null		2020-01-03T00:00:00.000000Z	12	2	21	two	2020-01-02T00:00:00.000000Z	22	2	22	two	2020-01-02T00:00:00.000000Z
                                 3	null	null		2020-01-03T00:00:00.000000Z	13	null	null		2020-01-03T00:00:00.000000Z	23	null	null		2020-01-03T00:00:00.000000Z
                                 """,
                         """
                                 SelectedRecord
-                                    Cross Join
-                                        Hash Join
-                                          condition: c.k=b.k
+                                    Hash Join
+                                      condition: c.k=b.k
+                                        Cross Join
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_multi_a
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: lp_multi_b
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: lp_multi_c
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: lp_multi_a
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_multi_c
                                 """);
                 assertRows("SELECT * FROM lp_multi_a a CROSS JOIN lp_multi_b b JOIN lp_multi_c c ON b.k=c.k "
                                 + "ORDER BY 1,6,11", true,
@@ -513,19 +652,19 @@ public class MultiJoinTest extends AbstractCairoTest {
                                 Encode sort
                                   keys: [id, id1, id2]
                                     SelectedRecord
-                                        Cross Join
-                                            Hash Join
-                                              condition: c.k=b.k
+                                        Hash Join
+                                          condition: c.k=b.k
+                                            Cross Join
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_multi_a
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: lp_multi_b
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: lp_multi_c
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_multi_a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_multi_c
                                 """);
                 assertRows("SELECT c.*,a.id aid,b.id bid FROM lp_multi_a a CROSS JOIN lp_multi_b b "
                                 + "JOIN lp_multi_c c ON b.k=c.k ORDER BY aid,bid,id", true,
@@ -545,19 +684,19 @@ public class MultiJoinTest extends AbstractCairoTest {
                                 Encode sort
                                   keys: [aid, bid, id]
                                     SelectedRecord
-                                        Cross Join
-                                            Hash Join
-                                              condition: c.k=b.k
+                                        Hash Join
+                                          condition: c.k=b.k
+                                            Cross Join
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_multi_a
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: lp_multi_b
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: lp_multi_c
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_multi_a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_multi_c
                                 """);
                 assertRows("SELECT a.id aid,b.id bid,c.id cid FROM lp_multi_a a CROSS JOIN lp_multi_b b "
                                 + "CROSS JOIN lp_multi_c c ORDER BY aid,bid,cid", true,
@@ -935,6 +1074,25 @@ public class MultiJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRightJoinOfLaterCommaGroupJoinsBeforeFirstInput() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrderTables();
+            assertQuery("SELECT a.v, b.w, d.id FROM a, b RIGHT JOIN d ON b.id = d.id ORDER BY 1, 3")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tw\tid
+                            1\t10\t1
+                            1\tnull\t3
+                            2\t10\t1
+                            2\tnull\t3
+                            """);
+            assertQuery("SELECT * FROM a, b RIGHT JOIN d ON b.id = d.id")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Cross Join");
+        });
+    }
+
+    @Test
     public void testThreeAndFourSourceKeysForwardReferencesAndShorthand() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
@@ -1255,6 +1413,35 @@ public class MultiJoinTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    private static void createOrderTables() throws Exception {
+        execute("CREATE TABLE a (id INT, v INT, ats TIMESTAMP) TIMESTAMP(ats) PARTITION BY DAY");
+        execute("CREATE TABLE b (id INT, w INT, bts TIMESTAMP) TIMESTAMP(bts) PARTITION BY DAY");
+        execute("CREATE TABLE c (id INT, w INT, u INT, cts TIMESTAMP) TIMESTAMP(cts) PARTITION BY DAY");
+        execute("CREATE TABLE d (id INT, dts TIMESTAMP) TIMESTAMP(dts) PARTITION BY DAY");
+        execute("CREATE TABLE p (x INT)");
+        execute("INSERT INTO p VALUES (1), (2)");
+        execute("""
+                INSERT INTO a VALUES
+                    (7, 1, '2024-01-01T00:00:03.000000Z'),
+                    (8, 2, '2024-01-01T00:00:04.000000Z')
+                """);
+        execute("""
+                INSERT INTO b VALUES
+                    (1, 10, '2024-01-01T00:00:01.000000Z'),
+                    (2, 20, '2024-01-01T00:00:02.000000Z')
+                """);
+        execute("""
+                INSERT INTO c VALUES
+                    (1, 10, 100, '2024-01-01T00:00:05.000000Z'),
+                    (2, 20, 200, '2024-01-01T00:00:06.000000Z')
+                """);
+        execute("""
+                INSERT INTO d VALUES
+                    (1, '2024-01-01T00:00:07.000000Z'),
+                    (3, '2024-01-01T00:00:08.000000Z')
+                """);
     }
 
     private void createRows() throws Exception {

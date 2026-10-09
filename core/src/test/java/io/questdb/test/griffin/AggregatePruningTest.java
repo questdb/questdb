@@ -30,6 +30,7 @@ import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -60,6 +61,50 @@ public class AggregatePruningTest extends AbstractCairoTest {
                     "value\n7\n7\n", 0, 1, null);
             assertPruned("SELECT 7 value FROM (SELECT g,sum(v) total FROM lp_agg_prune WHERE v<0)",
                     "value\n", 0, 1, null);
+        });
+    }
+
+    @Test
+    public void testCountOverJoinReadsNoColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            final String query = "SELECT count(*) c FROM lp_agg_prune a CROSS JOIN lp_agg_prune b";
+            assertQuery(query).noLeakCheck().assertsLogicalPlan("""
+                    Aggregate
+                      keys: []
+                      values: [count() AS c]
+                      Join
+                        Master a
+                          Scan
+                            table: lp_agg_prune
+                            columns: []
+                        CROSS b
+                          Scan
+                            table: lp_agg_prune
+                            columns: []
+                    """);
+            assertQuery(query).noLeakCheck().noRandomAccess().expectSize().returns("c\n9\n");
+        });
+    }
+
+    @Test
+    public void testScanAuthorizesReferencedColumnsThatPruningDrops() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertAuthorizedColumns("SELECT count(*) c FROM lp_agg_prune a CROSS JOIN (SELECT v FROM lp_agg_prune) b", """
+                    []
+                    [v]
+                    """);
+            assertAuthorizedColumns("SELECT count(*) c FROM (SELECT * FROM lp_agg_prune)", """
+                    [unused,g,v,ts]
+                    """);
+            assertAuthorizedColumns("SELECT v FROM (SELECT v, g, ts FROM lp_agg_prune) WHERE g > 0", """
+                    [v,g,ts]
+                    """);
+            assertAuthorizedColumns("SELECT DISTINCT g FROM (lp_agg_prune UNION ALL lp_agg_prune)", """
+                    [g]
+                    [g]
+                    """);
         });
     }
 
@@ -114,6 +159,26 @@ public class AggregatePruningTest extends AbstractCairoTest {
                             + " SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR)",
                     "value\n7\n7\n7\n", 0, 1, null);
         });
+    }
+
+    private static void collectAuthorizedColumns(LogicalPlan plan, StringSink sink) {
+        if (plan instanceof ScanPlan scan) {
+            final ObjList<CharSequence> names = new ObjList<>();
+            scan.collectAuthorizedColumnNames(names);
+            sink.put(names.toString()).put('\n');
+        }
+        for (int i = 0, n = plan.inputCount(); i < n; i++) {
+            collectAuthorizedColumns(plan.inputAt(i), sink);
+        }
+    }
+
+    private void assertAuthorizedColumns(String sql, String expected) throws Exception {
+        try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+             RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            final StringSink sink = new StringSink();
+            collectAuthorizedColumns(compiler.getPlanForTesting(), sink);
+            TestUtils.assertEquals(expected, sink);
+        }
     }
 
     private static int assertRetainedAggregates(LogicalPlan plan, int count, int keys) {

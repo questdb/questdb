@@ -879,6 +879,11 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         }
 
         @Override
+        public void setAuthorizedColumnIndexes(IntList columnIndexes) {
+            delegate.setAuthorizedColumnIndexes(columnIndexes);
+        }
+
+        @Override
         public void setPushdownFilterCondition(
                 long partitionTableVersion,
                 @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions

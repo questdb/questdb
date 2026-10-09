@@ -638,7 +638,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .withPlanContaining(
                             "Hash Left Outer Join Light",
-                            "condition: l2.__qdb_outer_ref__0_k=t1.k"
+                            "condition: __qdb_outer_ref__0_a=__qdb_outer_ref__0_a"
                     )
                     .withPlanNotContaining("filter: true")
                     .returns("""
@@ -15298,6 +15298,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ORDER BY o.id
                     """)
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             id\tadjusted_qty
                             1\t30.0

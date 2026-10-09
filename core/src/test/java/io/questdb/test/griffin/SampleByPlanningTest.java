@@ -35,6 +35,38 @@ import org.junit.Test;
 
 public class SampleByPlanningTest extends AbstractCairoTest {
     @Test
+    public void testBaseWithoutProjectedTimestampSamplesByItsSourceTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows("lp_sample", "TIMESTAMP");
+            assertQueryRows(
+                    "SELECT count() c,sum(v) total FROM (SELECT v FROM lp_sample) SAMPLE BY 1h",
+                    """
+                            c	total
+                            2	3.0
+                            2	3.0
+                            2	11.0
+                            """
+            );
+            assertQueryRows(
+                    "SELECT count() c FROM (SELECT v FROM lp_sample WHERE v > 1) SAMPLE BY 1h",
+                    """
+                            c
+                            1
+                            1
+                            2
+                            """
+            );
+            assertQueryRows(
+                    "SELECT sum(total) total FROM (SELECT sum(v) total FROM lp_sample SAMPLE BY 1h) SAMPLE BY 1d",
+                    """
+                            total
+                            17.0
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testCalendarBucketsBothPrecisionsAndEmptyInput() throws Exception {
         assertMemoryLeak(() -> {
             {

@@ -120,9 +120,9 @@ public class BindTimePredicateErrorTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v AND abs(a.v, 1) = 1 AND b.v = true").noLeakCheck().fails(44, ABS_ERROR);
             assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE b.v IN (SELECT ts FROM x) AND a.v = true").noLeakCheck().fails(54, "cannot compare LONG with type CURSOR");
             assertQuery("SELECT * FROM x a CROSS JOIN x b WHERE b.v = true AND a.ts = 'abc'").noLeakCheck().fails(43, EQ_ERROR);
-            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v JOIN x c ON b.v = c.v WHERE c.v = true AND b.ts = 'abc'").noLeakCheck().fails(90, "invalid timestamp");
+            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v JOIN x c ON b.v = c.v WHERE c.v = true AND b.ts = 'abc'").noLeakCheck().fails(72, EQ_ERROR);
             assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v JOIN x c ON b.v = c.v WHERE b.v = true AND c.ts = 'abc'").noLeakCheck().fails(72, EQ_ERROR);
-            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v JOIN x c ON b.v = c.v WHERE c.v = 0x123 AND b.v = true").noLeakCheck().fails(88, EQ_ERROR);
+            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v JOIN x c ON b.v = c.v WHERE c.v = 0x123 AND b.v = true").noLeakCheck().fails(74, "invalid constant: 0x123");
             assertQuery("SELECT * FROM x a JOIN (SELECT * FROM x WHERE v = true) b ON a.v = b.v WHERE a.ts = 'abc'").noLeakCheck().fails(48, EQ_ERROR);
             assertQuery("SELECT * FROM x a JOIN (SELECT * FROM x WHERE ts = 'abc') b ON a.v = b.v WHERE a.v = true").noLeakCheck().fails(51, "invalid timestamp");
             assertQuery("SELECT abs(a.v, 1) FROM x a JOIN x b ON a.v = b.v WHERE b.v = true").noLeakCheck().fails(60, EQ_ERROR);
@@ -234,7 +234,7 @@ public class BindTimePredicateErrorTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM x a JOIN x b ON a.ts = b.ts AND a.v - b.v WHERE a.ts = 'abc'").noLeakCheck().fails(50, "boolean expression expected");
             assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v AND a.v = true AND a.v + 1").noLeakCheck().fails(48, EQ_ERROR);
             assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v WHERE a.v + b.v AND a.v - b.v").noLeakCheck().fails(50, MISMATCH_ERROR);
-            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v JOIN x c ON b.v = c.v WHERE c.v - b.v AND a.ts = 'abc'").noLeakCheck().fails(89, "invalid timestamp");
+            assertQuery("SELECT * FROM x a JOIN x b ON a.v = b.v JOIN x c ON b.v = c.v WHERE c.v - b.v AND a.ts = 'abc'").noLeakCheck().fails(72, "boolean expression expected");
             assertQuery("SELECT * FROM x WHERE v + 1 AND v - 1").noLeakCheck().fails(24, MISMATCH_ERROR);
             assertQuery("SELECT * FROM x WHERE v - 1 AND ts = 'abc'").noLeakCheck().fails(24, MISMATCH_ERROR);
             assertQuery("SELECT * FROM x WHERE v = true AND v - 1").noLeakCheck().fails(24, EQ_ERROR);

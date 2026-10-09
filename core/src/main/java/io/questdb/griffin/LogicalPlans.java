@@ -31,18 +31,26 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
+import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.GroupingPlan;
+import io.questdb.griffin.plan.logical.HorizonJoinPlan;
+import io.questdb.griffin.plan.logical.HorizonJoinSlave;
+import io.questdb.griffin.plan.logical.JoinDependency;
+import io.questdb.griffin.plan.logical.JoinEquality;
+import io.questdb.griffin.plan.logical.JoinGraph;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinPlan;
+import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
@@ -51,7 +59,9 @@ import io.questdb.griffin.plan.logical.UnaryPlan;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
+import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.Chars;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -59,13 +69,179 @@ import io.questdb.std.ObjList;
  * Stateless plan-node predicates, walkers and plan-property utilities shared by the binder, the optimiser and the plan generator.
  */
 final class LogicalPlans {
+    private static final int ORDER_STABLE = 2;
+    private static final int RESULT_STABLE = 1;
+    private static final int SEQUENCE_STABLE = RESULT_STABLE | ORDER_STABLE;
+
     private LogicalPlans() {
+    }
+
+    private static boolean areStable(ObjList<? extends BoundExpression> expressions) {
+        for (int i = 0, n = expressions.size(); i < n; i++) {
+            if (!isStable(expressions.getQuick(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean canPushSetTimestampThrough(UnaryPlan plan, int columnIndex) {
         final LogicalPlan input = plan.getInput();
         final int inputIndex = input.getOutput().getColumnIndexById(plan.getOutput().getColumnId(columnIndex));
         return inputIndex >= 0 && canPushSetTimestamp(input, inputIndex);
+    }
+
+    private static void collectReferencedColumnIds(BoundExpression expression, IntIntHashMap sink) {
+        switch (expression) {
+            case ColumnExpression column -> reference(column.getColumnId(), column.getPosition(), sink);
+            case OuterColumnExpression outer -> reference(outer.getColumnId(), outer.getPosition(), sink);
+            case FunctionExpression call -> {
+                for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+                    collectReferencedColumnIds(call.argumentAt(i), sink);
+                }
+            }
+            case null, default -> {
+            }
+        }
+    }
+
+    private static void collectReferencedColumnIds(IntList columnIds, IntIntHashMap sink) {
+        for (int i = 0, n = columnIds.size(); i < n; i++) {
+            reference(columnIds.getQuick(i), Integer.MAX_VALUE, sink);
+        }
+    }
+
+    private static void collectReferencedColumnIds(IntList columnIds, IntList positions, IntIntHashMap sink) {
+        for (int i = 0, n = columnIds.size(); i < n; i++) {
+            reference(columnIds.getQuick(i), i < positions.size() ? positions.getQuick(i) : Integer.MAX_VALUE, sink);
+        }
+    }
+
+    private static void collectReferencedColumnIds(ObjList<? extends BoundExpression> expressions, IntIntHashMap sink) {
+        for (int i = 0, n = expressions.size(); i < n; i++) {
+            collectReferencedColumnIds(expressions.getQuick(i), sink);
+        }
+    }
+
+    private static void collectStatedColumnReferences(LogicalPlan plan, IntIntHashMap sink) {
+        switch (plan) {
+            case FilterPlan filter -> collectReferencedColumnIds(filter.getPredicate(), sink);
+            case ProjectPlan project -> {
+                if (!project.isImplied()) {
+                    collectReferencedColumnIds(project.getExpressions(), sink);
+                }
+            }
+            case SampleByPlan sampleBy -> {
+                collectReferencedColumnIds(sampleBy.getGroupingExpressions(), sink);
+                collectReferencedColumnIds(sampleBy.getAggregates(), sink);
+                collectReferencedColumnIds(sampleBy.getFillValues(), sink);
+                collectReferencedColumnIds(sampleBy.getFrom(), sink);
+                collectReferencedColumnIds(sampleBy.getTo(), sink);
+                collectReferencedColumnIds(sampleBy.getOffset(), sink);
+                collectReferencedColumnIds(sampleBy.getPeriod(), sink);
+                collectReferencedColumnIds(sampleBy.getTimezone(), sink);
+            }
+            case GroupingPlan aggregate -> {
+                collectReferencedColumnIds(aggregate.getGroupingExpressions(), sink);
+                collectReferencedColumnIds(aggregate.getAggregates(), sink);
+            }
+            case FillPlan fill -> {
+                collectReferencedColumnIds(fill.getValues(), sink);
+                collectReferencedColumnIds(fill.getSourceColumnIds(), sink);
+                collectReferencedColumnIds(fill.getFrom(), sink);
+                collectReferencedColumnIds(fill.getTo(), sink);
+                collectReferencedColumnIds(fill.getOffset(), sink);
+                collectReferencedColumnIds(fill.getTimezone(), sink);
+            }
+            case WindowPlan window -> {
+                collectReferencedColumnIds(window.getFunctions(), sink);
+                for (int i = 0, n = window.getSpecs().size(); i < n; i++) {
+                    final WindowSpec spec = window.getSpecs().getQuick(i);
+                    collectReferencedColumnIds(spec.getPartitionBy(), sink);
+                    collectReferencedColumnIds(spec.getOrderByColumnIds(), spec.getOrderByPositions(), sink);
+                }
+            }
+            case LimitPlan limit -> {
+                collectReferencedColumnIds(limit.getLo(), sink);
+                collectReferencedColumnIds(limit.getHi(), sink);
+            }
+            case SortPlan sort -> collectReferencedColumnIds(sort.getColumnIds(), sink);
+            case LatestByPlan latest -> collectReferencedColumnIds(latest.getKeyColumnIds(), sink);
+            case JoinPlan join -> {
+                collectReferencedColumnIds(join.getFilterConjuncts(), sink);
+                for (int i = 0, n = join.getInputs().size(); i < n; i++) {
+                    final JoinInput input = join.getInputs().getQuick(i);
+                    collectReferencedColumnIds(input.getMasterKeyColumnIds(), input.getKeyPositions(), sink);
+                    collectReferencedColumnIds(input.getSlaveKeyColumnIds(), input.getKeyPositions(), sink);
+                    collectReferencedColumnIds(input.getKeyFilter(), sink);
+                    collectReferencedColumnIds(input.getOnResidual(), sink);
+                    collectReferencedColumnIds(input.getPostJoinFilter(), sink);
+                    if (input.getUnnest() != null) {
+                        collectReferencedColumnIds(input.getUnnest().getExpressions(), sink);
+                    }
+                }
+                final JoinGraph graph = join.getGraph();
+                if (graph != null) {
+                    collectReferencedColumnIds(graph.getResiduals(), sink);
+                    collectReferencedColumnIds(graph.getConstantFilter(), sink);
+                    for (int i = 0, n = graph.getDependencies().size(); i < n; i++) {
+                        final JoinDependency dependency = graph.getDependencies().getQuick(i);
+                        for (int k = 0, count = dependency == null ? 0 : dependency.getKeys().size(); k < count; k++) {
+                            final JoinEquality key = dependency.getKeys().getQuick(k);
+                            reference(key.getLeftColumnId(), key.getLeftPosition(), sink);
+                            reference(key.getRightColumnId(), key.getRightPosition(), sink);
+                        }
+                    }
+                }
+            }
+            case WindowJoinPlan windowJoin -> {
+                for (int i = 0, n = windowJoin.getSteps().size(); i < n; i++) {
+                    final WindowJoinStep step = windowJoin.getSteps().getQuick(i);
+                    collectReferencedColumnIds(step.getAggregates(), sink);
+                    collectReferencedColumnIds(step.getFilter(), sink);
+                    collectReferencedColumnIds(step.getLoExpression(), sink);
+                    collectReferencedColumnIds(step.getHiExpression(), sink);
+                }
+            }
+            case HorizonJoinPlan horizon -> {
+                for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
+                    final HorizonJoinSlave slave = horizon.getSlaves().getQuick(i);
+                    collectReferencedColumnIds(slave.getMasterKeyColumnIds(), slave.getKeyPositions(), sink);
+                    collectReferencedColumnIds(slave.getSlaveKeyColumnIds(), slave.getKeyPositions(), sink);
+                }
+            }
+            default -> {
+            }
+        }
+        for (int i = 0, n = plan.inputCount(); i < n; i++) {
+            final LogicalPlan input = plan.inputAt(i);
+            if (input != null) {
+                collectStatedColumnReferences(input, sink);
+            }
+        }
+    }
+
+    private static LogicalPlan firstColumnSource(BoundExpression expression, LogicalPlan input) {
+        if (expression instanceof ColumnExpression column) {
+            return columnSource(input, column.getColumnId());
+        }
+        if (expression instanceof FunctionExpression call) {
+            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+                final LogicalPlan source = firstColumnSource(call.argumentAt(i), input);
+                if (source != null) {
+                    return source;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static int groupingStability(AggregatePlan aggregate, boolean isParallelGroupByEnabled) {
+        if (aggregate.getSharedSource() != null || stability(aggregate.getInput(), isParallelGroupByEnabled) != SEQUENCE_STABLE
+                || !areStable(aggregate.getGroupingExpressions()) || !areStable(aggregate.getAggregates())) {
+            return 0;
+        }
+        return aggregate.getGroupingExpressions().size() == 0 || !isParallelGroupByEnabled ? SEQUENCE_STABLE : RESULT_STABLE;
     }
 
     private static boolean hasInputColumn(BoundExpression expression) {
@@ -80,6 +256,91 @@ final class LogicalPlans {
             }
         }
         return false;
+    }
+
+    private static boolean isStable(BoundExpression expression) {
+        return expression == null || isStableWithinExecution(expression);
+    }
+
+    private static boolean readsOnlySource(BoundExpression expression, LogicalPlan input, LogicalPlan source) {
+        if (expression instanceof ColumnExpression column) {
+            return columnSource(input, column.getColumnId()) == source;
+        }
+        if (expression instanceof FunctionExpression call) {
+            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+                if (!readsOnlySource(call.argumentAt(i), input, source)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * {@link #RESULT_STABLE} when every evaluation of the plan within one execution yields the same multiset of rows,
+     * plus {@link #ORDER_STABLE} when it also yields them in the same order; neither for an operator whose stability
+     * is not proven.
+     */
+    private static void passColumnReferences(LogicalPlan plan, IntIntHashMap sink) {
+        switch (plan) {
+            case ProjectPlan project when project.isImplied() -> {
+                final OutputSchema output = project.getOutput();
+                for (int i = 0, n = output.getColumnCount(); i < n; i++) {
+                    final int index = sink.keyIndex(output.getColumnId(i));
+                    if (index < 0 && project.getExpressions().getQuick(i) instanceof ColumnExpression column) {
+                        reference(column.getColumnId(), sink.valueAt(index), sink);
+                    }
+                }
+            }
+            case SetOperationPlan operation -> {
+                final OutputSchema output = operation.getOutput();
+                for (int i = 0, n = output.getColumnCount(); i < n; i++) {
+                    final int index = sink.keyIndex(output.getColumnId(i));
+                    if (index < 0) {
+                        final int position = sink.valueAt(index);
+                        for (int k = 0, count = operation.inputCount(); k < count; k++) {
+                            reference(operation.inputAt(k).getOutput().getColumnId(i), position, sink);
+                        }
+                    }
+                }
+            }
+            default -> {
+            }
+        }
+        for (int i = 0, n = plan.inputCount(); i < n; i++) {
+            final LogicalPlan input = plan.inputAt(i);
+            if (input != null) {
+                passColumnReferences(input, sink);
+            }
+        }
+    }
+
+    private static void reference(int columnId, int position, IntIntHashMap sink) {
+        final int index = sink.keyIndex(columnId);
+        if (index > -1) {
+            sink.putAt(index, columnId, position);
+        } else if (position < sink.valueAt(index)) {
+            sink.putAt(index, columnId, position);
+        }
+    }
+
+    private static int stability(LogicalPlan plan, boolean isParallelGroupByEnabled) {
+        return switch (plan) {
+            case ScanPlan scan -> scan.getTableToken().isLiveView() ? 0 : SEQUENCE_STABLE;
+            case FunctionSourcePlan source -> source.isDeterministic() ? SEQUENCE_STABLE : 0;
+            case FilterPlan filter ->
+                    isStable(filter.getPredicate()) ? stability(filter.getInput(), isParallelGroupByEnabled) : 0;
+            case ProjectPlan project ->
+                    areStable(project.getExpressions()) ? stability(project.getInput(), isParallelGroupByEnabled) : 0;
+            case SortPlan sort -> sort.isMarkoutHorizon() ? 0 : stability(sort.getInput(), isParallelGroupByEnabled);
+            case LimitPlan limit -> isStable(limit.getLo()) && isStable(limit.getHi())
+                    && stability(limit.getInput(), isParallelGroupByEnabled) == SEQUENCE_STABLE ? SEQUENCE_STABLE : 0;
+            case AggregatePlan aggregate -> groupingStability(aggregate, isParallelGroupByEnabled);
+            case DistinctPlan distinct -> stability(distinct.getInput(), isParallelGroupByEnabled) & RESULT_STABLE;
+            case SetOperationPlan operation ->
+                    stability(operation.getLeft(), isParallelGroupByEnabled) & stability(operation.getRight(), isParallelGroupByEnabled);
+            default -> 0;
+        };
     }
 
     static boolean canPushJoinFilter(JoinPlan join, int source, int lastInput) {
@@ -248,6 +509,64 @@ final class LogicalPlans {
     }
 
     /**
+     * Maps the id of every column the query references in the plan and its inputs to the text position of its first
+     * reference, or to {@link Integer#MAX_VALUE} for a reference without one. An expression, a key or a column list
+     * references its columns, except in an implied projection, whose column is referenced when a reference of its
+     * output column is; a set operation passes the references of its output columns on to its inputs. A sub-query
+     * numbers its columns apart, so its plan is not visited.
+     */
+    static void collectReferencedColumnIds(LogicalPlan plan, IntIntHashMap sink) {
+        collectStatedColumnReferences(plan, sink);
+        passColumnReferences(plan, sink);
+    }
+
+
+    /**
+     * The plan whose own expression or scan defines the column, followed through column-only projections, filters,
+     * sorts and joins.
+     */
+    static LogicalPlan columnSource(LogicalPlan plan, int id) {
+        while (true) {
+            switch (plan) {
+                case ProjectPlan project -> {
+                    final int index = project.getOutput().getColumnIndexById(id);
+                    if (index < 0) {
+                        throw new IllegalStateException("predicate column is outside its projection");
+                    }
+                    if (!(project.getExpressions().getQuick(index) instanceof ColumnExpression column)) {
+                        return plan;
+                    }
+                    id = column.getColumnId();
+                    plan = project.getInput();
+                }
+                case FilterPlan _, SortPlan _ -> plan = plan.inputAt(0);
+                case JoinPlan join -> {
+                    final JoinInput source = join.getInputs().getQuick(joinColumnSource(join, id));
+                    if (source.getUnnest() != null) {
+                        return plan;
+                    }
+                    plan = source.getInput();
+                }
+                default -> {
+                    // LIMIT, grouping, DISTINCT and set operators define their own
+                    // predicate scope. Existing timestamp provenance also stops here.
+                    return plan;
+                }
+            }
+        }
+    }
+
+    /**
+     * Lays out a chain of LIMITs again, bottom-up, after the input beneath the chain changed.
+     */
+    static void deriveLimits(LogicalPlan plan) {
+        if (plan instanceof LimitPlan limit) {
+            deriveLimits(limit.getInput());
+            limit.deriveOutput();
+        }
+    }
+
+    /**
      * Whether the plan reads a table function over a data source outside the database.
      */
     static boolean hasExternalDataSource(LogicalPlan plan) {
@@ -314,6 +633,14 @@ final class LogicalPlans {
         return false;
     }
 
+    /**
+     * Whether every column the expression reads, outer columns aside, has one {@link #columnSource} in the input.
+     */
+    static boolean hasSingleColumnSource(BoundExpression expression, LogicalPlan input) {
+        final LogicalPlan source = firstColumnSource(expression, input);
+        return source == null || readsOnlySource(expression, input, source);
+    }
+
     static boolean isColumnProjection(ProjectPlan project) {
         if (project.hasUpdateConversions() || project.hasPrunedComputedColumns()) {
             return false;
@@ -339,8 +666,15 @@ final class LogicalPlans {
     }
 
     /**
-     * Whether every evaluation of the expression within one execution yields the same value. A sub-query is stable by
-     * construction: the generator evaluates it at most once per execution and shares its rows between consumers.
+     * Whether every evaluation of the plan within one execution yields the same multiset of rows, which is all the
+     * value of a sub-query depends on: its consumers read a set or a single row.
+     */
+    static boolean isResultStable(LogicalPlan plan, boolean isParallelGroupByEnabled) {
+        return (stability(plan, isParallelGroupByEnabled) & RESULT_STABLE) != 0;
+    }
+
+    /**
+     * Whether every evaluation of the expression within one execution yields the same value.
      */
     static boolean isStableWithinExecution(BoundExpression expression) {
         return (expression.getFunctionFlags() & BoundExpression.STABLE_WITHIN_EXECUTION) != 0;
@@ -374,11 +708,11 @@ final class LogicalPlans {
     }
 
     /**
-     * Evaluating the expression twice may give two values: it calls a function that is neither
-     * deterministic nor stable within one execution.
+     * Evaluating the expression twice may give two values: it reads a function or a sub-query whose value is not
+     * stable within one execution.
      */
     static boolean isVolatile(BoundExpression expression) {
-        if ((expression.getFunctionFlags() & BoundExpression.NON_DETERMINISTIC) != 0 && !isStableWithinExecution(expression)) {
+        if (!isStableWithinExecution(expression)) {
             return true;
         }
         if (expression instanceof FunctionExpression call) {
@@ -398,6 +732,18 @@ final class LogicalPlans {
      * reading tables without a sub-query sums, where {@code c} is a BYTE, SHORT, INT or LONG input column and
      * {@code k} an integer literal; otherwise null. {@link AggregateRewritePass} normalises such a sum.
      */
+    /**
+     * The index of the join input whose output holds the column.
+     */
+    static int joinColumnSource(JoinPlan join, int columnId) {
+        for (int i = 0, n = join.getInputs().size(); i < n; i++) {
+            if (join.getInputs().getQuick(i).getSourceOutput().getColumnIndexById(columnId) >= 0) {
+                return i;
+            }
+        }
+        throw new IllegalStateException("join column is outside its inputs");
+    }
+
     static FunctionExpression normalisableSumOperation(GroupingPlan aggregate, FunctionExpression sum) {
         if (!aggregate.hasDirectTableInput() || !Chars.equalsIgnoreCase(sum.getName(), "sum") || sum.getArgumentCount() != 1
                 || !(sum.argumentAt(0) instanceof FunctionExpression operation) || operation.getArgumentCount() != 2) {
@@ -463,16 +809,6 @@ final class LogicalPlans {
      */
     static boolean readsOnlyOuterColumns(FunctionExpression call) {
         return hasOuterColumn(call) && !hasInputColumn(call);
-    }
-
-    /**
-     * Lays out a chain of LIMITs again, bottom-up, after the input beneath the chain changed.
-     */
-    static void deriveLimits(LogicalPlan plan) {
-        if (plan instanceof LimitPlan limit) {
-            deriveLimits(limit.getInput());
-            limit.deriveOutput();
-        }
     }
 
     static int setTimestampIndex(LogicalPlan plan) {

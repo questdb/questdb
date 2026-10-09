@@ -9810,7 +9810,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .withPlan("""
                             SelectedRecord
                                 Hash Join Light
-                                  condition: products.productId=orders.orderId and products.supplier=suppliers.supplier
+                                  condition: products.supplier=suppliers.supplier and products.productId=orders.orderId
                                     Hash Join Light
                                       condition: suppliers.supplier=orders.orderId
                                         Hash Join Light
@@ -9864,9 +9864,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .withPlan("""
                             SelectedRecord
                                 Hash Join Light
-                                  condition: products.productId=orders.orderId and products.supplier=suppliers.supplier
+                                  condition: products.supplier=suppliers.supplier and products.productId=orders.orderId
                                     Hash Join Light
-                                      condition: suppliers.x=d.orderId and suppliers.supplier=orders.orderId
+                                      condition: suppliers.supplier=orders.orderId and suppliers.x=d.orderId
                                         Hash Join Light
                                           condition: d.productId=orders.orderId
                                             Hash Join Light
@@ -10035,20 +10035,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
                             SelectedRecord
                                 Cross Join
                                     Cross Join
-                                        Cross Join
-                                            Hash Join Light
-                                              condition: suppliers.supplier=products.supplier
-                                              symbolKeyJoin: true
+                                        Hash Join Light
+                                          condition: suppliers.supplier=products.supplier
+                                          symbolKeyJoin: true
+                                            Cross Join
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: orders
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: products
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: suppliers
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: orders
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: suppliers
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: customers
@@ -10086,7 +10086,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                     Hash Join Light
                                       condition: products.productId=d.productId
                                         Hash Join Light
-                                          condition: d.productId=customers.customerId and d.orderId=orders.orderId
+                                          condition: d.orderId=orders.orderId and d.productId=customers.customerId
                                             Hash Join Light
                                               condition: customers.customerId=orders.customerId
                                                 PageFrame
@@ -10642,7 +10642,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                         Hash Join Light
                                           condition: products.productId=d.productId
                                             Hash Join Light
-                                              condition: d.productId=shippers.shipper and d.orderId=orders.orderId
+                                              condition: d.orderId=orders.orderId and d.productId=shippers.shipper
                                                 Hash Join Light
                                                   condition: shippers.shipper=orders.orderId
                                                     PageFrame
@@ -10681,7 +10681,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                     Hash Join Light
                                       condition: products.productId=d.productId
                                         Hash Join Light
-                                          condition: d.productId=shippers.shipper and d.orderId=orders.orderId
+                                          condition: d.orderId=orders.orderId and d.productId=shippers.shipper
                                             Hash Join Light
                                               condition: shippers.shipper=orders.orderId
                                                 Nested Loop Right Join
@@ -10722,7 +10722,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                     Hash Join Light
                                       condition: products.productId=d.productId
                                         Hash Join Light
-                                          condition: d.productId=shippers.shipper and d.orderId=orders.orderId
+                                          condition: d.orderId=orders.orderId and d.productId=shippers.shipper
                                             Hash Join Light
                                               condition: shippers.shipper=orders.orderId
                                                 Nested Loop Full Join
@@ -10838,7 +10838,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                         Hash Join Light
                                           condition: products.productId=d.productId
                                             Hash Join Light
-                                              condition: d.productId=shippers.shipper and d.orderId=orders.orderId
+                                              condition: d.orderId=orders.orderId and d.productId=shippers.shipper
                                                 Hash Join Light
                                                   condition: shippers.shipper=orders.orderId
                                                     PageFrame
@@ -10877,7 +10877,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                     Hash Join Light
                                       condition: products.productId=d.productId
                                         Hash Join Light
-                                          condition: d.productId=shippers.shipper and d.orderId=orders.orderId
+                                          condition: d.orderId=orders.orderId and d.productId=shippers.shipper
                                             Hash Join Light
                                               condition: shippers.shipper=orders.orderId
                                                 Nested Loop Right Join
@@ -10918,7 +10918,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                     Hash Join Light
                                       condition: products.productId=d.productId
                                         Hash Join Light
-                                          condition: d.productId=shippers.shipper and d.orderId=orders.orderId
+                                          condition: d.orderId=orders.orderId and d.productId=shippers.shipper
                                             Hash Join Light
                                               condition: shippers.shipper=orders.orderId
                                                 Nested Loop Full Join
@@ -11237,7 +11237,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .withPlan("""
                             SelectedRecord
                                 Hash Join Light
-                                  condition: d.d=c.d and d.b=o.b
+                                  condition: d.b=o.b and d.d=c.d
                                     Hash Join Light
                                       condition: c.c=o.c
                                         PageFrame
@@ -12539,7 +12539,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                                     Frame forward scan on: suppliers
                                     SelectedRecord
                                         Hash Join Light
-                                          condition: products.productId=orders.orderId and products.supplier=suppliers.supplier
+                                          condition: products.supplier=suppliers.supplier and products.productId=orders.orderId
                                             Hash Join Light
                                               condition: suppliers.supplier=orders.orderId
                                                 Hash Join Light
@@ -20254,7 +20254,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                             Hash Join Light
                                               condition: products.productId=d.productId
                                                 Hash Join Light
-                                                  condition: d.productId=shippers.shipper and d.orderId=orders.orderId
+                                                  condition: d.orderId=orders.orderId and d.productId=shippers.shipper
                                                     Hash Join Light
                                                       condition: shippers.shipper=orders.orderId
                                                         PageFrame
@@ -20295,7 +20295,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                         Hash Join Light
                                           condition: products.productId=d.productId
                                             Hash Join Light
-                                              condition: d.productId=shippers.shipper and d.orderId=orders.orderId
+                                              condition: d.orderId=orders.orderId and d.productId=shippers.shipper
                                                 Hash Join Light
                                                   condition: shippers.shipper=orders.orderId
                                                     Nested Loop Right Join
@@ -20338,7 +20338,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                         Hash Join Light
                                           condition: products.productId=d.productId
                                             Hash Join Light
-                                              condition: d.productId=shippers.shipper and d.orderId=orders.orderId
+                                              condition: d.orderId=orders.orderId and d.productId=shippers.shipper
                                                 Hash Join Light
                                                   condition: shippers.shipper=orders.orderId
                                                     Nested Loop Full Join

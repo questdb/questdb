@@ -116,6 +116,7 @@ final class TableFunctionSources implements Closeable, Mutable {
 
     private static void describeSource(FunctionSourcePlan plan, RecordCursorFactory factory) {
         plan.setExternalDataSource(factory.usesExternalDataSource());
+        plan.setDeterministic(!factory.isNonDeterministic());
     }
 
     private static TableToken existingShowTable(QueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
@@ -298,6 +299,7 @@ final class TableFunctionSources implements Closeable, Mutable {
         copy.getRecordSchema().copyFrom(plan.getRecordSchema());
         copy.getSourceColumnIndexes().addAll(plan.getSourceColumnIndexes());
         copy.setExternalDataSource(plan.hasExternalDataSource());
+        copy.setDeterministic(plan.isDeterministic());
         copy.setProjectable(plan.isProjectable());
         copy.setRecordName(plan.getRecordName());
         prepared.add(copy);

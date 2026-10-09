@@ -35,19 +35,22 @@ import io.questdb.std.ObjectFactory;
 
 /**
  * A sub-query of the statement, shared by every {@link CursorExpression} that reads it: its plan, the first column id
- * the plan does not use, the nesting depth it bound at and, while the statement binds, its bound
- * output as a factory that opens no cursor, which binding builds the sub-query's consumers over.
+ * the plan does not use, the nesting depth it bound at, whether every evaluation within one execution yields the same
+ * rows and, while the statement binds, its bound output as a factory that opens no cursor, which binding builds the
+ * sub-query's consumers over.
  */
 public final class Subquery implements Mutable {
     public static final ObjectFactory<Subquery> FACTORY = Subquery::new;
     private final OutputMetadataFactory outputMetadata = new OutputMetadataFactory();
     private int depth;
+    private boolean isStable;
     private int nextColumnId;
     private LogicalPlan root;
 
     @Override
     public void clear() {
         depth = 0;
+        isStable = false;
         nextColumnId = 0;
         root = null;
         outputMetadata.metadata.clear();
@@ -72,10 +75,15 @@ public final class Subquery implements Mutable {
         return root;
     }
 
-    public Subquery of(LogicalPlan root, int nextColumnId, int depth) {
+    public boolean isStable() {
+        return isStable;
+    }
+
+    public Subquery of(LogicalPlan root, int nextColumnId, int depth, boolean isStable) {
         this.root = root;
         this.nextColumnId = nextColumnId;
         this.depth = depth;
+        this.isStable = isStable;
         outputMetadata.of(root.getOutput());
         return this;
     }
