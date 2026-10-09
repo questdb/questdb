@@ -37,17 +37,12 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Shows why {@link io.questdb.cairo.file.BlockFileReader} fails on a checksum mismatch instead of falling
- * back to the previous region.
- * <p>
- * The writer takes no part in a reader's fallback: it reads the header's version word and derives the next
- * write offset from that version's region, so it keeps treating the version the reader rejected as current.
- * The test shows the consequence: the next commit lands on the region a fallback reader would rely on, so a
- * fallback would turn one bad commit into the loss of the last good one.
- * <p>
- * {@code BlockFileWriter.commit()} makes the region durable before the version word names it, so a durable
- * version word implies durable region bytes, and a mismatch means real corruption rather than a torn commit.
- * {@link BlockFilePublishOrderTest} covers that barrier.
+ * Shows why {@link io.questdb.cairo.file.BlockFileReader} fails on a checksum mismatch instead of falling back to
+ * the previous region. The writer derives the next write offset from the header's version word, so it keeps
+ * treating the rejected version as current, and its next commit lands on the region a fallback reader would rely
+ * on: a fallback would turn one bad commit into the loss of the last good one. A mismatch means real corruption,
+ * not a torn commit, because {@code BlockFileWriter.commit()} makes the region durable before the version word
+ * names it ({@link BlockFilePublishOrderTest} covers that barrier).
  */
 public class BlockFileRegionReuseTest extends AbstractCairoTest {
 
