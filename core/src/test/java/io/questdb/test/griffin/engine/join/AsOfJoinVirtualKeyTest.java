@@ -26,15 +26,20 @@ package io.questdb.test.griffin.engine.join;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.join.AsyncAsOfJoinAtom;
 import io.questdb.griffin.engine.join.AsyncAsOfJoinRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -46,7 +51,9 @@ import static io.questdb.test.griffin.engine.join.AsyncAsOfJoinTest.assertPlanCo
  * key" ({@code cairo.sql.asof.join.virtual.key.enabled}) - runs as the keyed Async AsOf Join and
  * returns exactly what {@code asof_linear} returns: ties in storage order, NULL as the value, a
  * value the slave never holds, a rare value, TOLERANCE, projections that drop the key columns, an
- * extra master conjunct, bind variables, and Parquet and column-top layouts.
+ * extra master conjunct, bind variables, and Parquet and column-top layouts; self-joins, duplicated
+ * and reordered projections, chained joins, an outer ORDER BY / LIMIT, and a scalar sub-query in the
+ * master's filter on a cached factory re-executed after the sub-query's table changed.
  */
 public class AsOfJoinVirtualKeyTest extends AbstractCairoTest {
     private static final int PAGE_FRAME_MAX_ROWS = 100;
@@ -73,6 +80,42 @@ public class AsOfJoinVirtualKeyTest extends AbstractCairoTest {
         AsyncAsOfJoinRecordCursorFactory.WALK_MODE = AsyncAsOfJoinRecordCursorFactory.WALK_AUTO;
         AsyncAsOfJoinAtom.KEYS_MODE = AsyncAsOfJoinAtom.KEYS_AUTO;
         super.tearDown();
+    }
+
+    @Test
+    public void testCachedFactoryWithScalarSubQueryInMasterFilter() throws Exception {
+        // the master's filter binds a scalar sub-query in its JIT filter; the factory is re-executed
+        // after the sub-query's table changes, and every execution equals a fresh linear plan
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, ctx) -> {
+                        AsyncAsOfJoinTest.createTables(engine, ctx, new Rnd(42, 4242), false, false, false);
+                        final String body = "t.ts, t.px, q.bid FROM (SELECT ts, px FROM trades WHERE sym = 'f2' AND px > " +
+                                "(SELECT max(px) - 100 FROM trades WHERE ex = 'Z9')) t ASOF JOIN (SELECT ts, bid FROM quotes WHERE sym = 'f2') q";
+                        assertPlanContains(engine, ctx, "SELECT " + body, "virtual key");
+                        try (RecordCursorFactory factory = engine.select("SELECT " + body, ctx)) {
+                            final int[] rowCounts = new int[3];
+                            for (int round = 0; round < 3; round++) {
+                                final String actual = print(factory, ctx);
+                                final String expected;
+                                try (RecordCursorFactory linear = engine.select("SELECT /*+ asof_linear(t q) */ " + body, ctx)) {
+                                    expected = print(linear, ctx);
+                                }
+                                TestUtils.assertEquals("round " + round, expected, actual);
+                                rowCounts[round] = actual.split("\n").length;
+                                engine.execute("INSERT INTO trades VALUES ('2025-01-01T00:00:00.000000Z', 'f0', 'Z9', " + (round == 0 ? 50 : 103) + ".0)", ctx);
+                            }
+                            // the sub-query's value moved the rows: no sub-query row, then a low and a high max
+                            Assert.assertNotEquals(rowCounts[0], rowCounts[1]);
+                            Assert.assertNotEquals(rowCounts[1], rowCounts[2]);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test
@@ -191,6 +234,56 @@ public class AsOfJoinVirtualKeyTest extends AbstractCairoTest {
         assertSeeds(2, true, true, false);
     }
 
+    @Test
+    public void testShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, ctx) -> {
+                        AsyncAsOfJoinTest.createTables(engine, ctx, new Rnd(42, 4242), false, false, false);
+                        final String[] bodies = {
+                                // self-joins, the quotes case with ties of the same key
+                                "t.ts, t.px, q.px qpx, q.ex qex FROM (SELECT ts, px, ex FROM trades WHERE sym = 'f2') t ASOF JOIN (SELECT ts, px, ex FROM trades WHERE sym = 'f2') q",
+                                "t.ts, t.bid, q.bid qb FROM (SELECT ts, bid FROM quotes WHERE sym = 'f3') t ASOF JOIN (SELECT ts, bid FROM quotes WHERE sym = 'f3') q",
+                                "t.ts, t.bid, q.bid qb FROM (SELECT ts, bid FROM quotes WHERE sym = null) t ASOF JOIN (SELECT ts, bid FROM quotes WHERE sym = null) q",
+                                // a self-join with TOLERANCE
+                                "t.ts, t.bid, q.bid qb FROM (SELECT ts, bid FROM quotes WHERE sym = 'f3') t ASOF JOIN (SELECT ts, bid FROM quotes WHERE sym = 'f3') q TOLERANCE 3s",
+                                // duplicated and reordered columns: cross indexes that are not the identity
+                                "t.ts, t.px, t.p2, q.bid, q.b2 FROM (SELECT ts, px, px p2 FROM trades WHERE sym = 'f2') t ASOF JOIN (SELECT ts, bid, bid b2 FROM quotes WHERE sym = 'f2') q",
+                                "t.ex, t.px, t.ts, q.ex qex, q.bid, q.ts qts FROM (SELECT ex, px, ts FROM trades WHERE sym = 'f2') t ASOF JOIN (SELECT ex, bid, ts FROM quotes WHERE sym = 'f2') q",
+                                "t.px, t.sym, t.ts, q.bid, q.sym qs FROM (SELECT px, sym, ts, sym s2 FROM trades WHERE sym = 'f2') t ASOF JOIN (SELECT sym, bid, ts FROM quotes WHERE sym = 'f2') q",
+                                // the master's equality on another SYMBOL column holding the value
+                                "t.ts, t.px, q.bid FROM (SELECT ts, px FROM trades WHERE ex = 'X1' AND sym = 'f2') t ASOF JOIN (SELECT ts, bid FROM quotes WHERE ex = 'X1') q",
+                                // an interval on either side
+                                "t.ts, t.px, q.bid FROM (SELECT ts, px FROM trades WHERE sym = 'f4' AND ts IN '2024-01-02') t ASOF JOIN (SELECT ts, bid FROM quotes WHERE sym = 'f4') q",
+                                "t.ts, t.px, q.bid FROM (SELECT ts, px FROM trades WHERE sym = 'f4') t ASOF JOIN (SELECT ts, bid FROM quotes WHERE sym = 'f4' AND ts > '2024-01-02') q",
+                                // a scalar sub-query in the master's filter (bound in its JIT filter)
+                                "t.ts, t.px, q.bid FROM (SELECT ts, px FROM trades WHERE sym = 'f2' AND px > (SELECT avg(px) FROM trades)) t ASOF JOIN (SELECT ts, bid FROM quotes WHERE sym = 'f2') q",
+                                // IN (sub-query) on the key in the master's filter
+                                "t.ts, t.px, q.bid FROM (SELECT ts, px FROM trades WHERE sym = 'f2' AND sym IN (SELECT sym FROM quotes WHERE bid > 5)) t ASOF JOIN (SELECT ts, bid FROM quotes WHERE sym = 'f2') q",
+                                // an outer filter, an outer ORDER BY ... DESC LIMIT
+                                "t.ts, t.px, q.bid FROM (SELECT ts, px FROM trades WHERE sym = 'f2') t ASOF JOIN (SELECT ts, bid FROM quotes WHERE sym = 'f2') q WHERE q.bid > 1000",
+                                "t.ts, t.px, q.bid FROM (SELECT ts, px FROM trades WHERE sym = 'f2') t ASOF JOIN (SELECT ts, bid FROM quotes WHERE sym = 'f2') q ORDER BY t.ts DESC LIMIT 7",
+                                // two ASOF joins in a chain
+                                "t.ts, q.bid, r.bid rb FROM (SELECT ts, px FROM trades WHERE sym = 'f2') t ASOF JOIN (SELECT ts, bid FROM quotes WHERE sym = 'f2') q ASOF JOIN (SELECT ts, bid FROM quotes WHERE sym = 'f2') r",
+                                // an aggregate over the join
+                                "count(), sum(q.bid), min(q.ts) FROM (SELECT ts, px FROM trades WHERE sym = 'f5') t ASOF JOIN (SELECT ts, bid FROM quotes WHERE sym = 'f5') q",
+                                // an escaped quote, a value on neither side
+                                "t.ts, q.bid FROM (SELECT ts, px FROM trades WHERE sym = 'o''k') t ASOF JOIN (SELECT ts, bid FROM quotes WHERE sym = 'o''k') q",
+                        };
+                        for (String body : bodies) {
+                            final String sql = "SELECT " + body;
+                            assertPlanContains(engine, ctx, sql, "virtual key");
+                            TestUtils.assertSqlCursors(engine, ctx, "SELECT /*+ asof_linear(t q) asof_linear(t r) */ " + body, sql, LOG);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
     private static void assertForms(CairoEngine engine, SqlExecutionContext ctx, String value, boolean expectParallel) throws Exception {
         final String[] forms = {
                 // TAQ idx 82: neither side projects the key
@@ -218,6 +311,14 @@ public class AsOfJoinVirtualKeyTest extends AbstractCairoTest {
             TestUtils.assertSqlCursors(engine, ctx, "SELECT count() FROM (SELECT /*+ asof_linear(t q) */ " + body + ")", "SELECT count() FROM (" + sql + ")", LOG);
             TestUtils.assertSqlCursors(engine, ctx, "SELECT /*+ asof_linear(t q) */ " + body + " LIMIT 5, 40", sql + " LIMIT 5, 40", LOG);
         }
+    }
+
+    private static String print(RecordCursorFactory factory, SqlExecutionContext ctx) throws Exception {
+        final StringSink sink = new StringSink();
+        try (RecordCursor cursor = factory.getCursor(ctx)) {
+            CursorPrinter.println(cursor, factory.getMetadata(), sink);
+        }
+        return sink.toString();
     }
 
     private void assertSeeds(int seeds, boolean parquetSlave, boolean parquetMaster, boolean columnTops) throws Exception {

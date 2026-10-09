@@ -520,6 +520,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         negotiatedVersion = QwpConstants.VERSION;
         maxBatchRows = 0;  // reset to "unset"; will be set per-connection in onHeadersReady
         batchBuffer.reset();
+        // the pooled state outlives the connection: drop the symbol key -> id arrays a query grew
+        batchBuffer.releaseConnKeyMaps();
         bindVariableService.clear();
         // Connection dropped/reset -- client cannot reuse the delta dict on a
         // new connection so we discard it too. On a clean close() this is idempotent.

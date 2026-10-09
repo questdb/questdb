@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.model;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.OperatorExpression;
 import io.questdb.griffin.OperatorRegistry;
 import io.questdb.griffin.SqlKeywords;
@@ -85,11 +84,6 @@ public class ExpressionNode implements Mutable, Sinkable {
     // speculative pruning-bound compile was declined, so the residual filter re-compiled from this
     // same node reuses that already-generated sub-query instead of generating it a second time.
     public ScalarSubQueryCompileCache scalarBoundCompileCache;
-    // Compile-time link: set by FunctionParser on a scalar sub-query QUERY node that is an operand of
-    // a comparison it compiled as an AbstractScalarCursorFunction (the sub-query runs once per
-    // execution), to that function, so the JIT filter can read the sub-query's value as a bind
-    // variable. Not copied by clones: it names one compile of the node.
-    public Function scalarSubQueryFunction;
     public CharSequence token;
     public int type;
     public WindowExpression windowExpression;
@@ -334,7 +328,6 @@ public class ExpressionNode implements Mutable, Sinkable {
         isConstFoldWidening = false;
         scalarBoundHolder = null;
         scalarBoundCompileCache = null;
-        scalarSubQueryFunction = null;
     }
 
     public ExpressionNode copyFrom(final ExpressionNode other) {

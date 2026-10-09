@@ -27,6 +27,7 @@ package io.questdb.cutlass.qwp.codec;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 
@@ -39,24 +40,46 @@ import java.util.Arrays;
  * so the lookup structure has no effect on which id a key gets or when a key is first seen: the
  * connection dictionary's order and the batches' dictionary-budget splits are the same with any
  * cap, 0 included (hash map only).
+ * <p>
+ * The map lives as long as its connection's pooled egress state, so the array is not kept at the
+ * size a query grew it to: {@link #resetForNewQuery()} drops an array larger than
+ * {@link #RETAINED_DENSE_CAPACITY} keys, and {@link #release()} (the connection's end) drops any.
+ * Between queries a map holds at most {@code 4 * RETAINED_DENSE_CAPACITY} bytes of array.
  */
-final class QwpSymbolKeyMap {
-    static final int NO_ID = -1;
+public final class QwpSymbolKeyMap {
+    public static final int NO_ID = -1;
+    // the largest array, in keys, kept from one query to the next: 16 KiB
+    public static final int RETAINED_DENSE_CAPACITY = 4096;
     private static final int[] EMPTY_DENSE = new int[0];
     private static final int MIN_DENSE_CAPACITY = 64;
-    private final IntIntHashMap overflow = new IntIntHashMap();
+    // the most keys past the cap whose hash map is kept from one query to the next
+    private static final int RETAINED_OVERFLOW_KEYS = 1024;
+    private IntIntHashMap overflow = new IntIntHashMap();
     // keys stored in dense, so that clear() costs the keys the query used, not the array
-    private final IntList storedDenseKeys = new IntList();
+    private IntList storedDenseKeys;
     // dense[key] is the key's id, or NO_ID; keys at or past dense.length have no id unless they are
     // at or past denseMaxKeys, where overflow holds them
     int[] dense = EMPTY_DENSE;
     private int denseMaxKeys;
 
     QwpSymbolKeyMap(int denseMaxKeys) {
-        this.denseMaxKeys = Math.max(denseMaxKeys, 0);
+        this(denseMaxKeys, new IntList());
     }
 
-    void clear() {
+    /**
+     * Test seam: {@code storedDenseKeys} is the list that records the keys stored in the array.
+     */
+    @TestOnly
+    public QwpSymbolKeyMap(int denseMaxKeys, IntList storedDenseKeys) {
+        this.denseMaxKeys = Math.max(denseMaxKeys, 0);
+        this.storedDenseKeys = storedDenseKeys;
+    }
+
+    /**
+     * Forgets every key's id, keeping the array: within a query (a dictionary reset), where the
+     * query is likely to store the same keys again.
+     */
+    public void clear() {
         final int[] d = dense;
         for (int i = 0, n = storedDenseKeys.size(); i < n; i++) {
             d[storedDenseKeys.getQuick(i)] = NO_ID;
@@ -68,12 +91,20 @@ final class QwpSymbolKeyMap {
     /**
      * @return the key's connection id, or {@link #NO_ID} when it has none yet
      */
-    int get(int key) {
+    public int get(int key) {
         final int[] d = dense;
         if (key >= 0 && key < d.length) {
             return d[key];
         }
         return getSlow(key);
+    }
+
+    /**
+     * @return the length of the array, in keys
+     */
+    @TestOnly
+    public int getDenseCapacity() {
+        return dense.length;
     }
 
     int getDenseMaxKeys() {
@@ -95,7 +126,7 @@ final class QwpSymbolKeyMap {
     /**
      * Stores the id of a key that has none.
      */
-    void put(int key, int connId) {
+    public void put(int key, int connId) {
         assert connId >= 0;
         if (key >= 0 && key < denseMaxKeys) {
             int[] d = dense;
@@ -103,10 +134,43 @@ final class QwpSymbolKeyMap {
                 d = grow(key);
             }
             assert d[key] == NO_ID;
-            d[key] = connId;
+            // the key is recorded before its id is written: should recording it fail (out of
+            // memory), the array holds no id that clear() would not reset, which a later query
+            // could otherwise read as an id the connection's reset dictionary no longer has
             storedDenseKeys.add(key);
+            d[key] = connId;
         } else {
             overflow.put(key, connId);
+        }
+    }
+
+    /**
+     * Forgets every key's id and drops the array, as the connection ends: the pooled state keeps
+     * none of it for the next connection.
+     */
+    public void release() {
+        resetForNewQuery();
+        dense = EMPTY_DENSE;
+    }
+
+    /**
+     * Forgets every key's id, before a new query, and drops an array larger than
+     * {@link #RETAINED_DENSE_CAPACITY} keys: one query's rare large key would otherwise keep its
+     * array, up to 4 bytes x the cap, for the life of the pooled connection state. The next query
+     * grows a new array as it needs. Likewise drops the list of stored keys and the hash map of
+     * keys past the cap when a query grew them large.
+     */
+    public void resetForNewQuery() {
+        final boolean dropOverflow = overflow.size() > RETAINED_OVERFLOW_KEYS;
+        clear();
+        if (dropOverflow) {
+            overflow = new IntIntHashMap();
+        }
+        if (dense.length > RETAINED_DENSE_CAPACITY) {
+            dense = EMPTY_DENSE;
+        }
+        if (storedDenseKeys.capacity() > RETAINED_DENSE_CAPACITY) {
+            storedDenseKeys = new IntList();
         }
     }
 

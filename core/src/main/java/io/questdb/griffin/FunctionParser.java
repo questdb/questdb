@@ -38,7 +38,6 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.RuntimeConstFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryBoundRefFunction;
-import io.questdb.griffin.engine.functions.lt.AbstractScalarCursorFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
@@ -121,6 +120,7 @@ import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
+import io.questdb.griffin.engine.functions.lt.AbstractScalarCursorFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.ScalarSubQueryCompileCache;
 import io.questdb.griffin.model.ScalarTimestampBoundHolder;
@@ -169,6 +169,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private int executionRequirementPosition = -1;
     private String lastFunctionFactorySignature;
     private RecordMetadata metadata;
+    // where the parse records the scalar sub-queries it compiles, null for nowhere
+    private ScalarSubQueryLinks scalarSubQueryLinks;
     private SqlCodeGenerator sqlCodeGenerator;
     private SqlExecutionContext sqlExecutionContext;
 
@@ -238,6 +240,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         this.lastFunctionFactorySignature = null;
         this.sqlExecutionContext = null;
         this.cursorFunctionInstantiated = false;
+        this.scalarSubQueryLinks = null;
     }
 
     /**
@@ -417,6 +420,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         cursorFunctionInstantiated = false;
     }
 
+    /**
+     * Makes the parses that follow record their scalar sub-query comparisons in {@code links}, or
+     * nowhere for null.
+     *
+     * @return the links that were installed, to restore after the parse
+     */
+    ScalarSubQueryLinks setScalarSubQueryLinks(ScalarSubQueryLinks links) {
+        final ScalarSubQueryLinks previous = scalarSubQueryLinks;
+        scalarSubQueryLinks = links;
+        return previous;
+    }
+
     public void setSqlCodeGenerator(SqlCodeGenerator sqlCodeGenerator) {
         this.sqlCodeGenerator = sqlCodeGenerator;
     }
@@ -501,8 +516,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 }
             }
             final Function function = createFunction(node, mutableArgs, mutableArgPositions);
-            if (function instanceof AbstractScalarCursorFunction) {
-                linkScalarSubQuery(node, function);
+            if (scalarSubQueryLinks != null && function instanceof AbstractScalarCursorFunction scalarCursorFunction) {
+                linkScalarSubQuery(scalarSubQueryLinks, node, scalarCursorFunction);
             }
             functionStack.push(function);
         }
@@ -519,16 +534,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     void restoreExecutionRequirementPosition(int position) {
         executionRequirementPosition = position;
-    }
-
-    // The comparison's sub-query operand, the one QUERY child, is linked to the comparison: see
-    // ExpressionNode#scalarSubQueryFunction.
-    private static void linkScalarSubQuery(ExpressionNode node, Function function) {
-        final boolean isLhs = node.lhs != null && node.lhs.type == ExpressionNode.QUERY;
-        final boolean isRhs = node.rhs != null && node.rhs.type == ExpressionNode.QUERY;
-        if (node.paramCount == 2 && isLhs != isRhs) {
-            (isLhs ? node.lhs : node.rhs).scalarSubQueryFunction = function;
-        }
     }
 
     private static int countWindowOverloads(ObjList<FunctionFactoryDescriptor> overload) {
@@ -702,6 +707,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         ex.put(')');
         Misc.freeObjList(args, ex);
         return ex;
+    }
+
+    // The comparison's sub-query operand, the one QUERY child, is linked to the comparison, see
+    // ScalarSubQueryLinks.
+    private static void linkScalarSubQuery(ScalarSubQueryLinks links, ExpressionNode node, AbstractScalarCursorFunction function) {
+        final boolean isLhs = node.lhs != null && node.lhs.type == ExpressionNode.QUERY;
+        final boolean isRhs = node.rhs != null && node.rhs.type == ExpressionNode.QUERY;
+        if (node.paramCount == 2 && isLhs != isRhs) {
+            links.link(isLhs ? node.lhs : node.rhs, function);
+        }
     }
 
     private static long parseDate(CharSequence str, int position) throws SqlException {

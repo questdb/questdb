@@ -27,21 +27,34 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.lt.AbstractScalarCursorFunction;
+import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.jit.JitUtil;
+import io.questdb.std.Files;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
 import org.junit.Test;
 
 /**
  * Uncorrelated scalar sub-queries as bind variables of a JIT filter
  * ({@code cairo.sql.jit.scalar.subquery.enabled}): each filter prints exactly what the Java filter
  * prints, in every JIT mode and with the feature off, for every comparison, every numeric width the
- * cursor comparisons pair, sub-queries that return NULL or no row, sub-queries on either side, and
- * re-executions of a cached factory after the sub-query's value changed.
+ * cursor comparisons pair, sub-queries that return NULL or no row, sub-queries on either side,
+ * re-executions of a cached factory after the sub-query's value changed, NULL/infinite/NaN values,
+ * the DOUBLE tolerance, FLOAT against a DOUBLE no float holds, user bind variables, either order in
+ * which a consumer initialises the Java filter and the bind variables, and read_parquet().
  */
 public class ScalarSubQueryJitTest extends AbstractCairoTest {
     private static final String[] FILTERS = {
@@ -86,6 +99,77 @@ public class ScalarSubQueryJitTest extends AbstractCairoTest {
             "d > (select avg(d) from y) and d < (select max(d) from y) and l > 30",
             "sym in ('a', 'c') and i > (select min(i) from y)",
     };
+
+    // the reviewer's probes: values at the edges of the comparisons' semantics
+    private static final String[] EDGE_FILTERS = {
+            // BYTE / SHORT vs NULL INT scalar (Java: never true)
+            "b > (select i from y where k < 0)",
+            "b >= (select i from y where k < 0)",
+            "b <= (select null::int from y limit 1)",
+            "s < (select null::int from y limit 1)",
+            "b = (select i from y where k < 0)",
+            "b != (select i from y where k < 0)",
+            "not (b >= (select i from y where k < 0))",
+            // BYTE / SHORT vs NULL LONG / DOUBLE scalar
+            "b >= (select null::long from y limit 1)",
+            "b < (select null::long from y limit 1)",
+            "s >= (select null::double from y limit 1)",
+            "s < (select null::double from y limit 1)",
+            "b != (select null::double from y limit 1)",
+            // INT vs NULL DOUBLE / LONG scalar (Java widens INT NULL to NaN / LONG_NULL)
+            "i >= (select d from y where k < 0)",
+            "i <= (select null::double from y limit 1)",
+            "i = (select null::double from y limit 1)",
+            "i != (select null::double from y limit 1)",
+            "i > (select null::long from y limit 1)",
+            "i >= (select null::long from y limit 1)",
+            "i = (select null::long from y limit 1)",
+            "i != (select null::long from y limit 1)",
+            "not (i >= (select null::long from y limit 1))",
+            // LONG vs NULL INT scalar
+            "l >= (select null::int from y limit 1)",
+            "l = (select i from y where k < 0)",
+            "l != (select i from y where k < 0)",
+            // INT vs LONG beyond the int range
+            "i < (select 3000000000L from y limit 1)",
+            "i > (select -3000000000L from y limit 1)",
+            // FLOAT vs a DOUBLE no float holds
+            "f > (select 0.1 from y limit 1)",
+            "f < (select 0.1 from y limit 1)",
+            "f = (select 0.1 from y limit 1)",
+            "f >= (select 0.3 from y limit 1)",
+            "f != (select 0.1 from y limit 1)",
+            // the DOUBLE tolerance, 1e-10
+            "d > (select 1.0 from y limit 1)",
+            "d >= (select 1.0 from y limit 1)",
+            "d < (select 1.0 from y limit 1)",
+            "d = (select 1.0 from y limit 1)",
+            "d != (select 1.0 from y limit 1)",
+            // NULL = NULL for doubles
+            "d = (select null::double from y limit 1)",
+            "d != (select null::double from y limit 1)",
+            // infinities are NULL in QuestDB
+            "d < (select 1.0 / 0.0 from y limit 1)",
+            "d >= (select 1.0 / 0.0 from y limit 1)",
+            "d = (select 1.0 / 0.0 from y limit 1)",
+            "d > (select -1.0 / 0.0 from y limit 1)",
+            "i < (select 1.0 / 0.0 from y limit 1)",
+            // NaN produced as a value
+            "d <= (select 0.0 / 0.0 from y limit 1)",
+            // the same sub-query twice
+            "(select max(d) from y) > d and i > (select min(i) from y)",
+            // OR with sub-queries
+            "d > (select max(d) from y) or i < (select min(i) from y)",
+            // now() in the sub-query: uncorrelated, runs per execution
+            "l > (select count() from y where now() > 0::timestamp)",
+    };
+
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
+        inputRoot = root;
+    }
 
     @Test
     public void testAllFilters() throws Exception {
@@ -204,6 +288,119 @@ public class ScalarSubQueryJitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEdgeValues() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // values around the DOUBLE tolerance and floats no double equals
+            execute("insert into x (d, f, i, l, b, s, sym, k, ts) values " +
+                    "(1.00000000005, 0.1, 5, 5, 1, 1, 'a', 2000, '1970-01-02T00:00:00.000000Z')," +
+                    "(0.99999999995, 0.3, 6, 6, 1, 1, 'a', 2001, '1970-01-02T00:00:01.000000Z')," +
+                    "(1.0, 0.1, 7, 7, 1, 1, 'a', 2002, '1970-01-02T00:00:02.000000Z')");
+            final String[] shapes = {
+                    "select * from x where %s",
+                    "select count() from x where %s",
+                    "select sym, count(), sum(d) from x where %s order by sym",
+            };
+            for (String filter : EDGE_FILTERS) {
+                for (String shape : shapes) {
+                    assertAllModes(String.format(shape, filter));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJavaFilterAndLinkInitialisedInEitherOrder() throws Exception {
+        // A consumer may initialise the bind variables before the Java filter. Each execution must
+        // still bind its own value of the sub-query, never the one an earlier execution read.
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertMemoryLeak(() -> {
+            createTables();
+            Mode.JIT_VECTOR.apply();
+            try (RecordCursorFactory factory = select("select * from x where d > (select max(d) from y)")) {
+                final AsyncJitFilteredRecordCursorFactory jitFactory = findJitFactory(factory);
+                final Function filter = jitFactory.getFilter();
+                Assert.assertTrue(filter instanceof AbstractScalarCursorFunction);
+                final AbstractScalarCursorFunction source = (AbstractScalarCursorFunction) filter;
+                final ObjList<Function> bindVars = jitFactory.getBindVarFunctions();
+                Assert.assertEquals(1, bindVars.size());
+                final Function link = bindVars.getQuick(0);
+                double value = 1000;
+                // the link first, over several executions: the value it binds is read before the
+                // Java filter's init() runs, so it must be this execution's
+                for (int execution = 0; execution < 3; execution++) {
+                    value += 1000;
+                    execute("insert into y (k, d) values (" + (100 + execution) + ", " + value + ")");
+                    Function.init(bindVars, null, sqlExecutionContext, null);
+                    Assert.assertEquals("link first, execution " + execution, value, link.getDouble(null), 0);
+                    filter.init(null, sqlExecutionContext);
+                    Assert.assertEquals("link first, execution " + execution, value, source.getScalarDouble(), 0);
+                    Assert.assertEquals(value, link.getDouble(null), 0);
+                }
+                // the Java filter first, as every consumer does today
+                for (int execution = 0; execution < 3; execution++) {
+                    value += 1000;
+                    execute("insert into y (k, d) values (" + (200 + execution) + ", " + value + ")");
+                    filter.init(null, sqlExecutionContext);
+                    Assert.assertEquals("filter first, execution " + execution, value, source.getScalarDouble(), 0);
+                    Function.init(bindVars, null, sqlExecutionContext, null);
+                    Assert.assertEquals("filter first, execution " + execution, value, link.getDouble(null), 0);
+                }
+                // the link initialised again within an execution reads afresh, and the next
+                // execution's Java filter does not reuse that run
+                value += 1000;
+                execute("insert into y (k, d) values (300, " + value + ")");
+                Function.init(bindVars, null, sqlExecutionContext, null);
+                Assert.assertEquals(value, link.getDouble(null), 0);
+                value += 1000;
+                execute("insert into y (k, d) values (301, " + value + ")");
+                filter.init(null, sqlExecutionContext);
+                Assert.assertEquals(value, source.getScalarDouble(), 0);
+                Function.init(bindVars, null, sqlExecutionContext, null);
+                Assert.assertEquals(value, link.getDouble(null), 0);
+                // and the factory still returns the Java filter's rows
+                TestUtils.assertEquals(referenceOf("select * from x where d > (select max(d) from y)"), print(factory));
+            }
+        });
+    }
+
+    @Test
+    public void testReadParquetPushdownKeepsJitBinding() throws Exception {
+        // read_parquet() parses the filter a second time for its row group pushdown: the scalar
+        // sub-query must still be bound in the JIT filter
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertMemoryLeak(() -> {
+            createTables();
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+            }
+            final String[] filters = {
+                    "d > (select avg(d) from y)",
+                    "d > (select avg(d) from y) and i < (select max(i) from y where k < 5)",
+                    "k > 100 and l <= (select max(l) from y)",
+            };
+            for (String filter : filters) {
+                final String query = "select * from read_parquet('x.parquet') where " + filter;
+                final String expected = referenceOf(query);
+                for (Mode mode : Mode.values()) {
+                    mode.apply();
+                    try (RecordCursorFactory factory = select(query)) {
+                        Assert.assertEquals(mode + " JIT: " + query, mode.expectsJit(), factory.usesCompiledFilter());
+                        TestUtils.assertEquals(mode + ": " + query, expected, print(factory));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSubQueryErrorsAsJavaFilter() throws Exception {
         // more than one row fails the execution, in every mode, with the same message
         assertMemoryLeak(() -> {
@@ -224,6 +421,55 @@ public class ScalarSubQueryJitTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testUserBindVariables() throws Exception {
+        // user bind variables in the outer filter and inside the sub-query, on a cached factory
+        // re-executed with new values and new sub-query rows
+        assertMemoryLeak(() -> {
+            final String[] queries = {
+                    "select * from x where d > (select max(d) from y where k < $1) and i < $2",
+                    "select * from x where i < $2 and d > (select max(d) from y where k < $1) and l > $3",
+                    "select count() from x where d < (select avg(d) from y where k > $1) and l != $3",
+            };
+            for (String query : queries) {
+                for (Mode mode : Mode.values()) {
+                    createTables();
+                    bindVariableService.clear();
+                    bindVariableService.setLong(0, 10);
+                    bindVariableService.setInt(1, 200);
+                    bindVariableService.setLong(2, 100);
+                    mode.apply();
+                    try (RecordCursorFactory factory = select(query)) {
+                        if (!query.startsWith("select count()")) {
+                            Assert.assertEquals(mode + " JIT: " + query, mode.expectsJit(), factory.usesCompiledFilter());
+                        }
+                        for (int round = 0; round < 3; round++) {
+                            bindVariableService.setLong(0, 3 + round * 30);
+                            bindVariableService.setInt(1, 200 - round * 50);
+                            bindVariableService.setLong(2, 100 + round * 200);
+                            final String actual = print(factory);
+                            final String expected = referenceOf(query);
+                            mode.apply();
+                            TestUtils.assertEquals(mode + ", round " + round + ": " + query, expected, actual);
+                            execute("insert into y (k, d) select 100 + x, x * 3.0 + " + round + " from long_sequence(5)");
+                        }
+                    }
+                    execute("drop table x");
+                    execute("drop table y");
+                }
+            }
+        });
+    }
+
+    private static AsyncJitFilteredRecordCursorFactory findJitFactory(RecordCursorFactory factory) {
+        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+            if (f instanceof AsyncJitFilteredRecordCursorFactory jitFactory) {
+                return jitFactory;
+            }
+        }
+        throw new AssertionError("no JIT filter in the plan");
     }
 
     private void assertAllModes(String query) throws SqlException {

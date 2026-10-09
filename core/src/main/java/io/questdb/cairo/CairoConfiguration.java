@@ -818,8 +818,9 @@ public interface CairoConfiguration {
 
     /**
      * QWP egress maps a SYMBOL column's native symbol keys below this to connection dictionary ids
-     * with an array (4 bytes per key, sized to the largest key the query sends), and the other keys
-     * with a hash map. 0 uses the hash map for every key. The wire bytes are the same either way.
+     * with an array (4 bytes per key, sized to the largest key the query sends, kept from one query
+     * to the next only up to 16 KiB), and the other keys with a hash map. 0 uses the hash map for
+     * every key. The wire bytes are the same either way.
      */
     default int getQwpEgressSymbolDenseMaxKeys() {
         return QwpResultBatchBuffer.DEFAULT_SYMBOL_DENSE_MAX_KEYS;
@@ -1492,8 +1493,9 @@ public interface CairoConfiguration {
     boolean isSqlJitSymbolInBitsetEnabled();
 
     /**
-     * Plans a non-keyed ASOF JOIN whose two sides are filtered by the same SYMBOL equality, such as
-     * (... WHERE sym = $1) t ASOF JOIN (... WHERE sym = $1) q, as the keyed parallel ASOF JOIN on those columns.
+     * Plans a non-keyed ASOF JOIN whose two sides are filtered by the same SYMBOL equality with a
+     * literal, such as (... WHERE sym = 'AAPL') t ASOF JOIN (... WHERE sym = 'AAPL') q, as the keyed
+     * parallel ASOF JOIN on those columns. A bind variable ({@code sym = $1}) stays serial.
      */
     default boolean isSqlAsOfJoinVirtualKeyEnabled() {
         return true;

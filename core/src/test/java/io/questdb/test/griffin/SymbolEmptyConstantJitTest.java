@@ -63,6 +63,40 @@ public class SymbolEmptyConstantJitTest extends AbstractCairoTest {
     };
 
     @Test
+    public void testColumnTopsParquetAndWal() throws Exception {
+        // stop added by ALTER: the first partitions have a column top (NULL), then the later ones are
+        // converted to Parquet; WAL and non-WAL tables
+        assertMemoryLeak(() -> {
+            for (boolean wal : new boolean[]{false, true}) {
+                for (boolean withEmpty : new boolean[]{true, false}) {
+                    execute("create table x as (select rnd_symbol('a', 'b', 'c', null) sym, x::int i, x * 0.5 d, timestamp_sequence(0, 1000000) ts " +
+                            "from long_sequence(4000)) timestamp(ts) partition by hour " + (wal ? "wal" : "bypass wal"));
+                    execute("alter table x add column stop symbol");
+                    execute("insert into x (sym, i, d, ts, stop) select rnd_symbol('a', 'b', 'c', null), x::int, x * 0.5, " +
+                            "'1970-01-01T01:30:00'::timestamp + x * 1000000, " +
+                            "case x % 4 when 0 then null::string when 1 then " + (withEmpty ? "''" : "'T'") + " when 2 then 'S' else 'R' end " +
+                            "from long_sequence(4000)");
+                    if (wal) {
+                        drainWalQueue();
+                    }
+                    execute("alter table x convert partition to parquet where ts < '1970-01-01T02:00'");
+                    if (wal) {
+                        drainWalQueue();
+                    }
+                    assertAllFilters();
+                    // '' is not NULL: the column top reads as NULL
+                    TestUtils.assertEquals("c\n" + (withEmpty ? 1000 : 0) + "\n", referenceOf("select count() c from x where stop = ''"));
+                    TestUtils.assertEquals("c\n5000\n", referenceOf("select count() c from x where stop is null"));
+                    execute("drop table x");
+                    if (wal) {
+                        drainWalQueue();
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testEmptyStringAbsentFromSymbolTable() throws Exception {
         // the symbol table has no '': the constant resolves to no key, as in the Java filter
         assertMemoryLeak(() -> {

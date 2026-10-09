@@ -1116,6 +1116,10 @@ final class QwpColumnScratch implements QuietCloseable {
         Unsafe.putInt(symbolBytesCumAddr + 4L * slotIdx, prevCum + QwpVarint.encodedLength(connId));
     }
 
+    void releaseConnKeyMap() {
+        connKeyToConnId.release();
+    }
+
     /**
      * SYMBOL: room for {@code n} more non-null values, for {@link #appendSymbolConnIdReserved}.
      */
@@ -1141,7 +1145,8 @@ final class QwpColumnScratch implements QuietCloseable {
      * drops -- a DoS surface for slow clients or bursty workloads.
      */
     void resetForNewQuery() {
-        clearConnKeyMap();
+        // drops a key -> id array a large symbol key grew, see QwpSymbolKeyMap
+        connKeyToConnId.resetForNewQuery();
         // Roll the final batch of the previous query into the peak counters
         // before we use them to decide whether to shrink.
         updatePeakUsage();

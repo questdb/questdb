@@ -42,10 +42,11 @@ import io.questdb.griffin.engine.functions.lt.AbstractScalarCursorFunction;
  * execution. The value is the one the Java filter's {@link AbstractScalarCursorFunction} computed
  * for the execution, at the width and with the NULL the Java comparison uses (a DOUBLE NaN, a
  * {@code LONG_NULL}, an {@code INT_NULL} for an empty sub-query), so both filters compare the same
- * numbers. The source runs the sub-query once per execution in its {@code init()}, which every
- * consumer of a compiled filter calls before it initialises the bind variables. Should the source
- * not have run since this link last read it, the link runs it, so a stale value is never bound.
- * The link does not own the source: the Java filter does.
+ * numbers. The sub-query runs once per execution, by whichever of the source's {@code init()} and
+ * this link's {@code init()} a consumer calls first (see
+ * {@link AbstractScalarCursorFunction#initFromLink}), so the link binds the value of the execution
+ * whatever the order in which a consumer initialises its Java filter and its bind variables. The
+ * link does not own the source: the Java filter does.
  */
 public final class CompiledFilterScalarSubQuery {
 
@@ -64,29 +65,15 @@ public final class CompiledFilterScalarSubQuery {
         };
     }
 
-    private static int refresh(
-            AbstractScalarCursorFunction source,
-            int seenExecutions,
-            SymbolTableSource symbolTableSource,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        if (source.getExecutionCount() == seenExecutions) {
-            source.init(symbolTableSource, executionContext);
-        }
-        return source.getExecutionCount();
-    }
-
     private static void toPlan(PlanSink sink, AbstractScalarCursorFunction source) {
         sink.val("scalar sub-query of ").val(source);
     }
 
     private static final class DoubleLink extends DoubleFunction {
         private final AbstractScalarCursorFunction source;
-        private int seenExecutions;
 
         private DoubleLink(AbstractScalarCursorFunction source) {
             this.source = source;
-            this.seenExecutions = source.getExecutionCount();
         }
 
         @Override
@@ -96,7 +83,7 @@ public final class CompiledFilterScalarSubQuery {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            seenExecutions = refresh(source, seenExecutions, symbolTableSource, executionContext);
+            source.initFromLink(executionContext);
         }
 
         @Override
@@ -112,11 +99,9 @@ public final class CompiledFilterScalarSubQuery {
 
     private static final class IntLink extends IntFunction {
         private final AbstractScalarCursorFunction source;
-        private int seenExecutions;
 
         private IntLink(AbstractScalarCursorFunction source) {
             this.source = source;
-            this.seenExecutions = source.getExecutionCount();
         }
 
         @Override
@@ -126,7 +111,7 @@ public final class CompiledFilterScalarSubQuery {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            seenExecutions = refresh(source, seenExecutions, symbolTableSource, executionContext);
+            source.initFromLink(executionContext);
         }
 
         @Override
@@ -142,11 +127,9 @@ public final class CompiledFilterScalarSubQuery {
 
     private static final class LongLink extends LongFunction {
         private final AbstractScalarCursorFunction source;
-        private int seenExecutions;
 
         private LongLink(AbstractScalarCursorFunction source) {
             this.source = source;
-            this.seenExecutions = source.getExecutionCount();
         }
 
         @Override
@@ -156,7 +139,7 @@ public final class CompiledFilterScalarSubQuery {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            seenExecutions = refresh(source, seenExecutions, symbolTableSource, executionContext);
+            source.initFromLink(executionContext);
         }
 
         @Override

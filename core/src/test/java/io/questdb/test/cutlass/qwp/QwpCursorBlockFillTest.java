@@ -31,6 +31,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.qwp.codec.QwpEgressColumnDef;
 import io.questdb.cutlass.qwp.codec.QwpEgressConnSymbolDict;
 import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
+import io.questdb.cutlass.qwp.codec.QwpSymbolKeyMap;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressProcessorState;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -266,6 +268,44 @@ public class QwpCursorBlockFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolDenseKeyMapReleasedAcrossQueriesAndConnections() throws Exception {
+        assertMemoryLeak(() -> {
+            // 270 000 distinct symbols: 'k' || x has the key x - 1
+            execute("create table big as (select ('k' || x)::symbol s, x l, timestamp_sequence(0, 1000) ts " +
+                    "from long_sequence(270000)) timestamp(ts) partition by day");
+            for (boolean blocks : new boolean[]{false, true}) {
+                try (QwpEgressProcessorState state = new QwpEgressProcessorState(configuration)) {
+                    final QwpResultBatchBuffer buffer = state.getBatchBuffer();
+                    // one row with a rare large key grows the column's array to the cap: 1 MiB
+                    fillOneQuery(buffer, state.getConnSymbolDict(), "select s, l from big where l = 262001", blocks);
+                    Assert.assertEquals(QwpResultBatchBuffer.DEFAULT_SYMBOL_DENSE_MAX_KEYS, buffer.getSymbolDenseCapacity(0));
+                    // the next query on the connection does not keep it
+                    buffer.resetForNewQuery();
+                    Assert.assertEquals(0, buffer.getSymbolDenseCapacity(0));
+                    // an empty query in between keeps nothing either
+                    fillOneQuery(buffer, state.getConnSymbolDict(), "select s, l from big where l < 0", blocks);
+                    buffer.resetForNewQuery();
+                    Assert.assertEquals(0, buffer.getSymbolDenseCapacity(0));
+                    // small keys: a small array, kept from one query to the next
+                    fillOneQuery(buffer, state.getConnSymbolDict(), "select s, l from big where l <= 100", blocks);
+                    Assert.assertEquals(128, buffer.getSymbolDenseCapacity(0));
+                    buffer.resetForNewQuery();
+                    Assert.assertEquals(128, buffer.getSymbolDenseCapacity(0));
+                    Assert.assertTrue(buffer.getSymbolDenseCapacity(0) <= QwpSymbolKeyMap.RETAINED_DENSE_CAPACITY);
+                    // the large key again, then the connection ends: the pooled state keeps no array
+                    fillOneQuery(buffer, state.getConnSymbolDict(), "select s, l from big where l = 262001", blocks);
+                    Assert.assertEquals(QwpResultBatchBuffer.DEFAULT_SYMBOL_DENSE_MAX_KEYS, buffer.getSymbolDenseCapacity(0));
+                    state.clear();
+                    Assert.assertEquals(0, buffer.getSymbolDenseCapacity(0));
+                    // the next connection on the pooled state streams as before
+                    fillOneQuery(buffer, state.getConnSymbolDict(), "select s, l from big where l in (5, 262001)", blocks);
+                    Assert.assertEquals(QwpResultBatchBuffer.DEFAULT_SYMBOL_DENSE_MAX_KEYS, buffer.getSymbolDenseCapacity(0));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testStatefulProjectionsKeepRowOrder() throws Exception {
         assertMemoryLeak(() -> {
             final Rnd driver = TestUtils.generateRandom(LOG);
@@ -292,6 +332,27 @@ public class QwpCursorBlockFillTest extends AbstractCairoTest {
             defs.add(def);
         }
         return defs;
+    }
+
+    // streams one query's rows into the buffer, a single batch, as the egress loop does
+    private static void fillOneQuery(QwpResultBatchBuffer buffer, QwpEgressConnSymbolDict dict, String query, boolean blocks) throws Exception {
+        try (RecordCursorFactory factory = select(query)) {
+            final ObjList<QwpEgressColumnDef> defs = columnDefs(factory.getMetadata());
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                buffer.beginBatch(defs, cursor, dict);
+                while (true) {
+                    final RecordBlock block = blocks && cursor.supportsRecordBlocks() ? cursor.peekRecordBlock(1000) : null;
+                    if (block != null) {
+                        cursor.skipRecordBlock(buffer.appendBlock(block, Integer.MAX_VALUE));
+                    } else if (cursor.hasNext()) {
+                        buffer.appendRow(cursor.getRecord());
+                    } else {
+                        break;
+                    }
+                }
+                buffer.reset();
+            }
+        }
     }
 
     private static List<byte[]> stream(

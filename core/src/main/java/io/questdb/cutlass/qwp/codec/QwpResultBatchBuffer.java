@@ -48,6 +48,8 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Utf8Sequence;
 
+import org.jetbrains.annotations.TestOnly;
+
 import java.util.Arrays;
 
 /**
@@ -62,13 +64,13 @@ import java.util.Arrays;
  * buffers grow to the maximum size observed and never shrink.
  */
 public class QwpResultBatchBuffer implements QuietCloseable {
+    // default of qwp.egress.symbol.dense.max.keys: up to 1 MiB of ids per SYMBOL column
+    public static final int DEFAULT_SYMBOL_DENSE_MAX_KEYS = 1 << 18;
 
     private static final QwpEgressColumnDef[] EMPTY_DEFS = new QwpEgressColumnDef[0];
     private static final int[] EMPTY_INTS = new int[0];
     private static final long[] EMPTY_LONGS = new long[0];
     private static final QwpColumnScratch[] EMPTY_SCRATCHES = new QwpColumnScratch[0];
-    // default of qwp.egress.symbol.dense.max.keys: up to 1 MiB of ids per SYMBOL column
-    public static final int DEFAULT_SYMBOL_DENSE_MAX_KEYS = 1 << 18;
     private static final SymbolTable[] EMPTY_SYMBOL_TABLES = new SymbolTable[0];
     private static final byte[] EMPTY_WIRE_TYPES = new byte[0];
     // Per-column encoding discriminator for TIMESTAMP / TIMESTAMP_NANOS / DATE
@@ -137,19 +139,6 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     private byte[] wireTypesArr = EMPTY_WIRE_TYPES;
 
     public QwpResultBatchBuffer() {
-    }
-
-    /**
-     * Sets how many native symbol keys of a SYMBOL column are mapped to connection ids by an array
-     * rather than a hash map: keys below it (see {@link QwpSymbolKeyMap}). 0 maps every key by the
-     * hash map. The connection ids, and so the wire bytes, are the same either way. Only between
-     * queries.
-     */
-    public void setSymbolDenseMaxKeys(int symbolDenseMaxKeys) {
-        this.symbolDenseMaxKeys = symbolDenseMaxKeys;
-        for (int i = 0, n = scratches.size(); i < n; i++) {
-            scratches.getQuick(i).connKeyToConnId.setDenseMaxKeys(symbolDenseMaxKeys);
-        }
     }
 
     /**
@@ -702,6 +691,26 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         return physicalRowCount - startRow;
     }
 
+    /**
+     * @return the length, in keys, of the column's symbol key -> connection id array; 0 for a
+     * column the buffer has no scratch for
+     */
+    @TestOnly
+    public int getSymbolDenseCapacity(int column) {
+        return column < scratches.size() ? scratches.getQuick(column).connKeyToConnId.getDenseCapacity() : 0;
+    }
+
+    /**
+     * The connection ended: clears the per-column native-key -> connId caches and drops their
+     * key-indexed arrays, which the pooled connection state would otherwise keep for the next
+     * connection.
+     */
+    public void releaseConnKeyMaps() {
+        for (int i = 0, n = scratches.size(); i < n; i++) {
+            scratches.getQuick(i).releaseConnKeyMap();
+        }
+    }
+
     public void reset() {
         for (int i = 0, n = scratches.size(); i < n; i++) {
             scratches.getQuick(i).beginBatch(null);
@@ -749,6 +758,19 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         }
         physicalRowCount = 0;
         startRow = 0;
+    }
+
+    /**
+     * Sets how many native symbol keys of a SYMBOL column are mapped to connection ids by an array
+     * rather than a hash map: keys below it (see {@link QwpSymbolKeyMap}). 0 maps every key by the
+     * hash map. The connection ids, and so the wire bytes, are the same either way. Only between
+     * queries.
+     */
+    public void setSymbolDenseMaxKeys(int symbolDenseMaxKeys) {
+        this.symbolDenseMaxKeys = symbolDenseMaxKeys;
+        for (int i = 0, n = scratches.size(); i < n; i++) {
+            scratches.getQuick(i).connKeyToConnId.setDenseMaxKeys(symbolDenseMaxKeys);
+        }
     }
 
     /**

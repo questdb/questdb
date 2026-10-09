@@ -520,6 +520,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlAsOfJoinEvacuationThreshold;
     private final int sqlAsOfJoinLookahead;
     private final int sqlAsOfJoinShortCircuitCacheCapacity;
+    private final boolean sqlAsOfJoinVirtualKeyEnabled;
     private final int sqlBindVariablePoolSize;
     private final int sqlCharacterStoreCapacity;
     private final int sqlCharacterStoreSequencePoolCapacity;
@@ -562,10 +563,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlJitIRMemoryMaxPages;
     private final int sqlJitIRMemoryPageSize;
     private final int sqlJitMaxInListSizeThreshold;
-    private final boolean sqlJitSymbolInBitsetEnabled;
-    private final boolean sqlAsOfJoinVirtualKeyEnabled;
     private final boolean sqlJitScalarSubQueryEnabled;
     private final boolean sqlJitSymbolEmptyConstantEnabled;
+    private final boolean sqlJitSymbolInBitsetEnabled;
     private final boolean sqlSymbolInBitsetEnabled;
     private final int sqlSymbolInBitsetMaxKeys;
     private final int sqlJitMode;
@@ -6007,6 +6007,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isSqlAsOfJoinVirtualKeyEnabled() {
+            return sqlAsOfJoinVirtualKeyEnabled;
+        }
+
+        @Override
         public boolean isSqlDistinctGroupByRewriteEnabled() {
             // No production property backs this seam: the rewrite is always on in
             // a running server. Only tests override it (to reach
@@ -6020,16 +6025,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isSqlJitSymbolInBitsetEnabled() {
-            return sqlJitSymbolInBitsetEnabled;
-        }
-
-        @Override
-        public boolean isSqlAsOfJoinVirtualKeyEnabled() {
-            return sqlAsOfJoinVirtualKeyEnabled;
-        }
-
-        @Override
         public boolean isSqlJitScalarSubQueryEnabled() {
             return sqlJitScalarSubQueryEnabled;
         }
@@ -6037,6 +6032,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlJitSymbolEmptyConstantEnabled() {
             return sqlJitSymbolEmptyConstantEnabled;
+        }
+
+        @Override
+        public boolean isSqlJitSymbolInBitsetEnabled() {
+            return sqlJitSymbolInBitsetEnabled;
         }
 
         @Override
