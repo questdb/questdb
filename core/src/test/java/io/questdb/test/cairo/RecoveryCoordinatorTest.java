@@ -2613,16 +2613,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 engine.releaseAllWriters();
                 engine.releaseAllReaders();
 
-                // Precondition: both generations and the live files exist. The marker and the separate copy files
-                // of older development layouts are planted too: a database written before them may still hold them.
-                copyTableFile(tt, TableUtils.TXN_FILE_NAME, TableUtils.SNAPSHOT_FILE_NAME);
-                Assert.assertTrue("marker present", epochArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME, ""));
-                final String[] copySuffixes = {TableUtils.EPOCH_COPY_SUFFIX, TableUtils.EPOCH_COPY_SUFFIX + ".0", TableUtils.EPOCH_COPY_SUFFIX + ".1"};
-                for (String suffix : copySuffixes) {
-                    copyTableFile(tt, TableUtils.META_FILE_NAME, TableUtils.META_FILE_NAME + suffix);
-                    copyTableFile(tt, TableUtils.TXN_FILE_NAME, TableUtils.TXN_FILE_NAME + suffix);
-                    copyTableFile(tt, TableUtils.COLUMN_VERSION_FILE_NAME, TableUtils.COLUMN_VERSION_FILE_NAME + suffix);
-                }
+                // Precondition: both generations and the live files exist.
                 for (int generation = 0; generation < 2; generation++) {
                     Assert.assertTrue("manifest generation present", epochArtifactExists(tt, io.questdb.cairo.DurableEpochManifest.FILE_NAME, "." + generation));
                 }
@@ -2633,13 +2624,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                     RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, p, rootLen);
                 }
 
-                // All anchors are gone; the live _txn/_cv are untouched.
-                Assert.assertFalse("marker removed", epochArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME, ""));
-                for (String suffix : copySuffixes) {
-                    Assert.assertFalse("old _meta copy removed", epochArtifactExists(tt, TableUtils.META_FILE_NAME, suffix));
-                    Assert.assertFalse("old _txn copy removed", epochArtifactExists(tt, TableUtils.TXN_FILE_NAME, suffix));
-                    Assert.assertFalse("old _cv copy removed", epochArtifactExists(tt, TableUtils.COLUMN_VERSION_FILE_NAME, suffix));
-                }
+                // Both generations are gone; the live _txn/_cv are untouched.
                 for (int generation = 0; generation < 2; generation++) {
                     Assert.assertFalse("manifest generation removed", epochArtifactExists(tt, io.questdb.cairo.DurableEpochManifest.FILE_NAME, "." + generation));
                 }

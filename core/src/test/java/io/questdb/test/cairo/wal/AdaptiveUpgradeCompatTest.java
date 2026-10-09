@@ -64,13 +64,8 @@ import org.junit.Test;
  * <p>
  * Coverage split (only the GAPS are added here; the rest is cited, not duplicated):
  * <ul>
- *   <li><b>meta adaptive enrolment field</b> &mdash;
- *       {@link #testMetaEnrolmentFieldIsInertOnPreEnrolmentMeta} (NEW; the gap).</li>
- *   <li><b>{@code _snapshot} marker + {@code .epoch} copies</b> &mdash;
- *       {@link #testStraySnapshotAndEpochArtifactsAreInertOnNormalOpen} (NEW; the gap).</li>
  *   <li><b>downgrade</b> &mdash; {@link #testDowngradeFromAdaptiveDrainsCleanlyAndArtifactsAreInert} +
- *       {@link #testDowngradeThenRebootPreservesDataAndIgnoresStaleEpoch} +
- *       {@link #testNosyncBootDoesNotRestoreUnreadableMetaFromStaleAnchor} (NEW).</li>
+ *       {@link #testDowngradeThenRebootPreservesDataAndIgnoresStaleEpoch} (NEW).</li>
  *   <li><b>re-enabling adaptive after a downgrade</b> &mdash;
  *       {@link #testReEnablingAdaptiveKeepsRowsWrittenUnderNosync} (NEW).</li>
  *   <li><b>{@code _txn} body checksum</b> &mdash; zero-sentinel; cited:
@@ -81,65 +76,6 @@ import org.junit.Test;
  * These are read-compat assertions only; no behavior is weakened.
  */
 public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
-
-    // ------------------------------------------------------------------------------------------------
-    // Artifact 1: the adaptive enrolment record in _meta (a version-gated meta tail field).
-    // ------------------------------------------------------------------------------------------------
-
-    /**
-     * A {@code _meta} written by a development build that kept the enrolment record (minor format version 3, the
-     * record at byte 53) loads, reads, takes writes and a schema change, and survives a restart, under ADAPTIVE and
-     * NOSYNC. The offsets and values are spelled out because the constants that name them are not part of the format
-     * any more once the record goes.
-     */
-    @Test
-    public void testDevelopmentMetaWithEnrolmentRecordLoads() throws Exception {
-        assertMemoryLeak(() -> {
-            for (String mode : new String[]{"adaptive", "nosync"}) {
-                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-                final String name = "dev_meta_" + mode;
-                execute("create table " + name + " (ts timestamp, v long) timestamp(ts) partition by day wal");
-                execute("insert into " + name + " values ('2024-01-01T00:00:00.000000Z', 1)");
-                drainWalQueue();
-                final TableToken token = engine.verifyTableName(name);
-                releaseHandles();
-                final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
-                try (Path path = new Path()) {
-                    path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
-                    final int minorVersionField = peekInt(ff, path.$(), TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
-                    // The low short is the field's checksum over the metadata version and column count; keep it.
-                    pokeInt(ff, path.$(), TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION,
-                            Numbers.encodeLowHighShorts(Numbers.decodeLowShort(minorVersionField), (short) 3));
-                    pokeInt(ff, path.$(), 53, CommitMode.ADAPTIVE);
-                }
-
-                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
-                engine.getTxnScoreboardPool().remove(token);
-                engine.getTableSequencerAPI().resetForReboot(token);
-                new RecoveryCoordinator(engine).recover();
-                engine.notifyWalTxnRepublisher(token);
-                drainWalQueue();
-                execute("insert into " + name + " values ('2024-01-02T00:00:00.000000Z', 2)");
-                execute("alter table " + name + " add column c int");
-                execute("insert into " + name + " values ('2024-01-03T00:00:00.000000Z', 3, 7)");
-                drainWalQueue();
-                Assert.assertFalse(mode + ": the table must not be suspended", engine.getTableSequencerAPI().isSuspended(token));
-                releaseHandles();
-                engine.getTxnScoreboardPool().remove(token);
-                engine.getTableSequencerAPI().resetForReboot(token);
-                new RecoveryCoordinator(engine).recover();
-                assertQuery("select * from " + name)
-                        .expectSize()
-                        .timestamp("ts")
-                        .returns("""
-                                ts\tv\tc
-                                2024-01-01T00:00:00.000000Z\t1\tnull
-                                2024-01-02T00:00:00.000000Z\t2\tnull
-                                2024-01-03T00:00:00.000000Z\t3\t7
-                                """);
-            }
-        });
-    }
 
     /**
      * A table directory as a released version leaves it: {@code _txn} areas without checksum stamps, {@code _meta}
@@ -280,71 +216,6 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
             try (TableReader reader = engine.getReader(token)) {
                 Assert.assertEquals(1L, reader.size());
             }
-        });
-    }
-
-    // ------------------------------------------------------------------------------------------------
-    // Artifacts 2 & 3: the _snapshot marker and the _txn.epoch / _cv.epoch copies.
-    // ------------------------------------------------------------------------------------------------
-
-    /**
-     * The {@code _snapshot} marker and the {@code _txn.epoch}/{@code _cv.epoch} copies are SEPARATE files
-     * that the normal read path never opens (it opens {@code _meta}/{@code _txn}/{@code _cv}/columns by
-     * name). Fabricate all three next to a plain (non-adaptive) table and prove a normal query, a fresh
-     * {@link TableReader}, and a full engine reboot all read the correct data and never choke — the
-     * artifacts remain untouched on disk (inert / ignored).
-     * <p>
-     * The reboot is the "normal engine open" case: {@code RecoveryCoordinator.recover()} iterates every
-     * WAL table but skips roll-forward for a non-adaptive table (effective mode != ADAPTIVE), so the
-     * fabricated marker is never even loaded.
-     */
-    @Test
-    public void testStraySnapshotAndEpochArtifactsAreInertOnNormalOpen() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-        assertMemoryLeak(() -> {
-            execute("create table s (ts timestamp, v long) timestamp(ts) partition by day wal");
-            execute("insert into s values ('2024-01-01T00:00:00.000000Z', 1)");
-            execute("insert into s values ('2024-01-01T01:00:00.000000Z', 2)");
-            execute("insert into s values ('2024-01-01T02:00:00.000000Z', 3)");
-            drainWalQueue();
-            final TableToken tt = engine.verifyTableName("s");
-
-            // Fabricate the adaptive epoch trio alongside the live files: a loadable _snapshot marker plus
-            // _txn.epoch / _cv.epoch copies of the live pointers. A table an adaptive binary wrote and then
-            // handed to an unaware reader looks exactly like this.
-            fabricateEpochArtifacts(tt);
-            assertArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME);
-            assertArtifactExists(tt, TableUtils.TXN_FILE_NAME + TableUtils.EPOCH_COPY_SUFFIX);
-            assertArtifactExists(tt, TableUtils.COLUMN_VERSION_FILE_NAME + TableUtils.EPOCH_COPY_SUFFIX);
-
-            // Normal read path ignores them: query is correct, no choke.
-            assertQuery("select count() from s")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("count\n3\n");
-            // A fresh reader opens cleanly with the artifacts present.
-            try (TableReader r = engine.getReader(tt)) {
-                Assert.assertEquals(3L, r.size());
-            }
-            // Artifacts untouched by the normal read path => truly inert.
-            assertArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME);
-            assertArtifactExists(tt, TableUtils.TXN_FILE_NAME + TableUtils.EPOCH_COPY_SUFFIX);
-
-            // Normal ENGINE open (reboot) with the artifacts present: recover() skips the non-adaptive
-            // table, so the marker is inert; the table comes up clean with all rows.
-            releaseHandles();
-            try (CairoEngine restarted = new CairoEngine(configuration)) {
-                TestUtils.drainWalQueue(restarted);
-                final TableToken rtt = restarted.verifyTableName("s");
-                Assert.assertFalse("table must not be suspended after reboot with stray epoch artifacts",
-                        restarted.getTableSequencerAPI().isSuspended(rtt));
-                try (TableReader r = restarted.getReader(rtt)) {
-                    Assert.assertEquals("all rows must survive a reboot with stray artifacts", 3L, r.size());
-                }
-            }
-            // Still present after the reboot => recover() left the non-adaptive table's marker alone.
-            assertArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME);
         });
     }
 
@@ -504,26 +375,6 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
     // ------------------------------------------------------------------------------------------------
     // helpers
     // ------------------------------------------------------------------------------------------------
-
-    /**
-     * Write a {@code _snapshot} file of older layouts and copy the live {@code _txn}/{@code _cv} to {@code .epoch}.
-     */
-    private void fabricateEpochArtifacts(TableToken tt) {
-        final FilesFacade ff = configuration.getFilesFacade();
-        try (Path src = new Path(); Path dst = new Path()) {
-            // _txn -> _txn.epoch
-            src.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.TXN_FILE_NAME);
-            dst.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX);
-            Assert.assertTrue("copy _txn.epoch", ff.copy(src.$(), dst.$()) >= 0);
-            // _cv -> _cv.epoch
-            src.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
-            dst.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.COLUMN_VERSION_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX);
-            Assert.assertTrue("copy _cv.epoch", ff.copy(src.$(), dst.$()) >= 0);
-            // The _snapshot marker of older layouts, holding a copy of _txn: nothing reads it any more.
-            dst.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
-            Assert.assertTrue("copy _snapshot", ff.copy(src.$(), dst.$()) >= 0);
-        }
-    }
 
     private boolean hasSavePoint(TableToken tt) {
         try (Path p = new Path()) {

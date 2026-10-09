@@ -130,7 +130,6 @@ public class ChecksumArtifactsCrashTest extends AbstractCrashConsistencyTest {
             final String msg = String.valueOf(e.getMessage());
             if (msg.contains("checksum mismatch")
                     || msg.contains("torn sequencer txnlog record")
-                    || msg.contains("absent/torn sequencer txnlog record")
                     || msg.contains("body length is impossible")) {
                 Assert.fail("crash at op " + crashPoint + " condemned an intact artifact: " + msg);
             }

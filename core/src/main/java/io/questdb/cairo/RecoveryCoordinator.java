@@ -949,22 +949,12 @@ public class RecoveryCoordinator {
      * </ul>
      * Removing the anchor prevents recovery from selecting a stale lineage. Absent files are accepted so
      * this remains idempotent for non-adaptive / never-epoch'd tables, but any artifact that still exists
-     * after deletion is a hard restore failure. Only the save point files and the copy files of older development
-     * layouts are removed; the LIVE {@code _txn}/{@code _cv} are never touched. Leaves
-     * {@code path} trimmed back to the table root.
+     * after deletion is a hard restore failure. Only the save point files are removed; the LIVE
+     * {@code _txn}/{@code _cv} are never touched. Leaves {@code path} trimmed back to the table root.
      */
     public static void removeAdaptiveEpochArtifacts(FilesFacade ff, Path path, int tableRootLen) {
         final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(ff, path, tableRootLen, -1);
-        // The marker of older development layouts.
-        removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.SNAPSHOT_FILE_NAME));
-        // The separate copy files of older development layouts, left behind by a database written before them.
-        removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.META_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX));
-        removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX));
-        removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX));
         for (int generation = 0; generation < 2; generation++) {
-            removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.META_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation));
-            removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation));
-            removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation));
             if (saved.length < 1 || (saved[0].generation != generation && (saved.length < 2 || saved[1].generation != generation))) {
                 // Never published, or damaged: recovery selects neither.
                 removeAdaptiveEpochArtifactOrFail(ff, path.trimTo(tableRootLen).concat(DurableEpochManifest.FILE_NAME).put('.').put(generation));

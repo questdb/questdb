@@ -36,17 +36,13 @@ public final class TxnLogRecordVerifier {
     }
 
     /**
-     * Throws when the record is torn or absent; returns silently when it is intact.
-     * <p>
-     * The caller decides whether a record was checksummed at all and only calls in when it was, because
-     * the reserved slot is non-zero. A legacy record written before the CRC existed therefore never reaches here, so a zero CRC that
-     * does reach here is not legacy -- it is a checksum that was written and has since gone, which is
-     * an absent or torn record rather than a backward-compatible read.
+     * Throws when the record is torn; returns silently when it is intact. The caller reads a record with a zero
+     * CRC unverified and calls in only for a non-zero one.
      *
      * @param txn            the 1-based txn being read
      * @param recordBaseAddr address of the record
      * @param bodySize       bytes covered by the CRC
-     * @param storedCrc      the CRC as stored in the reserved slot, 0 when absent
+     * @param storedCrc      the CRC as stored in the reserved slot, never 0
      * @param txnOffset      record offset, for the error message
      */
     public static void verify(
@@ -56,14 +52,6 @@ public final class TxnLogRecordVerifier {
             long storedCrc,
             long txnOffset
     ) {
-        // The CALLER decides whether this record was checksummed at all, and only calls in when it was. So a
-        // zero reaching here is not a legacy record, it is a checksum that was written and has since gone.
-        if (storedCrc == 0L) {
-            throw CairoException.critical(CairoException.METADATA_VALIDATION)
-                    .put("absent/torn sequencer txnlog record [txn=").put(txn)
-                    .put(", txnOffset=").put(txnOffset)
-                    .put(']');
-        }
         final long actual = TableUtils.calculateCvAreaChecksum(recordBaseAddr, bodySize);
         if (actual != storedCrc) {
             throw CairoException.critical(CairoException.METADATA_VALIDATION)

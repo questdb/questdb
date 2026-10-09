@@ -72,7 +72,7 @@ import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
  */
 public class TableTransactionLogV1 implements TableTransactionLogFile {
     /**
-     * Header slot, in the reserved area and clear of V2's checksum fields, holding the first txn whose
+     * Header slot, in the reserved area, holding the first txn whose
      * record may not be on disk: every record below it was covered by a completed flush. Negative after an
      * open that scanned records without flushing them (NOSYNC, ASYNC): a later open in such a mode trusts
      * the records below the absolute value, an open in a durable mode scans the whole log. Zero in a file
