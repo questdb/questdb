@@ -1210,7 +1210,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         LOG.error().$("could not copy [errno=").$(ff.errno()).$(", from=").$(detachedPath).$(", to=").$(path).I$();
                         return AttachDetachStatus.ATTACH_ERR_COPY;
                     }
-                } else if (enrolledAdaptive) {
+                } else if (defersPartitionMoves()) {
                     // A crash before a save point covers this attach rewinds below it, and the WAL replay must find
                     // .attachable again, so it stays until then.
                     if (!linkAttachable(detachedPath.trimTo(detachedRootLen), isSoftLink)) {
@@ -2344,7 +2344,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
                 }
                 if (detachedPathLen > 0) {
-                    if (enrolledAdaptive) {
+                    if (defersPartitionMoves()) {
                         detachesAfterSavePoint.add(timestamp, detachTxn);
                     } else {
                         finishDetach(timestamp, detachTxn);
@@ -7532,6 +7532,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     currentTableTxn
             );
         }
+    }
+
+    // An ATTACH keeps its source and a DETACH its temporary name until a save point covers it. A replica keeps no
+    // save point and never rewinds, so there they finish at once.
+    private boolean defersPartitionMoves() {
+        return enrolledAdaptive && engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled();
     }
 
     private void discardAbandonedDeferredPostingSealPurges(long currentTableTxn) {
@@ -13452,7 +13458,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             LOG.error().$("could not remove temporary detached partition name [path=").$(other).$(", errno=").$(ff.errno()).I$();
                         }
                         other.trimTo(pathSize);
-                    } else if (adaptive && engine.getTableSequencerAPI().getTxnTracker(tableToken).getPinnedEpochTxn() < detachTxn) {
+                    } else if (adaptive
+                            && engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()
+                            && engine.getTableSequencerAPI().getTxnTracker(tableToken).getPinnedEpochTxn() < detachTxn) {
                         detachesAfterSavePoint.add(timestamp, detachTxn);
                     } else {
                         finishDetach(timestamp, detachTxn);

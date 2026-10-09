@@ -611,6 +611,54 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
+     * A replica keeps no save point and never rewinds, so its partition moves finish at once, as outside ADAPTIVE: a
+     * DETACH applied on the replica takes its final name, an ATTACH applied there consumes its source, and a DETACH
+     * left under its temporary name (by a primary whose save point did not follow) gets its final name at the
+     * replica's next writer open.
+     */
+    @Test
+    public void testReplicaFinishesPartitionMovesAtOnce() throws Exception {
+        runWithFaultFacade(() -> {
+            configureSavePoints();
+            final Scenario s = newScenario("rdet");
+            insertRows(s, 0, 2);
+            insertRows(s, 1, 2);
+            insertRows(s, 2, 2);
+            drainWalQueue();
+            engine.releaseAllWalWriters();
+            publishSavePoint(s);
+            reconcileSavePoint(s, LocalDurabilityPolicy.REPLICA_SKIP);
+            engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
+            try {
+                execute("alter table rdet detach partition list '2024-01-02'");
+                drainWalQueue();
+                Assert.assertEquals("[2024-01-01, 2024-01-02.detached, 2024-01-03]", partitionDirs(s));
+                Files.move(tableDir(s).resolve("2024-01-02.detached"), tableDir(s).resolve("2024-01-02.attachable"));
+                execute("alter table rdet attach partition list '2024-01-02'");
+                drainWalQueue();
+                Assert.assertEquals("[2024-01-01, 2024-01-02.2, 2024-01-03]", partitionDirs(s));
+
+                execute("alter table rdet detach partition list '2024-01-01'");
+                drainWalQueue();
+                final long detachTxn;
+                try (TableWriter w = getWriter(s.token)) {
+                    detachTxn = w.getTxn();
+                }
+                engine.releaseAllWriters();
+                Files.move(tableDir(s).resolve("2024-01-01.detached"), tableDir(s).resolve("2024-01-01." + detachTxn + ".detaching"));
+                try (TableWriter w = getWriter(s.token)) {
+                    Assert.assertNotNull(w);
+                }
+                engine.releaseAllWriters();
+                Assert.assertEquals("[2024-01-01.detached, 2024-01-02.2, 2024-01-03]", partitionDirs(s));
+                assertQuery("select count() from rdet").noRandomAccess().expectSize().returns("count\n4\n");
+            } finally {
+                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+            }
+        });
+    }
+
+    /**
      * A save point attempted after a flush of the table's sequencer log failed and fenced its durable frontier.
      * The failed flush loses the log's unsynced pages for good, so no later sync makes them durable.
      */
@@ -1053,6 +1101,12 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         // No periodic save point unless a row's step takes one.
         tracker(s).setLastEpochTs(nowMs());
         return s;
+    }
+
+    private String partitionDirs(Scenario s) throws IOException {
+        try (Stream<java.nio.file.Path> stream = Files.list(tableDir(s))) {
+            return stream.map(p -> p.getFileName().toString()).filter(n -> n.startsWith("2024")).sorted().toList().toString();
+        }
     }
 
     private void powerLoss(Scenario s) {
