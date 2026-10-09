@@ -101,7 +101,7 @@ public class IDGeneratorTest extends AbstractCairoTest {
     @Test
     public void testSyncModeDoesNotReissueIdsClaimedAfterOpen() throws Exception {
         // A batching generator caches its watermark at open(), but the file it caches from is not
-        // private to it. A replica's _wal_index.d advances by replication, recording ids the PRIMARY
+        // private to it. A replica's _wal_index.d advances by replication, recording ids the primary
         // allocated, while the replica's own generator was opened earlier against a file that still
         // read 0. Promote that replica and the stale watermark hands out ids the old primary already
         // used: the promoted node writes into a WAL directory that still exists on its peer, the wal
