@@ -2079,6 +2079,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
                 LOG.error().$("could not remove new partition dir on rollback [path=").$(other).I$();
             }
+            if (CairoException.isDataSyncFailure(th)) {
+                distressed = true;
+                engine.handleDataSyncFailure(th);
+            }
             throw th;
         } finally {
             path.trimTo(pathSize);

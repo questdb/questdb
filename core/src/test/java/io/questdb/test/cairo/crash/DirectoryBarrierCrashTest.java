@@ -189,6 +189,11 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
+    public void testSyncConvertToNativeNonWalFailedFileFsyncIsFailStop() throws Exception {
+        assertSyncConvertToNativeFileFsyncFailureIsFailStop(false);
+    }
+
+    @Test
     public void testSyncConvertToNativeNonWalSurvivesCrash() throws Exception {
         assertSyncSchemaChangeSurvivesCrash(false, true, "ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2024-01-01'", this::assertAllColumns);
     }
@@ -196,6 +201,11 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testSyncConvertToNativeWalFailedBarrierIsFailStop() throws Exception {
         assertSyncSchemaChangeBarrierFailureIsFailStop(true, true, "ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2024-01-01'", "fsyncConvertedPartitionDir");
+    }
+
+    @Test
+    public void testSyncConvertToNativeWalFailedFileFsyncIsFailStop() throws Exception {
+        assertSyncConvertToNativeFileFsyncFailureIsFailStop(true);
     }
 
     @Test
@@ -603,6 +613,22 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     private void assertRows(String expected) throws Exception {
         assertQuery("SELECT ts, v FROM x").timestamp("ts").expectSize().returns(expected);
+    }
+
+    /**
+     * Under SYNC, CONVERT TO NATIVE fsyncs each column file it decodes from the parquet file. The first of those
+     * fsyncs fails with a data-sync error: the engine must be poisoned, as for a failed directory barrier around
+     * the same statement.
+     */
+    private void assertSyncConvertToNativeFileFsyncFailureIsFailStop(boolean wal) throws Exception {
+        assertFsyncFailureIsFailStop(
+                "sync",
+                wal,
+                this::convertFirstPartitionToParquet,
+                () -> execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2024-01-01'"),
+                "produceNativeFromParquet",
+                0
+        );
     }
 
     /**
