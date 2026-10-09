@@ -1989,15 +1989,29 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
     /**
      * A table whose save point files both fail their checks refuses the start, and the message names the manual
-     * step. After a clean stop or a kill, moving both files out of the table directory lets the table start with
-     * its rows.
+     * step. When both fail their section checks the live files are untouched: after a clean stop or a kill, moving
+     * both files out of the table directory lets the table start with its rows. When recovery restored a generation
+     * over the live files before its content checks failed, the live files no longer hold the table's last state,
+     * so the message names only the restore from a backup or a checkpoint.
      */
     @Test
     public void testDamagedSavePointRefusalNamesItsManualStep() throws Exception {
+        final AtomicReference<String> failCvOpenOf = new AtomicReference<>();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                final String dirName = failCvOpenOf.get();
+                if (dirName != null && Utf8s.containsAscii(name, dirName)
+                        && Utf8s.endsWithAscii(name, java.io.File.separator + TableUtils.COLUMN_VERSION_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         try {
-            assertMemoryLeak(() -> {
+            assertMemoryLeak(ff, () -> {
                 execute("CREATE TABLE damaged (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 execute("INSERT INTO damaged VALUES ('2024-09-01T00:00:00.000000Z', 1)");
                 drainWalQueue();
@@ -2030,6 +2044,33 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 new RecoveryCoordinator(engine).recover();
                 drainWalQueue();
                 assertQuery("SELECT count() FROM damaged").noRandomAccess().expectSize().returns("count\n1\n");
+
+                // Both generations pass their section checks and are restored over the live files, then fail their
+                // content checks (the live _cv cannot be read).
+                execute("CREATE TABLE rewritten (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO rewritten VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                final TableToken rewritten = engine.verifyTableName("rewritten");
+                try (TableWriter w = getWriter(rewritten)) {
+                    w.advanceDurableEpoch(1L);
+                }
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                engine.getTableSequencerAPI().resetForReboot(rewritten);
+                failCvOpenOf.set(rewritten.getDirName());
+                try {
+                    new RecoveryCoordinator(engine).recover();
+                    Assert.fail("a table with no trustworthy save point must refuse the start");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "no trustworthy adaptive epoch generation; refusing unsafe live-state fallback [table=rewritten, dir="
+                                    + rewritten.getDirName() + "]; recovery has rewritten the live table files, restore the "
+                                    + "table from a backup or a checkpoint"
+                    );
+                } finally {
+                    failCvOpenOf.set(null);
+                }
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
