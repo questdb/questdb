@@ -69,16 +69,13 @@ import java.util.function.LongUnaryOperator;
 import static io.questdb.cairo.TableUtils.*;
 
 /**
- * A power loss can make the first page of {@code _txn} durable after commit N -- the version word, the A/B
- * geometry and the head of N's area -- while a later page keeps what it held before N. When N's area sits
- * where commit N-2's did, that page holds N-2's tail: the live area fails its body checksum, and the other
- * area still holds commit N-1 intact.
- * <p>
- * Each test builds that image from page-cache snapshots of {@code _txn}, restarts on it and checks that the
- * table continues from commit N-1. WAL apply replays commit N, a non-WAL table loses it, and a table whose
- * other files already moved past commit N-1 refuses to open without changing a byte of {@code _txn}.
- * Tables enrolled in adaptive commit mode never reach that code: startup recovery restores their
- * {@code _txn} from the durable epoch, and the adaptive runs check that the end state is the same.
+ * A power loss can make the first page of {@code _txn} durable after commit N (the version word, the A/B geometry
+ * and the head of N's area) while a later page still holds the tail of commit N-2, whose area N reuses. The live
+ * area then fails its body checksum, and the other area still holds commit N-1 intact. Each test builds that
+ * image from page-cache snapshots of {@code _txn}, restarts on it and checks that the table continues from commit
+ * N-1: WAL apply replays commit N, a non-WAL table loses it, and a table whose other files already moved past
+ * N-1 refuses to open without changing {@code _txn}. Adaptive tables restore {@code _txn} from the durable epoch
+ * at startup instead, and the adaptive runs check the same end state.
  */
 @RunWith(Parameterized.class)
 public class TxnTornLiveAreaRollbackTest extends AbstractCairoTest {
