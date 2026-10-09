@@ -31,17 +31,11 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * The {@code data.parquet} barrier must be issued through a handle the platform will actually accept.
- * <p>
- * Both parquet producers, the CONVERT path ({@code TableUtils.produceParquetFromNative}) and the O3
- * rewrite path ({@code O3PartitionJob}), fsync {@code data.parquet} before they publish {@code _pm}, so a
- * committed {@code _pm} never names data-file bytes still in the page cache. Windows refuses an fsync on a
- * read-only handle ({@code ERROR_ACCESS_DENIED}), so a barrier on an {@code openRONoCache} fd would stop a
- * Windows instance producing parquet under any commit mode other than {@code nosync}. See
- * {@link WindowsBarrierContractFilesFacade} for the mechanism.
- * <p>
- * The two tests cover the two sites individually. {@code WriteAccessBarrierSweepTest} covers the wider
- * storage surface, so it catches a new barrier on a read-only handle.
+ * Both parquet producers, the CONVERT path ({@code TableUtils.produceParquetFromNative}) and the O3 rewrite
+ * path ({@code O3PartitionJob}), fsync {@code data.parquet} before they publish {@code _pm}, so a committed
+ * {@code _pm} never names bytes still in the page cache. Each must issue that barrier through a writable handle:
+ * Windows refuses an fsync on a read-only handle ({@code ERROR_ACCESS_DENIED}), which would stop it producing
+ * parquet in any mode but NOSYNC. Each test covers one site through {@link WindowsBarrierContractFilesFacade}.
  */
 public class ParquetBarrierHandleAccessTest extends AbstractCairoTest {
 
