@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -45,6 +46,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
@@ -135,6 +137,74 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 }
             }
             Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
+        });
+    }
+
+    @Test
+    public void testAdaptiveLeftVersionGoesAfterRestart() throws Exception {
+        // A kill right after the change leaves the version on disk while the older save point names it. Recovery
+        // pins both save points, so it stays through the restart and VACUUM TABLE, and goes after the restarted
+        // writer's next save point.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        assertMemoryLeak(() -> {
+            final String[] changes = {
+                    "ALTER TABLE %s DROP PARTITION LIST '2024-01-01'",
+                    "INSERT INTO %s VALUES ('2024-01-04T12:00:00.000000Z', 4)",
+                    "INSERT INTO %s VALUES ('2024-01-01T01:00:00.000000Z', 4)"
+            };
+            final StringSink failures = new StringSink();
+            for (int i = 0; i < changes.length; i++) {
+                final String change = String.format(changes[i], "t" + i);
+                final TableToken tt = createAdaptiveDays("t" + i, i == 1);
+                final ObjList<String> left = versionDirs(tt);
+                execute(change);
+                drainWalQueue();
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                engine.getTxnScoreboardPool().remove(tt);
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                new RecoveryCoordinator(engine).recover();
+                engine.notifyWalTxnRepublisher(tt);
+                drainWalQueue();
+                execute("VACUUM TABLE t" + i);
+                purgeJob.drain(0);
+                checkOnDisk(failures, change + ", the older save point names it", tt, left, true);
+                execute("INSERT INTO t" + i + " VALUES ('2024-01-04T13:00:00.000000Z', 5)");
+                drainWalQueue();
+                purgeJob.drain(0);
+                checkOnDisk(failures, change + ", no save point names it", tt, left, false);
+            }
+            Assert.assertEquals("", failures.toString());
+        });
+    }
+
+    @Test
+    public void testAdaptiveVacuumRemovesDroppedPartitionAfterSavePoints() throws Exception {
+        // A reader keeps the dropped partition through the save points that stop naming it; once it is closed,
+        // VACUUM TABLE removes the partition.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+        assertMemoryLeak(() -> {
+            final StringSink failures = new StringSink();
+            final TableToken tt = createAdaptiveDays("t", false);
+            final ObjList<String> left = versionDirs(tt);
+            try (TableReader ignore = getReader("t")) {
+                execute("ALTER TABLE t DROP PARTITION LIST '2024-01-01'");
+                drainWalQueue();
+                for (int i = 0; i < 2; i++) {
+                    execute("INSERT INTO t VALUES ('2024-01-04T1" + i + ":00:00.000000Z', 5)");
+                    drainWalQueue();
+                    purgeJob.drain(0);
+                }
+                checkOnDisk(failures, "a reader holds it", tt, left, true);
+            }
+            engine.releaseAllReaders();
+            execute("VACUUM TABLE t");
+            purgeJob.drain(0);
+            checkOnDisk(failures, "after VACUUM TABLE", tt, left, false);
+            Assert.assertEquals("", failures.toString());
         });
     }
 
@@ -1290,11 +1360,40 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
         });
     }
 
+    private static void checkOnDisk(StringSink failures, String context, TableToken tt, ObjList<String> dirs, boolean expected) {
+        for (int i = 0, n = dirs.size(); i < n; i++) {
+            if (java.nio.file.Files.exists(java.nio.file.Path.of(configuration.getDbRoot(), tt.getDirName(), dirs.getQuick(i))) != expected) {
+                failures.put(context).put(": ").put(dirs.getQuick(i)).put(expected ? " is gone" : " is still on disk").put('\n');
+            }
+        }
+    }
+
     private static void testPartitionExist(Path path, int len, boolean... existence) {
         for (int i = 0, n = existence.length; i < n; i++) {
             path.trimTo(len).put(".").put(Integer.toString(i + 1)).concat("x.d").$();
             Assert.assertEquals(Utf8s.toString(path), existence[i], Files.exists(path.$()));
         }
+    }
+
+    // The 2024-01-01 directories on disk now.
+    private static ObjList<String> versionDirs(TableToken tt) throws Exception {
+        final ObjList<String> dirs = new ObjList<>();
+        try (java.util.stream.Stream<java.nio.file.Path> s = java.nio.file.Files.list(java.nio.file.Path.of(configuration.getDbRoot(), tt.getDirName()))) {
+            s.map(p -> p.getFileName().toString()).filter(n -> n.startsWith("2024-01-01")).forEach(dirs::add);
+        }
+        Assert.assertTrue(dirs.size() > 0);
+        return dirs;
+    }
+
+    // Three days in two batches, so the table has two save points that both name 2024-01-01.
+    private TableToken createAdaptiveDays(String table, boolean ttl) throws Exception {
+        execute("CREATE TABLE " + table + " (ts " + timestampType.getTypeName() + ", v LONG) TIMESTAMP(ts) PARTITION BY DAY"
+                + (ttl ? " TTL 2 DAYS" : "") + " WAL");
+        execute("INSERT INTO " + table + " VALUES ('2024-01-01T00:00:00.000000Z', 1), ('2024-01-01T02:00:00.000000Z', 1), ('2024-01-02T00:00:00.000000Z', 2), ('2024-01-03T00:00:00.000000Z', 3)");
+        drainWalQueue();
+        execute("INSERT INTO " + table + " VALUES ('2024-01-03T01:00:00.000000Z', 3)");
+        drainWalQueue();
+        return engine.verifyTableName(table);
     }
 
     private void runPartitionPurgeJobs() {

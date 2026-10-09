@@ -103,6 +103,29 @@ public final class DurableEpochManifest {
     }
 
     /**
+     * Whether a save point of either generation lists the partition version, so that recovery can restore it. A
+     * generation whose {@code _txn} copy cannot be read or fails its checksum counts as listing it.
+     */
+    public static boolean namesPartition(FilesFacade ff, Path tablePath, int rootLen, int tableId, long partitionTimestamp, long partitionNameTxn) {
+        final long header = Unsafe.malloc(FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int generation = 0; generation < 2; generation++) {
+                tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
+                if (readHeader(ff, tablePath, tableId, generation, header) == HEADER_VALID
+                        && txnSectionListsPartition(ff, tablePath, header, partitionTimestamp, partitionNameTxn)) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (CairoException e) {
+            return true;
+        } finally {
+            Unsafe.free(header, FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            tablePath.trimTo(rootLen);
+        }
+    }
+
+    /**
      * The lowest seqTxn a valid generation of the table names, {@link Long#MAX_VALUE} when there is none, or
      * {@code 0} when a header cannot be read. For threads other than the table's writer.
      *
@@ -702,6 +725,27 @@ public final class DurableEpochManifest {
         } finally {
             ff.close(fd);
             tablePath.trimTo(rootLen);
+        }
+    }
+
+    // Reads the _txn copy of the generation at `path`, whose valid header is at `header`.
+    private static boolean txnSectionListsPartition(FilesFacade ff, Path path, long header, long partitionTimestamp, long partitionNameTxn) {
+        final long size = Unsafe.getUnsafe().getLong(header + OFFSET_TXN_SIZE);
+        if (size <= 0) {
+            return true;
+        }
+        final long fd = ff.openRO(path.$());
+        if (fd < 0) {
+            return true;
+        }
+        final long buf = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            return ff.read(fd, buf, size, FILE_SIZE) != size
+                    || Unsafe.getUnsafe().getLong(header + OFFSET_TXN_SIZE + Long.BYTES) != TableUtils.calculateCvAreaChecksum(buf, size)
+                    || TxReader.imageListsPartition(buf, size, partitionTimestamp, partitionNameTxn);
+        } finally {
+            Unsafe.free(buf, size, MemoryTag.NATIVE_DEFAULT);
+            ff.close(fd);
         }
     }
 

@@ -287,8 +287,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             // these partitions via snapshotted metadata even if the scoreboard is not pinned yet.
             boolean rangeUnlocked = !checkpointInProgress
                     && nameTxn < lastTxn
-                    && txnScoreboard.isRangeAvailable(nameTxn, lastTxn)
-                    && isEpochRangeAvailable(tableToken, nameTxn, lastTxn);
+                    && isDroppedVersionFree(tableToken, ff, path, tableRootLen, txnScoreboard, partitionTimestamp, nameTxn, lastTxn);
 
             path.trimTo(tableRootLen);
             TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, nameTxn - 1);
@@ -307,6 +306,27 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 break;
             }
         }
+    }
+
+    // The drop's txn is not known here, so readers are checked up to the last txn. A save point pin is not: the
+    // older one is always below the last txn, which would keep the version for ever. Past a pin the version is
+    // free once no save point on disk lists it, the only way recovery can bring it back.
+    private boolean isDroppedVersionFree(
+            TableToken tableToken,
+            FilesFacade ff,
+            Path path,
+            int tableRootLen,
+            TxnScoreboard txnScoreboard,
+            long partitionTimestamp,
+            long nameTxn,
+            long lastTxn
+    ) {
+        final int holders = txnScoreboard.scanRangeHolders(nameTxn, lastTxn);
+        if (holders == TxnScoreboard.RANGE_FREE && isEpochRangeAvailable(tableToken, nameTxn, lastTxn)) {
+            return true;
+        }
+        return (holders & TxnScoreboard.RANGE_HELD_BY_OTHER) == 0
+                && !DurableEpochManifest.namesPartition(ff, path.trimTo(tableRootLen), tableRootLen, tableToken.getTableId(), partitionTimestamp, nameTxn - 1);
     }
 
     private boolean isEpochRangeAvailable(TableToken tableToken, long fromTxn, long toTxn) {
