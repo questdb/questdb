@@ -40,6 +40,219 @@ import java.util.Random;
 
 public class MultiJoinTest extends AbstractCairoTest {
     @Test
+    public void testCommaGroupOnClauseReadingEarlierInputBindsLikeCrossJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createCommaGroupTables();
+            final String rightJoinPlan = """
+                    SelectedRecord
+                        Hash Right Outer Join Light
+                          condition: c.x=a.x
+                            Cross Join
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                            Hash
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: c
+                    """;
+            final String rightJoinRows = """
+                    x	x1	x2
+                    1	1	1
+                    1	3	1
+                    2	1	2
+                    2	3	2
+                    null	null	4
+                    """;
+            assertQuery("SELECT * FROM a, b RIGHT JOIN c ON c.x = a.x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan(rightJoinPlan)
+                    .returns(rightJoinRows);
+            assertQuery("SELECT * FROM a CROSS JOIN b RIGHT JOIN c ON c.x = a.x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan(rightJoinPlan)
+                    .returns(rightJoinRows);
+            assertQuery("SELECT a.x ax, b.x bx, c.x cx FROM a, b FULL JOIN c ON c.x = a.x + 1 ORDER BY cx, ax, bx")
+                    .noLeakCheck()
+                    .withPlanContaining("""
+                                    Nested Loop Full Join
+                                      filter: c.x=a.x+1
+                                        Cross Join
+                            """)
+                    .returns("""
+                            ax	bx	cx
+                            2	1	null
+                            2	3	null
+                            null	null	1
+                            1	1	2
+                            1	3	2
+                            null	null	4
+                            """);
+            assertQuery("SELECT px, b.x bx, c.x cx FROM p, b RIGHT JOIN c ON c.x = px ORDER BY cx, px, bx")
+                    .noLeakCheck()
+                    .withPlanContaining("""
+                                    Hash Right Outer Join Light
+                                      condition: c.x=px
+                                        Cross Join
+                            """)
+                    .returns("""
+                            px	bx	cx
+                            1	1	1
+                            1	3	1
+                            2	1	2
+                            2	3	2
+                            null	null	4
+                            """);
+            assertQuery("SELECT a.x ax, b.x bx, c.x cx, d.x dx FROM a, b, c RIGHT JOIN d ON d.x = a.x ORDER BY dx, ax, bx, cx")
+                    .noLeakCheck()
+                    .returns("""
+                            ax	bx	cx	dx
+                            2	1	1	2
+                            2	1	2	2
+                            2	1	4	2
+                            2	3	1	2
+                            2	3	2	2
+                            2	3	4	2
+                            null	null	null	5
+                            """);
+            assertQuery("SELECT a.x ax, b.x bx, c.x cx, d.x dx, q.px qx FROM a, b RIGHT JOIN c ON c.x = b.x, d FULL JOIN q ON q.px = c.x "
+                    + "ORDER BY ax, bx, cx, dx, qx")
+                    .noLeakCheck()
+                    .withPlanContaining("""
+                                    Hash Full Outer Join Light
+                                      condition: q.px=c.x
+                                        Cross Join
+                                            Cross Join
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash Right Outer Join Light
+                                                  condition: c.x=b.x
+                            """)
+                    .returns("""
+                            ax	bx	cx	dx	qx
+                            null	null	null	null	5
+                            1	null	2	2	null
+                            1	null	2	5	null
+                            1	null	4	2	null
+                            1	null	4	5	null
+                            1	1	1	2	1
+                            1	1	1	5	1
+                            2	null	2	2	null
+                            2	null	2	5	null
+                            2	null	4	2	null
+                            2	null	4	5	null
+                            2	1	1	2	1
+                            2	1	1	5	1
+                            """);
+            assertQuery("SELECT a.x ax, l.y, c.x cx FROM a, b CROSS JOIN LATERAL (SELECT b.x * 10 y FROM long_sequence(1)) l "
+                    + "RIGHT JOIN c ON c.x = a.x ORDER BY cx, ax, y")
+                    .noLeakCheck()
+                    .returns("""
+                            ax	y	cx
+                            1	10	1
+                            1	30	1
+                            2	10	2
+                            2	30	2
+                            null	null	4
+                            """);
+            execute("CREATE TABLE ta (k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tb (k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tc (k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertQuery("SELECT * FROM ta, tb SPLICE JOIN tc ON tc.k = ta.k")
+                    .noLeakCheck()
+                    .fails(21, "left side of splice join doesn't support random access");
+            assertQuery("SELECT * FROM ta CROSS JOIN tb SPLICE JOIN tc ON tc.k = ta.k")
+                    .noLeakCheck()
+                    .fails(31, "left side of splice join doesn't support random access");
+        });
+    }
+
+    @Test
+    public void testCommaGroupOnClauseReadingOwnInputsBindsNested() throws Exception {
+        assertMemoryLeak(() -> {
+            createCommaGroupTables();
+            assertQuery("SELECT * FROM a, b RIGHT JOIN c ON c.x = b.x WHERE a.x = c.x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join
+                                  condition: c.x=a.x
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    Hash
+                                        Hash Right Outer Join Light
+                                          condition: c.x=b.x
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                            """)
+                    .returns("""
+                            x	x1	x2
+                            1	1	1
+                            2	null	2
+                            """);
+            assertQuery("SELECT * FROM a, b FULL JOIN c ON c.x = b.x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("""
+                                Cross Join
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    Hash Full Outer Join Light
+                            """)
+                    .returns("""
+                            x	x1	x2
+                            1	1	1
+                            1	null	2
+                            1	null	4
+                            1	3	null
+                            2	1	1
+                            2	null	2
+                            2	null	4
+                            2	3	null
+                            """);
+            assertQuery("SELECT p.px ppx, b.x bx, q.px qpx FROM p, b RIGHT JOIN q ON q.px = px ORDER BY ppx, bx, qpx")
+                    .noLeakCheck()
+                    .withPlanContaining("""
+                                    Cross Join
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: p
+                                        Nested Loop Right Join
+                                          filter: q.px=q.px
+                            """)
+                    .returns("""
+                            ppx	bx	qpx
+                            1	1	1
+                            1	1	5
+                            1	3	1
+                            1	3	5
+                            2	1	1
+                            2	1	5
+                            2	3	1
+                            2	3	5
+                            """);
+            assertQuery("SELECT * FROM a, b RIGHT JOIN c ON c.x = x").noLeakCheck().fails(41, "Ambiguous column [name=x]");
+            assertQuery("SELECT * FROM a, b RIGHT JOIN c ON c.x = nope").noLeakCheck().fails(41, "Invalid column: nope");
+            assertQuery("SELECT * FROM a, b RIGHT JOIN c ON c.x = zz.x").noLeakCheck().fails(41, "Invalid table name or alias");
+        });
+    }
+
+    @Test
     public void testCursorColumnJoinsAfterOrderedInputs() throws Exception {
         assertMemoryLeak(() -> {
             createOrderTables();
@@ -954,7 +1167,20 @@ public class MultiJoinTest extends AbstractCairoTest {
                             2	null	1	1
                             2	null	4	null
                             """);
-            assertException("SELECT * FROM a, c RIGHT JOIN d ON d.k = a.k", 41, "Invalid table name or alias");
+            for (String comma : new String[]{",", "CROSS JOIN"}) {
+                assertQuery("SELECT * FROM a " + comma + " c RIGHT JOIN d ON d.k = a.k ORDER BY 3, 1, 2")
+                        .noLeakCheck()
+                        .returns("""
+                                k	k1	k2
+                                null	null	null
+                                null	1	null
+                                null	4	null
+                                1	null	1
+                                1	1	1
+                                1	4	1
+                                null	null	5
+                                """);
+            }
         });
     }
 
@@ -1831,6 +2057,21 @@ public class MultiJoinTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    private void createCommaGroupTables() throws Exception {
+        execute("CREATE TABLE a (x INT)");
+        execute("CREATE TABLE b (x INT)");
+        execute("CREATE TABLE c (x INT)");
+        execute("CREATE TABLE d (x INT)");
+        execute("CREATE TABLE p (px INT)");
+        execute("CREATE TABLE q (px INT)");
+        execute("INSERT INTO a VALUES (1), (2)");
+        execute("INSERT INTO b VALUES (1), (3)");
+        execute("INSERT INTO c VALUES (1), (2), (4)");
+        execute("INSERT INTO d VALUES (2), (5)");
+        execute("INSERT INTO p VALUES (1), (2)");
+        execute("INSERT INTO q VALUES (1), (5)");
     }
 
     private void createRows() throws Exception {

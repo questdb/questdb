@@ -203,6 +203,23 @@ final class JoinBinder implements Mutable {
         return false;
     }
 
+    private static boolean hasTemporalJoin(ObjList<QueryModel> sources, int lo, int hi) {
+        boolean hasTemporalJoin = false;
+        for (int i = lo + 1; i < hi; i++) {
+            final QueryModel occurrence = sources.getQuick(i);
+            final int type = occurrence.getJoinType();
+            final boolean isTemporal = type == QueryModel.JOIN_ASOF || type == QueryModel.JOIN_LT || type == QueryModel.JOIN_SPLICE;
+            if (type != QueryModel.JOIN_CROSS && type != QueryModel.JOIN_INNER
+                    && type != QueryModel.JOIN_LEFT_OUTER && type != QueryModel.JOIN_RIGHT_OUTER
+                    && type != QueryModel.JOIN_FULL_OUTER && type != QueryModel.JOIN_UNNEST && !isTemporal
+                    && !QueryModel.isLateralJoin(type)) {
+                throw new IllegalStateException("unexpected join type in join block");
+            }
+            hasTemporalJoin |= isTemporal;
+        }
+        return hasTemporalJoin;
+    }
+
     private static boolean isCompileTimeJoinConstant(ExpressionNode expression) {
         if (expression == null) {
             return true;
@@ -266,7 +283,8 @@ final class JoinBinder implements Mutable {
 
     /**
      * The end of the comma group that starts at {@code start} when the group has a RIGHT, FULL or SPLICE join, which
-     * null-extends only the inputs of its own group, so the group binds as a nested join; {@code start} otherwise.
+     * null-extends only the inputs of its own group unless its ON clauses read an input before the group;
+     * {@code start} otherwise.
      */
     private static int nullingCommaGroupEnd(ObjList<QueryModel> sources, int start, int sourceCount) {
         boolean hasMasterNullingJoin = false;
@@ -408,6 +426,51 @@ final class JoinBinder implements Mutable {
     }
 
     /**
+     * Binds the inputs of the later comma group from {@code lo} to {@code hi}, which has a RIGHT, FULL or SPLICE
+     * join, then nests the group as one CROSS input of the join, since a comma binds looser than JOIN, unless an ON
+     * clause of the group reads a column of an input before the group: the group's inputs then join the join
+     * directly, so that the comma binds like CROSS JOIN.
+     */
+    private void bindCommaGroup(JoinPlan join, QueryModel source, int lo, int hi, boolean hasTemporalJoin,
+                                SqlExecutionContext executionContext) throws SqlException {
+        final ObjList<QueryModel> sources = source.getJoinModels();
+        final int dependencyBase = lateralDependencyInputs.size();
+        final int modelBase = inputModels.size();
+        final JoinPlan group = ctx.planNodes.joins.next().of(sources.getQuick(lo).getModelPosition());
+        group.setExplicitTimestamp(false);
+        final boolean hasGroupTemporalJoin = hasTemporalJoin(sources, lo, hi);
+        bindJoinInputs(group, source, lo, hi, hasGroupTemporalJoin, executionContext);
+        final ObjList<JoinInput> inputs = group.getInputs();
+        boolean hasPrefixReference = false;
+        for (int i = 1, n = inputs.size(); i < n && !hasPrefixReference; i++) {
+            hasPrefixReference = hasCommaPrefixReference(joinModel(source, modelBase, i).getJoinCriteria(), join, group);
+        }
+        if (hasPrefixReference) {
+            final int offset = join.getInputs().size();
+            for (int i = dependencyBase, n = lateralDependencyInputs.size(); i < n; i++) {
+                lateralDependencyInputs.setQuick(i, lateralDependencyInputs.getQuick(i) + offset);
+                lateralDependencyParents.setQuick(i, lateralDependencyParents.getQuick(i) + offset);
+            }
+            for (int i = 0, n = inputs.size(); i < n; i++) {
+                final JoinInput step = inputs.getQuick(i);
+                if (hasTemporalJoin && !hasGroupTemporalJoin && step.getInput() != null) {
+                    ctx.retainImplicitTimestamp(step.getInput());
+                }
+                join.getInputs().add(step);
+                addJoinOutput(join, step.getSourceOutput(), step.getBindingAlias());
+            }
+            return;
+        }
+        bindJoinConditions(group, source, null, dependencyBase, modelBase, executionContext);
+        inputModels.setPos(modelBase);
+        lateralDependencyInputs.setPos(dependencyBase);
+        lateralDependencyParents.setPos(dependencyBase);
+        inputModels.add(lo);
+        join.getInputs().add(ctx.planNodes.joinInputs.next().of(group, JoinKind.CROSS, null, sources.getQuick(lo).getJoinKeywordPosition()));
+        join.getOutput().addColumnsFrom(group.getOutput());
+    }
+
+    /**
      * Binds the join's conditions in source order and leaves its order to the optimiser:
      * collects the keys and constraints into the join's graph, checks that the join semantics admit an order, the
      * key types, the time series inputs and TOLERANCE, binds the outer ON residuals, and binds every other conjunct
@@ -529,6 +592,60 @@ final class JoinBinder implements Mutable {
         return predicate;
     }
 
+    private void bindJoinInputs(JoinPlan join, QueryModel source, int lo, int hi, boolean hasTemporalJoin,
+                                SqlExecutionContext executionContext) throws SqlException {
+        final ObjList<QueryModel> sources = source.getJoinModels();
+        for (int i = lo; i < hi; i++) {
+            final QueryModel occurrence = sources.getQuick(i);
+            final CharSequence alias = inputAlias(occurrence);
+            if (alias != null) {
+                for (int k = 0; k < i; k++) {
+                    if (Chars.equalsIgnoreCase(alias, inputAlias(sources.getQuick(k)))) {
+                        final ExpressionNode name = occurrence.getAlias() != null ? occurrence.getAlias() : occurrence.getTableNameExpr();
+                        throw SqlException.$(name == null ? 0 : name.position, "Duplicate table or alias: ")
+                                .put(name == null ? alias : name.token);
+                    }
+                }
+            }
+            final int groupEnd = lo == 0 && i > 0 && occurrence.isCommaJoin() ? nullingCommaGroupEnd(sources, i, hi) : i;
+            if (groupEnd > i) {
+                bindCommaGroup(join, source, i, groupEnd, hasTemporalJoin, executionContext);
+                i = groupEnd - 1;
+                continue;
+            }
+            inputModels.add(i);
+            final JoinInput step;
+            if (occurrence.getJoinType() == QueryModel.JOIN_UNNEST) {
+                final UnnestSpec spec = bindUnnest(occurrence, join.getOutput(), executionContext);
+                step = ctx.planNodes.joinInputs.next().ofUnnest(spec, alias, occurrence.getJoinKeywordPosition());
+                if (spec.isStandalone()) {
+                    join.getOutput().clear();
+                }
+            } else {
+                final int index = join.getInputs().size();
+                final JoinKind stepType = index == 0 ? JoinKind.CROSS : joinKind(occurrence.getJoinType());
+                final boolean isDependent = QueryModel.isLateralJoin(occurrence.getJoinType());
+                final LogicalPlan input;
+                if (isDependent) {
+                    final int outerColumnBase = ctx.scope().outerColumnIds.size();
+                    input = lateralBinder.bindLateral(occurrence, join, index, executionContext);
+                    addLateralDependencies(join, index, outerColumnBase);
+                } else {
+                    input = binder.bindSource(occurrence, executionContext);
+                }
+                if (hasTemporalJoin) {
+                    ctx.retainImplicitTimestamp(input);
+                }
+                step = ctx.planNodes.joinInputs.next().of(input, stepType, alias, occurrence.getJoinKeywordPosition());
+                step.setSubquery(occurrence.getNestedModel() != null);
+                step.setDependent(isDependent);
+            }
+            step.setHints(resolveJoinHints(source, occurrence));
+            join.getInputs().add(step);
+            addJoinOutput(join, step.getSourceOutput(), alias);
+        }
+    }
+
     private void bindJoinOnResidual(ExpressionNode onFilter, JoinPlan join, JoinInput slave, QueryModel source,
                                     int lastInput, SqlExecutionContext executionContext) throws SqlException {
         if (onFilter == null) {
@@ -582,75 +699,12 @@ final class JoinBinder implements Mutable {
     private JoinPlan bindJoinSources(QueryModel source, ExpressionNode where, int lo, int hi,
                                      SqlExecutionContext executionContext) throws SqlException {
         final ObjList<QueryModel> sources = source.getJoinModels();
-        boolean hasTemporalJoin = false;
-        for (int i = lo + 1; i < hi; i++) {
-            final QueryModel occurrence = sources.getQuick(i);
-            final int type = occurrence.getJoinType();
-            final boolean isTemporal = type == QueryModel.JOIN_ASOF || type == QueryModel.JOIN_LT || type == QueryModel.JOIN_SPLICE;
-            if (type != QueryModel.JOIN_CROSS && type != QueryModel.JOIN_INNER
-                    && type != QueryModel.JOIN_LEFT_OUTER && type != QueryModel.JOIN_RIGHT_OUTER
-                    && type != QueryModel.JOIN_FULL_OUTER && type != QueryModel.JOIN_UNNEST && !isTemporal
-                    && !QueryModel.isLateralJoin(type)) {
-                throw new IllegalStateException("unexpected join type in join block");
-            }
-            hasTemporalJoin |= isTemporal;
-        }
         final int dependencyBase = lateralDependencyInputs.size();
         final int modelBase = inputModels.size();
         final JoinPlan join = ctx.planNodes.joins.next().of(sources.getQuick(lo).getModelPosition());
         join.setExplicitTimestamp(lo == 0 && source.hasExplicitTimestamp());
         try {
-            for (int i = lo; i < hi; i++) {
-                final QueryModel occurrence = sources.getQuick(i);
-                final CharSequence alias = inputAlias(occurrence);
-                if (alias != null) {
-                    for (int k = 0; k < i; k++) {
-                        if (Chars.equalsIgnoreCase(alias, inputAlias(sources.getQuick(k)))) {
-                            final ExpressionNode name = occurrence.getAlias() != null ? occurrence.getAlias() : occurrence.getTableNameExpr();
-                            throw SqlException.$(name == null ? 0 : name.position, "Duplicate table or alias: ")
-                                    .put(name == null ? alias : name.token);
-                        }
-                    }
-                }
-                final int groupEnd = lo == 0 && i > 0 && occurrence.isCommaJoin() ? nullingCommaGroupEnd(sources, i, hi) : i;
-                inputModels.add(i);
-                if (groupEnd > i) {
-                    final JoinPlan group = bindJoinSources(source, null, i, groupEnd, executionContext);
-                    join.getInputs().add(ctx.planNodes.joinInputs.next().of(group, JoinKind.CROSS, null, occurrence.getJoinKeywordPosition()));
-                    join.getOutput().addColumnsFrom(group.getOutput());
-                    i = groupEnd - 1;
-                    continue;
-                }
-                final JoinInput step;
-                if (occurrence.getJoinType() == QueryModel.JOIN_UNNEST) {
-                    final UnnestSpec spec = bindUnnest(occurrence, join.getOutput(), executionContext);
-                    step = ctx.planNodes.joinInputs.next().ofUnnest(spec, alias, occurrence.getJoinKeywordPosition());
-                    if (spec.isStandalone()) {
-                        join.getOutput().clear();
-                    }
-                } else {
-                    final int index = join.getInputs().size();
-                    final JoinKind stepType = index == 0 ? JoinKind.CROSS : joinKind(occurrence.getJoinType());
-                    final boolean isDependent = QueryModel.isLateralJoin(occurrence.getJoinType());
-                    final LogicalPlan input;
-                    if (isDependent) {
-                        final int outerColumnBase = ctx.scope().outerColumnIds.size();
-                        input = lateralBinder.bindLateral(occurrence, join, index, executionContext);
-                        addLateralDependencies(join, index, outerColumnBase);
-                    } else {
-                        input = binder.bindSource(occurrence, executionContext);
-                    }
-                    if (hasTemporalJoin) {
-                        ctx.retainImplicitTimestamp(input);
-                    }
-                    step = ctx.planNodes.joinInputs.next().of(input, stepType, alias, occurrence.getJoinKeywordPosition());
-                    step.setSubquery(occurrence.getNestedModel() != null);
-                    step.setDependent(isDependent);
-                }
-                step.setHints(resolveJoinHints(source, occurrence));
-                join.getInputs().add(step);
-                addJoinOutput(join, step.getSourceOutput(), alias);
-            }
+            bindJoinInputs(join, source, lo, hi, hasTemporalJoin(sources, lo, hi), executionContext);
             bindJoinConditions(join, source, where, dependencyBase, modelBase, executionContext);
             return join;
         } finally {
@@ -1013,6 +1067,29 @@ final class JoinBinder implements Mutable {
             reference = findForwardJoinReference(expression.args.getQuick(i), join, origin);
         }
         return reference;
+    }
+
+    /**
+     * Whether the expression, an ON clause of a later comma group, reads a column of an input before the group: a
+     * column that neither the group nor an outer query resolves, while the inputs before the group do.
+     */
+    private boolean hasCommaPrefixReference(ExpressionNode expression, JoinPlan join, JoinPlan group) {
+        if (expression == null) {
+            return false;
+        }
+        if (expression.type == ExpressionNode.LITERAL) {
+            return FunctionBinder.findColumn(expression, group.getOutput(), null) == -1 && !isOuterColumn(expression, group)
+                    && FunctionBinder.findColumn(expression, join.getOutput(), null) > -1;
+        }
+        if (hasCommaPrefixReference(expression.lhs, join, group) || hasCommaPrefixReference(expression.rhs, join, group)) {
+            return true;
+        }
+        for (int i = 0, n = expression.args.size(); i < n; i++) {
+            if (hasCommaPrefixReference(expression.args.getQuick(i), join, group)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean hasOwnJoinKey(ExpressionNode expression, JoinPlan join, int input) {
