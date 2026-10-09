@@ -32,26 +32,13 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * A {@link TestFilesFacadeImpl} that attributes every durability barrier to the file it acted on, so a
- * test can assert "{@code _txn} of this table was msync'd N times during this commit" rather than count
- * anonymous barriers.
- *
- * <p>Attribution works in two hops, both of which the facade observes:
- * <ol>
- *   <li>{@code openRW}/{@code openRO}/{@code openCleanRW} give fd -&gt; path;</li>
- *   <li>{@code mmap}/{@code mremap} give [address, address+len) -&gt; fd, hence -&gt; path.</li>
- * </ol>
- * {@code fsync}/{@code fdatasync}/{@code fsyncAndClose} are attributed directly by fd;
- * {@code msync(addr, len, ..)} is attributed by locating the mapping whose range contains {@code addr}.
- * {@code syncfs} is filesystem-wide, so it is counted separately under {@link #syncfsCount()} rather
- * than charged to any single file.
- *
- * <p>Counters are keyed by full path and queried by substring, so a test can scope an assertion to one
- * table's directory ({@code msyncCount("t1~1/_txn")}) without counting the {@code _txn} of telemetry or
- * sibling tables.
- *
- * <p>The facade suppresses no real syscall: it observes and delegates, so the system under test behaves
- * as in production.
+ * A {@link TestFilesFacadeImpl} that attributes every durability barrier to the file it acted on, so a test can
+ * assert "{@code _txn} of this table was msync'd N times during this commit". It maps fd to path from
+ * {@code openRW}/{@code openRO}/{@code openCleanRW}, and mapped ranges to fd from {@code mmap}/{@code mremap}.
+ * {@code fsync}, {@code fdatasync} and {@code fsyncAndClose} are attributed by fd, {@code msync} by the mapping
+ * that contains its address, and the filesystem-wide {@code syncfs} is counted under {@link #syncfsCount()}.
+ * Counters are keyed by full path and queried by substring ({@code msyncCount("t1~1/_txn")}). The facade observes
+ * and delegates every call; it suppresses no syscall.
  */
 public class SyncAttributingFilesFacade extends TestFilesFacadeImpl {
 
@@ -275,17 +262,11 @@ public class SyncAttributingFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * Decode an {@link LPSZ} path to a String by its bytes.
-     * <p>
-     * Neither {@code name.toString()} nor {@code Utf8s.toString(name)} works here: {@code Path$PathLPSZ}
-     * does not override {@code Object.toString()} and {@code Utf8s.toString} delegates to it, so both yield
-     * an identity string. Every counter would then be keyed by a unique string and every {@code contains()}
-     * lookup would return 0, which reads like a passing "must not flush" assertion. Test paths are ASCII
-     * temp dirs, so a byte-wise decode is exact.
-     * <p>
-     * Separators are normalized to {@code '/'}: {@code Path} renders {@code '\'} on Windows, while every
-     * caller keys its counters with {@code '/'}-joined needles. Without the normalization every lookup
-     * returns 0 on Windows.
+     * Decodes an {@link LPSZ} path to a String byte by byte, with separators normalized to {@code '/'}.
+     * {@code Path$PathLPSZ} does not override {@code toString()}, and {@code Utf8s.toString} delegates to it, so
+     * both yield an identity string that no {@code contains()} lookup matches, which reads like a passing "must
+     * not flush" assertion. Test paths are ASCII, so the byte-wise decode is exact. Callers key their counters
+     * with {@code '/'}-joined needles, while {@code Path} renders {@code '\'} on Windows.
      */
     private static String pathToString(LPSZ name) {
         final int n = name.size();
