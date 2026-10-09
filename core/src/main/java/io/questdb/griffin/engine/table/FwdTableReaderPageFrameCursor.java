@@ -69,6 +69,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private int cachedRowGroupIndex;
     private long cachedRowGroupStartRow;
     private long filterBufEnd = -1;
+    // frames for a serial scan whose rows come from an index: see CairoConfiguration.getSqlIndexScanPageFrameMaxRows()
+    private boolean indexScan;
     // Track the lowest partition index that has not been released yet
     private int lowestOpenPartitionIndex = 0;
     private int pageFrameMaxRows;
@@ -217,7 +219,9 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         this.reader = partitionFrameCursor.getTableReader();
         TablePageFrameCursor.buildColumnMapping(columnMapping, columnIndexes, reader.getMetadata());
         this.pageFrameMinRows = executionContext.getPageFrameMinRows();
-        this.pageFrameMaxRows = executionContext.getPageFrameMaxRows();
+        this.pageFrameMaxRows = indexScan
+                ? Math.max(executionContext.getPageFrameMaxRows(), executionContext.getCairoEngine().getConfiguration().getSqlIndexScanPageFrameMaxRows())
+                : executionContext.getPageFrameMaxRows();
         if (pushdownFilterConditions != null) {
             for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
@@ -238,6 +242,15 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             reader.closePartitionByIndex(i);
         }
         lowestOpenPartitionIndex = reenterPartitionIndex;
+    }
+
+    /**
+     * Marks this cursor as the frame source of a serial scan whose rows come from an index. Its native
+     * frames then hold up to {@link io.questdb.cairo.CairoConfiguration#getSqlIndexScanPageFrameMaxRows()}
+     * rows, from the next {@link #of(SqlExecutionContext, PartitionFrameCursor)} on.
+     */
+    public void setIndexScan(boolean indexScan) {
+        this.indexScan = indexScan;
     }
 
     @Override

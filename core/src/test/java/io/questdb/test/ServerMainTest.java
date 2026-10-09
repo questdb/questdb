@@ -1047,6 +1047,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.index.key.major.max.partition.passes\tQDB_CAIRO_SQL_INDEX_KEY_MAJOR_MAX_PARTITION_PASSES\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.max.symbol.not.equals.count\tQDB_CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT\t100\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.page.frame.max.rows\tQDB_CAIRO_SQL_PAGE_FRAME_MAX_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.index.scan.page.frame.max.rows\tQDB_CAIRO_SQL_INDEX_SCAN_PAGE_FRAME_MAX_ROWS\t16777216\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.page.frame.min.rows\tQDB_CAIRO_SQL_PAGE_FRAME_MIN_ROWS\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.small.page.frame.max.rows\tQDB_CAIRO_SQL_SMALL_PAGE_FRAME_MAX_ROWS\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.small.page.frame.min.rows\tQDB_CAIRO_SQL_SMALL_PAGE_FRAME_MIN_ROWS\t10000\tdefault\tfalse\tfalse\n" +

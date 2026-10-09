@@ -959,6 +959,16 @@ public interface CairoConfiguration {
     long getSqlIndexKeyMajorMaxPartitionPasses();
 
     /**
+     * Most rows in a page frame of a serial scan whose rows come from an index (a symbol index
+     * key, with or without a filter). Such a scan walks the index key once per frame, so its cost
+     * follows the frames a partition is cut into, not just the rows it returns: it takes frames of
+     * up to this many rows, or of {@link #getSqlPageFrameMaxRows()} rows when that is larger.
+     */
+    default int getSqlIndexScanPageFrameMaxRows() {
+        return io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
+    }
+
+    /**
      * When the number of intervals exceeds this threshold during bracket expansion,
      * intervals are merged to prevent unbounded memory growth.
      */

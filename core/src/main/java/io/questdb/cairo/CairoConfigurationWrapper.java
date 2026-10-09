@@ -1205,6 +1205,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlIndexScanPageFrameMaxRows() {
+        return getDelegate().getSqlIndexScanPageFrameMaxRows();
+    }
+
+    @Override
     public int getSqlIntervalIncrementalMergeThreshold() {
         return getDelegate().getSqlIntervalIncrementalMergeThreshold();
     }

@@ -345,6 +345,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(50_000, configuration.getCairoConfiguration().getSqlParallelWorkStealingSpinTimeout());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlPageFrameMaxRows());
         Assert.assertEquals(100_000, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
+        Assert.assertEquals(16_777_216, configuration.getCairoConfiguration().getSqlIndexScanPageFrameMaxRows());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getPageFrameReduceRowIdListCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getPageFrameReduceColumnListCapacity());
         Assert.assertEquals(2048, configuration.getCairoConfiguration().getGroupByBatchSize());
@@ -1591,6 +1592,20 @@ public class PropServerConfigurationTest {
             Assert.fail();
         } catch (ServerConfigurationException e) {
             TestUtils.assertContains(e.getMessage(), "cairo.sql.parallel.groupby.batch.size must be between 1 and");
+        }
+    }
+
+    @Test
+    public void testInvalidIndexScanPageFrameMaxRows() throws Exception {
+        for (String value : new String[]{"0", String.valueOf(io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 2)}) {
+            Properties properties = new Properties();
+            properties.setProperty("cairo.sql.index.scan.page.frame.max.rows", value);
+            try {
+                newPropServerConfiguration(properties);
+                Assert.fail();
+            } catch (ServerConfigurationException e) {
+                TestUtils.assertContains(e.getMessage(), "cairo.sql.index.scan.page.frame.max.rows must be between 1 and 16777216");
+            }
         }
     }
 

@@ -71,6 +71,8 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private long filterBufEnd = -1;
     // Track the highest partition index that has not been released yet
     private int highestOpenPartitionIndex = -1;
+    // frames for a serial scan whose rows come from an index: see CairoConfiguration.getSqlIndexScanPageFrameMaxRows()
+    private boolean indexScan;
     private int pageFrameMaxRows;
     private int pageFrameMinRows;
     private PartitionFrameCursor partitionFrameCursor;
@@ -221,7 +223,9 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         this.reader = partitionFrameCursor.getTableReader();
         TablePageFrameCursor.buildColumnMapping(columnMapping, columnIndexes, reader.getMetadata());
         this.pageFrameMinRows = executionContext.getPageFrameMinRows();
-        this.pageFrameMaxRows = executionContext.getPageFrameMaxRows();
+        this.pageFrameMaxRows = indexScan
+                ? Math.max(executionContext.getPageFrameMaxRows(), executionContext.getCairoEngine().getConfiguration().getSqlIndexScanPageFrameMaxRows())
+                : executionContext.getPageFrameMaxRows();
         if (pushdownFilterConditions != null) {
             for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
@@ -244,6 +248,15 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             reader.closePartitionByIndex(i);
         }
         highestOpenPartitionIndex = reenterPartitionIndex;
+    }
+
+    /**
+     * Marks this cursor as the frame source of a serial scan whose rows come from an index. Its native
+     * frames then hold up to {@link io.questdb.cairo.CairoConfiguration#getSqlIndexScanPageFrameMaxRows()}
+     * rows, from the next {@link #of(SqlExecutionContext, PartitionFrameCursor)} on.
+     */
+    public void setIndexScan(boolean indexScan) {
+        this.indexScan = indexScan;
     }
 
     @Override
