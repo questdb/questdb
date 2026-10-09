@@ -498,20 +498,12 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
     }
 
     /**
-     * ADAPTIVE commit mode with a W=50ms group-commit window, through the
-     * same-sender-survives-restart path. Under group commit the local durable-ack
-     * frontier ({@code getLocalDurableSeqTxn}) advances only when the batched
-     * {@code fdatasync} fires, once per 50ms window, so it lags the bytes the sender
-     * has handed off. At the bounce the SF cursor holds a larger un-acked window than
-     * under NOSYNC or SYNC, which ack every commit, and replays it on reconnect.
-     * {@code DEDUP UPSERT KEYS(ts, id)} collapses the resent tail against the rows
-     * committed before the bounce, so every row written across the bounce is present
-     * exactly once.
-     *
-     * <p>This bounces the QWP <em>server</em> (a WS reconnect); the shared engine, its
-     * WAL and the durable-ack frontier persist, so the test covers the <em>client</em>
-     * store-and-forward replay against the lagging ack. {@code DurableFrontierTest} and
-     * the adaptive crash tests cover the engine's power-loss recovery side at W&gt;0.
+     * ADAPTIVE with a 50ms group-commit window, through the same-sender-survives-restart path. The local
+     * durable-ack frontier ({@code getLocalDurableSeqTxn}) advances only when the batched {@code fdatasync} fires,
+     * so at the bounce the sender's store-and-forward cursor holds a larger un-acked window than under NOSYNC or
+     * SYNC and replays it on reconnect. {@code DEDUP UPSERT KEYS(ts, id)} collapses the resent tail, so every row
+     * written across the bounce is present exactly once. Only the QWP server bounces; the engine, its WAL and the
+     * frontier persist, so this covers the client's replay against the lagging ack, not power-loss recovery.
      */
     @Test
     public void testSameSenderReplaysUnackedAcrossRestartUnderAdaptiveW50ms() throws Exception {
