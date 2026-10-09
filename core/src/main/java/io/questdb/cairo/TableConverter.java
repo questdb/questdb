@@ -235,8 +235,12 @@ public class TableConverter {
         return convertedTables;
     }
 
-    private static void applyOutstandingWal(CairoEngine engine, TableToken token, long lastSeqTxn) {
+    // Returns null once the WAL is applied and flushed. A replay that stops early throws on an adaptive start, where
+    // the table keeps its save point for the next start; on a start outside adaptive the table is flushed and the
+    // refusal returned, for the caller to remove the save point first.
+    private static CairoException applyOutstandingWal(CairoEngine engine, TableToken token, long lastSeqTxn) {
         final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+        CairoException refusal = null;
         try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 0)) {
             long previousSeqTxn = -1;
             while (true) {
@@ -252,15 +256,19 @@ public class TableConverter {
                             previousSeqTxn = seqTxn;
                             continue;
                         }
-                        throw CairoException.critical(0)
+                        refusal = CairoException.critical(0)
                                 .put("could not apply the WAL before the conversion to non-WAL, the table stays a WAL table;")
                                 .put(" resume it, let it catch up and restart [table=").put(token.getTableName())
                                 .put(", seqTxn=").put(seqTxn)
                                 .put(", lastSeqTxn=").put(lastSeqTxn)
                                 .put(", suspended=").put(tracker.isSuspended())
                                 .put(']');
+                        if (engine.getConfiguration().getCommitMode() == CommitMode.ADAPTIVE) {
+                            throw refusal;
+                        }
                     }
-                    // After the conversion the WAL is gone, so the replayed rows must be on disk first.
+                    // After the conversion the WAL is gone, so the replayed rows must be on disk first. A refused
+                    // conversion outside adaptive loses its save point, so its replayed rows must be on disk too.
                     try {
                         writer.fsyncMaterializedState();
                     } catch (CairoException | CairoError e) {
@@ -272,6 +280,7 @@ public class TableConverter {
                     }
                     LOG.info().$("replayed WAL before conversion [table=").$(token)
                             .$(", seqTxn=").$(seqTxn)
+                            .$(", refused=").$(refusal != null)
                             .I$();
                     break;
                 }
@@ -287,6 +296,7 @@ public class TableConverter {
                     .put(']');
         }
         engine.unlock(AllowAllSecurityContext.INSTANCE, token, null, false);
+        return refusal;
     }
 
     // The seqTxn in the table's _txn file. Returns Long.MAX_VALUE when the file does not load, so that the
@@ -331,9 +341,11 @@ public class TableConverter {
      * crash before the removal leaves the save point, so the next start rewinds the table to it and replays again.
      * <p>
      * A replay that stops early, at a transaction that fails to apply or after a pass that applied nothing,
-     * throws: the caller keeps {@code _convert}, the WAL and the save point, the table stays a WAL table and the
-     * next start retries. A sequencer that cannot be read refuses the conversion of a table with a save point. A
-     * failed flush stops the engine.
+     * throws: the caller keeps {@code _convert} and the WAL, the table stays a WAL table and the next start retries.
+     * An adaptive start keeps the save point, which the next replay starts from. A start outside adaptive flushes
+     * the table and removes its save point and pin first, as on success, so that a transaction skipped with
+     * {@code RESUME WAL FROM TXN} is not replayed again from the save point. A sequencer that cannot be read
+     * refuses the conversion of a table with a save point. A failed flush stops the engine.
      */
     private static void replayWalBeforeConversion(CairoEngine engine, TableToken token) {
         final CairoConfiguration configuration = engine.getConfiguration();
@@ -360,10 +372,13 @@ public class TableConverter {
                 return;
             }
             try {
-                applyOutstandingWal(engine, token, lastSeqTxn);
+                final CairoException refusal = applyOutstandingWal(engine, token, lastSeqTxn);
                 // On an adaptive instance the replay's writer may also have enrolled a table that had no save point.
                 RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, tablePath.trimTo(tableRootLen), tableRootLen);
                 RecoveryCoordinator.unpinEpoch(engine, token);
+                if (refusal != null) {
+                    throw refusal;
+                }
             } catch (Throwable th) {
                 if (CairoException.isDataSyncFailure(th)) {
                     engine.handleDataSyncFailure(th);

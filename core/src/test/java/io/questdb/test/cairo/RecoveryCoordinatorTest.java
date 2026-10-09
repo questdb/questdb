@@ -1630,11 +1630,104 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     /**
+     * A conversion refused on a start outside adaptive, at a transaction that fails for good, leaves adaptive at
+     * the refusal: the replayed rows are flushed, the save point removed and its pin released, so a power loss
+     * right after it keeps every byte, and the next start does not rewind below a transaction that
+     * {@code RESUME WAL FROM TXN} skipped. After that step the next start converts the table with every row the skip
+     * did not name.
+     */
+    @Test
+    public void testConversionToNonWalRefusedOutsideAdaptiveClearedByResumeFromTxn() throws Exception {
+        org.junit.Assume.assumeFalse("the crash model rewrites files under a live engine, which Windows forbids", Os.isWindows());
+        final CrashFaultFilesFacade crashFf = new CrashFaultFilesFacade();
+        crashFf.setDbRoot(root);
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        try {
+            assertMemoryLeak(crashFf, () -> {
+                buildAdaptiveLazyGapTable("conv");
+                final TableToken tt = engine.verifyTableName("conv");
+                // Transaction 8 is structural, so the replay commits every transaction before the broken transaction 9,
+                // which goes into a WAL of its own; transaction 10 follows. Transaction 9 loses a column file, so it
+                // fails when it is applied.
+                execute("ALTER TABLE conv ADD COLUMN extra INT");
+                drainWalQueue();
+                final String brokenWal;
+                try (
+                        io.questdb.cairo.wal.WalWriter held = engine.getWalWriter(tt);
+                        io.questdb.cairo.wal.WalWriter broken = engine.getWalWriter(tt)
+                ) {
+                    Assert.assertNotEquals(held.getWalName(), broken.getWalName());
+                    brokenWal = broken.getWalName();
+                    final io.questdb.cairo.TableWriter.Row row = broken.newRow(MicrosTimestampDriver.floor("2024-09-01T08:00:00.000000Z"));
+                    row.putLong(1, 7);
+                    row.append();
+                    broken.commit();
+                }
+                execute("INSERT INTO conv VALUES ('2024-09-01T09:00:00.000000Z', 9, 9)");
+                drainWalQueue();
+                assertQuery("SELECT count() FROM conv").noRandomAccess().expectSize().returns("count\n9\n");
+
+                execute("ALTER TABLE conv SET TYPE BYPASS WAL");
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                engine.releaseAllWalWriters();
+                engine.releaseInactiveTableSequencers();
+                try (Path path = new Path()) {
+                    path.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(brokenWal).concat("0").concat("v.d");
+                    Assert.assertTrue(engine.getConfiguration().getFilesFacade().removeQuiet(path.$()));
+                }
+
+                setCommitMode("nosync");
+                crashFf.markDurableBaseline(engine.getConfiguration().getDbRoot());
+                engine.getTxnScoreboardPool().remove(tt);
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                new RecoveryCoordinator(engine).recover();
+                engine.load();
+                Assert.assertTrue("the conversion must be refused", engine.verifyTableName("conv").isWal());
+                Assert.assertTrue("the refused conversion keeps its _convert", epochArtifactExists(tt, WalUtils.CONVERT_FILE_NAME, ""));
+                Assert.assertTrue("precondition: the replay stopped at the broken transaction", engine.getTableSequencerAPI().isSuspended(tt));
+                Assert.assertEquals("the replay applied every transaction before the broken one", 8L, readTxnSeqTxn(tt));
+                Assert.assertFalse("a refusal outside adaptive removes the save point", hasSavePointFile(tt));
+                Assert.assertEquals("a refusal outside adaptive releases the pin", -1L, engine.getTableSequencerAPI().getTxnTracker(tt).getPinnedEpochTxn());
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                final Map<String, byte[]> files = new TreeMap<>(readTableFiles(tt, true));
+                files.keySet().removeIf(file -> !file.contains(java.io.File.separator)
+                        && !file.equals(TableUtils.TXN_FILE_NAME)
+                        && !file.equals(TableUtils.COLUMN_VERSION_FILE_NAME)
+                        && !file.equals(TableUtils.META_FILE_NAME));
+                Assert.assertEquals("a power loss after the refusal keeps every byte", "[]", bytesLostAtPowerLoss(crashFf, tt, files).toString());
+
+                // The manual step: give up the broken transaction, let the apply catch up, restart.
+                execute("ALTER TABLE conv RESUME WAL FROM TXN 10");
+                drainWalQueue();
+                engine.releaseAllWalWriters();
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                drainPurgeJob();
+                engine.getTxnScoreboardPool().remove(tt);
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                new RecoveryCoordinator(engine).recover();
+                engine.load();
+                final TableToken converted = engine.verifyTableName("conv");
+                Assert.assertFalse("the next start converts the table", converted.isWal());
+                Assert.assertEquals("every row the skip did not name", 8L, rowCount(converted));
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        }
+    }
+
+    /**
      * A replay that stops early, here at a transaction that fails to apply and suspends the table, refuses the
      * conversion in every mode, whether the table has a save point or not: it stays a WAL table with its
-     * {@code _convert}, its WAL and its save point. Once the cause is fixed and the table is resumed and caught up,
-     * the next start converts it with every row. On a start outside adaptive the WAL purge in between keeps the WAL
-     * that the save point still needs.
+     * {@code _convert} and its WAL. An adaptive start keeps the save point for the next replay; a start outside
+     * adaptive flushes the table and removes it. Once the cause is fixed and the table is resumed and caught up, the
+     * next start converts it with every row.
      */
     @Test
     public void testConversionToNonWalRefusedWhileReplayStopsKeepsEveryRow() throws Exception {
@@ -1690,8 +1783,8 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                         failures.add(label + ": the conversion went ahead with " + rowCount(engine.verifyTableName(name)) + " rows");
                         continue;
                     }
-                    if (modes[0].equals("adaptive") && !hasSavePointFile(tt)) {
-                        failures.add(label + ": the refused conversion removed the save point");
+                    if (modes[0].equals("adaptive") && hasSavePointFile(tt) != modes[1].equals("adaptive")) {
+                        failures.add(label + ": the refused conversion " + (hasSavePointFile(tt) ? "kept" : "removed") + " the save point");
                     }
 
                     // The manual step: the cause is fixed, the table resumed and caught up, then a restart.
