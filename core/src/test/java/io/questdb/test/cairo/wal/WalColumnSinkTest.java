@@ -193,6 +193,44 @@ public class WalColumnSinkTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCancelWithoutOpenBlockIsNoOp() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken token = createTable(new TableModel(configuration, "sink_idle_cancel", PartitionBy.HOUR)
+                    .col("a", ColumnType.LONG)
+                    .timestamp("ts")
+                    .wal()
+            );
+            try (WalWriter walWriter = engine.getWalWriter(token)) {
+                WalColumnSink sink = walWriter;
+                sink.beginColumnarWrite();
+                long start = sink.getSegmentRowCount();
+                for (int i = 0; i < 2; i++) {
+                    sink.getDataColumn(0).putLong(30L + i);
+                    sink.getDataColumn(1).putLong128(TS0 + i * 1_000_000L, start + i);
+                }
+                sink.setRowValueNotNullColumnar(0, start + 1);
+                sink.setRowValueNotNullColumnar(1, start + 1);
+                sink.finishColumnarWrite(2, TS0, TS0 + 1_000_000L, false);
+
+                // the block is finished but not committed, and no block is open
+                sink.cancelColumnarWrite();
+                Assert.assertEquals(start + 2, sink.getSegmentRowCount());
+                walWriter.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT a, ts FROM sink_idle_cancel")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            a\tts
+                            30\t2026-01-01T00:00:00.000000Z
+                            31\t2026-01-01T00:00:01.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testFinishWithoutDesignatedTimestampIsRefused() throws Exception {
         assertMemoryLeak(() -> {
             TableToken token = createTable(new TableModel(configuration, "sink_no_ts", PartitionBy.HOUR)
@@ -212,7 +250,7 @@ public class WalColumnSinkTest extends AbstractCairoTest {
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "columnar write did not write designated timestamp column");
                 }
-                sink.cancelColumnarWrite(start);
+                sink.cancelColumnarWrite();
                 Assert.assertEquals(start, sink.getSegmentRowCount());
 
                 // the writer stays usable
@@ -232,6 +270,41 @@ public class WalColumnSinkTest extends AbstractCairoTest {
                     .returns("""
                             a\tts
                             8\t2026-01-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFinishWithoutOpenBlockIsRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken token = createTable(new TableModel(configuration, "sink_idle_finish", PartitionBy.HOUR)
+                    .col("a", ColumnType.LONG)
+                    .timestamp("ts")
+                    .wal()
+            );
+            try (WalWriter walWriter = engine.getWalWriter(token)) {
+                WalColumnSink sink = walWriter;
+                assertRefused(() -> sink.finishColumnarWrite(1, TS0, TS0, false), "not in columnar write mode");
+                Assert.assertEquals(0, sink.getSegmentRowCount());
+
+                // the writer stays usable
+                sink.beginColumnarWrite();
+                long start = sink.getSegmentRowCount();
+                sink.getDataColumn(0).putLong(5L);
+                sink.getDataColumn(1).putLong128(TS0 + 1_000_000L, start);
+                sink.setRowValueNotNullColumnar(0, start);
+                sink.setRowValueNotNullColumnar(1, start);
+                sink.finishColumnarWrite(1, TS0 + 1_000_000L, TS0 + 1_000_000L, false);
+                walWriter.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT a, ts FROM sink_idle_finish")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            a\tts
+                            5\t2026-01-01T00:00:01.000000Z
                             """);
         });
     }
@@ -323,6 +396,8 @@ public class WalColumnSinkTest extends AbstractCairoTest {
             );
             try (WalWriter walWriter = engine.getWalWriter(token)) {
                 Assert.assertEquals(1, walWriter.getWalId());
+                // the writer's own appender exists but holds no block, so close() must cancel the foreign one
+                walWriter.getColumnarRowAppender();
                 WalColumnSink sink = walWriter;
                 sink.beginColumnarWrite();
                 long start = sink.getSegmentRowCount();
@@ -368,12 +443,11 @@ public class WalColumnSinkTest extends AbstractCairoTest {
             try (WalWriter walWriter = engine.getWalWriter(token)) {
                 WalColumnSink sink = walWriter;
                 sink.beginColumnarWrite();
-                long start = sink.getSegmentRowCount();
                 assertRefused(sink::beginColumnarWrite, "already in columnar write mode");
                 assertRefused(walWriter::commit, "cannot commit during columnar write");
                 assertRefused(walWriter::rollback, "cannot rollback during columnar write");
                 assertRefused(() -> walWriter.newRow(TS0), "cannot use row-oriented newRow() during columnar write");
-                sink.cancelColumnarWrite(start);
+                sink.cancelColumnarWrite();
 
                 // after the cancel, row writes work again
                 TableWriter.Row row = walWriter.newRow(TS0);
@@ -418,8 +492,8 @@ public class WalColumnSinkTest extends AbstractCairoTest {
         }
 
         @Override
-        public void cancelColumnarWrite(long startRowId) {
-            delegate.cancelColumnarWrite(startRowId);
+        public void cancelColumnarWrite() {
+            delegate.cancelColumnarWrite();
         }
 
         @Override
