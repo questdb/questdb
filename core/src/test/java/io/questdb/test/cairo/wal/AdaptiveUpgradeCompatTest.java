@@ -55,20 +55,10 @@ import org.junit.Test;
 
 /**
  * Upgrade and mixed-version compatibility for adaptive commit mode. Adaptive ({@link CommitMode#ADAPTIVE}) adds
- * new on-disk artifacts to a table directory. These tests prove in-process that each artifact is inert to a reader
- * that does not know about it, which is the forward-compatibility, rolling-upgrade and downgrade contract. A matrix
- * against old binaries cannot run in-process.
- * <p>
- * Coverage:
- * <ul>
- *   <li>downgrade: {@link #testDowngradeFromAdaptiveDrainsCleanlyAndArtifactsAreInert} and
- *       {@link #testDowngradeThenRebootPreservesDataAndIgnoresStaleEpoch};</li>
- *   <li>re-enabling adaptive after a downgrade: {@link #testReEnablingAdaptiveKeepsRowsWrittenUnderNosync};</li>
- *   <li>the {@code _txn} body checksum of an old file (zero sentinel):
- *       {@code TxnTest.testOpenOldFormatTxn_noBodyChecksum};</li>
- *   <li>the {@code _cv} body checksum of an old file (magic-gated):
- *       {@code ColumnVersionWriterTest.testCvChecksumAbsent*}.</li>
- * </ul>
+ * on-disk artifacts to a table directory; these tests prove in-process that each one is inert to a reader that does
+ * not know about it, which is the forward-compatibility, rolling-upgrade and downgrade contract. A matrix against
+ * old binaries cannot run in-process. {@code TxnTest} and {@code ColumnVersionWriterTest} cover the body checksums
+ * of old {@code _txn} and {@code _cv} files.
  */
 public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
 
