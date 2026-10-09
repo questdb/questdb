@@ -268,6 +268,53 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
     }
 
     @Test
+    public void testKillKeepsBytesRewrittenAfterTheirFlush() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String powerLossDir = temp.newFolder("rewrite-power-loss").getAbsolutePath();
+        final String killDir = temp.newFolder("rewrite-kill").getAbsolutePath();
+        try (
+                Path powerLossFile = new Path().of(powerLossDir).concat("a.d");
+                Path killFile = new Path().of(killDir).concat("a.d");
+                Path createdLater = new Path().of(killDir).concat("created-later.d");
+                Path removedLater = new Path().of(killDir).concat("removed-later.d")
+        ) {
+            // the same history in both directories: byte 1 written and flushed, then rewritten in place
+            // with byte 2 and never flushed again
+            for (String dir : new String[]{powerLossDir, killDir}) {
+                try (Path file = new Path().of(dir).concat("a.d")) {
+                    writeAndSync(ff, file, (byte) 1);
+                    syncDirectory(ff, dir);
+                    ff.markDurableBaseline(dir);
+                    final long fd = openAndWrite(ff, file, (byte) 2);
+                    ff.close(fd);
+                }
+            }
+
+            // a power loss brings back the flushed byte
+            ff.crash(powerLossDir);
+            assertFileBytes(powerLossFile, (byte) 1);
+
+            // a kill keeps the page cache: the image is taken at the armed kill point, the rewritten
+            // byte survives, and nothing the process does after the kill point does
+            writeAndSync(ff, removedLater, (byte) 4);
+            ff.armKillAt(ff.killPointCount() + 1, killDir);
+            final long fd = openAndWrite(ff, killFile, (byte) 2);
+            ff.close(fd); // the kill point: the image is taken before this close runs
+            Assert.assertTrue(ff.isKillImageTaken());
+            final long laterFd = openAndWrite(ff, killFile, (byte) 3);
+            ff.fsync(laterFd);
+            ff.close(laterFd);
+            writeAndSync(ff, createdLater, (byte) 5);
+            ff.remove(removedLater.$());
+            ff.crash(killDir);
+            Assert.assertFalse("the crash must consume the kill image", ff.isKillImageTaken());
+            assertFileBytes(killFile, (byte) 2);
+            assertFileBytes(removedLater, (byte) 4);
+            Assert.assertFalse(java.nio.file.Files.exists(java.nio.file.Paths.get(createdLater.toString())));
+        }
+    }
+
+    @Test
     public void testOpenAppendIsTrackedForDurability() throws Exception {
         final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
         final String dir = temp.newFolder("crashroot4").getAbsolutePath();
