@@ -40,23 +40,22 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * DATA BEFORE POINTER for the block-file A/B region scheme.
+ * Data before pointer for the block-file A/B region scheme.
  * <p>
- * {@link BlockFileWriter#commit()} writes the new region into the INACTIVE area and then bumps the header's
+ * {@link BlockFileWriter#commit()} writes the new region into the inactive area and then bumps the header's
  * version word to select it. The version word sits at offset 0; the region extends the file tail. They are
  * different pages, and the kernel writes dirty pages back independently and in any order, so without a
  * barrier between them a crash can leave the version word durable while the region bytes it names are not.
  * <p>
  * That state is unrecoverable rather than merely stale: {@link io.questdb.cairo.file.BlockFileReader} throws
- * "block file checksum mismatch" and refuses the file outright, with no fallback to the previous region --
- * which is still intact on disk. These files hold view and mat-view DEFINITIONS, structural DDL that is not
- * re-derivable from anything else, so refusing the file loses the object.
+ * "block file checksum mismatch" and refuses the file outright, with no fallback to the previous region,
+ * which is still intact on disk. These files hold view and mat-view definitions, structural DDL that cannot be
+ * re-derived from anything else, so refusing the file loses the object.
  * <p>
- * Asserted as ORDERING rather than as a crash outcome deliberately. {@code CrashFaultFilesFacade} snapshots
- * whole files at sync points, so it cannot express "page 0 durable, tail not" -- the very skew at issue --
- * and a crash-based control against it passes whether or not the barrier exists. What IS observable, and is
- * exactly the invariant, is the version word's value at each sync: the sync that makes the region durable
- * must happen while the version word still names the PREVIOUS region.
+ * The test asserts ordering rather than a crash outcome: {@code CrashFaultFilesFacade} snapshots whole files at
+ * sync points, so it cannot express "page 0 durable, tail not". The invariant is the version word's value at
+ * each sync: the sync that makes the region durable must happen while the version word still names the
+ * previous region.
  */
 public class BlockFilePublishOrderTest extends AbstractCairoTest {
 
