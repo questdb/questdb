@@ -92,13 +92,11 @@ public class AlterTableSetTypeTest extends AbstractCairoTest {
     /**
      * The conversion resets {@code _meta}'s metadataVersion in place. That field is checksummed into the
      * meta-format minor-version word, so rewriting it without re-stamping the checksum switches off the
-     * version gate and every gated tail field then reads as absent -- TTL becomes 0, the table format
-     * reverts to NATIVE, the adaptive enrolment record reverts to UNSET. Nothing fails; the table quietly
-     * loses those properties.
+     * version gate and every gated tail field then reads as absent: TTL becomes 0 and the table format
+     * reads as NATIVE. Nothing fails; the table quietly loses those properties.
      *
-     * <p>The ADD COLUMN is what makes this reachable and is not decoration: it lifts metadataVersion off 0,
-     * so resetting it to 0 actually changes the value the checksum covers. Without it the reset is a no-op
-     * and the gate survives by luck.
+     * <p>The ADD COLUMN lifts metadataVersion off 0, so resetting it to 0 changes the value the checksum
+     * covers. Without it the reset is a no-op and the test does not exercise the gate.
      */
     @Test
     public void testConvertToWalPreservesVersionGatedMetadata() throws Exception {
