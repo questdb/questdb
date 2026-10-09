@@ -158,9 +158,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI, WalColum
     private int columnCount;
     private ColumnVersionReader columnVersionReader;
     private WalColumnarRowAppender columnarAppender;
+    private long columnarWriteStartRow;
     private ConversionSymbolMapWriter conversionSymbolMap;
     private ConversionSymbolTable conversionSymbolTable;
     private long currentTxnStartRowNum = -1;
+    private boolean hasOpenColumnarWrite;
     // The highest seqTxn this writer sequenced under a group window whose batched device flush has not run yet;
     // -1 when nothing is pending. Guarded by the writer monitor, as are the two fields below: the committing
     // thread sets it, and both the committing thread and the background flusher read and clear it.
@@ -374,6 +376,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI, WalColum
     @Override
     public void beginColumnarWrite() {
         checkDistressed();
+        if (hasOpenColumnarWrite) {
+            throw CairoException.nonCritical().put("already in columnar write mode");
+        }
         // The roll opens an empty segment without copying rows, so it must never find
         // uncommitted rows: the flag is set only after a commit and by
         // rollUncommittedToNewSegment with nothing uncommitted. QWP commit batching
@@ -388,6 +393,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI, WalColum
             distressed = true;
             throw e;
         }
+        columnarWriteStartRow = segmentRowCount;
+        hasOpenColumnarWrite = true;
     }
 
     @Override
@@ -626,7 +633,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI, WalColum
      * {@code cancelColumnarWrite}; also true after a cancel that failed to rewind.
      */
     public boolean isInColumnarWrite() {
-        return columnarAppender != null && columnarAppender.isInColumnarWrite();
+        return hasOpenColumnarWrite;
     }
 
     @Override
@@ -739,7 +746,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI, WalColum
         }
         try {
             if (isInColumnarWrite()) {
-                columnarAppender.cancelColumnarWrite();
+                if (columnarAppender != null && columnarAppender.isInColumnarWrite()) {
+                    // the appender resets its own state and cancels through this writer
+                    columnarAppender.cancelColumnarWrite();
+                } else {
+                    cancelColumnarWrite(columnarWriteStartRow);
+                }
             }
             // Flush the pending batch, so a clean handoff (pool return or close) leaves the frontier on disk
             // for the next acquirer and any durable-ack consumer. rollback0() rewinds only uncommitted rows, so
@@ -2862,6 +2874,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI, WalColum
     @Override
     public void cancelColumnarWrite(long startRowId) {
         setAppendPosition(startRowId);
+        hasOpenColumnarWrite = false;
     }
 
     /**
@@ -2905,6 +2918,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI, WalColum
 
         // Update row count
         segmentRowCount += rowCount;
+        hasOpenColumnarWrite = false;
     }
 
     /**

@@ -313,6 +313,82 @@ public class WalColumnSinkTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testPoolReturnDuringSinkWriteDiscardsBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken token = createTable(new TableModel(configuration, "sink_pool", PartitionBy.HOUR)
+                    .col("a", ColumnType.LONG)
+                    .timestamp("ts")
+                    .wal()
+            );
+            try (WalWriter walWriter = engine.getWalWriter(token)) {
+                Assert.assertEquals(1, walWriter.getWalId());
+                WalColumnSink sink = walWriter;
+                sink.beginColumnarWrite();
+                long start = sink.getSegmentRowCount();
+                for (int i = 0; i < 3; i++) {
+                    sink.getDataColumn(0).putLong(900L + i);
+                    sink.getDataColumn(1).putLong128(TS0 + i, start + i);
+                }
+                // close() returns the writer to the pool with the block still open
+            }
+            try (WalWriter walWriter = engine.getWalWriter(token)) {
+                Assert.assertEquals(1, walWriter.getWalId());
+                WalColumnSink sink = walWriter;
+                sink.beginColumnarWrite();
+                long start = sink.getSegmentRowCount();
+                Assert.assertEquals(0, start);
+                sink.getDataColumn(0).putLong(42L);
+                sink.getDataColumn(1).putLong128(TS0, start);
+                sink.setRowValueNotNullColumnar(0, start);
+                sink.setRowValueNotNullColumnar(1, start);
+                sink.finishColumnarWrite(1, TS0, TS0, false);
+                walWriter.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT a, ts FROM sink_pool")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            a\tts
+                            42\t2026-01-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testRowOperationsDuringSinkWriteAreRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken token = createTable(new TableModel(configuration, "sink_guard", PartitionBy.HOUR)
+                    .col("a", ColumnType.LONG)
+                    .timestamp("ts")
+                    .wal()
+            );
+            try (WalWriter walWriter = engine.getWalWriter(token)) {
+                WalColumnSink sink = walWriter;
+                sink.beginColumnarWrite();
+                long start = sink.getSegmentRowCount();
+                assertRefused(sink::beginColumnarWrite, "already in columnar write mode");
+                assertRefused(walWriter::commit, "cannot commit during columnar write");
+                assertRefused(walWriter::rollback, "cannot rollback during columnar write");
+                assertRefused(() -> walWriter.newRow(TS0), "cannot use row-oriented newRow() during columnar write");
+                sink.cancelColumnarWrite(start);
+
+                // after the cancel, row writes work again
+                TableWriter.Row row = walWriter.newRow(TS0);
+                row.putLong(0, 1L);
+                row.append();
+                walWriter.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT a FROM sink_guard")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\n1\n");
+        });
+    }
+
     private static void assertRefused(Runnable operation, String expectedMessage) {
         try {
             operation.run();
