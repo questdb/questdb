@@ -107,22 +107,17 @@ public class BlockFileWriter implements Closeable {
         Vect.memcpy(fileBaseAddress + regionWriteOffset + HEADER_SIZE, memoryBaseAddress, regionLength);
 
         currentVersion += 1;
-        // The offset/length for the NEW version live in the header slot the CURRENT version does not use
-        // (slots alternate by version parity), so writing them now cannot disturb the version still in force.
+        // The offset and length for the new version live in the header slot the current version does not
+        // use (slots alternate by version parity), so writing them cannot disturb the version in force.
         setRegionOffset(currentVersion, regionWriteOffset);
         setRegionLength(currentVersion, regionLength);
 
-        // DATA BEFORE POINTER. The version word at offset 0 selects a region living in the file's TAIL, so
-        // the two are different pages and the kernel writes dirty pages back independently and in any order.
-        // Publishing the version word in the same barrier as the region it names would let a crash leave a
-        // durable version selecting bytes that never reached the device -- and that is not merely a stale
-        // read: BlockFileReader throws "block file checksum mismatch" and refuses the file outright, with no
-        // fallback to the previous region even though it is still intact on disk. These files hold view and
-        // mat-view DEFINITIONS, structural DDL nothing can re-derive, so refusing the file loses the object.
-        //
-        // This barrier makes a durable version word imply durable region bytes, matching what the save point
-        // and the _cv/_txn pair already guarantee. Cost is one extra msync of a few-KB file per commit; the
-        // warmest caller (per-refresh mat-view state) already performs far heavier IO around it.
+        // Data before pointer. The version word at offset 0 selects a region in the file's tail, on another
+        // page, and the kernel writes dirty pages back in any order. Publishing the version word in the same
+        // barrier as its region could leave a durable version naming bytes that never reached the device;
+        // BlockFileReader then refuses the file ("block file checksum mismatch") with no fallback to the
+        // previous region. These files hold view and mat-view definitions, which nothing can re-derive, so
+        // this barrier makes a durable version word imply durable region bytes.
         if (commitMode != CommitMode.NOSYNC) {
             file.sync(commitMode == CommitMode.ASYNC);
         }
