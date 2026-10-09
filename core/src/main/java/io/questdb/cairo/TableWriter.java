@@ -1095,9 +1095,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * Applies a command directly to this writer. On a WAL table this bypasses the WAL (a forced ALTER, a queued
      * command), so no WAL replay can redo the change, and an adaptive table takes a durable epoch after it,
-     * unless one already names the current txn. Every direct path ends here: the dispatcher, a command run
-     * once the writer frees up, and the writer's command queue. A WAL lag the writer holds is dropped first, so
-     * the command sees only committed rows and the apply job applies the lag's transactions again afterwards.
+     * unless one already names the current txn. The dispatcher, a command run once the writer frees up and the
+     * writer's command queue end here. A WAL lag the writer holds is dropped first, so the command sees only
+     * committed rows and the apply job applies the lag's transactions again afterwards. The Enterprise storage
+     * policy jobs apply their commands inline, without this method; they work on partitions older than the
+     * active one, where no WAL lag sits.
      */
     public long applyOutsideWal(AsyncWriterCommand command, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         if (discardWalLag("change outside the WAL")) {
