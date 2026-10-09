@@ -35,18 +35,15 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Crash consistency for the {@code _txn} body-checksum capability marker.
+ * Crash consistency for the {@code _txn} body checksum and the stamp that names its record.
  * <p>
- * It publishes a claim ("from this point a checksum exists") separately from the checksummed bytes
- * themselves, so a crash can land between the two writes. Get it wrong in the unsafe direction and the
- * reader condemns intact data: a capability marker durable AHEAD of the checksum it promises makes the
- * already-written record read as torn.
+ * The stamp claims that a checksum exists, separately from the checksummed bytes themselves, so a crash can
+ * land between the two writes. A stamp durable ahead of the checksum it promises would make the
+ * already-written record read as torn, and the reader would condemn intact data.
  * <p>
- * It is swept at EVERY durability op rather than at one chosen point, and each iteration asserts
- * the injected crash actually fired -- a sweep whose injection never fires proves nothing.
- * <p>
- * The bar is deliberately asymmetric, matching the crash model: FEWER rows or a missing table after a
- * crash is acceptable (rollback); a healthy artifact reported as corrupt is not.
+ * The test sweeps every durability op rather than one chosen point, and each iteration asserts that the
+ * injected crash fired. The bar is asymmetric, matching the crash model: fewer rows or a missing table after
+ * a crash is acceptable (rollback); a healthy artifact reported as corrupt is not.
  */
 public class ChecksumArtifactsCrashTest extends AbstractCrashConsistencyTest {
 
@@ -86,9 +83,9 @@ public class ChecksumArtifactsCrashTest extends AbstractCrashConsistencyTest {
 
     @Test
     public void testTornChecksumStampDegradesToLegacy() throws Exception {
-        // Tear the checksum and the stamp that names its record. Losing them must cost DETECTION (the record
-        // falls back to "unstamped, unverified"), never availability -- the alternative, condemning a record
-        // whose checksum metadata is gone, would take out a healthy table.
+        // Tear the checksum and the stamp that names its record. Losing them must cost detection (the record
+        // falls back to "unstamped, unverified"), never availability: condemning a record whose checksum
+        // metadata is gone would take out a healthy table.
         runWithCrashFacade(() -> {
             execute("create table txntorn (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into txntorn values ('2024-01-01T00:00:00.000000Z', 1)");
@@ -108,8 +105,8 @@ public class ChecksumArtifactsCrashTest extends AbstractCrashConsistencyTest {
     }
 
     /**
-     * Bar: after a crash the table either reads, or is gone. What it must never do is survive and then
-     * be rejected by one of the new checksum verdicts, which would mean intact bytes condemned.
+     * Asserts that after a crash the table either reads or is gone. It must never survive and then be
+     * rejected by a checksum verdict, which would mean intact bytes condemned.
      */
     private void assertTableReadableOrGone(String tableName, int crashPoint) {
         try {
@@ -133,7 +130,7 @@ public class ChecksumArtifactsCrashTest extends AbstractCrashConsistencyTest {
                     || msg.contains("body length is impossible")) {
                 Assert.fail("crash at op " + crashPoint + " condemned an intact artifact: " + msg);
             }
-            // other failures are pre-existing recovery outcomes, not this feature's concern
+            // other failures are ordinary crash-recovery outcomes, outside the scope of this check
         }
     }
 
