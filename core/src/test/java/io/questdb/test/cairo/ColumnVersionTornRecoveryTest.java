@@ -71,16 +71,13 @@ import static io.questdb.cairo.TableUtils.*;
 
 /**
  * A power loss can leave {@code _cv} unable to serve the column version that an intact {@code _txn} record
- * names. Part of the live area keeps what its page held before the commit that wrote it, or the whole file
- * stays one commit behind {@code _txn}. Commit N is then not durable as a whole, even though its {@code _txn}
- * record is.
+ * names: part of its live area keeps its pre-commit page, or the whole file stays one commit behind.
  * <p>
  * Each test builds such an image from page-cache snapshots and restarts on it. The table continues from commit
- * N-1 when that commit's column versions and every file they name are still on disk: WAL apply replays commit
- * N, a non-WAL table loses it. Otherwise the writer refuses to open without changing a byte, and a WAL table is
- * suspended with an actionable error. Either way the WAL writer keeps accepting rows. Tables enrolled in
- * adaptive commit mode never reach that code: startup recovery restores their {@code _txn} and {@code _cv}
- * from the durable epoch, and the adaptive runs check that the end state is the same.
+ * N-1 when that commit's column versions and the files they name are on disk: WAL apply replays commit N, a
+ * non-WAL table loses it. Otherwise the writer refuses to open without changing a byte and a WAL table is
+ * suspended with an actionable error; the WAL writer keeps accepting rows either way. Adaptive tables restore
+ * {@code _txn} and {@code _cv} from the durable epoch at startup, and their runs check the same end state.
  */
 @RunWith(Parameterized.class)
 public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
@@ -174,7 +171,7 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
     @Test
     public void testReplicaTableRepairsColumnVersionAheadOfTxn() throws Exception {
         // A kill between the _cv and _txn commits of an UPDATE, or a power loss that wrote back only _cv. Startup
-        // used to refuse to publish the table's baseline from it, and took the instance down on every restart.
+        // must not take the instance down over it: the table writer repairs the table.
         assertReplicaTableRepairs(false, (dir, commits) -> writeFile(dir + TXN_FILE_NAME, commits.txn(commits.size() - 2)));
     }
 
@@ -225,7 +222,7 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
             }
             assertFileUnchanged(dir + TXN_FILE_NAME, txnImage);
             assertFileUnchanged(dir + COLUMN_VERSION_FILE_NAME, cvImage);
-            // The writer used to roll back and then create an empty file for the column version it could not find.
+            // The writer must not roll back and then create an empty file for the column version it cannot find.
             Assert.assertArrayEquals(lastPartitionFiles, listPartitionFiles(dir, ROWS - 1));
         });
     }
@@ -270,8 +267,8 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
 
             try (CairoEngine restarted = new CairoEngine(configuration)) {
                 final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(restarted);
-                // Bootstrapping a WAL writer reads the table's symbol counts through _cv. A _cv that cannot serve
-                // _txn used to fail every INSERT and DDL for good, because nothing then opened the table writer.
+                // Bootstrapping a WAL writer reads the table's symbol counts through _cv. The INSERT must succeed
+                // although that _cv cannot serve _txn.
                 restarted.execute("insert into x values (" + NEW_ROW_TS + "::timestamp, 's9', 777, 777)", ctx);
                 TestUtils.drainWalQueue(restarted);
                 // The writer continued from commit N-1 and WAL apply replayed commit N: nothing is lost.

@@ -906,8 +906,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testForceDropPartitionRangeNotOnDiskWithSplits() throws Exception {
         // Force-drop removes the partition dir synchronously "at the end of the alter" under nosync; under
-        // adaptive the physical cleanup is deferred (like epoch-gated WAL purge), so the immediate
-        // assertFalse(dir exists) needs the deterministic nosync timing. This asserts drop mechanics, not durability.
+        // adaptive the physical cleanup is deferred, so the immediate assertFalse(dir exists) needs nosync.
+        // The test covers drop mechanics, not durability.
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
         assertMemoryLeak(() -> {
@@ -2109,8 +2109,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
             @Override
             public long openRO(LPSZ name) {
                 // Fails _meta opens only once runCheckTableSuspended starts the WAL apply, so the
-                // UPDATE fails when the apply job compiles it. Counting earlier opens instead is
-                // brittle: table creation opens _meta more often under adaptive commit mode
+                // UPDATE fails when the apply job compiles it. The number of earlier opens depends on
+                // the commit mode: table creation opens _meta more often under adaptive commit mode
                 // (epoch baseline copy and checksum) than under nosync, and compiling the UPDATE
                 // opens a reader to reject parquet partitions.
                 if (isWalApplyStarted && Utf8s.containsAscii(name, "_meta")) {
@@ -2238,7 +2238,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testWalSegmentFixedColumnTruncatedSuspendsTable() throws Exception {
-        // Plan 1c audit #6: a torn/short segment .d file for a fixed-width column must be detected
+        // A torn or short segment .d file for a fixed-width column must be detected
         // before mmap and cause table suspension, not silent-apply / SIGBUS.
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -2247,7 +2247,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             // Commit 5 rows; WAL writer flushes them to wal1/0/x.d (8 bytes each = 40 bytes)
             execute("insert into " + tableName + " select x, timestamp_sequence('2022-02-24', 1000000L) from long_sequence(5)");
 
-            // Release WAL writer so we can safely truncate the segment file.
+            // Release the WAL writer so the segment file can be truncated safely.
             engine.releaseInactive();
 
             // Locate and truncate wal1/0/x.d to 24 bytes (covers 3 rows, not 5).
@@ -2274,7 +2274,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     "Table should be suspended after short fixed-width segment",
                     engine.getTableSequencerAPI().isSuspended(tableToken)
             );
-            // True negative control: assert OUR early guard is the detector, not a downstream path.
+            // The early segment-length guard must be the detector, not a downstream path.
             String fixedErrMsg = engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage();
             Assert.assertTrue(
                     "Suspension errorMessage must contain our guard string 'WAL segment column too short', got: "
@@ -2286,7 +2286,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testWalSegmentVarcharAuxTruncatedSuspendsTable() throws Exception {
-        // Plan 1c audit #6: a torn/short .i (aux) file for a VARCHAR column must cause suspension.
+        // A torn or short .i (aux) file for a VARCHAR column must cause suspension.
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             execute("create table " + tableName + " (v varchar, ts timestamp) timestamp(ts) partition by DAY WAL");
@@ -2308,7 +2308,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             try {
                 long originalLen = ff.length(fd);
                 Assert.assertTrue("Expected aux segment file >= 80 bytes", originalLen >= 80);
-                // Truncate to 32 bytes — covers only 2 entries (16*2), not 5.
+                // Truncate to 32 bytes: covers only 2 entries (16*2), not 5.
                 Assert.assertTrue("Could not truncate aux segment file", ff.truncate(fd, 32));
             } finally {
                 ff.close(fd);
@@ -2319,7 +2319,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     "Table should be suspended after short varchar aux segment",
                     engine.getTableSequencerAPI().isSuspended(tableToken)
             );
-            // True negative control: assert OUR early guard is the detector, not a downstream path.
+            // The early segment-length guard must be the detector, not a downstream path.
             String auxErrMsg = engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage();
             Assert.assertTrue(
                     "Suspension errorMessage must contain our guard string 'WAL segment column too short', got: "
@@ -2331,12 +2331,12 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testWalSegmentVarcharDataTruncatedSuspendsTable() throws Exception {
-        // Plan 1c audit #6: a torn/short .d (data) file for a VARCHAR column must cause suspension.
+        // A torn or short .d (data) file for a VARCHAR column must cause suspension.
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             execute("create table " + tableName + " (v varchar, ts timestamp) timestamp(ts) partition by DAY WAL");
 
-            // Use longer values (>9 bytes, so they are NOT fully inlined and DO appear in .d).
+            // Use longer values (>9 bytes), so they are not fully inlined and appear in .d.
             execute("insert into " + tableName +
                     " select rpad('x', 20, 'x') || x, timestamp_sequence('2022-02-24', 1000000L) from long_sequence(5)");
 
@@ -2354,7 +2354,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             try {
                 long originalLen = ff.length(fd);
                 Assert.assertTrue("Expected data segment file > 0", originalLen > 0);
-                // Truncate to at most half the file — so the last row's data is definitely missing.
+                // Truncate to at most half the file, so the last row's data is missing.
                 long truncTo = originalLen / 2;
                 Assert.assertTrue("Could not truncate data segment file", ff.truncate(fd, truncTo));
             } finally {
@@ -2366,7 +2366,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     "Table should be suspended after short varchar data segment",
                     engine.getTableSequencerAPI().isSuspended(tableToken)
             );
-            // True negative control: assert OUR early guard is the detector, not a downstream path.
+            // The early segment-length guard must be the detector, not a downstream path.
             String dataErrMsg = engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage();
             Assert.assertTrue(
                     "Suspension errorMessage must contain our guard string 'WAL segment column too short', got: "

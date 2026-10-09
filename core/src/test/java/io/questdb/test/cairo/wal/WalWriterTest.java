@@ -146,34 +146,24 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void apply1RowCommits1Writer() throws Exception {
-        // 1,000,000 single-row commits. Each commit's durability point is a real device barrier, and on
-        // macOS that is fcntl(F_FULLFSYNC) -- measured at ~5.2ms/op on APFS versus ~0.24ms for the fsync
-        // this used to be, so a million of them cannot fit the 1200s timeout (both 1M variants hit it
-        // exactly). The barrier/full split only removes the per-commit FAN-OUT; the commit point itself must
-        // stay a full flush, so no amount of tuning brings this workload back on this platform. The
-        // behaviour under test -- 1-row commit application -- is platform-independent and stays covered on
-        // Linux CI.
+        // 1,000,000 single-row commits. On macOS a commit's device barrier is fcntl(F_FULLFSYNC), and a
+        // million of them do not fit the 20-minute test timeout. The behaviour under test, 1-row commit
+        // application, is platform-independent and stays covered on Linux.
         Assume.assumeFalse("1M single-row commits cannot complete under F_FULLFSYNC (see comment)", Os.isOSX());
         testApply1RowCommitManyWriters(Micros.SECOND_MICROS, 1_000_000, 1);
     }
 
     @Test
     public void apply1RowCommitsManyWriters() throws Exception {
-        // 1,000,000 single-row commits. Each commit's durability point is a real device barrier, and on
-        // macOS that is fcntl(F_FULLFSYNC) -- measured at ~5.2ms/op on APFS versus ~0.24ms for the fsync
-        // this used to be, so a million of them cannot fit the 1200s timeout (both 1M variants hit it
-        // exactly). The barrier/full split only removes the per-commit FAN-OUT; the commit point itself must
-        // stay a full flush, so no amount of tuning brings this workload back on this platform. The
-        // behaviour under test -- 1-row commit application -- is platform-independent and stays covered on
-        // Linux CI.
+        // Skipped on macOS for the same reason as apply1RowCommits1Writer.
         Assume.assumeFalse("1M single-row commits cannot complete under F_FULLFSYNC (see comment)", Os.isOSX());
         testApply1RowCommitManyWriters(Micros.SECOND_MICROS, 1_000_000, 16);
     }
 
     /**
-     * Adaptive coverage for the 1-row-commit apply path, at a row count chosen to fit the 20-minute rule
-     * with margin. 20k is the count docs/adaptive-commit-mode.md §3 benchmarks (~31.7 s there); the 1M
-     * arms stay on nosync because under adaptive they time out on real storage.
+     * Adaptive coverage for the 1-row-commit apply path, at a row count that fits the 20-minute test
+     * timeout with margin. The 1M arms run under nosync because under adaptive they time out on real
+     * storage.
      */
     @Test
     public void apply1RowCommitsAdaptive() throws Exception {
@@ -181,26 +171,14 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     /**
-     * Regenerates the rows-per-commit curve in docs/adaptive-commit-mode.md §3. Skipped unless
-     * {@code -Dquestdb.bench.batchSweep=true} is set, because it is a storage measurement rather than a
-     * behavioural assertion -- run it by hand on the target hardware, selecting
-     * {@code WalWriterTest#adaptiveBatchSizeSweep}, and read the BATCH SWEEP lines from the log.
-     * <p>
-     * MUST be run against a REAL filesystem root. On tmpfs (e.g. a {@code QDB_TEST_TMPDIR} under
-     * {@code /dev/shm}) fdatasync is a no-op, so every arm measures the non-durability cost only and the
-     * curve is meaningless -- measured: the 1M-commit arm "passes" in 19.86 s on tmpfs and times out at
-     * 1200 s on ext4.
-     * <p>
-     * Fixed total rows, varying batch size, because the durability cost is per COMMIT: this is what shows
-     * an operator where the per-commit barrier stops dominating. §3's headline table is the B=1 point,
-     * which the doc itself calls "the pathological floor, not typical ingestion" -- quoting it without the
-     * rest of the curve overstates the cost of durability by orders of magnitude.
+     * Benchmark, not a behavioural test: measures the adaptive apply time of a fixed row count at several
+     * rows-per-commit values, since the durability cost is per commit. Runs only with
+     * {@code -Dquestdb.bench.batchSweep=true}; the result is in the BATCH SWEEP log lines. Run it on a
+     * real filesystem: on tmpfs fdatasync is a no-op and the numbers mean nothing.
      */
     @Test
     public void adaptiveBatchSizeSweep() throws Exception {
-        // Gated by a property rather than @Ignore: @Ignore skips even when the method is selected
-        // explicitly, so the benchmark could never be run at all. This stays out of CI (the property is
-        // unset there) while remaining runnable on demand with -Dquestdb.bench.batchSweep=true.
+        // A property gate rather than @Ignore, because @Ignore also skips a test selected explicitly.
         Assume.assumeTrue(
                 "set -Dquestdb.bench.batchSweep=true to run the batch-size sweep",
                 Boolean.getBoolean("questdb.bench.batchSweep")
@@ -209,10 +187,9 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     /**
-     * The {@code nosync} baseline for {@link #adaptiveBatchSizeSweep()}. Separate @Test method, NOT another
-     * loop arm: the commit mode is fixed when the per-test configuration is built, so both modes in one
-     * method silently run as one mode (see the assertion in {@code testApplyRowCommits}). Run with the same
-     * property and pair the two logs to get the durability cost at each batch size.
+     * The {@code nosync} baseline for {@link #adaptiveBatchSizeSweep()}. It is a separate test method
+     * because the commit mode is fixed when the per-test configuration is built, so one method cannot run
+     * two modes.
      */
     @Test
     public void nosyncBatchSizeSweep() throws Exception {
@@ -1081,9 +1058,8 @@ public class WalWriterTest extends AbstractCairoTest {
                 mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
                 final long version = mem.getLong(ColumnVersionReader.OFFSET_VERSION_64);
                 Assert.assertTrue(version > 0);
-                // _txn still names `version`; a stable _cv one behind it is a state no writer can repair, and
-                // the symbol-map bootstrap used to loop on it until the process was killed, then to fail every
-                // INSERT for good.
+                // _txn still names `version`; a stable _cv one behind it is a state no writer can repair. The
+                // symbol-map bootstrap must neither loop on it nor fail every later INSERT.
                 mem.putLong(ColumnVersionReader.OFFSET_VERSION_64, version - 1);
                 mem.close();
                 try {
@@ -5743,13 +5719,11 @@ public class WalWriterTest extends AbstractCairoTest {
     /**
      * REBASE clones {@code _meta} and then resets its metadataVersion in place. That field is checksummed
      * into the meta-format minor-version word, so rewriting it without re-stamping the checksum switches
-     * off the version gate, and every gated tail field then reads as absent on the clone: TTL becomes 0,
-     * the table format reverts to NATIVE, the adaptive enrolment record reverts to UNSET. Nothing fails --
-     * the rebased table quietly comes back with different properties from the one that went in.
+     * off the version gate, and every gated tail field then reads as absent on the clone, for example TTL
+     * as 0. Nothing fails: the rebased table silently loses properties.
      *
-     * <p>The ADD COLUMN is load-bearing, not decoration: it lifts metadataVersion off 0 so that resetting
-     * it to 0 actually changes the value the checksum covers. Without it the reset is a no-op and the gate
-     * survives by luck, which is exactly why this went unnoticed.
+     * <p>The ADD COLUMN lifts metadataVersion off 0, so that resetting it to 0 changes the value the
+     * checksum covers; without it the reset is a no-op and the test proves nothing.
      */
     @Test
     public void testRebaseWalPreservesVersionGatedMetadata() throws Exception {
@@ -5760,7 +5734,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 execute("create table t (ts timestamp, x int) timestamp(ts) partition by day ttl 3 days wal");
                 execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
                 drainWalQueue();
-                // Lift metadataVersion off zero, so the clone's reset genuinely changes it.
+                // Lift metadataVersion off zero, so the clone's reset changes it.
                 execute("alter table t add column y int");
                 drainWalQueue();
 
@@ -7064,45 +7038,32 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     private void testApply1RowCommitManyWriters(long tsStep, int totalRows, int walWriterCount) throws Exception {
-        // Volume arm: nosync. See the overload's javadoc for why the commit mode must be explicit here.
+        // The volume arms run under nosync; see the overload's javadoc.
         testApply1RowCommitManyWriters(tsStep, totalRows, walWriterCount, "nosync");
     }
 
     /**
      * Applies {@code totalRows} single-row commits across {@code walWriterCount} writers.
      * <p>
-     * The commit mode is EXPLICIT rather than inherited, because at these row counts it decides whether
-     * the test finishes at all. The durability cost is per commit and is a real device barrier, so the
-     * 1M-commit arms are storage benchmarks under any fsync-ing mode: measured on ext4,
-     * {@code apply1RowCommits1Writer} under {@code adaptive} hit
-     * {@code TestTimedOutException: test timed out after 1200000 milliseconds} -- the 20-minute
-     * AbstractCairoTest rule -- while {@code nosync} completes in seconds. (docs/adaptive-commit-mode.md
-     * §3 records the same thing: at 1M commits "sync and adaptive both exceed the 20-minute test
-     * timeout... while nosync finishes in 4.7 s".)
-     * <p>
-     * Do NOT let these inherit the suite default. It is {@code adaptive}, and CI passing today is a
-     * function of runner storage being fast enough, not of headroom -- a slower runner turns it into a
-     * timeout. The behaviour under test is 1-row commit APPLICATION, which is orthogonal to the commit
-     * mode; {@link #apply1RowCommitsAdaptive()} keeps the adaptive path covered at a row count that fits.
+     * The caller passes the commit mode instead of inheriting the suite default: each commit under a
+     * syncing mode costs a device barrier, so a million commits under adaptive or sync exceed the
+     * 20-minute test timeout. The behaviour under test, 1-row commit application, does not depend on the
+     * mode; {@link #apply1RowCommitsAdaptive()} covers the adaptive path at a row count that fits.
      */
     private void testApply1RowCommitManyWriters(long tsStep, int totalRows, int walWriterCount, String commitMode) throws Exception {
         testApplyRowCommits(tsStep, totalRows, walWriterCount, commitMode, 1);
     }
 
     /**
-     * As above, but committing every {@code rowsPerCommit} rows. The durability cost is per COMMIT, so
-     * this parameter is what turns the §3 headline number into a curve -- see {@link #adaptiveBatchSizeSweep()}.
+     * As above, but committing every {@code rowsPerCommit} rows; {@link #adaptiveBatchSizeSweep()} varies it.
      */
     private void testApplyRowCommits(long tsStep, int totalRows, int walWriterCount, String commitMode, int rowsPerCommit) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
         setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
         assertMemoryLeak(() -> {
-            // Self-check, and it is load-bearing: setProperty is only honoured while the per-test
-            // configuration is still being built, so a method that calls this helper more than once gets
-            // the FIRST arm's mode for EVERY arm, silently. Measured that way, a "nosync vs adaptive"
-            // sweep reported eight arms all at ADAPTIVE (=3) and produced a plausible-looking durability
-            // comparison in which the mode never moved. Assert rather than log, so one mode per test
-            // method is enforced instead of remembered.
+            // setProperty takes effect only while the per-test configuration is being built, so a second
+            // call of this helper in one test method silently keeps the first call's mode. The assertion
+            // enforces one commit mode per test method.
             final int expectedMode = CommitMode.fromString(commitMode);
             Assert.assertEquals(
                     "requested commit mode '" + commitMode + "' did not reach the engine (got "
@@ -7111,8 +7072,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     expectedMode,
                     configuration.getCommitMode()
             );
-            // Dropped first so this helper can be invoked more than once within one test method
-            // (adaptiveBatchSizeSweep runs an arm per batch size). No-op for the single-arm callers.
+            // Dropped first because adaptiveBatchSizeSweep calls this helper once per batch size.
             execute("drop table if exists sm");
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("sm");

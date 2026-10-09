@@ -299,15 +299,12 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
     }
 
     /**
-     * Plan 4 — adaptive observability columns: TDD (RED -> GREEN).
-     * <p>
-     * Asserts that wal_tables() exposes the four new columns with correct values:
+     * wal_tables() exposes the adaptive observability columns with the tracker's values:
      * <ul>
-     *   <li>{@code commitMode} — reflects the engine's configured commit mode (default = "nosync").</li>
-     *   <li>{@code durableEpochSeqTxn} — read from the per-table {@link SeqTxnTracker}.</li>
-     *   <li>{@code recoveryIncarnation} — incremented by {@link io.questdb.cairo.RecoveryCoordinator}
-     *       on a successful epoch restore; bumping via {@link SeqTxnTracker#bumpRecoveryIncarnation()}
-     *       directly verifies the counter is surfaced correctly by wal_tables().</li>
+     *   <li>{@code durableEpochSeqTxn}, read from the per-table {@link SeqTxnTracker};</li>
+     *   <li>{@code recoveryIncarnation}, which {@link io.questdb.cairo.RecoveryCoordinator} increments
+     *       on a successful epoch restore; the test bumps it through
+     *       {@link SeqTxnTracker#bumpRecoveryIncarnation()} directly.</li>
      * </ul>
      */
     @Test
@@ -315,7 +312,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1); // disable auto-epoch so durableEpochSeqTxn stays 0 until driven explicitly below
         assertMemoryLeak(() -> {
-            // Default commit mode for AbstractCairoTest is now ADAPTIVE; this test pins it explicitly.
+            // The test pins ADAPTIVE rather than rely on the suite default.
             createTable("T1", true);
             drainWalQueue();
 
@@ -387,8 +384,8 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("x"));
             assertTrue("adaptive frontier should advance", tracker.getLocalDurableSeqTxn() > 0);
 
-            // Both new columns expose the tracker's values verbatim. lastEpochTs is a TIMESTAMP (micros),
-            // populated from the tracker's wall-clock-MILLIS value * 1000; cast back to long to assert exactly.
+            // Both columns expose the tracker's values verbatim. lastEpochTs is a TIMESTAMP (micros),
+            // populated from the tracker's wall-clock millis value * 1000; cast back to long to assert exactly.
             assertQuery("select localDurableSeqTxn, cast(lastEpochTs as long) as epochMicros " +
                     "from wal_tables() where name = 'x'")
                     .noLeakCheck()

@@ -55,10 +55,6 @@ import java.util.Map;
  * <p>The invariant "part-file durable before the header that points to it" prevents a crash window
  * where maxTxn=N is persisted in the header but the record for txn N in the part file has not yet
  * been written back by the OS, leaving a zeroed/partial record on reopen.
- *
- * <p>This test would FAIL against the old code because the old sync0() synced only txnMem and
- * never called txnPartMem.sync() at all, so txnPartMem would never appear first in the msync order.
- * Similarly fullSync() only synced txnMem, missing txnPartMem entirely.
  */
 public class TableTransactionLogV2SyncOrderTest extends AbstractCairoTest {
 
@@ -79,8 +75,6 @@ public class TableTransactionLogV2SyncOrderTest extends AbstractCairoTest {
 
     /**
      * Verifies that for addEntry (sync0 path), the part file is msync'd before the header.
-     * RED against the old code (sync0 only synced txnMem, never txnPartMem).
-     * GREEN after the fix (sync0 syncs txnPartMem first, then txnMem).
      */
     @Test
     public void testAddEntrySyncsPartFileBeforeHeader() throws Exception {
@@ -114,8 +108,6 @@ public class TableTransactionLogV2SyncOrderTest extends AbstractCairoTest {
 
     /**
      * Verifies that for fullSync (metadata-change path), the part file is msync'd before the header.
-     * RED against the old code (fullSync only synced txnMem, never txnPartMem).
-     * GREEN after the fix (fullSync syncs txnPartMem first, then txnMem).
      */
     @Test
     public void testFullSyncSyncsPartFileBeforeHeader() throws Exception {
@@ -198,13 +190,13 @@ public class TableTransactionLogV2SyncOrderTest extends AbstractCairoTest {
 
     /**
      * A FilesFacade that records the order of msync calls, keyed by the file path that was
-     * mmap'd to produce the address being sync'd. This lets us verify part-file-before-header
-     * ordering without relying on fsync (which is conditional on file size growth).
+     * mmap'd to produce the address being sync'd. This verifies part-file-before-header ordering
+     * without relying on fsync, which is conditional on file size growth.
      */
     static class SyncOrderFilesFacade extends FilesFacadeImpl {
-        // addr → path (resolved at mmap time via fd → path).
+        // addr -> path (resolved at mmap time via fd -> path).
         private final Map<Long, String> addrToPath = new HashMap<>();
-        // fd → path (populated at open time).
+        // fd -> path (populated at open time).
         private final Map<Long, String> fdToPath = new HashMap<>();
         // ordered list of file paths as they were msync'd.
         private final List<String> syncOrder = new ArrayList<>();
@@ -223,9 +215,9 @@ public class TableTransactionLogV2SyncOrderTest extends AbstractCairoTest {
         }
 
         /**
-         * Clear only the sync-order log; keep fd→addr mappings intact so that subsequent msync
+         * Clear only the sync-order log; keep fd->addr mappings intact so that subsequent msync
          * calls (e.g. after addEntry) can still resolve addresses to file paths. Use this when the
-         * files are already open and you only want to discard syncs that happened during create/open.
+         * files are already open and only the syncs that happened during create/open should go.
          */
         public void resetSyncOrder() {
             syncOrder.clear();

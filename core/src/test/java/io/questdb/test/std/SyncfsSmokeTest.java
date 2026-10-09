@@ -37,8 +37,7 @@ import java.io.File;
 /**
  * Smoke test verifying that the syncfs JNI binding resolves at runtime (no UnsatisfiedLinkError) and that
  * FilesFacadeImpl.syncfs behaves like fsync (returns/does-not-throw on a valid fd). syncfs(2) makes the whole
- * filesystem containing the fd durable in one device flush — the primitive the batched SYNC commit uses to
- * journal all column extent conversions at once (replacing the broken foreign-_cv-flush reliance).
+ * filesystem containing the fd durable in one device flush.
  */
 public class SyncfsSmokeTest extends AbstractTest {
 

@@ -1085,7 +1085,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     // Another session can create a table as WAL while the parser is inside a line that creates it as non-WAL (WAL
-    // default off). ADAPTIVE refuses the table then too, with its later lines; other modes write it as on base.
+    // default off). ADAPTIVE refuses the table then too, with its later lines; other modes write all its lines.
     @Test
     public void testWalTableCreatedMidLineRefusedInAdaptiveOnly() throws Exception {
         assertMemoryLeak(() -> {

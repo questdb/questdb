@@ -846,8 +846,7 @@ public class BlockFileTest extends AbstractCairoTest {
     /**
      * A FilesFacade that counts every {@code msync}/{@code fdatasync} call, used to prove that
      * {@link BlockFileWriter#setCommitMode(int)} governs {@code commit()}'s observable sync
-     * behavior (rather than per-file path resolution — the writer under test only ever touches
-     * a single block file, so a total count is sufficient).
+     * behavior. The writer under test touches a single block file, so a total count is sufficient.
      */
     private static class SyncCountingFilesFacade extends TestFilesFacadeImpl {
         private int syncCount;

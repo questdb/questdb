@@ -69,16 +69,13 @@ import java.util.function.LongUnaryOperator;
 import static io.questdb.cairo.TableUtils.*;
 
 /**
- * A power loss can make the first page of {@code _txn} durable after commit N -- the version word, the A/B
- * geometry and the head of N's area -- while a later page keeps what it held before N. When N's area sits
- * where commit N-2's did, that page holds N-2's tail: the live area fails its body checksum, and the other
- * area still holds commit N-1 intact.
- * <p>
- * Each test builds that image from page-cache snapshots of {@code _txn}, restarts on it and checks that the
- * table continues from commit N-1. WAL apply replays commit N, a non-WAL table loses it, and a table whose
- * other files already moved past commit N-1 refuses to open without changing a byte of {@code _txn}.
- * Tables enrolled in adaptive commit mode never reach that code: startup recovery restores their
- * {@code _txn} from the durable epoch, and the adaptive runs check that the end state is the same.
+ * A power loss can make the first page of {@code _txn} durable after commit N (the version word, the A/B geometry
+ * and the head of N's area) while a later page still holds the tail of commit N-2, whose area N reuses. The live
+ * area then fails its body checksum, and the other area still holds commit N-1 intact. Each test builds that
+ * image from page-cache snapshots of {@code _txn}, restarts on it and checks that the table continues from commit
+ * N-1: WAL apply replays commit N, a non-WAL table loses it, and a table whose other files already moved past
+ * N-1 refuses to open without changing {@code _txn}. Adaptive tables restore {@code _txn} from the durable epoch
+ * at startup instead, and the adaptive runs check the same end state.
  */
 @RunWith(Parameterized.class)
 public class TxnTornLiveAreaRollbackTest extends AbstractCairoTest {
@@ -169,7 +166,7 @@ public class TxnTornLiveAreaRollbackTest extends AbstractCairoTest {
     @Test
     public void testWalAppendWithAreaAfterPrevious() throws Exception {
         // 100 partitions: the area at offset 64 fits the first page, and the one after it straddles the page
-        // boundary. The previous record loads, but a writer used to refuse to continue from it.
+        // boundary. The previous record loads, and the writer must continue from it.
         final long lastDay = T0 + 99 * DAY;
         assertWalReplaysTornCommit(DAY, 100, 6, k -> lastDay + k * HOUR, false, true);
     }
@@ -185,8 +182,8 @@ public class TxnTornLiveAreaRollbackTest extends AbstractCairoTest {
     @Test
     public void testWalNewPartitionEachCommit() throws Exception {
         // A new partition per commit grows the record, so the areas move: commit N's area may start past the
-        // first page, or overlap where an older record was. Base read such images as partitions that did not
-        // exist and wiped the table.
+        // first page, or overlap where an older record was. Reading such an image as is would treat existing
+        // partitions as missing and wipe the table.
         final long lastDay = T0 + 199 * DAY;
         assertWalReplaysTornCommit(DAY, 200, 4, k -> lastDay + k * DAY, false, false);
     }
@@ -194,7 +191,7 @@ public class TxnTornLiveAreaRollbackTest extends AbstractCairoTest {
     @Test
     public void testWalOutOfOrderAppendIntoOlderPartition() throws Exception {
         // Each commit appends in place to an older partition whose entry lies in the second page. Reading the
-        // torn bytes as they are used to lose committed rows for good.
+        // torn bytes as they are would lose committed rows for good.
         assertWalReplaysTornCommit(DAY, 200, 4, k -> T0 + (150 + k) * DAY + HOUR, false, true);
     }
 
@@ -208,9 +205,9 @@ public class TxnTornLiveAreaRollbackTest extends AbstractCairoTest {
 
     @Test
     public void testWalReplicaTableReplaysTornCommit() throws Exception {
-        // A replica enrols the table without an anchor and applies at NOSYNC grade. Startup used to adopt the torn
-        // _txn as the table's baseline, and the writer then refused to roll back an enrolled table: reads failed
-        // and WAL apply suspended for good, across restarts.
+        // A replica enrols the table without an anchor and applies at NOSYNC grade. Startup must not adopt the
+        // torn _txn as the table's baseline, and the writer must roll the enrolled table back; otherwise reads
+        // fail and WAL apply stays suspended across restarts.
         Assume.assumeTrue("only an adaptive table is enrolled without an anchor", "adaptive".equals(commitMode));
         assertMemoryLeak(() -> {
             configureCommitMode();
@@ -326,7 +323,7 @@ public class TxnTornLiveAreaRollbackTest extends AbstractCairoTest {
             engine.clear();
             installTornImage(txnPath, snapshots);
 
-            // Erase the previous record's checksum stamp: it now loads unverified, like a record an older
+            // Erase the previous record's checksum stamp: the record then loads unverified, like a record an older
             // binary wrote, and nothing vouches for it.
             final byte[] image = readFile(txnPath);
             final ByteBuffer bb = ByteBuffer.wrap(image).order(ByteOrder.LITTLE_ENDIAN);

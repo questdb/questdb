@@ -32,11 +32,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Equivalence proof for Task 2: {@code ColumnVersionReader}'s presence/verify logic is refactored to
- * delegate to {@link io.questdb.cairo.ChecksumTrailer#classify}, and this test must observe IDENTICAL
- * verdicts before and after that refactor -- a healthy {@code _cv} still loads clean, and a torn one is
- * still rejected. See {@code .superpowers/sdd/task-2-report.md} for the before/after equivalence
- * evidence (this test run pre- and post-refactor).
+ * {@code ColumnVersionReader} verifies the {@code _cv} body checksum through
+ * {@link io.questdb.cairo.ChecksumTrailer#classify}: a healthy {@code _cv} loads without a checksum fallback,
+ * and a {@code _cv} whose live area has a flipped byte is rejected.
  */
 public class ChecksumTrailerCvEquivalenceTest extends AbstractCairoTest {
 
@@ -54,15 +52,15 @@ public class ChecksumTrailerCvEquivalenceTest extends AbstractCairoTest {
 
     @Test
     public void testCorruptedCvAreaIsDetected() throws Exception {
-        // Negative control for the fix: flip a byte inside the live _cv area and require the reader
-        // to refuse it rather than serve column versions derived from rotted bytes.
+        // Flip a byte inside the live _cv area: the reader must refuse it rather than serve column versions
+        // derived from rotted bytes.
         assertMemoryLeak(() -> {
             execute("create table cv_rot (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into cv_rot values ('2024-01-01T00:00:00.000000Z', 1)");
             drainWalQueue();
-            // A single fresh column has no column-top / rename history, so its _cv area is empty (size
-            // 0) -- nothing to flip. ADD COLUMN then inserting into the SAME already-populated partition
-            // forces a real column-top entry into _cv, giving the live area actual bytes to corrupt.
+            // A single fresh column has no column-top or rename history, so its _cv area is empty, with
+            // nothing to flip. ADD COLUMN, then an insert into the same populated partition, writes a
+            // column-top entry into _cv, which gives the live area bytes to corrupt.
             execute("alter table cv_rot add column v2 long");
             execute("insert into cv_rot values ('2024-01-01T01:00:00.000000Z', 2, 20)");
             drainWalQueue();

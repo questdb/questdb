@@ -40,23 +40,21 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Publishing a file by renaming it into place is durable only once the rename ITSELF is durable. On POSIX
- * the publisher takes that barrier by fsyncing the parent directory afterwards; on Windows
- * {@code FlushFileBuffers} accepts file handles only, so {@code TableUtils.fsyncDirDurable} skips the
- * barrier there and the rename had none at all -- a power loss could keep the fsynced file contents and the
- * durable pointer naming them while losing the name itself, inverting data-before-pointer.
+ * Publishing a file by renaming it into place is durable only once the rename itself is durable. On POSIX
+ * the publisher fsyncs the parent directory afterwards. On Windows {@code FlushFileBuffers} accepts file
+ * handles only, so {@code TableUtils.fsyncDirDurable} skips that barrier, and a power loss could keep the
+ * fsynced file contents and the durable pointer naming them while losing the name itself.
  *
- * <p>{@code FilesFacade.renameDurable} closes that: on Windows the move is asked to write through, off
- * Windows it is exactly {@code rename}. These tests assert the two halves that can regress silently --
- * that the primitive keeps {@code rename}'s observable semantics, and that the publish SITES actually ask
- * for it (a durable primitive nobody calls is the same as no primitive at all).
+ * <p>{@code FilesFacade.renameDurable} covers that: on Windows it asks the move to write through, elsewhere
+ * it is {@code rename}. These tests check that the primitive keeps {@code rename}'s observable semantics and
+ * that the publish sites call it.
  */
 public class DurableRenamePublishTest extends AbstractCairoTest {
 
     /**
      * The durable variant must be a drop-in for {@code rename}: same success, same bytes, same
-     * destination-exists behaviour (POSIX replaces, Windows fails -- and TableWriter depends on the
-     * Windows half, so adding MOVEFILE_REPLACE_EXISTING would be a silent behaviour change).
+     * destination-exists behaviour (POSIX replaces, Windows fails; TableWriter depends on the Windows half,
+     * so adding MOVEFILE_REPLACE_EXISTING would change behaviour).
      */
     @Test
     public void testDurableRenameMatchesPlainRenameSemantics() throws Exception {
@@ -90,11 +88,11 @@ public class DurableRenamePublishTest extends AbstractCairoTest {
     }
 
     /**
-     * {@code FilesFacadeImpl.barrierFsync} and {@code fsyncDurable} must route through the OVERRIDABLE
-     * {@code fdatasync}/{@code fsync} on EVERY platform -- on Darwin via the per-thread upgrade flag,
-     * since the durable variants are different fcntls there. A facade that intercepts the weak method
-     * without doing IO must fully absorb the durable call, or the crash harness's per-syscall model goes
-     * quiet on exactly the platform where the barrier syscall differs.
+     * {@code FilesFacadeImpl.barrierFsync} and {@code fsyncDurable} route through the overridable
+     * {@code fdatasync}/{@code fsync} on every platform; on Darwin via the per-thread upgrade flag, since the
+     * durable variants are different fcntls there. A facade that intercepts the weak method without doing IO
+     * must fully absorb the durable call, or the crash harness's per-syscall model misses the barrier on the
+     * platform where its syscall differs.
      */
     @Test
     public void testFaultInjectingFacadesStillInterceptTheDurableFsyncs() {
@@ -124,11 +122,10 @@ public class DurableRenamePublishTest extends AbstractCairoTest {
     }
 
     /**
-     * The interface default and {@code FilesFacadeImpl} both route through the OVERRIDABLE
-     * {@code rename} on EVERY platform -- on Windows via the per-thread upgrade flag, since the durable
-     * move is a different syscall there -- so every fault-injecting facade that intercepts renames keeps
-     * intercepting these. Without that the harness goes quiet instead of red -- the failure mode
-     * {@code FilesFacadeImpl}'s {@code barrierFsync}/{@code fsyncDurable} comments already call out.
+     * The interface default and {@code FilesFacadeImpl} both route through the overridable {@code rename}
+     * on every platform (on Windows via the per-thread upgrade flag, since the durable move is a different
+     * syscall there), so every fault-injecting facade that intercepts renames keeps intercepting these.
+     * Otherwise such a harness would silently miss the durable renames.
      */
     @Test
     public void testFaultInjectingFacadesStillInterceptTheDurableRename() {
@@ -147,16 +144,16 @@ public class DurableRenamePublishTest extends AbstractCairoTest {
             dst.of(root).concat("b");
             Assert.assertEquals(Files.FILES_RENAME_OK, ff.renameDurable(src.$(), dst.$()));
         }
-        // One rename call on every platform: the facade absorbed the rename without IO, so the real
-        // syscall -- write-through move on Windows, rename(2) elsewhere -- must never have run (the
-        // paths do not exist; the real syscall would have returned an error, failing the assert above).
+        // One rename call on every platform: the facade absorbed the rename without IO, so the real syscall
+        // (write-through move on Windows, rename(2) elsewhere) did not run. The paths do not exist, so the
+        // real syscall would have returned an error and failed the assert above.
         Assert.assertEquals(1, ff.renameCalls);
     }
 
     /**
      * The metadata swap ({@code _meta -> _meta.prev}, {@code _meta.swp -> _meta}) is a publish, and its
-     * companion table-dir fsync is the barrier Windows does not get. So under a durability-promising commit
-     * mode both renames must be the durable variant.
+     * companion table-dir fsync is the barrier Windows does not get. Under a commit mode that promises
+     * durability both renames must be the durable variant.
      */
     @Test
     public void testMetadataSwapPublishesWithADurableRename() throws Exception {
@@ -177,8 +174,8 @@ public class DurableRenamePublishTest extends AbstractCairoTest {
     }
 
     /**
-     * ... and NOSYNC must keep costing nothing: it takes no directory fsync either, so asking the move to
-     * write through would be a barrier the mode explicitly disclaims.
+     * NOSYNC takes no directory fsync, so it must not ask the move to write through either: that would be
+     * a barrier the mode disclaims.
      */
     @Test
     public void testNosyncMetadataSwapTakesNoRenameBarrier() throws Exception {
@@ -212,11 +209,11 @@ public class DurableRenamePublishTest extends AbstractCairoTest {
     }
 
     /**
-     * Records which rename variant each path went through. Observes only -- both calls delegate, so the
-     * system under test behaves exactly as in production.
+     * Records which rename variant each path went through. Observes only: both calls delegate, so the
+     * system under test behaves as in production.
      * <p>
-     * Note it extends {@link FilesFacadeImpl} through {@link TestFilesFacadeImpl} and overrides BOTH
-     * variants: on POSIX {@code renameDurable} delegates to {@code rename}, so recording only in
+     * It extends {@link FilesFacadeImpl} through {@link TestFilesFacadeImpl} and overrides both variants:
+     * on POSIX {@code renameDurable} delegates to {@code rename}, so recording only in
      * {@code rename} could not tell the two apart.
      */
     private static final class RenameRecordingFacade extends TestFilesFacadeImpl {
@@ -256,8 +253,8 @@ public class DurableRenamePublishTest extends AbstractCairoTest {
             if (Os.isWindows()) {
                 return Files.renameDurable(from, to);
             }
-            // Off Windows the durable rename IS rename(2); call super.rename, NOT super.renameDurable,
-            // which would re-enter this class's rename override and double-count the same call as plain.
+            // Off Windows the durable rename is rename(2). Call super.rename, not super.renameDurable, which
+            // would re-enter this class's rename override and count the same call again as plain.
             return super.rename(from, to);
         }
 
@@ -272,8 +269,8 @@ public class DurableRenamePublishTest extends AbstractCairoTest {
         }
 
         private static String pathToString(LPSZ name) {
-            // NOT name.toString(): an LPSZ renders as its identity hash, so every contains() lookup would
-            // silently return 0 and the assertions would go quiet instead of red.
+            // Not name.toString(): an LPSZ renders as its identity hash, so every contains() lookup would
+            // return 0.
             final int n = name.size();
             final StringBuilder sb = new StringBuilder(n);
             for (int i = 0; i < n; i++) {

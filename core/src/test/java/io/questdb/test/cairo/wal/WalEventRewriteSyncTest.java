@@ -53,19 +53,16 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The durability barriers a commit pays on its WAL event files when a concurrent ALTER TABLE ADD COLUMN is
- * replayed into it (the NO_TXN path), and on every commit after that.
+ * The barriers a commit pays on its WAL event files when a concurrent ALTER TABLE ADD COLUMN is replayed into it
+ * (the NO_TXN path), and on every commit after that.
  * <ul>
- *   <li>ADD COLUMN SYMBOL rewrites the pending record in place. In SYNC and ADAPTIVE both {@code _event} and
- *   {@code _event.i} must get a device barrier holding the rewritten record before the txn is sequenced:
- *   once a sequencer record names the txn, no mix of original and rewritten files may be left for a power
- *   loss to expose. NOSYNC and ASYNC promise nothing across a power loss and pay no barrier. As in base,
- *   ASYNC msyncs both files once more with MS_ASYNC after the rewrite, and NOSYNC makes no call.</li>
- *   <li>A roll that moves the pending rows into a new segment re-creates the record there. Under ADAPTIVE it
- *   needs the same pre-sequencing barrier that the commit's own sync gave the old segment.</li>
- *   <li>Nothing else changes: the NO_TXN path pays exactly one extra MS_ASYNC per event file for a rewrite
- *   outside NOSYNC, plus one barrier per event file in SYNC and ADAPTIVE, and nothing for a column that is
- *   not rewritten, and the commits after the race pay exactly the per-commit grade of their mode.</li>
+ *   <li>ADD COLUMN SYMBOL rewrites the pending record in place. SYNC and ADAPTIVE give {@code _event} and
+ *   {@code _event.i} a device barrier before the txn is sequenced, so a power loss never exposes a mix of
+ *   original and rewritten files. ASYNC msyncs both files once more with MS_ASYNC; NOSYNC makes no call.</li>
+ *   <li>A roll that moves the pending rows into a new segment re-creates the record there, and ADAPTIVE gives
+ *   it the same pre-sequencing barrier.</li>
+ *   <li>Nothing else is paid: a column that is not rewritten costs nothing, and the commits after the race pay
+ *   exactly the per-commit grade of their mode.</li>
  * </ul>
  */
 @RunWith(Parameterized.class)

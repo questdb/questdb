@@ -316,7 +316,7 @@ public class MemoryCMARWImplTest {
 
     /**
      * Once this instance has reserved the file from offset 0, each extend reserves only the new tail.
-     * Reserving [0, size) every time made posix_fallocate() walk all the file's extents on each call.
+     * Reserving [0, size) on every call would make posix_fallocate() walk all the file's extents.
      */
     @Test
     public void testExtendReservesOnlyNewTail() throws Exception {

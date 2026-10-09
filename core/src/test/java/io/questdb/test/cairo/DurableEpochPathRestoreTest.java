@@ -35,22 +35,12 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * A helper handed someone else's {@link Path} must give it back at the length it received it.
- * <p>
- * This is not style. {@code DurableEpochManifest.write} left the caller's path at
- * {@code <table>/_epoch.manifest.<generation>}, and on Linux nobody noticed because the very next call --
- * {@code TableWriter.fsyncEpochDirectory} -- did a {@code trimTo} on the way past. That {@code trimTo}
- * lived INSIDE an {@code if (!Os.isWindows())} guard, so on Windows the whole cleanup vanished along with
- * the directory fsync it was bracketed with. The stale suffix then survived into the next consumer of the
- * path, which concatenated onto it and tried to open
- * {@code <table>/_epoch.manifest.1/_meta.swp}. Every structural DDL on an adaptive table failed at that
- * open -- 60 times in one CI leg -- and, because the swap died before reaching its own fsync, it also hid
- * the separate read-only-handle barrier bug underneath it (see {@code WriteAccessBarrierSweepTest}).
- * <p>
- * The lesson generalises past this one method: <b>a platform guard must not wrap a side effect that is not
- * platform-specific</b>. Restoring a path is not a Windows concern. Neither test can be written on the
- * platform that breaks, so the contract is asserted directly instead -- and it is observable on Linux,
- * because the path is left dirty on EVERY platform. Only the accidental cleanup was Linux-only.
+ * {@code DurableEpochManifest.write} and {@code DurableEpochManifest.fsyncDirectory} must give back the table
+ * {@link Path} they receive at its original length. A leftover suffix such as {@code _epoch.manifest.<generation>}
+ * makes the next consumer concatenate onto it, and every structural DDL on an adaptive table then fails to open its
+ * swap file. On Windows the directory fsync is skipped but the path must still be restored, so the tests assert the
+ * contract directly on every platform. The class also covers the rejection branches of
+ * {@code DurableEpochManifest.validate()}.
  */
 public class DurableEpochPathRestoreTest extends AbstractCairoTest {
 
@@ -96,18 +86,10 @@ public class DurableEpochPathRestoreTest extends AbstractCairoTest {
     }
 
     /**
-     * The manifest's REJECTION contract: three cases, each asserting {@code validate()} returns false.
-     * <p>
-     * The coverage pass on PR #7411 found {@code DurableEpochManifest.validate()} is entered by the
-     * existing suites and ALWAYS SUCCEEDS -- its happy path is covered and every rejection branch had
-     * zero coverage: the {@code _txn} section checksum, the {@code _cv} section checksum, and the
-     * {@code metadataVersion} agreement. Those are three of the four conditions the PR
-     * describes as proving an epoch self-consistent before recovery adopts it, so the guarantee rested
-     * on the passing case alone.
-     * <p>
-     * The torn-copy crash tests do not reach them. They corrupt the saved {@code _txn} and recovery
-     * rejects it earlier, inside {@code RecoveryCoordinator}'s own decode, so they exercise that layer
-     * instead. Calling {@code validate()} directly is what separates the two.
+     * {@code DurableEpochManifest.validate()} rejects a manifest whose {@code _txn}, {@code _meta} or
+     * {@code _cv} section checksum does not match, or whose metadataVersion disagrees with the caller's. The
+     * torn-copy crash tests do not reach these branches: recovery rejects a corrupt saved {@code _txn} earlier,
+     * in {@code RecoveryCoordinator}'s own decode, so these tests call {@code validate()} directly.
      */
     @Test
     public void testValidateRejectsATamperedTxnEpochPayload() throws Exception {
@@ -137,7 +119,7 @@ public class DurableEpochPathRestoreTest extends AbstractCairoTest {
                                 (int) h[0], h[1], h[2], h[3], h[4]));
                 p.trimTo(rootLen);
                 // Identical bytes on disk; only the caller's claimed metadataVersion differs. This is
-                // the _txn <-> _meta agreement, and nothing exercised its failure.
+                // the _txn <-> _meta agreement.
                 Assert.assertFalse("a metadataVersion disagreeing with the manifest must be rejected",
                         DurableEpochManifest.validate(configuration, token, p, rootLen,
                                 (int) h[0], h[1], h[2], h[3], h[4] + 1));
@@ -147,8 +129,8 @@ public class DurableEpochPathRestoreTest extends AbstractCairoTest {
 
     /**
      * Builds an enrolled table, proves its manifest validates, flips one byte inside the named file's
-     * section, and requires the manifest to reject it. The precondition matters: without
-     * it a build where validate() always returned false would pass every case here.
+     * section, and requires the manifest to reject it. The precondition keeps a validate() that always
+     * returns false from passing every case.
      */
     private void assertTamperedPayloadIsRejected(String table, String payloadName) throws Exception {
         final TableToken token = enrolledAdaptiveTable(table);

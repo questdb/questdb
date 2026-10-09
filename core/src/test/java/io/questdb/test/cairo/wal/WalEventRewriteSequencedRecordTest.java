@@ -41,8 +41,8 @@ import org.junit.Test;
  * Rewriting the last event record is only for the NO_TXN path of a commit, where that record is the
  * commit's own, not yet sequenced, DATA record and has to gain the new column's null flag. A local ADD
  * COLUMN has no such record: its pending rows get theirs, flag included, when they are committed. The last
- * record of the segment is then someone else's already sequenced txn, and rewriting it as DATA replaced
- * that txn's content under its seqTxn.
+ * record of the segment is then an already sequenced txn of another writer, and rewriting it as DATA would
+ * replace that txn's content under its seqTxn.
  */
 public class WalEventRewriteSequencedRecordTest extends AbstractCairoTest {
 

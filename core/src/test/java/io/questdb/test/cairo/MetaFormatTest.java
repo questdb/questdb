@@ -50,9 +50,8 @@ import java.util.Collection;
  * <p>
  * Every producer of the record writes the base layout: the latest minor format version, a minor-version checksum
  * that keeps the version-gated fields readable, and zeros from the end of the table format to the column types.
- * Earlier development builds stamped minor versions 3 to 6 and stored an enrolment record at byte 53 and a body
- * length and checksum at [64, 80); this build never reads those bytes and still reads every gated field of such
- * a file.
+ * Earlier development builds stamped minor versions 3 to 6 and wrote non-zero bytes into that padding, including
+ * [64, 80); this build never reads those bytes and still reads every gated field of such a file.
  */
 @RunWith(Parameterized.class)
 public class MetaFormatTest extends AbstractCairoTest {
@@ -145,7 +144,7 @@ public class MetaFormatTest extends AbstractCairoTest {
     private static void assertBaseLayout(String path) {
         final byte[] header = readHeader(path);
         final int minorVersionField = Unsafe.byteArrayGetInt(header, (int) TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
-        // The enrolment record is the newest field of this layout.
+        // The minor version is the latest one this build writes.
         Assert.assertEquals(path, TableUtils.META_FORMAT_MINOR_VERSION_LATEST, Numbers.decodeHighShort(minorVersionField));
         // The version stays trusted: a mismatch here would switch off every version-gated field.
         Assert.assertEquals(

@@ -56,22 +56,17 @@ import java.util.List;
 import java.util.stream.Stream;
 
 /**
- * An adaptive replica ({@link LocalDurabilityPolicy#REPLICA_SKIP}) advances no durable epoch and keeps no WAL
- * purge floor, and nothing downloads purged WAL again. So a replica must never keep an anchor that startup would
- * rewind a table to: the replay would need WAL the purge job deleted, and the table would come back suspended
- * and truncated to the anchor. Each test models one Enterprise lifecycle sequence with the OSS primitives
- * Enterprise calls:
+ * An adaptive replica ({@link LocalDurabilityPolicy#REPLICA_SKIP}) advances no durable epoch and keeps no WAL purge
+ * floor, so it must never keep an anchor that startup would rewind a table to: the replay would need WAL the purge
+ * job deleted. Each test models one Enterprise lifecycle sequence with the OSS primitives Enterprise calls:
  * <ul>
  *   <li>ReplicaRoleState ctor: {@code engine.setLocalDurabilityPolicy(REPLICA_SKIP)}</li>
- *   <li>ReplicaRoleState.openLoops (the demote clear): remove the anchor, for every table present at that
- *       moment</li>
- *   <li>WalEvents.registerTable: the same CREATE path, which keeps no anchor on a replica (modelled here by
- *       CREATE)</li>
+ *   <li>ReplicaRoleState.openLoops (the demote clear): remove the anchor of every table present at that moment</li>
+ *   <li>WalEvents.registerTable: CREATE, which keeps no anchor on a replica</li>
  *   <li>ReplicaRoleState.close / PrimaryRoleState ctor: {@code setLocalDurabilityPolicy(ALWAYS_ON)}</li>
  *   <li>boot: {@code RecoveryCoordinator.recover()} under ALWAYS_ON, before any role state exists</li>
  * </ul>
- * Every scenario purges applied WAL and then restarts. The table must come back with every applied row, and
- * must not be suspended.
+ * Every scenario purges applied WAL and restarts; the table must come back unsuspended, with every applied row.
  */
 public class ReplicaSkipAnchorTest extends AbstractCairoTest {
 
@@ -130,7 +125,7 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
 
     @Test
     public void testCreateUnderReplicaSkipCrashAfterPurge() throws Exception {
-        // The reviewer's probe: a table created (Enterprise: registered by the downloader) while the node is a
+        // A table created (Enterprise: registered by the downloader) while the node is a
         // replica, applied in several batches with idle eviction, WAL purged, then a crash.
         run(() -> {
             setAdaptive(true);

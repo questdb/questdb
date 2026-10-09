@@ -1628,11 +1628,10 @@ public final class TestUtils {
         path.of(engine.getConfiguration().getDbRoot()).concat(token);
         TableUtils.createTable(engine.getConfiguration(), memory, engine.getTelemetry(), path, structure, ColumnType.VERSION, tableId, token.getDirName());
         engine.registerTableToken(token);
-        // Publish the generation-zero epoch anchor, exactly as CairoEngine's create path does before it
-        // registers the sequencer. The anchor is otherwise written by TableWriter, so a table built here
-        // and never written to has none -- and RecoveryCoordinator refuses to fall back to live state for
-        // a markerless adaptive table, failing the whole engine on the next startup rather than just that
-        // table. Tests that create a table this way and then restart a server would blame the restart.
+        // Publish the generation-zero epoch anchor, as CairoEngine's create path does before it registers
+        // the sequencer. Otherwise only TableWriter writes the anchor, so a table built here and never written
+        // to has none, and RecoveryCoordinator refuses to fall back to live state for an adaptive table without
+        // a save point: the whole engine fails on the next startup, not just that table.
         if (structure.isWalEnabled() && !structure.isView()) {
             final CairoConfiguration configuration = engine.getConfiguration();
             if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {

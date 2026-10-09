@@ -69,15 +69,13 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     // Representative area for the helper unit tests: 3 entries * 32 bytes = 96 bytes.
     private static final long CV_AREA_SIZE = 3L * BLOCK_SIZE_BYTES;
 
-    // ---- _cv body-checksum unit tests (mirror the _txn helper tests) ----
-
     @Test
     public void testCvAreaChecksumChangesWhenAnyByteChanges() {
         long addr = Unsafe.malloc(CV_AREA_SIZE, MemoryTag.NATIVE_DEFAULT);
         try {
             fillPattern(addr, CV_AREA_SIZE, 0x1234);
             long base = TableUtils.calculateCvAreaChecksum(addr, CV_AREA_SIZE);
-            // Every byte of the whole area is covered (zero exclusions): flipping any one must change it.
+            // The checksum covers every byte of the area: flipping any one must change it.
             for (long off = 0; off < CV_AREA_SIZE; off++) {
                 byte orig = Unsafe.getByte(addr + off);
                 Unsafe.putByte(addr + off, (byte) (orig ^ 0x5a));
@@ -100,7 +98,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 Assert.assertEquals("checksum must be deterministic for seed " + seed, c1, c2);
                 Assert.assertNotEquals("checksum returned 0 for seed " + seed, 0L, c1);
             }
-            // The all-zero area (avalanche of 0) must still be remapped away from the 0 = "absent" sentinel.
+            // The checksum of an all-zero area must still differ from the 0 = "absent" sentinel.
             for (long off = 0; off < CV_AREA_SIZE; off++) {
                 Unsafe.putByte(addr + off, (byte) 0);
             }
@@ -112,11 +110,9 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCvChecksumAbsentOldFormat() throws Exception {
-        // TRUNCATED-EXACT-LENGTH variant of an old-format _cv: a 40-byte header and the file ending
-        // EXACTLY at offset+size (no trailer at all). readSafe() must succeed and must NOT SIGBUS or
-        // throw or fall back: the length check sees the file is too short for a 16-byte trailer and
-        // skips the verify. NOTE: this is NOT the most common real legacy shape (a real legacy _cv is
-        // page-rounded with non-zero trailing bytes) - see testCvChecksumAbsentRealLegacyShape for that.
+        // An old-format _cv truncated to end exactly at offset+size, with no trailer. The file is too
+        // short for a 16-byte trailer, so readSafe() skips the verify: no SIGBUS, no throw, no fallback.
+        // A typical legacy _cv is page-rounded instead; testCvChecksumAbsentRealLegacyShape covers that.
         assertMemoryLeak(() -> {
             final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (Path path = new Path()) {
@@ -134,14 +130,14 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     liveSize = peekLong(ff, cvPath, areaA ? OFFSET_SIZE_A_64 : OFFSET_SIZE_B_64);
                 }
 
-                // Truncate the file to exactly offset+size, removing the trailer entirely: byte-for-byte
-                // an old-format _cv with no trailing bytes after the last block.
+                // Truncate the file to exactly offset+size, removing the trailer: an old-format _cv with
+                // no bytes after the last block.
                 truncateFile(ff, cvPath, liveOffset + liveSize);
                 Assert.assertEquals(liveOffset + liveSize, ff.length(cvPath));
 
                 ColumnVersionReader.resetBodyChecksumFallbackCount();
                 try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
-                    // Must not SIGBUS / throw, and must read the data back correctly.
+                    // No SIGBUS, no throw, and the data reads back correctly.
                     r.readSafe(configuration.getMillisecondClock(), 1);
                     for (int i = 0; i < 5; i++) {
                         Assert.assertEquals(i * 10L, r.getColumnTopQuick(i, i));
@@ -154,25 +150,16 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCvChecksumAbsentRealLegacyShape() throws Exception {
-        // THE REGRESSION TEST. Reproduces the REAL on-disk shape of a healthy pre-checksum _cv and proves
-        // the new reader reads it cleanly (no throw, no fallback). This FAILS against the pre-fix
-        // (EOF-guard + zero-sentinel) implementation and PASSES after the magic-gate fix.
+        // Reproduces the on-disk shape of a healthy pre-checksum _cv and proves the reader reads it
+        // cleanly (no throw, no fallback). A legacy writer closes with close(false), so the file stays
+        // page-rounded, well past offset+size, and the bytes at offset+size are often non-zero data of an
+        // adjacent area. Neither the file length nor a zero check can tell such a file from one with a
+        // trailer; only the magic can.
         //
-        // Why the old absent-detection was broken: a legacy _cv is written by a ColumnVersionWriter whose
-        // close() is close(false) - NO truncation - so the file stays PAGE-ROUNDED (its on-disk length is
-        // ceilPageSize(...), well past offset+size), and the old no-gap allocator packed the next area
-        // right after the live one, so the bytes at offset+size are frequently NON-ZERO adjacent-area
-        // data. The old reader's "absent" test was: file too short for a trailing long (FALSE here - the
-        // file is page-rounded) OR the trailing long == 0 (FALSE here - the bytes are non-zero garbage).
-        // So the old reader treated garbage as a checksum, ran a verify over an UNCHECKSUMMED legacy area,
-        // mismatched, and threw "_cv checksum mismatch in both A and B areas" on a HEALTHY old table.
-        //
-        // We faithfully reconstruct that shape: commit several times (so areas are packed adjacently and
-        // there is real non-zero data on disk around the live area), confirm the file is page-rounded past
-        // offset+size+16, then OVERWRITE the 16-byte trailer slot at offset+size with NON-MAGIC garbage
-        // (0x0101...). That is exactly a pre-checksum file: page-rounded length + non-zero, non-magic bytes
-        // where the new format would put its trailer. The magic-gated reader must see "no MAGIC => absent"
-        // and skip the verify.
+        // The test commits several times so areas are packed with real data around the live area, checks
+        // that the file is page-rounded past offset+size+16, then fills the trailer slot at offset+size
+        // with non-magic, non-zero bytes. The reader must see no magic, treat the checksum as absent and
+        // skip the verify.
         assertMemoryLeak(() -> {
             final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (Path path = new Path()) {
@@ -181,8 +168,8 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 long liveSize;
                 long fileLen;
                 try (ColumnVersionWriter w = new ColumnVersionWriter(configuration, cvPath, true)) {
-                    // Several commits with varying shapes so areas get packed and the on-disk tail around
-                    // the live area holds real (non-zero) column-version bytes, not just zeros.
+                    // Several commits with varying shapes, so areas get packed and the bytes around the live
+                    // area hold real (non-zero) column-version data.
                     int gen = 0;
                     for (int round = 0; round < 8; round++) {
                         for (int n = 1; n <= 6; n++) {
@@ -205,12 +192,12 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     liveOffset = peekLong(ff, cvPath, areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
                     liveSize = peekLong(ff, cvPath, areaA ? OFFSET_SIZE_A_64 : OFFSET_SIZE_B_64);
                 }
-                // close() is close(false): the file was NOT truncated and is page-rounded.
+                // close() is close(false): the writer does not truncate, so the file stays page-rounded.
                 fileLen = ff.length(cvPath);
 
-                // Prove this really is the page-rounded legacy shape the regression needs: the file extends
-                // well past the live area's 16-byte trailer slot (so the EOF guard alone can NOT call it
-                // absent), and the length is page-aligned (exactly what close(false) leaves behind).
+                // Check the page-rounded legacy shape: the file extends past the live area's 16-byte trailer
+                // slot, so the length alone cannot call the trailer absent, and the length is page-aligned,
+                // which is what close(false) leaves behind.
                 Assert.assertTrue(
                         "file must be page-rounded past offset+size+16 (got len=" + fileLen
                                 + ", need > " + (liveOffset + liveSize + 16) + ")",
@@ -218,19 +205,17 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 );
                 Assert.assertEquals("legacy file length must be page-aligned", 0L, fileLen % ff.getPageSize());
 
-                // Simulate a pre-checksum file: stamp NON-MAGIC, NON-ZERO garbage across the 16-byte trailer
-                // slot at offset+size (and a bit beyond, to model real adjacent-area data). A pre-fix reader
-                // would treat the first 8 bytes as a checksum (non-zero => not the zero sentinel) and throw.
+                // Simulate a pre-checksum file: stamp non-magic, non-zero bytes across the 16-byte trailer
+                // slot at offset+size, and a bit beyond, to model data of an adjacent area.
                 pokeBytes(ff, cvPath, liveOffset + liveSize, 0x01, 64);
-                // Sanity: the bytes we just wrote are NOT the magic and NOT zero, i.e. exactly the trap the
-                // old absent-detection fell into.
+                // The stamped bytes are neither the magic nor zero.
                 long trailerWord = peekLong(ff, cvPath, liveOffset + liveSize);
                 Assert.assertNotEquals("trailer slot must not be the magic (it's legacy garbage)", TableUtils.CV_CHECKSUM_MAGIC, trailerWord);
                 Assert.assertNotEquals("trailer slot must be non-zero (defeats the zero sentinel)", 0L, trailerWord);
 
                 ColumnVersionReader.resetBodyChecksumFallbackCount();
                 try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
-                    // MUST read cleanly: no SIGBUS, no throw, no fallback. The data must round-trip.
+                    // Reads cleanly: no SIGBUS, no throw, no fallback, and the data round-trips.
                     r.readSafe(configuration.getMillisecondClock(), 1);
                     for (int n = 1; n <= 5; n++) {
                         Assert.assertEquals(n * 13L, r.getColumnTopQuick(n, n));
@@ -246,10 +231,9 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCvChecksumAbsentPageRoundedNoTrailer() throws Exception {
-        // A second legacy variant: a page-rounded file whose 16-byte trailer slot holds ZERO-then-garbage
-        // mix that does not form the magic. Even though the file is long enough for a trailer, the absence
-        // of the magic at offset+size means "no checksum here" and the reader must skip cleanly. This pins
-        // that the magic - not merely the file length - is what gates presence.
+        // A page-rounded legacy file whose 16-byte trailer slot does not hold the magic. The file is long
+        // enough for a trailer, but without the magic at offset+size the reader treats the checksum as
+        // absent and skips the verify: the magic, not the file length, gates presence.
         assertMemoryLeak(() -> {
             final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (Path path = new Path()) {
@@ -269,8 +253,8 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 long fileLen = ff.length(cvPath);
                 Assert.assertTrue("file must be page-rounded past the trailer slot", fileLen >= liveOffset + liveSize + 16);
 
-                // Overwrite the trailer's MAGIC slot with a value that is decidedly NOT the magic (here the
-                // bitwise-NOT of the magic), leaving the checksum slot whatever it was. No magic => absent.
+                // Overwrite the trailer's magic slot with the bitwise-NOT of the magic, leaving the checksum
+                // slot as it is. No magic means no checksum.
                 pokeLong(ff, cvPath, liveOffset + liveSize, ~TableUtils.CV_CHECKSUM_MAGIC);
                 Assert.assertNotEquals(TableUtils.CV_CHECKSUM_MAGIC, peekLong(ff, cvPath, liveOffset + liveSize));
 
@@ -288,9 +272,9 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCvReadSafeNamesTornLiveAreaOnlyForItsOwnVersion() throws Exception {
-        // The A/B fallback stays useful to a consumer of the PREVIOUS commit (a _txn that fell back alongside
-        // it names exactly that version). A consumer of the torn commit itself is told so by name, and at once:
-        // waiting cannot repair a torn area, and "timeout" would send an operator hunting for contention.
+        // The A/B fallback serves a consumer of the previous commit (a _txn that fell back alongside it names
+        // exactly that version). A consumer of the torn commit itself gets an error that names the torn area,
+        // at once: waiting cannot repair a torn area, and a timeout would suggest contention instead.
         assertMemoryLeak(() -> {
             final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (Path path = new Path()) {
@@ -364,9 +348,9 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCvChecksumDetectsCorruption() throws Exception {
-        // Single commit => only the live area is valid (the other area was never written / is empty).
-        // Corrupting a covered byte of the live area, leaving its checksum stale, must NOT silently return
-        // the wrong value: with no valid other area, readSafe() must throw.
+        // After a single commit only the live area is valid; the other area is empty. Corrupting a covered
+        // byte of the live area, leaving its checksum stale, must not return the wrong value: with no valid
+        // other area, readSafe() throws.
         assertMemoryLeak(() -> {
             final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (Path path = new Path()) {
@@ -382,7 +366,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     liveOffset = peekLong(ff, cvPath, areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
                 }
 
-                // Flip the first block's partition timestamp WITHOUT recomputing the trailing checksum.
+                // Flip the first block's partition timestamp without recomputing the trailing checksum.
                 long orig = peekLong(ff, cvPath, liveOffset);
                 pokeLong(ff, cvPath, liveOffset, orig ^ 0x5a5a_5a5aL);
 
@@ -402,13 +386,12 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCvChecksumFallbackAfterManyCommits() throws Exception {
-        // THE KEY PLACEMENT TEST. Many commits with VARYING entry counts (grow then shrink, repeatedly) so
-        // calculateWriteOffset both APPENDS new areas after the current one AND REUSES freed front space -
-        // exercising the +16 footprint reservation in BOTH branches. After all that, corrupt ONLY the
-        // current area; readSafe() must fall back to the OTHER (prior) area and return its exact, valid
-        // content. A wrong +16 reservation would have let some commit clobber the prior area's data OR its
-        // trailer, so either the fallback content would be wrong or its checksum would fail (=> both-areas
-        // throw). We assert the fallback content equals the prior area read straight off disk.
+        // Area placement under the +16 trailer reservation. Many commits with varying entry counts (grow,
+        // then shrink, repeatedly) make calculateWriteOffset both append new areas after the current one
+        // and reuse freed space at the front, so both branches reserve the trailer footprint. The test then
+        // corrupts only the current area; readSafe() must fall back to the prior area and return exactly
+        // its content as read straight off disk. A wrong reservation lets a commit clobber the prior area's
+        // data or trailer, so the fallback content is wrong or both areas fail the checksum.
         assertMemoryLeak(() -> {
             final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (Path path = new Path()) {
@@ -432,8 +415,8 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                             w.upsert(n, 0, gen++, n * 3L);
                             w.commit();
                         }
-                        // shrink (keep partition 1 so the area never becomes empty - we want pure size
-                        // oscillation between front-reuse and append, not the empty-area edge case)
+                        // shrink, keeping partition 1 so the area never becomes empty: the size oscillates
+                        // between front reuse and append without hitting the empty-area edge case
                         for (int n = peak; n >= 2; n--) {
                             w.removePartition(n);
                             w.commit();
@@ -454,8 +437,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     priorSize = peekLong(ff, cvPath, areaA ? OFFSET_SIZE_B_64 : OFFSET_SIZE_A_64);
                 }
 
-                // Invariant guaranteed by the +16 reservation: the two areas' full footprints
-                // [offset, offset+size+16) must be disjoint. If this fails, the placement math is wrong.
+                // The +16 reservation keeps the two areas' full footprints [offset, offset+size+16) disjoint.
                 assertNoAreaOverlap(currentOffset, currentSize, priorOffset, priorSize);
 
                 // Corrupt the current/live area's first block, leaving its trailing checksum stale.
@@ -466,8 +448,8 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
                     r.readSafe(configuration.getMillisecondClock(), 1);
                     Assert.assertEquals("must fall back to the prior area exactly once", 1L, ColumnVersionReader.getBodyChecksumFallbackCount());
-                    // The fallback exposed the prior area: its block count and exact content must equal the
-                    // prior area read straight off disk (proving it was neither clobbered nor mis-sized).
+                    // The fallback exposes the prior area: its block count and content equal the prior area
+                    // read straight off disk, so it is neither clobbered nor mis-sized.
                     Assert.assertEquals(
                             "fallback must expose the prior area's full block set",
                             (int) (priorSize / BLOCK_SIZE_BYTES) * ColumnVersionWriter.BLOCK_SIZE,
@@ -481,9 +463,9 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCvNoFalsePositiveUnderConcurrentCommits() throws Exception {
-        // Concurrent writer (thousands of commits) + a reader looping readSafe(). Because the whole _cv area
-        // is commit-immutable, the reader must NEVER see a stable-version checksum mismatch: the fallback
-        // counter must stay 0 across the entire run.
+        // A concurrent writer (thousands of commits) and a reader looping readSafe(). The whole _cv area is
+        // immutable once committed, so the reader never sees a checksum mismatch on a stable version: the
+        // fallback counter stays 0 for the whole run.
         assertMemoryLeak(() -> {
             final int N = 10_000;
             final FilesFacade ff = configuration.getFilesFacade();
@@ -520,8 +502,8 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                         barrier.await();
                         while (done.get() == 0) {
                             try {
-                                // A generous timeout: we are not testing liveness here, only that a healthy
-                                // concurrent commit never trips a body-checksum fallback.
+                                // A generous timeout: the test checks only that a healthy concurrent commit
+                                // never trips a body-checksum fallback, not liveness.
                                 r.readSafe(configuration.getMillisecondClock(), 5_000);
                             } catch (CairoException ex) {
                                 if (Chars.contains(ex.getFlyweightMessage(), "timeout")) {
@@ -551,8 +533,8 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCvRollbackVerifies() throws Exception {
-        // rollback() re-exposes the prior area (version - 1). Its trailing checksum must still verify - proof
-        // that the latest commit's placement did NOT clobber the prior area's data or checksum.
+        // rollback() re-exposes the prior area (version - 1). Its trailing checksum still verifies, so the
+        // latest commit's placement did not clobber the prior area's data or checksum.
         assertMemoryLeak(() -> {
             final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (Path path = new Path()) {
@@ -566,19 +548,18 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     StringSink before = new StringSink();
                     before.put(w.toString());
 
-                    // Second commit with a different shape (so the area placement actually moves).
+                    // Second commit with a different shape, so the area placement moves.
                     w.upsert(99, 0, 999, 9999);
                     w.upsert(100, 1, 1000, 10000);
                     w.commit();
 
-                    // Roll back to the prior committed area. readUnsafe() inside rollback() verifies-or-skips;
-                    // a clobbered prior checksum would log an error but to be strict we re-verify via a fresh
-                    // reader's readSafe() (which does the real checksum check) below.
+                    // Roll back to the prior committed area. readUnsafe() inside rollback() only logs a bad
+                    // checksum, so a fresh reader's readSafe() below does the strict check.
                     w.rollback();
                     Assert.assertEquals("rollback must restore the prior committed state", before.toString(), w.toString());
                 }
 
-                // Independently confirm the now-current (post-rollback) area passes the strict readSafe check.
+                // The current (post-rollback) area passes the strict readSafe() check.
                 ColumnVersionReader.resetBodyChecksumFallbackCount();
                 try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
                     r.readSafe(configuration.getMillisecondClock(), 1);
@@ -1230,8 +1211,8 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
         }
     }
 
-    // Asserts the two areas' FULL on-disk footprints [offset, offset+size+16) (data + 16-byte trailer:
-    // MAGIC + checksum) are disjoint - the invariant the +16 placement reservation must guarantee.
+    // Asserts the two areas' full on-disk footprints [offset, offset+size+16) (data plus the 16-byte trailer:
+    // magic and checksum) are disjoint, as the +16 placement reservation guarantees.
     private static void assertNoAreaOverlap(long offsetA, long sizeA, long offsetB, long sizeB) {
         long endA = offsetA + sizeA + TableUtils.CV_CHECKSUM_TRAILER_SIZE; // exclusive end incl. the trailer
         long endB = offsetB + sizeB + TableUtils.CV_CHECKSUM_TRAILER_SIZE;
@@ -1243,7 +1224,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     }
 
     // Reads `size` bytes of blocks from the on-disk area at `offset` and asserts they equal what the reader
-    // loaded into its cached list (same order). Proves the fallback exposed the prior area byte-for-byte.
+    // loaded into its cached list, in the same order.
     private static void assertReaderMatchesArea(FilesFacade ff, LPSZ path, long offset, long size, ColumnVersionReader r) {
         int blocks = (int) (size / BLOCK_SIZE_BYTES);
         LongList list = r.getCachedColumnVersionList();
@@ -1272,8 +1253,8 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
         }
     }
 
-    // Positional 8-byte write of the _cv file. Used to corrupt a committed area on disk WITHOUT recomputing
-    // its trailing checksum and WITHOUT truncating the file (a writable mmap would truncate). Mirrors TxnTest.
+    // Positional 8-byte write of the _cv file. Corrupts a committed area on disk without recomputing its
+    // trailing checksum and without truncating the file, which a writable mmap would do. Mirrors TxnTest.
     private static void pokeLong(FilesFacade ff, LPSZ path, long offset, long value) {
         long fd = ff.openRW(path, CairoConfiguration.O_NONE);
         Assert.assertTrue(fd > -1);
@@ -1289,8 +1270,8 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     }
 
     // Writes `count` identical bytes `b` starting at `offset` of the _cv file (no mmap, so it cannot
-    // truncate the file). Used to stamp NON-MAGIC, non-zero garbage into the trailer slot of a page-rounded
-    // file to forge a healthy pre-checksum (legacy) _cv shape.
+    // truncate the file). Stamps non-magic, non-zero bytes into the trailer slot of a page-rounded file to
+    // forge a healthy pre-checksum (legacy) _cv.
     private static void pokeBytes(FilesFacade ff, LPSZ path, long offset, int b, int count) {
         long fd = ff.openRW(path, CairoConfiguration.O_NONE);
         Assert.assertTrue(fd > -1);

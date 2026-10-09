@@ -42,9 +42,9 @@ import static io.questdb.cairo.ColumnVersionReader.OFFSET_VERSION_64;
 
 /**
  * Test-only corruption helpers for a table's {@code _cv} (column version) file. Used as the negative
- * control in {@link ChecksumTrailerCvEquivalenceTest}: flip a byte strictly inside the currently-LIVE
- * A/B area's data, never the 16-byte trailer that follows it and never the other (inactive) area --
- * mirrors the header layout documented on {@link ColumnVersionReader} (OFFSET_VERSION_64's parity picks
+ * control in {@link ChecksumTrailerCvEquivalenceTest}: flip a byte strictly inside the live A/B area's
+ * data, never the 16-byte trailer that follows it and never the other (inactive) area. The layout is the
+ * header documented on {@link ColumnVersionReader} (OFFSET_VERSION_64's parity picks
  * A vs B; OFFSET_OFFSET_{A,B}_64 / OFFSET_SIZE_{A,B}_64 give that area's on-disk [offset, offset+size)).
  * A flip in the trailer would only prove ABSENT handling; a flip in the inactive area proves nothing
  * (readers never look at it unless the live area's checksum has already failed).
@@ -73,7 +73,7 @@ public final class CvCorruptionUtils {
                     liveSize > 0
             );
 
-            // Flip the first byte of the live area's DATA. Strictly inside [liveOffset, liveOffset + liveSize):
+            // Flip the first byte of the live area's data. Strictly inside [liveOffset, liveOffset + liveSize):
             // never [liveOffset + liveSize, liveOffset + liveSize + 16) (the trailer) and never the other area.
             long flipAt = liveOffset;
             byte orig = RawFileAccess.peekByte(ff, cvPath, flipAt);
@@ -84,9 +84,9 @@ public final class CvCorruptionUtils {
     /**
      * Evicts every pooled reader/writer for {@code tableName} (a stale pooled {@code TableReader} caches
      * its {@code ColumnVersionReader}'s last-seen version and short-circuits re-verification when the
-     * on-disk version word is unchanged -- exactly the case here, since corrupting a data byte does not
-     * bump the version) and then opens a genuinely fresh {@code TableReader}, so the checksum verify in
-     * {@code ColumnVersionReader.readSafe()} actually runs against the bytes now on disk.
+     * on-disk version word is unchanged, as here, since corrupting a data byte does not bump the
+     * version) and then opens a fresh {@code TableReader}, so the checksum verify in
+     * {@code ColumnVersionReader.readSafe()} runs against the bytes on disk.
      */
     public static void forceReload(CairoEngine engine, String tableName) {
         TableToken token = engine.verifyTableName(tableName);

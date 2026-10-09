@@ -207,9 +207,9 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     /**
-     * Forwarded like every other syscall. Without this the default implementation runs against the WRAPPED
-     * facade's fd but bypasses this wrapper, so on Darwin -- where barrierFsync is a distinct syscall rather
-     * than a routed fdatasync -- the fault injection this class exists for never sees a WAL commit barrier.
+     * Forwarded like every other syscall. Without this the default implementation runs against the wrapped
+     * facade's fd but bypasses this wrapper, so on Darwin, where barrierFsync is a distinct syscall rather
+     * than a routed fdatasync, the fault injection never sees a WAL commit barrier.
      */
     @Override
     public void barrierFsync(long fd) {

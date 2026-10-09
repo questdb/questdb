@@ -63,43 +63,23 @@ import java.util.regex.Pattern;
 import static io.questdb.test.cairo.wal.GroupCommitTestUtils.commitRow;
 
 /**
- * TDD tests for Plan 2 — CommitMode.ADAPTIVE: durable WAL commit (Task A) + lazy table apply (Task B).
+ * WAL commit and table apply durability per commit mode.
  *
- * <p>Task A: under ADAPTIVE, every WAL commit issues {@code fdatasync} on the segment column
- * data file(s), the WAL-e events file ({@code _event}), AND the sequencer part file
- * ({@code _txn_parts/…}) and header ({@code _txnlog}), IN THAT ORDER
- * (data → events → sequencer), before the commit returns.
- *
- * <p>Task B: under ADAPTIVE, {@code ApplyWal2TableJob} (drainWalQueue) must NOT issue any
- * msync or fdatasync on the TABLE PARTITION column files during apply. The table is a
- * rebuildable cache of the durable WAL, so flushing it on apply wastes I/O.
- * Under SYNC mode, the column files ARE flushed — the test distinguishes both.
- *
- * <p>Under NOSYNC mode, zero fdatasync calls must be issued to any files.
- *
- * <p>(a) ordering test — RED before Task A, GREEN after.
- * <p>(b) NOSYNC zero-fdatasync test — regression guard.
- * <p>(c) round-trip data-integrity test — ingest → drainWalQueue → select returns data.
- * <p>(d) ADAPTIVE no-crash on dropped column (NullMemory guard, Task A review).
- * <p>(e) Task B — ADAPTIVE apply: ZERO msync/fdatasync on table partition column files.
- * <p>(f) Task B — SYNC apply: NON-ZERO msync/fdatasync on table partition column files.
- * <p>(g) Task B — correctness: adaptive lazy apply produces correct query results.
+ * <p>Under ADAPTIVE, every WAL commit issues {@code fdatasync} on the segment column data, then on the
+ * events file ({@code _event}), then on the sequencer part ({@code _txn_parts/...}) and header
+ * ({@code _txnlog}), before the commit returns. Apply ({@code ApplyWal2TableJob}) issues no {@code msync}
+ * or {@code fdatasync} on table partition column files: the table is a rebuildable cache of the durable WAL,
+ * and the durable epoch flushes it. Under SYNC, apply flushes the column files. Under NOSYNC, nothing
+ * issues {@code fdatasync}.
  */
 public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     private static final long WINDOW_US = 1_000_000L;
 
     /**
-     * (a) ADAPTIVE: a WAL commit must fdatasync segment column data BEFORE events BEFORE sequencer.
-     * Fails until WalWriter.syncIfRequired(), WalEventWriter.sync(), and
-     * TableTransactionLogV2.sync0() all call fdatasync after their msync under ADAPTIVE mode.
-     *
-     * <p>We do a "warmup" insert first (to pre-allocate all file pages so that no page-extension
-     * fdatasyncs occur during the measurement commit). Then we reset the fdatasync log and do
-     * the measurement insert, capturing only the per-commit durability fdatasyncs.
-     *
-     * <p>Runs at the default {@code W=50ms}, so the writeback DRAIN
-     * ({@code cairo.wal.commit.writeback.drain}) is active: this therefore also pins that the drain moves
-     * no barrier — the fdatasync order below must survive it.
+     * ADAPTIVE: a WAL commit fdatasyncs segment column data before the events file, and the events file
+     * before the sequencer. A warmup insert pre-allocates the file pages, so the checked commit logs only
+     * the per-commit durability fdatasyncs. The default window keeps the writeback drain
+     * ({@code cairo.wal.commit.writeback.drain}) active, so the test also shows the drain keeps this order.
      */
     @Test
     public void testAdaptiveFdatasyncOrderDataBeforeEventsBeforeSequencer() throws Exception {
@@ -116,8 +96,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
             trackFf.resetFdatasyncOrder(); // discard all fdatasyncs from warmup + page allocation
 
-            // Measurement insert: pages already allocated, so only the per-commit durability
-            // fdatasyncs (from our new ADAPTIVE code) appear in the log.
+            // Checked insert: the pages exist, so only the per-commit durability fdatasyncs appear in the log.
             execute("insert into x values ('2024-01-01T00:01:00.000000Z', 42)");
 
             // The commit should have issued fdatasync on column data, events, and sequencer.
@@ -173,13 +152,12 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
-     * (b) NOSYNC: zero fdatasync calls must be issued on WAL commit.
-     * Sets CAIRO_DEFAULT_SEQ_PART_TXN_COUNT > 0 so the V2 sequencer {@code sync0} NOSYNC branch
-     * is also exercised (regression guard for the V2 path, not just V1).
+     * NOSYNC: a WAL commit issues no fdatasync on the segment, events or sequencer files, including on the
+     * V2 sequencer path ({@code TableTransactionLogV2.sync0}).
      */
     @Test
     public void testNosyncIssuesZeroFdatasync() throws Exception {
-        // NOSYNC is the default — no need to set the property, but we set it explicitly for clarity.
+        // The test suite defaults to ADAPTIVE, so pin NOSYNC.
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // Use a small part size so the V2 sequencer code path (TableTransactionLogV2.sync0) is
         // exercised during this insert. Without this the sequencer defaults to V1.
@@ -210,8 +188,8 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
-     * (c) Round-trip: adaptive ingest → drainWalQueue → select returns the inserted data.
-     * Uses the default FilesFacade (not the tracking one) because we only need data correctness here.
+     * ADAPTIVE round trip: rows inserted and applied by {@code drainWalQueue} read back intact. The test runs
+     * on the default FilesFacade, since only data correctness matters here.
      */
     @Test
     public void testAdaptiveRoundTrip() throws Exception {
@@ -231,20 +209,11 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                             "2024-03-01T01:00:00.000000Z\t13\n");
         });
     }
-    // Note: testAdaptiveRoundTrip uses the plain assertMemoryLeak() (no custom ff) so that
-    // the BlockFileWriter and other engine components operate normally.
 
     /**
-     * (d) Regression guard: ADAPTIVE commit must NOT crash on a WAL table that has had a column
-     * dropped. Dropped-column slots are stored as {@code NullMemory.INSTANCE} (not {@code null}),
-     * and {@code NullMemory.getFd()} throws {@link UnsupportedOperationException}.
-     *
-     * <p>The fix in {@code WalWriter.syncIfRequired()} guards with
-     * {@code !(column instanceof NullMemory)} instead of {@code column.isOpen()}.
-     *
-     * <p>Before Fix 1 this test throws {@code UnsupportedOperationException} from
-     * {@code NullMemory.getFd()} during the post-drop insert commit.
-     * After Fix 1 it succeeds and the surviving data round-trips correctly.
+     * ADAPTIVE: a commit on a WAL table with a dropped column succeeds and the surviving data round-trips.
+     * The WAL writer stores a dropped column's slot as {@code NullMemory.INSTANCE}, whose {@code getFd()}
+     * throws {@link UnsupportedOperationException}, so {@code WalWriter.syncIfRequired()} must skip it.
      */
     @Test
     public void testAdaptiveDropColumnNoNullMemoryCrash() throws Exception {
@@ -258,7 +227,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             execute("insert into dc_test values ('2024-05-01T00:00:00.000000Z', 1, 2, 3)");
             drainWalQueue();
 
-            // Drop column 'b' — its slot becomes NullMemory.INSTANCE inside WalWriter.
+            // Drop column 'b': its slot becomes NullMemory.INSTANCE inside WalWriter.
             execute("alter table dc_test drop column b");
             drainWalQueue();
 
@@ -268,7 +237,6 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             engine.releaseInactiveTableSequencers();
 
             // Insert after drop: WalWriter.syncIfRequired() must not call NullMemory.getFd().
-            // Before Fix 1 this throws UnsupportedOperationException.
             execute("insert into dc_test (ts, a, c) values ('2024-05-01T01:00:00.000000Z', 10, 30)");
             drainWalQueue();
 
@@ -282,42 +250,34 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         });
     }
 
-    // ---------- Task B: lazy apply tests ----------
-
     /**
-     * (e) Task B — ADAPTIVE apply: ZERO msync/fdatasync on table partition column files.
+     * ADAPTIVE: an in-order apply issues no msync or fdatasync on table partition column files.
      *
-     * <p>The tracking facade records every {@code msync} and {@code fdatasync} call, mapping
-     * mmap addresses to file paths via open-time tracking. We reset the counters AFTER the
-     * WAL insert (so WAL-commit syncs from Task A are excluded) and BEFORE {@code drainWalQueue}.
-     * After apply, table partition column-file sync count must be zero.
-     *
-     * <p>RED before Task B (ADAPTIVE currently falls through to syncColumns0 = per-file msync).
-     * GREEN after making syncColumns skip SYNC/ASYNC paths for ADAPTIVE.
+     * <p>The tracking facade maps mmap addresses to file paths at open time and records every
+     * {@code msync} and {@code fdatasync}. The test resets the counters after the WAL insert, so the
+     * WAL-commit syncs are excluded, and counts only the syncs issued by {@code drainWalQueue}.
      */
     @Test
     public void testAdaptiveApplyIssuezZeroColumnSyncsOnApply() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        // Disable the durable epoch so this test isolates the LAZY APPLY's own sync behavior; the
-        // epoch (Plan 3B) deliberately forces a column flush from inside the apply worker, which is
-        // covered separately by testFsyncMaterializedStateForcesFlushAndWritesEpochCopies + the
-        // adaptive epoch crash test.
+        // Disable the durable epoch: it flushes the columns from inside the apply worker, and this test
+        // covers the apply's own sync behaviour only.
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
 
         final TableSyncTrackingFacade trackFf = new TableSyncTrackingFacade();
         assertMemoryLeak(trackFf, () -> {
             execute("create table tab_e (ts timestamp, v long) timestamp(ts) partition by day wal");
 
-            // Insert: triggers WAL commit with Task A fdatasyncs (segment/events/seq).
+            // Insert: the WAL commit fdatasyncs the segment, events and sequencer files.
             execute("insert into tab_e values ('2024-06-01T00:00:00.000000Z', 42)");
 
-            // Reset counters AFTER insert so WAL-commit syncs are excluded.
+            // Reset counters after the insert so WAL-commit syncs are excluded.
             // Only apply-side syncs (from drainWalQueue) are counted below.
             trackFf.resetTableColumnSyncs();
 
             // Apply: ApplyWal2TableJob materialises the WAL txn into the table partition.
-            // Under ADAPTIVE (Task B), syncColumns() must behave like NOSYNC here — no msync/fdatasync.
+            // Under ADAPTIVE, syncColumns() behaves like NOSYNC here: no msync or fdatasync.
             drainWalQueue();
 
             long tableColumnSyncs = trackFf.getTableColumnSyncCount();
@@ -337,24 +297,13 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
-     * (e2) Task C Part 1 — ADAPTIVE O3 apply: ZERO msync/fdatasync on table partition column files.
+     * ADAPTIVE: an out-of-order apply issues no msync or fdatasync on table partition column files.
      *
-     * <p>Test (e) exercises only the in-order LAG fast-path
-     * ({@code applyFromWalLagToLastPartition}), whose column sync is gated by
-     * {@code TableWriter.syncColumns()} (already lazy under ADAPTIVE since Plan 2B). But an
-     * OUT-OF-ORDER apply takes the O3 merge path ({@code processO3Block} -> {@code O3CopyJob}),
-     * whose OWN destination-column sync ({@code O3CopyJob.run()} -> {@code syncColumns}) was gated
-     * only on {@code commitMode != NOSYNC} and therefore STILL msync+fsync'd the columns under
-     * ADAPTIVE — defeating lazy apply for every O3 commit (the column was journaled durable on
-     * apply, so a crash could not lose post-epoch rows; the Plan-3B negative control could not
-     * reproduce row loss because of this leak).
-     *
-     * <p>This forces the O3 path: apply one in-order row, then insert an EARLIER timestamp into the
-     * SAME, already-materialized partition and apply again — that second apply must merge
-     * out-of-order, going through O3CopyJob. Under ADAPTIVE its destination-column sync must now be
-     * skipped (gated on {@code appliesColumnSync}).
-     *
-     * <p>RED before Task C Part 1 (O3CopyJob msync'd the columns); GREEN after gating it.
+     * <p>{@link #testAdaptiveApplyIssuezZeroColumnSyncsOnApply} covers only the in-order fast path
+     * ({@code applyFromWalLagToLastPartition}). An out-of-order apply merges through
+     * {@code processO3Block} -> {@code O3CopyJob}, which syncs the destination columns on its own, gated on
+     * {@code appliesColumnSync}. The test applies one row, then inserts an earlier timestamp into the same
+     * materialized partition, so the second apply must take the O3 merge path.
      */
     @Test
     public void testAdaptiveO3ApplyIssuesZeroColumnSyncsOnApply() throws Exception {
@@ -370,11 +319,11 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             execute("insert into tab_e2 values ('2024-06-01T05:00:00.000000Z', 1)");
             drainWalQueue();
 
-            // Reset AFTER the first apply: only the O3 merge apply below is measured.
+            // Reset after the first apply: only the O3 merge apply below is counted.
             trackFf.resetTableColumnSyncs();
 
-            // An EARLIER timestamp into the same partition => the next apply must merge
-            // out-of-order through processO3Block -> O3CopyJob (NOT the LAG fast-path).
+            // An earlier timestamp into the same partition: the next apply merges out-of-order
+            // through processO3Block -> O3CopyJob, not the in-order fast path.
             execute("insert into tab_e2 values ('2024-06-01T01:00:00.000000Z', 2)");
             drainWalQueue();
 
@@ -396,12 +345,9 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
-     * (f) Task B — SYNC apply: NON-ZERO msync/fdatasync on table partition column files.
-     *
-     * <p>Contrast test: proves the tracking facade correctly distinguishes table-partition
-     * column syncs from WAL syncs, and that SYNC mode DOES flush the columns on apply.
-     * If this test passes but (e) also passes, that means adaptive genuinely skips what
-     * SYNC does — i.e. the two tests form a paired RED/GREEN guard.
+     * SYNC: apply flushes table partition column files. Paired with
+     * {@link #testAdaptiveApplyIssuezZeroColumnSyncsOnApply}, it shows that the tracking facade tells
+     * table column syncs from WAL syncs, so the zero count under ADAPTIVE is not vacuous.
      */
     @Test
     public void testSyncApplyFlushesTableColumnFiles() throws Exception {
@@ -414,7 +360,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
 
             execute("insert into tab_f values ('2024-06-02T00:00:00.000000Z', 99)");
 
-            // Reset AFTER insert, BEFORE apply — same discipline as test (e).
+            // Reset after the insert and before apply, as in testAdaptiveApplyIssuezZeroColumnSyncsOnApply.
             trackFf.resetTableColumnSyncs();
 
             drainWalQueue();
@@ -434,10 +380,8 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
-     * (g) Task B — correctness: adaptive lazy apply produces correct data for multi-row txn.
-     *
-     * <p>Verifies that skipping the column flush on apply does not corrupt the materialized
-     * state — reads after drainWalQueue return all inserted rows in order.
+     * ADAPTIVE: apply without a column flush leaves correct materialized state; reads after
+     * {@code drainWalQueue} return every inserted row in order.
      */
     @Test
     public void testAdaptiveLazyApplyCorrectness() throws Exception {
@@ -462,25 +406,17 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
-     * (h) B1 — {@code fsyncMaterializedState()} forces the column flush + commit-pointer fsync
-     * INDEPENDENT of commit mode, even under ADAPTIVE (whose apply path skips column sync), AND
-     * persists the durable epoch copies {@code _txn.epoch} / {@code _cv.epoch}.
-     *
-     * <p>Under ADAPTIVE, test (e) proved the lazy apply issues ZERO column syncs. This test resets
-     * the sync counters AFTER drainWalQueue (so the lazy apply's zero is the baseline), then calls
-     * {@code writer.fsyncMaterializedState()} and asserts:
-     * <ol>
-     *   <li>table partition column files WERE synced (the durable cut forces the flush the SYNC path
-     *       proves, regardless of ADAPTIVE);</li>
-     *   <li>the two durable epoch copies exist on disk in the table dir.</li>
-     * </ol>
+     * ADAPTIVE: {@code fsyncMaterializedState()} flushes the table partition column files whatever the
+     * commit mode, although apply skips the column sync, and writes a save point
+     * ({@code _epoch.manifest.0/1}) holding copies of {@code _txn} and {@code _cv}. The test resets the
+     * sync counters after apply, so only the syncs of {@code fsyncMaterializedState()} are counted.
      */
     @Test
     public void testFsyncMaterializedStateForcesFlushAndWritesEpochCopies() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        // Disable the automatic epoch so the EXPLICIT fsyncMaterializedState() call below is the only
-        // durable cut under test here (B1 in isolation; the apply-worker hook is B2's concern).
+        // Disable the automatic epoch, so the explicit fsyncMaterializedState() call below is the only
+        // durable cut. testApplyWorkerFiresDurableEpoch covers the epoch fired by the apply worker.
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
 
         final TableSyncTrackingFacade trackFf = new TableSyncTrackingFacade();
@@ -488,12 +424,11 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             execute("create table tab_h (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into tab_h values ('2024-08-01T00:00:00.000000Z', 1)");
             execute("insert into tab_h values ('2024-08-01T01:00:00.000000Z', 2)");
-            drainWalQueue(); // lazy apply: zero column syncs (proven by test (e))
+            drainWalQueue(); // lazy apply: no column syncs
 
             io.questdb.cairo.TableToken tt = engine.verifyTableName("tab_h");
 
-            // Reset AFTER the lazy apply so the zero-sync apply is the baseline; only the
-            // fsyncMaterializedState() syncs below are counted.
+            // Reset after the lazy apply: only the fsyncMaterializedState() syncs below are counted.
             trackFf.resetTableColumnSyncs();
 
             try (io.questdb.cairo.TableWriter writer = getWriter(tt)) {
@@ -506,7 +441,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                     tableColumnSyncs > 0
             );
 
-            // The durable epoch copies must exist in the table dir.
+            // The save point must hold copies of _txn and _cv.
             assertEpochCopyExists(tt, io.questdb.cairo.TableUtils.TXN_FILE_NAME);
             assertEpochCopyExists(tt, io.questdb.cairo.TableUtils.COLUMN_VERSION_FILE_NAME);
 
@@ -521,11 +456,10 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
-     * (i) B2 — the apply worker fires a durable epoch automatically: after drainWalQueue under
-     * ADAPTIVE with epochs enabled (interval 0 => every batch), the {@code _snapshot} marker is
-     * written, {@code _txn.epoch}/{@code _cv.epoch} exist, the tracker publishes
-     * {@code durableEpochSeqTxn} = the applied seqTxn, and the epoch txn is PINNED in the scoreboard
-     * (so partition purge can't reclaim it).
+     * ADAPTIVE: the apply worker fires a durable epoch on its own. With an epoch interval of 0 (every
+     * batch), after {@code drainWalQueue} the save point holds copies of {@code _txn} and {@code _cv} at
+     * the applied seqTxn, the tracker publishes that seqTxn as {@code durableEpochSeqTxn}, and the
+     * scoreboard pins the epoch txn, so partition purge cannot reclaim it.
      */
     @Test
     public void testApplyWorkerFiresDurableEpoch() throws Exception {
@@ -605,37 +539,18 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         assertMemoryLeak(() -> Assert.assertFalse(engine.getConfiguration().isAdaptiveEpochColumnSyncBatched()));
     }
 
-    // ---------- Task 2: legacy sync() == master (revert S2 + gate append-only) ----------
-
     /**
-     * SYNC: a WAL commit must NOT issue fdatasync on extend (S2 reverted) — the memory primitive's
-     * {@code sync()} must take its non-appendOnly {@code else} branch (full-range {@code msync} only,
-     * byte-identical to master) for legacy (non-ADAPTIVE) commit modes.
-     *
-     * <p>We do a warmup insert first (to pre-allocate all file pages so page-extension fdatasyncs from
-     * that insert don't pollute the measurement), then reset the counters and do the measurement insert.
-     *
-     * <p>This test asserts only the {@code fdatasync} revert. The {@code syncfs}-on-apply revert (S1) is
-     * Task 3's concern (its own {@code testSyncModeNoSyncfs}); we deliberately do NOT assert
-     * {@code syncfsCount == 0} here because the SYNC apply still routes through the batched
-     * {@code syncfs} path until Task 3 removes it.
-     *
-     * <p>DEVIATION FROM BRIEF (documented in the Task 2 report): the brief's literal single-warmup-row
-     * + single-measurement-row bodies never actually cross a page boundary at the default 1MB/16MB
-     * column page sizes, so {@code fdatasyncCount == 0} trivially even WITHOUT the S2 revert (verified
-     * empirically: pre-fix run showed {@code fdatasync=0}) — a vacuous, non-discriminating RED. To make
-     * this a genuine regression guard we (1) shrink both the WAL-segment and table-partition column
-     * page size to one OS page (4096 bytes) so a handful of 16-byte rows crosses an extend boundary,
-     * and (2) make the measurement insert 1000 rows (one WAL commit, via {@code long_sequence}) so at
-     * least one real {@code extend()} happens on both the WAL segment and the applied partition column
-     * files. This reproduced genuine RED (fdatasyncCount > 0) before the fix, below.
+     * SYNC: a WAL commit and its apply issue no fdatasync when a mapped column file extends; for
+     * non-ADAPTIVE modes the memory primitive's {@code sync()} issues a full-range {@code msync} only. The
+     * WAL segment and table column page sizes shrink to one OS page, and the checked insert writes 1000 rows
+     * in one commit, so the commit extends the mapped files. {@link #testSyncModeNoSyncfs} covers
+     * {@code syncfs} on apply.
      */
     @Test
     public void testSyncModeNoFdatasyncOnExtend() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
-        // Shrink column page sizes to one OS page so the 1000-row measurement insert below genuinely
-        // extends the mapped file (see DEVIATION note above) instead of fitting entirely inside the
-        // default 1MB/16MB initial allocation.
+        // Shrink column page sizes to one OS page, so the 1000-row insert below extends the mapped files
+        // instead of fitting inside the default 1MB/16MB initial allocation.
         node1.setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, String.valueOf(Files.PAGE_SIZE));
         node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, String.valueOf(Files.PAGE_SIZE));
         final SyscallCountingFacade ff = new SyscallCountingFacade();
@@ -644,8 +559,8 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)"); // warmup: allocate first page
             drainWalQueue();
             ff.reset();
-            // 1000 rows (16 bytes/row) comfortably cross the 4096-byte page in one commit, forcing a
-            // real mmap extend on both the WAL segment and the applied table-partition column files.
+            // 1000 rows (16 bytes/row) cross the 4096-byte page in one commit, which extends the mapping
+            // of both the WAL segment and the applied table partition column files.
             execute("insert into x select timestamp_sequence('2024-01-01T00:01:00.000000Z', 1000000L), x from long_sequence(1000)");
             drainWalQueue();
             Assert.assertEquals("SYNC must issue 0 fdatasync (S2 reverted)", 0, ff.fdatasyncCount);
@@ -654,10 +569,9 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
-     * ADAPTIVE: after the legacy-path revert above, adaptive's WAL-commit durability must remain intact.
-     * Adaptive's fdatasync comes from the explicit {@code ff.fdatasync(column.getFd())} loop in
-     * {@code WalWriter.syncIfRequired()} (Task A) — independent of the memory primitive's own
-     * fdatasync-on-extend (just reverted for legacy modes) — so this must still pass unchanged.
+     * ADAPTIVE: a WAL commit fdatasyncs the column files. The fdatasync comes from the explicit
+     * {@code ff.fdatasync(column.getFd())} loop in {@code WalWriter.syncIfRequired()}, which does not
+     * depend on the memory primitive's {@code sync()}.
      */
     @Test
     public void testAdaptiveStillFsyncsAfterLegacyRevert() throws Exception {
@@ -676,10 +590,8 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
-     * ASYNC: a WAL commit must issue {@code msync(MS_ASYNC)} only — never a blocking
-     * {@code msync(MS_SYNC)}, never {@code fdatasync}, never {@code syncfs}. Spec Testing plan item 2
-     * (only the SYNC case was covered above, by {@code testSyncModeNoFdatasyncOnExtend} /
-     * {@code testSyncModeNoSyncfs}).
+     * ASYNC: a WAL commit and its apply issue {@code msync(MS_ASYNC)}, and no {@code fdatasync} or
+     * {@code syncfs}.
      */
     @Test
     public void testAsyncModeMsyncAsyncOnly() throws Exception {
@@ -699,8 +611,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
-     * NOSYNC: a WAL commit + apply must issue zero device flushes — no {@code fdatasync}, no
-     * {@code syncfs}. Spec Testing plan item 3.
+     * NOSYNC: a WAL commit and its apply issue no device flush: no {@code fdatasync} and no {@code syncfs}.
      */
     @Test
     public void testNosyncModeNoSyncs() throws Exception {
@@ -718,15 +629,9 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         });
     }
 
-    // ---------- Task 3: S1 — remove SYNC batched-syncfs routing (SYNC apply == master msync) ----------
-
     /**
-     * SYNC: apply must NOT issue syncfs (S1 reverted) — syncColumns() must route SYNC to the
-     * per-file syncColumns0(async) path (byte-identical to master), not syncColumnsBatchedSync().
-     *
-     * <p>RED before this task (SYNC still routes to the batched Linux syncfs path); GREEN after
-     * removing the {@code commitMode == CommitMode.SYNC && Os.isLinux() &&
-     * isAdaptiveEpochColumnSyncBatched()} branch in {@code syncColumns()}.
+     * ADAPTIVE: when the scoreboard slot for the next epoch pin is busy, {@code advanceDurableEpoch()}
+     * leaves the previous save point authoritative.
      */
     @Test
     public void testEpochMarkerDoesNotAdvanceWhenNextPinSlotIsBusy() throws Exception {
@@ -754,6 +659,10 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * SYNC: apply issues no {@code syncfs}. {@code syncColumns()} syncs each column file through
+     * {@code syncColumns0()}, not through the batched {@code syncColumnsBatchedSync()}.
+     */
     @Test
     public void testSyncModeNoSyncfs() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
@@ -770,16 +679,10 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
-     * Regression: the ADAPTIVE durable epoch ({@code fsyncMaterializedState()}) must STILL syncfs —
-     * only the per-commit SYNC apply path lost the batched routing above. The epoch's own call to
-     * {@code syncColumnsBatchedSync()} (gated on {@code Os.isLinux() &&
-     * isAdaptiveEpochColumnSyncBatched()}, independent of commit mode) is untouched by this task.
-     * The non-batched {@code else} branch of {@code fsyncMaterializedState()} also syncfs — via its
-     * own explicit {@code fsyncMaterializedStateSyncFs()} call (I1: the epoch flush must be
-     * filesystem-wide even off the batched path) — so this assertion holds regardless of which of
-     * the two epoch paths actually runs; this test (Linux, batched config at its default) exercises
-     * the batched path, while the non-batched path is exercised by disabling
-     * {@code isAdaptiveEpochColumnSyncBatched()} or running off-Linux.
+     * ADAPTIVE: the durable epoch ({@code fsyncMaterializedState()}) issues {@code syncfs}. The batched
+     * path ({@code syncColumnsBatchedSync()}, on Linux with {@code isAdaptiveEpochColumnSyncBatched()})
+     * and the non-batched path ({@code fsyncMaterializedStateSyncFs()}) both flush the whole filesystem,
+     * so the assertion holds on either; at the default configuration on Linux the batched path runs.
      */
     @Test
     public void testAdaptiveEpochStillSyncfs() throws Exception {
@@ -907,13 +810,12 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
-     * The epoch's non-wide-syncfs flush must scale with the UN-EPOCHED WRITE SET, not with table history.
-     * Everything older than the previous epoch was made durable by that epoch, so re-walking it buys nothing
-     * and costs three syscalls per file per partition, forever, at the epoch cadence.
+     * On a platform whose syncfs is not filesystem-wide, the epoch flush scales with the write set since the
+     * previous epoch, not with table history: the previous epoch already made everything older durable.
      * <p>
-     * Pins both halves: the first epoch of a writer's life still walks everything (it must cover partitions a
-     * previous writer instance left un-epoched), and a second epoch that follows a write to ONE partition
-     * opens files under that partition only.
+     * The first epoch of a writer's life walks every partition, since it must cover partitions a previous
+     * writer instance left un-epoched. A later epoch that follows a write to one partition opens files under
+     * that partition only.
      */
     @Test
     public void testEpochFlushesOnlyTheWriteSetOnNonWideSyncfsPlatform() throws Exception {
@@ -957,7 +859,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                 );
             }
 
-            // Write to the LAST partition only, then epoch again: history must not be re-walked.
+            // Write to the last partition only, then epoch again: history must not be re-walked.
             try (WalWriter walWriter = engine.getWalWriter(tt)) {
                 commitRow(walWriter, 2 * Micros.DAY_MICROS + 1, 4L);
             }
@@ -986,13 +888,11 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
      * A read-only (soft-linked) attached partition must not stall the epoch on a platform whose syncfs is
      * not filesystem-wide, where {@code fsyncAttachedPartitionFiles} is the epoch's column-flush path.
      * <p>
-     * Such a partition is backed by storage this writer never writes, so it holds nothing an epoch could
-     * need to flush, and {@code openRW} on its files fails. That failure is not contained: it unwinds into
-     * {@code handleBestEffortDurableEpochFailure}, which only logs, so the epoch never reaches
-     * {@code setLastEpochTs} — {@code durableEpochSeqTxn} stays 0, {@link WalPurgeJob} pins the purge floor
-     * at 0, and the WAL grows without bound while the whole scan is retried every apply batch. Asserting the
-     * PUBLISHED epoch, rather than merely "it did not throw", is what separates the fix from the swallow
-     * that hid the failure.
+     * Such a partition is backed by storage this writer never writes, so it holds nothing an epoch needs to
+     * flush, and {@code openRW} on its files fails. A failed open would reach
+     * {@code handleBestEffortDurableEpochFailure}, which only logs: {@code durableEpochSeqTxn} would stay 0,
+     * {@code WalPurgeJob} would hold the purge floor at 0, and the WAL would grow without bound. The test
+     * therefore asserts the published epoch, not just the absence of an exception.
      */
     @Test
     public void testEpochSkipsReadOnlyPartitionsOnNonWideSyncfsPlatform() throws Exception {
@@ -1016,7 +916,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             final long appliedSeqTxn = tracker.getWriterTxn();
             try (TableWriter tableWriter = getWriter(tt)) {
                 Assert.assertEquals(2, tableWriter.getTxWriter().getPartitionCount());
-                // Flag the FIRST partition read-only exactly as attachPartition does for a soft link, and
+                // Flag the first partition read-only exactly as attachPartition does for a soft link, and
                 // make its files unopenable for write exactly as the read-only mount behind one would.
                 tableWriter.getTxWriter().setPartitionReadOnlyByTimestamp(0L, true);
                 ff.denyWritesUnder("1970-01-01");
@@ -1119,8 +1019,6 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         }
     }
 
-    // ---------- helpers ----------
-
     private static void appendRow(WalWriter writer, long v) {
         final TableWriter.Row row = writer.newRow(v * 60_000_000L);
         row.putLong(1, v);
@@ -1131,7 +1029,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
 
     /**
      * Returns true if the given path is a WAL segment column data file (.d file or fixed-size
-     * column file in a wal/ segment directory — i.e. NOT the event or sequencer files).
+     * column file in a wal/ segment directory), not an event or sequencer file.
      */
     private static boolean isWalColumnDataFile(String p) {
         if (p == null) {
@@ -1139,8 +1037,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         }
         // WAL segment column files live inside wal<N>/<segmentId>/ and end with .d
         // (variable-length data: varchar, binary) or have no extension (fixed-size columns).
-        // The key distinguishing feature is the path containing "/wal" and a segment integer
-        // directory, AND not being an event or sequencer file.
+        // The path contains "/wal" and a segment integer directory, and is not an event or sequencer file.
         boolean inWalDir = p.contains("/wal") || p.contains("\\wal");
         boolean isEventFile = p.endsWith(WalUtils.EVENT_FILE_NAME)
                 || p.endsWith(WalUtils.EVENT_FILE_NAME + ".")
@@ -1179,14 +1076,13 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
-     * A FilesFacade that counts every {@code msync} and {@code fdatasync} call on TABLE
-     * PARTITION COLUMN FILES (i.e. not in {@code wal<N>/} segment dirs, not in
-     * {@code txn_seq/}, and not control/metadata files).
+     * A FilesFacade that counts every {@code msync} and {@code fdatasync} call on table partition
+     * column files: not in {@code wal<N>/} segment dirs, not in {@code txn_seq/}, and not control or
+     * metadata files.
      *
-     * <p>It tracks: fd→path (on open), addr→fd (on mmap), then resolves msync(addr) and
-     * fdatasync(fd) to a path and classifies it. Only table-partition column file syncs
-     * are counted; WAL-segment and sequencer syncs are ignored so the test can reset
-     * AFTER the WAL insert (Task A syncs) and measure ONLY the apply-side syncs.
+     * <p>It tracks fd -> path on open and addr -> fd on mmap, then resolves msync(addr) and
+     * fdatasync(fd) to a path and classifies it. WAL segment and sequencer syncs are ignored, so a test
+     * can reset after the WAL insert and count only the apply-side syncs.
      */
     static class TableSyncTrackingFacade extends TestFilesFacadeImpl {
         // fd -> file path (populated on every open call)
@@ -1300,10 +1196,10 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
-     * Returns true if the given path is a TABLE PARTITION column file — i.e. a file that
-     * {@code syncColumns()} flushes on each commit. Specifically, it must NOT be in the WAL
-     * segment directory ({@code /wal<N>/}), NOT in the sequencer directory ({@code /txn_seq/}),
-     * and NOT a table-level control file ({@code _txn}, {@code _cv}, {@code _meta}, {@code _todo}).
+     * Returns true if the given path is a table partition column file, one that {@code syncColumns()}
+     * flushes on each commit: not in a WAL segment directory ({@code /wal<N>/}), not in the sequencer
+     * directory ({@code /txn_seq/}), and not a table-level control file ({@code _txn}, {@code _cv},
+     * {@code _meta}, {@code _todo}).
      *
      * <p>Table partition column files live at paths like:
      * {@code <root>/<tableName>/2024-01-01/ts.d} or {@code <root>/<tableName>/2024-01-01/v.d}.
@@ -1320,12 +1216,10 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         if (p.contains(WalUtils.SEQ_DIR) || p.contains(WalUtils.SEQ_DIR_DEPRECATED)) {
             return false;
         }
-        // Table-root control files: _txn, _cv, _meta, _todo, _lock, bitmap indexes (_k, _v)
-        // that live AT the table root level (not in a date-partition subdirectory).
-        // We only want partition column data files (.d, or fixed-size columns).
-        // Filter: must end with .d (variable-len data/aux) or look like a fixed-size column
-        // (no extension, e.g. "ts", "v"). Accept only if the last path component is a
-        // plausible column file (not a QuestDB control file).
+        // Table-root control files (_txn, _cv, _meta, _todo, _lock, bitmap indexes _k and _v) live at
+        // the table root, not in a partition subdirectory. Accept only partition column data files: the
+        // last path component ends with .d (variable-length data or aux) or has no extension (a fixed-size
+        // column such as "ts" or "v"), and is not a control file.
         String name = p;
         int sep = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
         if (sep >= 0) {
@@ -1428,15 +1322,13 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
 
     /**
      * A FilesFacade that counts every {@code msync} (split sync/async), {@code fdatasync},
-     * {@code fsync}, and {@code syncfs} call, with no path filtering. Used by the Task 2/3 legacy
-     * vs. adaptive sync() revert tests, which only need raw syscall counts (not per-file attribution).
+     * {@code fsync}, and {@code syncfs} call, with no path filtering, for the tests that need raw
+     * syscall counts per commit mode rather than per-file attribution.
      *
-     * <p>Also tracks, in {@link #tableColumnMsyncLengths}, the {@code len} argument of every
-     * non-async {@code msync} against a TABLE PARTITION COLUMN file (per
-     * {@link #isTablePartitionColumnFile}, reusing the same fd/path/addr tracking as
-     * {@link TableSyncTrackingFacade}), so a test can distinguish a narrowed (appended-bytes-only)
-     * msync from a full-extent (mapped-size) one without being confused by WAL-segment or table
-     * control-file ({@code _txn}/{@code _cv}/{@code _meta}) msyncs.
+     * <p>It also records in {@link #tableColumnMsyncLengths} the {@code len} argument of every non-async
+     * {@code msync} on a table partition column file (per {@link #isTablePartitionColumnFile}, with the
+     * fd/path/addr tracking of {@link TableSyncTrackingFacade}), so a test can tell a msync of the appended
+     * bytes from a msync of the whole mapping without counting WAL segment or control-file msyncs.
      */
     static class SyscallCountingFacade extends TestFilesFacadeImpl {
         final LongList tableColumnMsyncLengths = new LongList();
