@@ -196,8 +196,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
     @Override
     public void fullSync() {
-        // Part file must be durable before the header: same ordering invariant as sync0(). NOSYNC and ASYNC
-        // promise nothing across a power loss and sync the header alone, as base does.
+        // The part file must be durable before the header, as in sync0(). NOSYNC and ASYNC promise nothing
+        // across a power loss and sync the header alone.
         if (txnPartMem.isOpen() && CommitMode.isPowerLossDurable(configuration.getCommitMode())) {
             txnPartMem.sync(false);
         }
@@ -309,10 +309,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     }
 
     /**
-     * Adaptive group-commit (Deferred 2): true when this table is ADAPTIVE AND a group window {@code W > 0}
-     * is configured, so the per-commit sequencer fdatasync is DEFERRED to the batched flush. A pure function
-     * of the table's effective mode + config (no per-commit racing state), so concurrent WAL writers of the
-     * same table all agree.
+     * True under ADAPTIVE with a group window above zero, where the batched flush takes over the per-commit
+     * sequencer fdatasync. It depends on configuration only, so concurrent WAL writers of a table agree.
      */
     private boolean isDeviceFlushDeferred() {
         return configuration.getCommitMode() == CommitMode.ADAPTIVE && configuration.getAdaptiveCommitGroupWindowUs() > 0;
@@ -364,27 +362,21 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     private void sync0() {
         int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
-            // Part file must be durable before the header that points to it.
-            // A crash after the header sync but before the part file is written back
-            // would leave maxTxn=N pointing at a zeroed/partial record. ASYNC promises nothing across a
-            // power loss, and its MS_ASYNC orders nothing, so it syncs the header alone, as base does.
+            // The part file must be durable before the header that points to it, or a crash after the header
+            // sync can leave maxTxn=N pointing at a zeroed or partial record. ASYNC promises nothing across a
+            // power loss, and its MS_ASYNC orders nothing, so it syncs the header alone.
             //
-            // Deferred 2 (group commit, W>0): push the sequencer files to the page cache with msync(MS_ASYNC)
-            // — writeback-only, NO device flush — and DEFER the fdatasync (the device flush) to the batched
-            // flushPendingDurable (via fdatasyncTxnLog), which performs it as the final seq step of
-            // data→events→seq. Doing MS_SYNC here would device-flush the sequencer on every commit and defeat
-            // the window; the record is still in the page cache + ordered, so the batched fdatasync captures
-            // it. localDurableSeqTxn advances only after that batch flush, so a durable-ack'd txn is always
-            // device-durable. Other modes (and ADAPTIVE W=0) keep their exact existing sync grade.
+            // With a group window, ADAPTIVE pushes the files to the page cache with MS_ASYNC and leaves the
+            // device flush to the batched flush (fdatasyncTxnLog). localDurableSeqTxn advances only after that
+            // flush, so a durably acknowledged txn is on the device. Other modes keep their own grade.
             final boolean deferDeviceFlush = isDeviceFlushDeferred();
             final boolean async = commitMode == CommitMode.ASYNC || deferDeviceFlush;
             if (txnPartMem.isOpen() && commitMode != CommitMode.ASYNC) {
                 txnPartMem.sync(async);
             }
             txnMem.sync(async);
-            // ADAPTIVE: make the sequencer durable. fdatasync part file first, then the header
-            // that points to it — same ordering invariant as the msync above. The header's
-            // maxTxn=N must not be device-visible before the record at txn N in the part file.
+            // ADAPTIVE flushes the part file to the device before the header: the header's maxTxn=N must not
+            // reach the device before the record at txn N.
             if (commitMode == CommitMode.ADAPTIVE && !deferDeviceFlush) {
                 if (txnPartMem.isOpen()) {
                     ff.fdatasync(txnPartMem.getFd());
@@ -396,9 +388,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
     @Override
     public void fdatasyncTxnLog() {
-        // The deferred (batched) device flush for adaptive group commit: part file before the header, the
-        // same ordering invariant sync0() preserves. The msync in sync0() already pushed the bytes to the
-        // page cache; this carries the device flush + journal commit.
+        // The batched device flush of adaptive group commit, part file before the header as in sync0(). The
+        // msync in sync0() has already pushed the bytes to the page cache.
         if (txnPartMem.isOpen()) {
             ff.fdatasync(txnPartMem.getFd());
         }
@@ -542,7 +533,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
         // Verify the per-record CRC in the reserved trailing slot, if present. calculateCvAreaChecksum never
         // returns 0, so a stored 0 means "no CRC written". That has three causes the slot cannot tell apart, and
-        // all three read the record unverified:
+        // all three read the record unverified, since rejecting them would suspend a table on records an older
+        // QuestDB wrote correctly:
         //   (1) a record written by a binary that predates the per-record CRC. Its body is valid.
         //   (2) an absent record: an all-zero slot the cursor reached because the header's MAX_TXN became
         //       durable ahead of the record body. No real record carries walId 0 (writers use walId >= 1,
@@ -554,9 +546,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             final long recordBase = address + txnOffset;
             final long storedCrc = Unsafe.getLong(recordBase + RESERVED_OFFSET);
             if (storedCrc == 0L) {
-                // No checksum for this record. A binary that predates the checksum writes a literal zero
-                // into this slot, so a zero cannot be told from a torn one and must be read unverified --
-                // the alternative suspends a table on records an older QuestDB wrote perfectly well.
+                // No checksum for this record: read it unverified.
                 return;
             }
             TxnLogRecordVerifier.verify(txn, recordBase, RESERVED_OFFSET, storedCrc, txnOffset);
