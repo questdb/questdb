@@ -31,20 +31,12 @@ import org.junit.Assume;
 import org.junit.Test;
 
 /**
- * The suite must run one commit mode, chosen in one place.
- * <p>
- * There are three ways a test ends up with a configuration: {@link Overrides} for anything extending
- * {@code AbstractCairoTest}, {@link DefaultTestCairoConfiguration} for direct instantiation, and the
- * generated {@code server.conf} for the {@code AbstractBootstrapTest} suites that run a real server. If one
- * of them sets no mode, its tests follow the shipped default, and changing that default moves their coverage
- * without failing anything.
- * <p>
- * This fails if one of the three paths drifts. It cannot detect a fourth path that forgets the switch:
- * nothing enumerates the ways a test acquires a configuration, so a new one must be added here by hand.
- * <p>
- * Paths 1 and 2 are asserted here. Path 3 is asserted by {@link BootstrapCommitModeTest}, which this class
- * cannot reach: it extends {@code AbstractCairoTest}, while {@code createDummyConfiguration} lives on
- * {@code AbstractBootstrapTest}.
+ * The suite runs one commit mode, chosen in one place. A test gets its configuration through {@link Overrides}
+ * ({@code AbstractCairoTest}), {@link DefaultTestCairoConfiguration} (direct instantiation) or the generated
+ * {@code server.conf} ({@code AbstractBootstrapTest}); a path that sets no mode follows the shipped default, so
+ * changing that default would move its coverage without failing anything. This class asserts the first two
+ * paths and {@link BootstrapCommitModeTest} the third. Nothing enumerates these paths, so a new one must be
+ * added here by hand.
  */
 public class TestCommitModeSwitchTest extends AbstractCairoTest {
 
