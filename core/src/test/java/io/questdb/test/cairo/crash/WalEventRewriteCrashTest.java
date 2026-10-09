@@ -60,7 +60,7 @@ import java.util.stream.Stream;
  * writer's commit gets NO_TXN, replays the ALTER, and rewrites its already sealed record in place so that
  * the record carries the new column's null flag. The rewrite replaces bytes in two files that the kernel
  * writes back independently: {@code _event} and {@code _event.i}. It can write either of them back while it
- * still holds the ORIGINAL record (between the first write and the rewrite), and either of them after the
+ * still holds the original record (between the first write and the rewrite), and either of them after the
  * rewrite.
  * <p>
  * Each case promotes one subset of the two files to durable at the pre-rewrite point, the complementary
@@ -68,8 +68,8 @@ import java.util.stream.Stream;
  * that the sequencer names the txn. {@code markFileDurable} models the kernel writeback. Without a barrier
  * after the rewrite, a pre-rewrite file next to a post-rewrite one is a mixed image: the reader finds the
  * record longer than its stale index entry, and the table suspends. Where the original record survives in
- * full, it applies without the new column's null flag. The fix flushes both files after the rewrite and
- * before the txn is sequenced, so the only image a sequenced txn can meet is the rewritten one.
+ * full, it applies without the new column's null flag. The writer flushes both files after the rewrite and
+ * before it sequences the txn, so the only image a sequenced txn can meet is the rewritten one.
  */
 @RunWith(Parameterized.class)
 public class WalEventRewriteCrashTest extends AbstractAdaptiveCrashTest {
