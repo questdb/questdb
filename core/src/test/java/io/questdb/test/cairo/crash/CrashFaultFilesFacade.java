@@ -37,7 +37,9 @@ import java.util.stream.Stream;
  *   <li>{@code pteFlushed} — whether the file's mmap-dirty pages have been pushed to the page cache via
  *       msync since it became mappable (so {@code sync_file_range} can see them);</li>
  *   <li>{@code deviceCacheContent} — the bytes written back to the device's (volatile) cache, pending a
- *       device flush;</li>
+ *       device flush. A whole-file sync ({@code fsync}, {@code fdatasync}, {@code syncfs}) writes back the
+ *       whole current image; a RANGED one ({@code msync(MS_SYNC)}, {@code sync_file_range}) only its range,
+ *       so a page dirtied through an earlier, already unmapped mapping stays behind;</li>
  *   <li>{@code durableContent} — the bytes that SURVIVE a crash (promoted from the device cache by a flush,
  *       then TRUNCATED to the journaled extent — see the metadata-journaling dimension below).</li>
  * </ul>
@@ -128,7 +130,9 @@ import java.util.stream.Stream;
  *       msync and its {@code sync_file_range}; the self-tests exercise the un-msync'd path on FRESH files
  *       only. mmap STORES (the tests' {@code Unsafe.setMemory}) are not visible as {@code write} calls, so a
  *       mapping's written end is normally declared by msync; syncfs is the exception and snapshots the full
- *       current image because it writes dirty pages back even after their mapping has been removed.</li>
+ *       current image because it writes dirty pages back even after their mapping has been removed. A
+ *       whole-file {@code fsync}/{@code fdatasync} likewise counts non-zero bytes past the declared end as
+ *       written: it writes back every dirty page of its file, msync'd or not.</li>
  *   <li>The device-cache/durable snapshots are full-file byte copies taken at sync points. Files are small
  *       in these tests, so this is cheap; if it ever became hot it could be narrowed to a dirty range.</li>
  *   <li>{@code syncedDataEnd} is a written-data-END proxy (the max synced range end), not a precise set of
@@ -317,6 +321,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             // sendfile path bypasses write()/msync tracking, writtenDataEnd stays 0, and crash() would
             // roll the copied file back to length 0). Mirrors how write()/append() advance writtenDataEnd.
             final String dst = toAbsPath(to);
+            shrinkTo(dst, 0); // creat() truncated a destination that already existed
             track(dst);
             // After the copy the real file length IS the written extent (creat truncated, sendfile filled).
             advanceWrittenDataEnd(dst, length(to));
@@ -413,6 +418,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             track(p);
             byte[] now = readCurrent(p);
             deviceCacheContent.put(p, now);
+            advanceWrittenDataEnd(p, nonZeroEnd(now));
             advanceSyncedDataEnd(p, writtenDataEnd.getOrDefault(p, 0L));
             journalCommit(p);
             doFlush();
@@ -469,6 +475,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                 track(p);
                 byte[] now = readCurrent(p);
                 deviceCacheContent.put(p, now);
+                advanceWrittenDataEnd(p, nonZeroEnd(now));
                 advanceSyncedDataEnd(p, writtenDataEnd.getOrDefault(p, 0L));
                 journalCommit(p);
                 doFlush();
@@ -501,6 +508,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                 // writtenDataEnd is keyed by path so it survives the close above.
                 track(p);
                 deviceCacheContent.put(p, snapshot);
+                advanceWrittenDataEnd(p, nonZeroEnd(snapshot));
                 advanceSyncedDataEnd(p, writtenDataEnd.getOrDefault(p, 0L));
                 journalCommit(p);
                 doFlush();
@@ -743,11 +751,12 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             pteFlushed.put(p, Boolean.TRUE);
             advanceWrittenDataEnd(p, fileEnd);
             if (!async) {
-                // MS_SYNC is a range-fsync: JOURNAL COMMIT + data-at-device + DEVICE FLUSH. Snapshot current
-                // bytes, advance the at-device end to this file-absolute synced end (capped at the written
+                // MS_SYNC is a range-fsync: JOURNAL COMMIT + data-at-device + DEVICE FLUSH. Write back the
+                // current bytes of the msync'd RANGE only (dirty pages elsewhere in the file stay where they
+                // were), advance the at-device end to this file-absolute synced end (capped at the written
                 // end), commit F's metadata to the journal (and all files' if modelSharedJournal), then flush
                 // -> promotes the journaled extent of EVERY tracked file to durable.
-                deviceCacheContent.put(p, readCurrent(p));
+                deviceCacheContent.put(p, withRangeWrittenBack(deviceCacheContent.get(p), readCurrent(p), fileEnd - len, fileEnd));
                 advanceSyncedDataEnd(p, Math.min(fileEnd, writtenDataEnd.getOrDefault(p, 0L)));
                 journalCommit(p);
                 doFlush();
@@ -772,8 +781,8 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                 // "does not write out the file's metadata" and "does not sync out [the block allocator] to
                 // disk", so journaledDataEnd does NOT advance. The within-page bytes it drains are durable
                 // ONLY once a later journal commit (this file's own, or a shared-journal commit) journals the
-                // extent conversion.
-                deviceCacheContent.put(p, readCurrent(p));
+                // extent conversion. Only the drained range reaches the device.
+                deviceCacheContent.put(p, withRangeWrittenBack(deviceCacheContent.get(p), readCurrent(p), offset, offset + nbytes));
                 advanceWrittenDataEnd(p, offset + nbytes);
                 advanceSyncedDataEnd(p, offset + nbytes);
             }
@@ -781,6 +790,32 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             // track as dirty in the page cache (they were never msync'd / write()-n). This is the real footgun.
         }
         return rc;
+    }
+
+    @Override
+    public boolean allocate(long fd, long size) {
+        final long lengthBefore = trackedLength(fd);
+        final boolean ok = super.allocate(fd, size);
+        shrinkAfterAllocate(fd, lengthBefore);
+        return ok;
+    }
+
+    @Override
+    public boolean allocateRange(long fd, long offset, long size) {
+        final long lengthBefore = trackedLength(fd);
+        final boolean ok = super.allocateRange(fd, offset, size);
+        shrinkAfterAllocate(fd, lengthBefore);
+        return ok;
+    }
+
+    @Override
+    public boolean truncate(long fd, long size) {
+        final boolean ok = super.truncate(fd, size);
+        final String p = fdToPath.get(fd);
+        if (ok && p != null) {
+            shrinkTo(p, size);
+        }
+        return ok;
     }
 
     /**
@@ -1196,6 +1231,47 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
+     * F shrank to {@code size}: its blocks past {@code size} are freed. Drop them from the device image and pull
+     * every watermark back to the new end, so space F grows into again starts unwritten, as re-allocated space
+     * does. Otherwise a later ranged sync (which merges its range into the previous device image) or any flush
+     * would bring the freed bytes back. The durable image is left alone: until a journal commit covers the
+     * shrink, a crash restores F as it was.
+     */
+    private void shrinkTo(String path, long size) {
+        if (!trackedFiles.contains(path)) {
+            return;
+        }
+        final byte[] device = deviceCacheContent.get(path);
+        if (device != null && device.length > size) {
+            deviceCacheContent.put(path, truncateTo(device, size));
+        }
+        clampTo(writtenDataEnd, path, size);
+        clampTo(syncedDataEnd, path, size);
+        clampTo(journaledDataEnd, path, size);
+    }
+
+    /**
+     * allocate() never shrinks a file on Linux (posix_fallocate), but on macOS and Windows it ends in a truncate
+     * to the requested size, which shrinks a longer file.
+     */
+    private void shrinkAfterAllocate(long fd, long lengthBefore) {
+        if (lengthBefore > 0) {
+            final long lengthAfter = super.length(fd);
+            if (lengthAfter >= 0 && lengthAfter < lengthBefore) {
+                shrinkTo(fdToPath.get(fd), lengthAfter);
+            }
+        }
+    }
+
+    /**
+     * The current length of a file the content model tracks, or -1 for any other fd.
+     */
+    private long trackedLength(long fd) {
+        final String p = fdToPath.get(fd);
+        return p != null && trackedFiles.contains(p) ? super.length(fd) : -1L;
+    }
+
+    /**
      * A JOURNAL COMMIT covering F. F's own pending extent conversions become journaled
      * ({@code journaledDataEnd[F]=syncedDataEnd[F]}). If {@link #modelSharedJournal} (default ext4 jbd2 /
      * xfs single filesystem-wide journal), the same commit ALSO journals every OTHER tracked file's pending
@@ -1210,6 +1286,13 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         }
     }
 
+    private static void clampTo(Map<String, Long> watermark, String path, long end) {
+        final Long current = watermark.get(path);
+        if (current != null && current > end) {
+            watermark.put(path, end);
+        }
+    }
+
     /**
      * Return a prefix of {@code src} of length {@code min(end, src.length)} (the journaled extent).
      */
@@ -1221,6 +1304,39 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         byte[] out = new byte[n];
         System.arraycopy(src, 0, out, 0, n);
         return out;
+    }
+
+    /**
+     * The device image after a RANGED write-back ({@code msync(MS_SYNC)} of a mapping, {@code sync_file_range}):
+     * the bytes of {@code [lo, hi)} come from the current page-cache image, every other byte stays as the
+     * device held it, and a byte the device never held reads as zero (an unwritten extent). The image keeps
+     * the current file length. A whole-file snapshot here would treat pages written through an earlier,
+     * already unmapped mapping as written back, and hide a missing flush of every page released unsynced.
+     */
+    private static byte[] withRangeWrittenBack(byte[] device, byte[] current, long lo, long hi) {
+        final byte[] out = new byte[current.length];
+        if (device != null) {
+            System.arraycopy(device, 0, out, 0, Math.min(device.length, current.length));
+        }
+        final int end = (int) Math.min(hi, current.length);
+        final int start = (int) Math.max(0L, Math.min(lo, end));
+        System.arraycopy(current, start, out, start, end - start);
+        return out;
+    }
+
+    /**
+     * End of the last non-zero byte of {@code image}. A whole-file sync writes back every dirty page of the
+     * file, including stores made through a mapping that was never msync'd, which this facade cannot see. In
+     * fallocate'd space such a store is the only way a non-zero byte gets past the declared written end, so
+     * the sync counts it as written; zero bytes stay indistinguishable from unwritten space.
+     */
+    private static long nonZeroEnd(byte[] image) {
+        for (int i = image.length - 1; i >= 0; i--) {
+            if (image[i] != 0) {
+                return i + 1;
+            }
+        }
+        return 0;
     }
 
     /**

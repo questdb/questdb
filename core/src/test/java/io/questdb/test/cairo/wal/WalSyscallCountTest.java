@@ -26,12 +26,14 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
@@ -49,6 +51,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -71,6 +74,8 @@ import java.util.stream.Stream;
  */
 @RunWith(Parameterized.class)
 public class WalSyscallCountTest extends AbstractCairoTest {
+    // A WAL column file: .d, plus .i for var-size columns.
+    private static final Pattern COLUMN_FILE = Pattern.compile("[a-z]+\\.[di]");
     private static final int MEASURED = 20;
     // The files base writes in a WAL segment: the event file and its index, the segment _meta and the column
     // files (.d, plus .i for var-size columns).
@@ -105,6 +110,50 @@ public class WalSyscallCountTest extends AbstractCairoTest {
     @Test
     public void testApplyPassVarSize() throws Exception {
         assertCalls(false, true);
+    }
+
+    /**
+     * How a WAL column releases a page: ingest crossing many pages of every column file and a segment roll.
+     * NOSYNC releases without an msync, ASYNC with MS_ASYNC, SYNC with MS_SYNC. ADAPTIVE on Linux releases
+     * with MS_ASYNC, because the commit's fdatasync of each column file writes the released pages back;
+     * elsewhere it keeps MS_SYNC.
+     */
+    @Test
+    public void testColumnPageRelease() throws Exception {
+        Assume.assumeFalse("the sequencer log format does not touch column pages", isV2);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        node1.setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, io.questdb.std.Files.PAGE_SIZE);
+        node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1_000);
+        final CountingFacade ff = new CountingFacade();
+        ff.isCountingPageReleases = true;
+        assertMemoryLeak(ff, () -> {
+            Assert.assertEquals(commitMode, CommitMode.toString(engine.getConfiguration().getCommitMode()));
+            Assert.assertEquals(io.questdb.std.Files.PAGE_SIZE, engine.getConfiguration().getWalDataAppendPageSize());
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (WalWriter writer = getWalWriter("x")) {
+                ff.start(true);
+                for (int i = 0; i < 1_500; i++) {
+                    final TableWriter.Row row = writer.newRow((i + 1) * 1_000_000L);
+                    row.putLong(1, i);
+                    row.putVarchar(2, new Utf8String("varchar too long to inline " + i));
+                    row.append();
+                    if (i % 300 == 299) {
+                        writer.commit();
+                    }
+                }
+                ff.stop();
+                Assert.assertEquals("the ingest must roll to a second segment", 1, writer.getSegmentId());
+            }
+            final String grade = switch (commitMode) {
+                case "nosync" -> "noMsync";
+                case "async" -> "msyncAsync";
+                case "sync" -> "msyncSync";
+                default -> Os.isLinux() ? "msyncAsync" : "msyncSync";
+            };
+            // 22 releases as the pages fill (18 in the first segment of 1,200 rows, 4 in the second of 300) and 4
+            // as the segment roll closes ts.d, v.d, vc.d and vc.i: the same in every mode.
+            Assert.assertEquals("column page releases [mode=" + commitMode + ']', grade + "=26", CountingFacade.join(ff.pageReleases));
+        });
     }
 
     @Test
@@ -289,8 +338,16 @@ public class WalSyscallCountTest extends AbstractCairoTest {
      */
     private static class CountingFacade extends TestFilesFacadeImpl {
         private final Map<String, int[]> calls = new TreeMap<>();
+        // The mappings of WAL column files and the files' fds, to tell a column page release (an msync, then
+        // the munmap of the same address) from the other unmaps.
+        private final Map<Long, String> columnFileByAddr = new HashMap<>();
+        private final Map<Long, String> columnFileByFd = new HashMap<>();
         private final Map<String, int[]> opened = new TreeMap<>();
+        private final Map<String, int[]> pageReleases = new TreeMap<>();
         private final List<String> summaries = new ArrayList<>();
+        private boolean isCountingPageReleases;
+        private long lastMsyncAddr;
+        private boolean lastMsyncAsync;
         private Thread measured;
 
         @Override
@@ -314,6 +371,7 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         @Override
         public boolean close(long fd) {
             count("close");
+            columnFileByFd.remove(fd);
             return super.close(fd);
         }
 
@@ -362,7 +420,12 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         @Override
         public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
             count("mmap");
-            return super.mmap(fd, len, offset, flags, memoryTag);
+            final long addr = super.mmap(fd, len, offset, flags, memoryTag);
+            final String columnFile = columnFileByFd.get(fd);
+            if (columnFile != null) {
+                columnFileByAddr.put(addr, columnFile);
+            }
+            return addr;
         }
 
         @Override
@@ -386,12 +449,18 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         @Override
         public void msync(long addr, long len, boolean async) {
             count(async ? "msyncAsync" : "msyncSync");
+            lastMsyncAddr = addr;
+            lastMsyncAsync = async;
             super.msync(addr, len, async);
         }
 
         @Override
         public void munmap(long address, long size, int memoryTag) {
             count("munmap");
+            if (columnFileByAddr.remove(address) != null && Thread.currentThread() == measured) {
+                increment(pageReleases, address != lastMsyncAddr ? "noMsync" : lastMsyncAsync ? "msyncAsync" : "msyncSync");
+            }
+            lastMsyncAddr = 0;
             super.munmap(address, size, memoryTag);
         }
 
@@ -416,7 +485,14 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         @Override
         public long openRW(LPSZ name, int opts) {
             countOpen("openRW", name);
-            return super.openRW(name, opts);
+            final long fd = super.openRW(name, opts);
+            if (isCountingPageReleases && fd > -1) {
+                final String file = fileName(name);
+                if (COLUMN_FILE.matcher(file).matches()) {
+                    columnFileByFd.put(fd, file);
+                }
+            }
+            return fd;
         }
 
         @Override
@@ -473,6 +549,19 @@ public class WalSyscallCountTest extends AbstractCairoTest {
             return super.write(fd, address, len, offset);
         }
 
+        private static String fileName(LPSZ name) {
+            final StringBuilder file = new StringBuilder();
+            for (int i = 0, n = name.size(); i < n; i++) {
+                final char c = (char) (name.byteAt(i) & 0xFF);
+                if (c == '/' || c == '\\') {
+                    file.setLength(0);
+                } else {
+                    file.append(c);
+                }
+            }
+            return file.toString();
+        }
+
         private static void increment(Map<String, int[]> counts, String key) {
             counts.computeIfAbsent(key, k -> new int[1])[0]++;
         }
@@ -497,16 +586,7 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         private void countOpen(String call, LPSZ name) {
             if (Thread.currentThread() == measured) {
                 increment(calls, call);
-                final StringBuilder file = new StringBuilder();
-                for (int i = 0, n = name.size(); i < n; i++) {
-                    final char c = (char) (name.byteAt(i) & 0xFF);
-                    if (c == '/' || c == '\\') {
-                        file.setLength(0);
-                    } else {
-                        file.append(c);
-                    }
-                }
-                increment(opened, file.toString());
+                increment(opened, fileName(name));
             }
         }
 

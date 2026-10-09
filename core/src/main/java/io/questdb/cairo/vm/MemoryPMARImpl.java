@@ -33,6 +33,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -45,6 +46,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     // bytes actually written into that page instead of flushing the whole page window. NARROW-ONLY:
     // we do not skip msync for PMAR (see sync()), so there is no cross-sync offset state to go stale.
     // Defaults to false: the non-appendOnly path is byte-identical to the original full-page msync.
+    // Set only on ADAPTIVE WAL columns and ADAPTIVE table columns, so it also picks the release grade.
     private boolean appendOnly = false;
     // When true this is a TABLE PARTITION column under CommitMode.ADAPTIVE: the page-release / close
     // path skips its msync so the materialized column stays NON-DURABLE on the apply side (lazy apply;
@@ -204,8 +206,8 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
                 // to [0, pageSize]. This is the main win: the active partition's partial last page is
                 // synced on every commit, and most of it is unwritten/clean. We recompute the length
                 // from the live append offset each call, so prior jumpTo/rollback cannot make it stale
-                // (NARROW-ONLY: no msync skip for PMAR). The page-flip release() still msyncs the full
-                // page it releases, so completed pages are fully flushed.
+                // (NARROW-ONLY: no msync skip for PMAR). The page-flip release() msyncs the full page it
+                // releases (MS_ASYNC for an ADAPTIVE WAL column on Linux, whose commit fdatasyncs the file).
                 final long inPageWritten = inPageWritten();
                 if (inPageWritten > 0) {
                     ff.msync(pageAddress, inPageWritten, async);
@@ -316,8 +318,12 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
                 // applyLazy (adaptive table partition column) skips the page-release msync — the column is
                 // a rebuildable cache of the durable WAL, made durable only by the epoch + recovery. WAL
                 // segment columns never set applyLazy, so their explicit per-commit fdatasync is unaffected.
+                // An ADAPTIVE WAL column (appendOnly) releases with MS_ASYNC on Linux: the page stays dirty in
+                // the page cache, and the commit's fdatasync of this file writes it back before the commit is
+                // sequenced. Elsewhere that fdatasync is not shown to cover a page that is no longer mapped.
                 if (commitMode != CommitMode.NOSYNC && !applyLazy) {
-                    ff.msync(address, getPageSize(), commitMode == CommitMode.ASYNC);
+                    ff.msync(address, getPageSize(), commitMode == CommitMode.ASYNC
+                            || (appendOnly && commitMode == CommitMode.ADAPTIVE && Os.isLinux()));
                 }
             } finally {
                 ff.munmap(address, getPageSize(), memoryTag);
