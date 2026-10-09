@@ -431,6 +431,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             } finally {
                 path.trimTo(tableRootLen);
             }
+            // Once for the whole rewrite, however many pieces each column file took.
+            targetFrame.sync();
             // Closed first: the index build reads back the column files the copy wrote.
             targetFrame = Misc.free(targetFrame);
             getNativeIndexBuilder().buildIndexes(other, reader.getMetadata(), cvr, columnTops, partitionTimestamp, liveRows, reader.getTxn());
@@ -646,6 +648,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                         .put(", liveRows=").put(liveRows)
                         .put(']');
             }
+            // Once for the whole merge, however many folders and pieces each column file took.
+            targetFrame.sync();
             // Closed first: the index build reads back the column files the copy wrote.
             targetFrame = Misc.free(targetFrame);
             getNativeIndexBuilder().buildIndexes(other, reader.getMetadata(), cvr, columnTops, logicalPartitionTimestamp, liveRows, reader.getTxn());

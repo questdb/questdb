@@ -47,7 +47,9 @@ public interface FrameColumn extends Closeable {
      * @param sourceColumn         the source frame
      * @param sourceLo             low index in the source frame
      * @param sourceHi             high index in the source frame, exclusive
-     * @param commitMode           the commit mode, which drives durability of the change.
+     * @param commitMode           the commit mode, which drives durability of the change. The write is not flushed
+     *                             here: under {@link io.questdb.cairo.CommitMode#SYNC} it leaves its files for
+     *                             {@link #sync()} to flush, and any other mode flushes nothing.
      */
     void append(long appendOffsetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode);
 
@@ -89,6 +91,14 @@ public interface FrameColumn extends Closeable {
     long getSecondaryFd();
 
     int getStorageType();
+
+    /**
+     * Whether a write under {@link io.questdb.cairo.CommitMode#SYNC} since the last {@link #sync()} left a file of
+     * this column unflushed.
+     */
+    default boolean isSyncPending() {
+        return false;
+    }
 
     default boolean isTimestampIndex() {
         return false;
@@ -135,5 +145,13 @@ public interface FrameColumn extends Closeable {
      * do not own a posting index writer.
      */
     default void setUpcomingTableTxn(long upcomingTableTxn) {
+    }
+
+    /**
+     * Fsyncs each file of this column that a write under {@link io.questdb.cairo.CommitMode#SYNC} touched since the
+     * last call, so a frame that runs several appends and merges against the same files flushes each file once, after
+     * the last.
+     */
+    default void sync() {
     }
 }

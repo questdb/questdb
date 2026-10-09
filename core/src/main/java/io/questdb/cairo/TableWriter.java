@@ -6660,6 +6660,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     compactionWrittenRows += rowCount;
                 }
             }
+            // Once for the whole REWRITE, however many pieces each column file took.
+            targetFrame.sync();
             // Only now, with every piece copied, do the target's own tops become the committed ones.
             ColumnTopSink sink = columnVersionWriter.asColumnTopSink(partitionTs);
             targetFrame.publishColumnTops(sink);
@@ -10524,6 +10526,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     written += rowCount;
                 }
             }
+            // Once for the whole tail, however many pieces each column file took.
+            targetFrame.sync();
             // Only now, with every tail piece copied, do the target's own tops become the committed ones.
             ColumnTopSink sink = columnVersionWriter.asColumnTopSink(tailPartitionTs);
             targetFrame.publishColumnTops(sink);
@@ -11434,6 +11438,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                             configuration.getCommitMode()
                                     );
                                 }
+                                // Once for the whole split, however many ranges each column file took.
+                                targetFrame.sync();
                                 ColumnTopSink sink = columnVersionWriter.asColumnTopSink(newSplitPartitionTimestamp);
                                 targetFrame.publishColumnTops(sink);
                             }
@@ -17348,6 +17354,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // was opened. Nothing appended means every source was refused, and then the target has to be
             // left exactly as it was found - a composite one above all, which still needs its geometry.
             final long appendedRows = targetFrame.getRowCount() - targetExtent;
+            // Once for the whole squash - the target's copy included - however many sources each column file took.
+            targetFrame.sync();
             if (appendedRows > 0 || copyTargetFrame) {
                 // The lag rows rode along with the last partition's copy. They belong to no piece and are
                 // not live, so they count towards the target's extent but not towards its row count.

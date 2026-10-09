@@ -71,6 +71,9 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     // See ContiguousFileFixFrameColumn#isAllocatedBytesKnown.
     private boolean isAllocatedAuxBytesKnown;
     private boolean isAllocatedDataBytesKnown;
+    // See ContiguousFileFixFrameColumn#isSyncPending, one per file.
+    private boolean isAuxSyncPending;
+    private boolean isDataSyncPending;
     // Set by reserve(): a dedup merge can write more data than the reservation was sized for, see appendData.
     private boolean isDedup;
     private boolean isReadOnly;
@@ -136,9 +139,6 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             }
             assertAuxWriteReserved(dstAuxOffset + dstAuxSize);
             writeShiftedAux(srcDataOffset - targetDataOffset, srcAuxAddr, sourceLo, sourceHi, appendOffsetRowCount);
-            if (commitMode != CommitMode.NOSYNC) {
-                ff.fsync(auxFd);
-            }
         } else {
             final long dstAuxAddr = mapAuxWritable(dstAuxOffset + dstAuxSize) + dstAuxOffset;
             columnTypeDriver.shiftCopyAuxVector(
@@ -149,10 +149,8 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                     dstAuxAddr,
                     dstAuxSize
             );
-            if (commitMode != CommitMode.NOSYNC) {
-                TableUtils.msync(ff, dstAuxAddr, dstAuxSize, commitMode == CommitMode.ASYNC);
-            }
         }
+        markAuxWritten(commitMode);
 
         this.appendOffsetRowCount = appendOffsetRowCount + (sourceHi - sourceLo);
         this.dataAppendOffsetBytes = targetDataOffset + srcDataSize;
@@ -198,18 +196,12 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             } else {
                 ColumnWriteBuffer.write(ff, dataFd, sourceColumn.getContiguousDataAddr(sourceRowHi) + srcDataOffset, srcDataSize, targetDataOffset);
             }
-            if (commitMode != CommitMode.NOSYNC) {
-                ff.fsync(dataFd);
-            }
-            return;
+        } else {
+            final long srcDataAddress = sourceColumn.getContiguousDataAddr(sourceRowHi) + srcDataOffset;
+            final long dstDataAddress = mapDataWritable(targetDataOffset + srcDataSize) + targetDataOffset;
+            Vect.memcpy(dstDataAddress, srcDataAddress, srcDataSize);
         }
-
-        final long srcDataAddress = sourceColumn.getContiguousDataAddr(sourceRowHi) + srcDataOffset;
-        final long dstDataAddress = mapDataWritable(targetDataOffset + srcDataSize) + targetDataOffset;
-        Vect.memcpy(dstDataAddress, srcDataAddress, srcDataSize);
-        if (commitMode != CommitMode.NOSYNC) {
-            TableUtils.msync(ff, dstDataAddress, srcDataSize, commitMode == CommitMode.ASYNC);
-        }
+        markDataWritten(commitMode);
     }
 
     @Override
@@ -224,9 +216,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                 // Set nulls in variable file
                 final long targetDataMemAddr = mapDataWritable(targetDataOffset + srcDataSize) + targetDataOffset;
                 columnTypeDriver.setDataVectorEntriesToNull(targetDataMemAddr, sourceColumnTop);
-                if (commitMode != CommitMode.NOSYNC) {
-                    TableUtils.msync(ff, targetDataMemAddr, srcDataSize, commitMode == CommitMode.ASYNC);
-                }
+                markDataWritten(commitMode);
 
                 // Cache the new data append offset
                 this.appendOffsetRowCount = rowCount + sourceColumnTop;
@@ -246,15 +236,16 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                     targetDataOffset + columnTypeDriver.getDataVectorMinEntrySize(),
                     sourceColumnTop
             );
-            if (commitMode != CommitMode.NOSYNC) {
-                TableUtils.msync(ff, targetAuxMemAddr, srcAuxSize, commitMode == CommitMode.ASYNC);
-            }
+            markAuxWritten(commitMode);
         }
     }
 
     @Override
     public void close() {
         if (!closed) {
+            // See ContiguousFileFixFrameColumn#close.
+            isAuxSyncPending = false;
+            isDataSyncPending = false;
             if (auxMapAddr != 0) {
                 ff.munmap(auxMapAddr, auxMapSize, MEMORY_TAG);
                 auxMapAddr = 0;
@@ -334,6 +325,11 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     @Override
     public int getStorageType() {
         return COLUMN_CONTIGUOUS_FILE;
+    }
+
+    @Override
+    public boolean isSyncPending() {
+        return isAuxSyncPending || isDataSyncPending;
     }
 
     @Override
@@ -433,11 +429,9 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             );
         }
 
-        if (commitMode != CommitMode.NOSYNC) {
-            TableUtils.msync(ff, dstAuxAddr, dstAuxSize, commitMode == CommitMode.ASYNC);
-            if (dstDataAddr != 0) {
-                TableUtils.msync(ff, dstDataAddr, dataSize, commitMode == CommitMode.ASYNC);
-            }
+        markAuxWritten(commitMode);
+        if (dstDataAddr != 0) {
+            markDataWritten(commitMode);
         }
 
         this.appendOffsetRowCount = appendOffsetRowCount + mergeIndexRows;
@@ -543,6 +537,19 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     public void setRecycleBin(RecycleBin<FrameColumn> recycleBin) {
         assert this.recycleBin == null;
         this.recycleBin = recycleBin;
+    }
+
+    @Override
+    public void sync() {
+        // See ContiguousFileFixFrameColumn#sync.
+        if (isDataSyncPending) {
+            ff.fsync(dataFd);
+            isDataSyncPending = false;
+        }
+        if (isAuxSyncPending) {
+            ff.fsync(auxFd);
+            isAuxSyncPending = false;
+        }
     }
 
     /**
@@ -698,6 +705,21 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                     ? TableUtils.mapRO(ff, dataFd, newDataMemSize, 0, MEMORY_TAG)
                     : TableUtils.mremap(ff, dataFd, dataMapAddr, dataMapSize, newDataMemSize, Files.MAP_RO, MEMORY_TAG);
             dataMapSize = newDataMemSize;
+        }
+    }
+
+    /**
+     * See ContiguousFileFixFrameColumn#markWritten.
+     */
+    private void markAuxWritten(int commitMode) {
+        if (commitMode == CommitMode.SYNC) {
+            isAuxSyncPending = true;
+        }
+    }
+
+    private void markDataWritten(int commitMode) {
+        if (commitMode == CommitMode.SYNC) {
+            isDataSyncPending = true;
         }
     }
 

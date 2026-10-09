@@ -53,8 +53,12 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -154,17 +158,25 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
     }
 
     /**
-     * A merge-append commit that fails after its first action wrote rows and index entries: the writer's close must
-     * not truncate the BITMAP .k/.v back to their pre-commit sizes.
+     * A merge-append commit that fails after both its actions wrote rows and index entries, at the plan's one sync of
+     * v.d: the writer's close must not truncate the BITMAP .k/.v back to their pre-commit sizes.
      */
     @Test
-    public void testFailedMergeAppendSecondActionKeepsIndexFiles() throws Exception {
+    public void testFailedMergeAppendSyncKeepsIndexFiles() throws Exception {
         checkFailedMergeAppendThenWriterClose(2, true);
     }
 
     /**
      * Merge-append commits that add more BITMAP keys than the writer's own index writer cached when bound.
      */
+    /**
+     * ASYNC is treated as NOSYNC by frame writes: no flush at all.
+     */
+    @Test
+    public void testMergeAppendAsyncCommitDoesNotFsyncWrittenColumns() throws Exception {
+        Assert.assertEquals(0, countMergeAppendColumnFsyncs("async"));
+    }
+
     @Test
     public void testMergeAppendManyNewKeysKeepsBitmapIndexFiles() throws Exception {
         assertMemoryLeak(() -> {
@@ -190,6 +202,19 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
     /**
      * In-order rows into a non-WAL table whose last partition was left composite by its WAL days.
      */
+    @Test
+    public void testMergeAppendNoSyncCommitDoesNotFsyncWrittenColumns() throws Exception {
+        Assert.assertEquals(0, countMergeAppendColumnFsyncs("nosync"));
+    }
+
+    /**
+     * One fsync per written column file - ts.d, s.d, v.d, vc.d and vc.i - however many actions wrote it.
+     */
+    @Test
+    public void testMergeAppendSyncCommitFsyncsWrittenColumnsOnce() throws Exception {
+        Assert.assertEquals(5, countMergeAppendColumnFsyncs("sync"));
+    }
+
     @Test
     public void testNonWalInOrderRowAfterCompositeLastPartition() throws Exception {
         assertMemoryLeak(() -> {
@@ -563,55 +588,22 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
     }
 
     /**
-     * @param failOnWrite 1 fails the commit's first write to v.d by failing the file's open. 2 lets the first action
-     *                    write and fails the second one's: a composite plan opens and maps v.d once for all its
-     *                    actions, so under a SYNC commit that failure is the second sync of v.d - an msync of the
-     *                    one mapping for a merge, an fsync of the file for an append written with mixed I/O.
+     * @param failOnWrite 1 fails the commit's first write to v.d by failing the file's open. 2 lets every action
+     *                    write and fails the plan's sync of v.d - under a SYNC commit, the one fsync the plan issues
+     *                    on the file, after its last action.
      */
     private void checkFailedMergeAppendThenWriterClose(int failOnWrite, boolean twoActions) throws Exception {
         final AtomicBoolean armed = new AtomicBoolean();
         final AtomicInteger opens = new AtomicInteger();
-        final AtomicInteger writeMaps = new AtomicInteger();
+        final AtomicInteger syncs = new AtomicInteger();
         final AtomicLong vFd = new AtomicLong(-1);
-        // The writable mapping of v.d, [vMapLo, vMapHi): every write of the plan goes through it.
-        final AtomicLong vMapLo = new AtomicLong();
-        final AtomicLong vMapHi = new AtomicLong();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                final long addr = super.mmap(fd, len, offset, flags, memoryTag);
-                trackWritableMapping(fd, flags, addr, len);
-                return addr;
-            }
-
-            @Override
-            public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
-                final long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
-                trackWritableMapping(fd, mode, newAddr, newSize);
-                return newAddr;
-            }
-
-            @Override
             public void fsync(long fd) {
-                if (armed.get() && fd == vFd.get() && writeMaps.incrementAndGet() >= failOnWrite) {
-                    throw CairoException.critical(0).put("injected fsync failure [writes=").put(writeMaps.get()).put(']');
+                if (armed.get() && fd == vFd.get() && failOnWrite == 2) {
+                    throw CairoException.critical(0).put("injected fsync failure [syncs=").put(syncs.incrementAndGet()).put(']');
                 }
                 super.fsync(fd);
-            }
-
-            @Override
-            public void msync(long addr, long len, boolean async) {
-                if (armed.get() && addr >= vMapLo.get() && addr < vMapHi.get() && writeMaps.incrementAndGet() >= failOnWrite) {
-                    throw CairoException.critical(0).put("injected msync failure [writes=").put(writeMaps.get()).put(']');
-                }
-                super.msync(addr, len, async);
-            }
-
-            private void trackWritableMapping(long fd, int flags, long addr, long len) {
-                if (armed.get() && fd == vFd.get() && flags == Files.MAP_RW && addr != FilesFacade.MAP_FAILED) {
-                    vMapLo.set(addr);
-                    vMapHi.set(addr + len);
-                }
             }
 
             @Override
@@ -633,7 +625,7 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
             engine.resetFrameFactory();
             enableMergeAppend();
             if (failOnWrite > 1) {
-                // Every action syncs what it wrote, which is the one per-action call left on v.d to fail.
+                // The plan fsyncs v.d once, after its last action: the call to fail.
                 node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
             }
             execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -654,7 +646,7 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
             drainWalQueue();
             armed.set(false);
             final boolean suspended = engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t"));
-            Assert.assertTrue("fixture: the injected failure did not fail the commit [opens=" + opens.get() + ", writeMaps=" + writeMaps.get() + ']', suspended);
+            Assert.assertTrue("fixture: the injected failure did not fail the commit [opens=" + opens.get() + ", syncs=" + syncs.get() + ']', suspended);
 
             engine.releaseAllReaders();
             engine.releaseAllWriters();
@@ -831,5 +823,75 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .returns("c\n41000\n");
+    }
+
+    /**
+     * Counts the fsyncs a merge-append commit issues on the column files of the day it writes O3 rows into, under
+     * {@code commitMode}, and asserts no file is fsynced more than once: the plan's actions MERGE into and append to
+     * the same files, which are flushed once, after the last. The O3 rows come from memory, so mixed I/O writes them
+     * with positioned writes.
+     */
+    private int countMergeAppendColumnFsyncs(String commitMode) throws Exception {
+        final AtomicBoolean armed = new AtomicBoolean();
+        final Map<Long, AtomicInteger> fsyncsByFd = new ConcurrentHashMap<>();
+        final Set<Long> columnFds = ConcurrentHashMap.newKeySet();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                columnFds.remove(fd);
+                return super.close(fd);
+            }
+
+            @Override
+            public void fsync(long fd) {
+                if (armed.get() && columnFds.contains(fd)) {
+                    fsyncsByFd.computeIfAbsent(fd, k -> new AtomicInteger()).incrementAndGet();
+                }
+                super.fsync(fd);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (fd > -1 && Utf8s.containsAscii(name, "2024-01-02")
+                        && (Utf8s.endsWithAscii(name, ".d") || Utf8s.endsWithAscii(name, ".i"))) {
+                    columnFds.add(fd);
+                }
+                return fd;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            // Pooled frame columns capture the FilesFacade they were built with; start from a fresh pool.
+            engine.resetFrameFactory();
+            Assume.assumeTrue(engine.getConfiguration().isWriterMixedIOEnabled());
+            enableMergeAppend();
+            node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX, v LONG, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // 2024-01-01 full, 2024-01-02 up to 11:59, so the batch's rows past it are appended. The VARCHARs are
+            // too long to inline into vc.i, so vc.d is written as well.
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01', 60_000_000L), 'k' || (x % 10), x, 'base_varchar_' || x" +
+                    " FROM long_sequence(2160)");
+            drainWalQueue();
+
+            armed.set(true);
+            execute("INSERT INTO t SELECT * FROM (" +
+                    "SELECT timestamp_sequence('2024-01-02T00:00:10', 10_000_000L) ts, 'n' || x s, x v, 'merged_varchar_' || x vc FROM long_sequence(3000)" +
+                    " UNION ALL " +
+                    "SELECT timestamp_sequence('2024-01-02T18:00:00', 10_000_000L) ts, 'm' || x s, x v, 'appended_varchar_' || x vc FROM long_sequence(1000))");
+            drainWalQueue();
+            armed.set(false);
+            assertNotSuspended("t");
+            Assert.assertTrue("fixture: 2024-01-02 must be composite", isComposite("t", "2024-01-02"));
+            assertQuery("SELECT count() c, count_distinct(vc) d FROM t WHERE ts IN '2024-01-02'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\td\n4720\t4720\n");
+        });
+        int fsyncs = 0;
+        for (Map.Entry<Long, AtomicInteger> e : fsyncsByFd.entrySet()) {
+            Assert.assertEquals("fsyncs of fd " + e.getKey(), 1, e.getValue().get());
+            fsyncs += e.getValue().get();
+        }
+        return fsyncs;
     }
 }

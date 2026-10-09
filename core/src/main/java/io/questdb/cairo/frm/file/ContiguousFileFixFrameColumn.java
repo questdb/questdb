@@ -61,6 +61,9 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     // False until the first write of this open asked the file for its length; allocatedBytes means nothing before.
     private boolean isAllocatedBytesKnown;
     private boolean isReadOnly;
+    // Set by a write under CommitMode.SYNC, cleared by sync(): the file owes an fsync. Every other commit mode leaves
+    // the file to the kernel's writeback, see markWritten.
+    private boolean isSyncPending;
     // See setReadWindow: the top getColumnTop() reports is capped here, while columnTop stays the file's own.
     private long logicalRowHi = Long.MAX_VALUE;
     // One mapping of the file from its byte 0. Read-only columns map the rows they are asked for; writable ones map
@@ -126,9 +129,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             } else {
                 ColumnWriteBuffer.write(ff, fd, sourceColumn.getContiguousDataAddr(sourceHi) + srcOffset, size, dstOffset);
             }
-            if (commitMode != CommitMode.NOSYNC) {
-                ff.fsync(fd);
-            }
+            markWritten(commitMode);
             return;
         }
 
@@ -147,10 +148,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                     : sourceColumn.getContiguousDataAddr(sourceHi);
             Vect.memcpy(dstAddress, srcAddress + srcOffset, size);
         }
-
-        if (commitMode != CommitMode.NOSYNC) {
-            TableUtils.msync(ff, dstAddress, size, commitMode == CommitMode.ASYNC);
-        }
+        markWritten(commitMode);
     }
 
     @Override
@@ -214,9 +212,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             } else {
                 mergeShuffle(src1Address, src2Address, dstAddress, mergeIndexAddr, mergeIndexRows, shl);
             }
-            if (commitMode != CommitMode.NOSYNC) {
-                TableUtils.msync(ff, dstAddress, size, commitMode == CommitMode.ASYNC);
-            }
+            markWritten(commitMode);
         } finally {
             if (nullValueAddress != 0) {
                 Unsafe.free(nullValueAddress, 1L << shl, MemoryTag.NATIVE_O3);
@@ -285,15 +281,16 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         if (sourceColumnTop > 0) {
             final long mappedAddress = mapWritable((rowCount + sourceColumnTop) << shl) + (rowCount << shl);
             TableUtils.setNull(columnType, mappedAddress, sourceColumnTop);
-            if (commitMode != CommitMode.NOSYNC) {
-                TableUtils.msync(ff, mappedAddress, sourceColumnTop << shl, commitMode == CommitMode.ASYNC);
-            }
+            markWritten(commitMode);
         }
     }
 
     @Override
     public void close() {
         if (!closed) {
+            // A flush still owed here is either the frame's to do - FrameImpl#releaseColumn noted it before this
+            // close - or belongs to a write being abandoned.
+            isSyncPending = false;
             if (mapAddr != 0) {
                 ff.munmap(mapAddr, mapSize, MEMORY_TAG);
                 mapAddr = 0;
@@ -356,6 +353,11 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     @Override
     public int getStorageType() {
         return COLUMN_CONTIGUOUS_FILE;
+    }
+
+    @Override
+    public boolean isSyncPending() {
+        return isSyncPending;
     }
 
     public void ofRO(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex, boolean isEmpty) {
@@ -428,6 +430,15 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     public void setRecycleBin(RecycleBin<FrameColumn> recycleBin) {
         assert this.recycleBin == null;
         this.recycleBin = recycleBin;
+    }
+
+    @Override
+    public void sync() {
+        if (isSyncPending) {
+            // Flushes every dirty page of the file, the ones written through the mapping included.
+            ff.fsync(fd);
+            isSyncPending = false;
+        }
     }
 
     /**
@@ -533,6 +544,17 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                 ? TableUtils.mapRO(ff, fd, newMemSize, MEMORY_TAG)
                 : TableUtils.mremap(ff, fd, mapAddr, mapSize, newMemSize, Files.MAP_RO, MEMORY_TAG);
         mapSize = newMemSize;
+    }
+
+    /**
+     * Records a write for {@link #sync()}. Only {@link CommitMode#SYNC} asks for a flush: {@link CommitMode#ASYNC} is
+     * treated as {@link CommitMode#NOSYNC}, leaving the dirty pages to the kernel's writeback, which is all the
+     * {@code msync(MS_ASYNC)} it stands for does on Linux.
+     */
+    private void markWritten(int commitMode) {
+        if (commitMode == CommitMode.SYNC) {
+            isSyncPending = true;
+        }
     }
 
     private void of(int columnType, long columnTop, int columnIndex) {

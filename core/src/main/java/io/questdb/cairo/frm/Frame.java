@@ -180,4 +180,13 @@ public interface Frame extends Closeable {
      * the open that set it: {@link #close()} drops it.
      */
     void shift(long rowLo, long rowHi);
+
+    /**
+     * Fsyncs every column file an append or merge under {@link io.questdb.cairo.CommitMode#SYNC} wrote since the last
+     * call - each file once, however many operations wrote it. The operations themselves flush nothing, and any other
+     * commit mode flushes nothing at all, so a caller writing a partition calls this once, after its last operation and
+     * before it publishes what it wrote; it costs nothing unless a SYNC operation ran. Closing the frame drops whatever
+     * is still unflushed.
+     */
+    void sync();
 }

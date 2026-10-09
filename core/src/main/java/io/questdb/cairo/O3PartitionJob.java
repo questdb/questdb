@@ -1182,6 +1182,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
             }
+            // Once for the whole plan, however many of its actions wrote each column file.
+            target.sync();
             success = true;
         } finally {
             if (cacheEntry != null) {
@@ -1286,6 +1288,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     FrameAlgebra.append(target, source, rowOffset, rowOffset + rowCount, upcomingTableTxn, commitMode);
                     tableWriter.addPhysicallyWrittenRows(rowCount);
                 }
+                // No sync: the staging image is scratch, read back by the merge below and removed before anything
+                // is published. The merge's own directory is what gets synced.
             }
 
             // The flatten put the pieces in timestamp order and left the dead rows behind, so the leading NULL
@@ -1842,6 +1846,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         }
                     }
                 }
+                // Once for the whole directory, however many of the actions wrote each column file.
+                target.sync();
             }
         }
 
