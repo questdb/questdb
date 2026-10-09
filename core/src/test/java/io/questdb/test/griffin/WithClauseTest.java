@@ -25,6 +25,9 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlParser;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -429,6 +432,47 @@ public class WithClauseTest extends AbstractCairoTest {
                             a\t5
                             a\t1
                             """);
+        });
+    }
+
+    @Test
+    public void testCteRefusedByDeclaredQueryCopiesLeavesNoLexerStash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x::INT x, ('s' || x)::SYMBOL s FROM long_sequence(5))");
+            // A reference to a CTE after the first stashes what the lexer has read ahead, parses
+            // the CTE's text again and puts back what it stashed. The lexer belongs to the
+            // compiler, which a pool keeps while the server runs, and the next compile drops
+            // nothing the lexer has stashed. When the second parse threw, the lexer kept what it
+            // had stashed, so every refused statement left the stash larger for good.
+            //
+            // Every parse of c copies @q for its second read of it, and 110 references would parse
+            // c 110 times, so one of them takes the copies past their maximum while the parser is
+            // inside it.
+            final String sql = "WITH c AS (DECLARE @q := (SELECT s FROM t WHERE x < 3) SELECT x FROM t WHERE s IN @q AND s IN @q) "
+                    + unionOfReads("c", 110);
+            assertRefusalLeavesNoLexerStash(
+                    sql,
+                    sql.indexOf("(SELECT s") + 1,
+                    "declared sub-queries are read too many times [max=" + SqlParser.MAX_DECLARED_QUERY_COPIES + ']'
+            );
+        });
+    }
+
+    @Test
+    public void testCteRefusedByParseBudgetLeavesNoLexerStash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x::INT x, ('s' || x)::SYMBOL s FROM long_sequence(5))");
+            // Each CTE reads the one before it twice, so a later reference to c12 parses c11
+            // again, which parses c10 again, and so on down the chain. The parse budget refuses a
+            // read of c0 in the text of c1 while the parser is inside the references above it,
+            // each of which has stashed the lexer's read-ahead, see
+            // testCteRefusedByDeclaredQueryCopiesLeavesNoLexerStash.
+            final String sql = joinCteChain(12);
+            assertRefusalLeavesNoLexerStash(
+                    sql,
+                    sql.indexOf("JOIN c0 b") + "JOIN ".length(),
+                    "statement is too complex to parse [models="
+            );
         });
     }
 
@@ -860,6 +904,18 @@ public class WithClauseTest extends AbstractCairoTest {
         return c0.append(" SELECT count() FROM c").append(levels).toString();
     }
 
+    // WITH c0 AS (SELECT x FROM t), c1 AS (SELECT a.x FROM c0 a JOIN c0 b ON a.x = b.x), ...
+    // SELECT * FROM c<levels>
+    private static String joinCteChain(int levels) {
+        final StringBuilder sql = new StringBuilder("WITH c0 AS (SELECT x FROM t)");
+        for (int i = 1; i <= levels; i++) {
+            sql.append(", c").append(i)
+                    .append(" AS (SELECT a.x FROM c").append(i - 1)
+                    .append(" a JOIN c").append(i - 1).append(" b ON a.x = b.x)");
+        }
+        return sql.append(" SELECT * FROM c").append(levels).toString();
+    }
+
     // WITH c AS (SELECT x::STRING s FROM long_sequence(3)) SELECT count() FROM k
     // WHERE s IN (SELECT s FROM c) AND ..., <reads> times
     private static String readsOfCte(int reads) {
@@ -889,5 +945,44 @@ public class WithClauseTest extends AbstractCairoTest {
             c0.append(",x");
         }
         return doublingChainOver(c0.append(" FROM long_sequence(1)").toString(), levels, "count()");
+    }
+
+    // Asserts that a compiler refuses the statement at the position and that its lexer, which
+    // outlives the statement, holds nothing stashed afterwards. The same compiler then reads a
+    // CTE twice in a statement that parses, which leaves nothing stashed either. Both statements
+    // read the table t.
+    private void assertRefusalLeavesNoLexerStash(String sql, int position, String error) throws Exception {
+        try (StashProbeCompiler compiler = new StashProbeCompiler(engine)) {
+            assertQuery(sql)
+                    .withCompiler(compiler)
+                    .noLeakCheck()
+                    .fails(position, error);
+            Assert.assertEquals(0, compiler.getLexerStashSize());
+
+            assertQuery("WITH c AS (SELECT x FROM t WHERE x < 3) SELECT * FROM c UNION ALL SELECT * FROM c")
+                    .withCompiler(compiler)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            x
+                            1
+                            2
+                            1
+                            2
+                            """);
+            Assert.assertEquals(0, compiler.getLexerStashSize());
+        }
+    }
+
+    // Reads the stash of the lexer the compiler parses statements with. The compiler does not
+    // expose that lexer, but a subclass reaches it.
+    private static class StashProbeCompiler extends SqlCompilerImpl {
+        private StashProbeCompiler(CairoEngine engine) {
+            super(engine);
+        }
+
+        private int getLexerStashSize() {
+            return lexer.getStashSize();
+        }
     }
 }

@@ -771,7 +771,13 @@ public class UnionTest extends AbstractCairoTest {
                             -2
                             3
                             """);
-            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (SELECT v FROM t EXCEPT SELECT v FROM t WHERE v = 1 ORDER BY 1 DESC LIMIT 1)")
+            assertQuery("""
+                    SELECT -1L v
+                    UNION ALL
+                    SELECT -2L
+                    UNION ALL
+                    SELECT * FROM (SELECT v FROM t EXCEPT SELECT v FROM t WHERE v = 1 ORDER BY 1 DESC LIMIT 1)
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -781,7 +787,13 @@ public class UnionTest extends AbstractCairoTest {
                             -2
                             3
                             """);
-            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (SELECT v FROM t WHERE v > 1 INTERSECT SELECT v FROM t ORDER BY 1 LIMIT 1)")
+            assertQuery("""
+                    SELECT -1L v
+                    UNION ALL
+                    SELECT -2L
+                    UNION ALL
+                    SELECT * FROM (SELECT v FROM t WHERE v > 1 INTERSECT SELECT v FROM t ORDER BY 1 LIMIT 1)
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -1743,6 +1755,127 @@ public class UnionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionNestedInJoinLateralWithOrderByAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // The trailing ORDER BY and LIMIT of a set operation that a lateral join reads apply to
+            // the whole set operation, once per row of the join's left side. For the row t1.v the
+            // branches return 1 to t1.v and 11 to t1.v + 10, so the largest value is t1.v + 10.
+            assertQuery("""
+                    SELECT t1.v, t2.v
+                    FROM t t1
+                    JOIN LATERAL (
+                        SELECT v FROM t WHERE v <= t1.v
+                        UNION ALL
+                        SELECT v + 10 FROM t WHERE v <= t1.v
+                        ORDER BY v DESC
+                        LIMIT 1
+                    ) t2
+                    ORDER BY t1.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            v\tv1
+                            1\t11
+                            2\t12
+                            3\t13
+                            """);
+            // a row of the left side for which both branches are empty
+            assertQuery("""
+                    SELECT t1.v, t2.v
+                    FROM t t1
+                    LEFT JOIN LATERAL (
+                        SELECT v FROM t WHERE v < t1.v
+                        UNION ALL
+                        SELECT v + 10 FROM t WHERE v < t1.v
+                        ORDER BY v DESC
+                        LIMIT 1
+                    ) t2 ON true
+                    ORDER BY t1.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            v\tv1
+                            1\tnull
+                            2\t11
+                            3\t12
+                            """);
+        });
+    }
+
+    @Test
+    public void testUnionNestedInJoinRejectsOrderByAliasOfLastBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // The trailing ORDER BY of a set operation that a join reads applies to the whole set
+            // operation, which takes its column names from its first branch. The ORDER BY cannot
+            // name an alias that only the last branch declares, and can name the first branch's.
+            assertQuery("SELECT * FROM t t1 JOIN (SELECT v FROM t UNION ALL SELECT v w FROM t ORDER BY w DESC LIMIT 1) t2 ON t1.v = t2.v")
+                    .noLeakCheck()
+                    .fails(78, "Invalid column: w");
+            assertQuery("SELECT * FROM t t1 JOIN (SELECT v w FROM t UNION ALL SELECT v FROM t ORDER BY w DESC LIMIT 1) t2 ON t1.v = t2.w")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v\tw
+                            3\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testUnionNestedInJoinWithLimitOrOrderByAlone() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // A trailing LIMIT without an ORDER BY, and a trailing ORDER BY without a LIMIT, of a
+            // set operation that a join reads apply to the whole set operation, the same as the
+            // two together.
+            final String rows = "SELECT v FROM t UNION ALL SELECT v + 10 FROM t";
+            // LIMIT alone
+            assertQuery("SELECT * FROM t t1 CROSS JOIN (" + rows + " LIMIT 2) t2 ORDER BY t1.v, t2.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\tv1
+                            1\t1
+                            1\t2
+                            2\t1
+                            2\t2
+                            3\t1
+                            3\t2
+                            """);
+            // a negative LIMIT alone
+            assertQuery("SELECT * FROM t t1 CROSS JOIN (" + rows + " LIMIT -2) t2 ORDER BY t1.v, t2.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\tv1
+                            1\t12
+                            1\t13
+                            2\t12
+                            2\t13
+                            3\t12
+                            3\t13
+                            """);
+            // ORDER BY alone: an outer ORDER BY would hide the order the set operation returns its
+            // rows in, so the join's left side has one row instead.
+            assertQuery("SELECT t2.v FROM long_sequence(1) CROSS JOIN (" + rows + " ORDER BY 1 DESC) t2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            13
+                            12
+                            11
+                            3
+                            2
+                            1
+                            """);
+        });
+    }
+
+    @Test
     public void testUnionNestedInJoinWithOrderByAndLimit() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
@@ -1793,7 +1926,14 @@ public class UnionTest extends AbstractCairoTest {
                             0\t0
                             3\t3
                             """);
-            assertQuery("SELECT 0L v, 0L v1 UNION ALL SELECT -1L, -1L UNION ALL SELECT * FROM t t1 JOIN (SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY v DESC LIMIT 1) t2 ON t1.v = t2.v")
+            assertQuery("""
+                    SELECT 0L v, 0L v1
+                    UNION ALL
+                    SELECT -1L, -1L
+                    UNION ALL
+                    SELECT * FROM t t1
+                    JOIN (SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY v DESC LIMIT 1) t2 ON t1.v = t2.v
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
@@ -1902,7 +2042,13 @@ public class UnionTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns(expected);
-            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY v DESC LIMIT 1)")
+            assertQuery("""
+                    SELECT -1L v
+                    UNION ALL
+                    SELECT -2L
+                    UNION ALL
+                    SELECT * FROM (SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY v DESC LIMIT 1)
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -1920,7 +2066,12 @@ public class UnionTest extends AbstractCairoTest {
                             3
                             """);
             // a later branch of a set operation that sits in a later branch itself
-            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (SELECT -3L v UNION ALL SELECT -4L UNION ALL SELECT * FROM (" + top1 + "))")
+            assertQuery("""
+                    SELECT -1L v
+                    UNION ALL
+                    SELECT -2L
+                    UNION ALL
+                    SELECT * FROM (SELECT -3L v UNION ALL SELECT -4L UNION ALL SELECT * FROM (""" + top1 + "))")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -1971,7 +2122,13 @@ public class UnionTest extends AbstractCairoTest {
                             """);
             // A bracketed last branch scopes its ORDER BY and LIMIT to itself, in a later branch
             // of an outer set operation as well.
-            assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (SELECT v FROM t UNION ALL (SELECT v FROM t ORDER BY 1 DESC LIMIT 1))")
+            assertQuery("""
+                    SELECT -1L v
+                    UNION ALL
+                    SELECT -2L
+                    UNION ALL
+                    SELECT * FROM (SELECT v FROM t UNION ALL (SELECT v FROM t ORDER BY 1 DESC LIMIT 1))
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -2020,7 +2177,12 @@ public class UnionTest extends AbstractCairoTest {
                             a\t3
                             a\t3
                             """);
-            assertQuery("WITH c AS (SELECT s, l FROM k UNION ALL (SELECT s, l FROM k ORDER BY 2 DESC LIMIT 1)) SELECT * FROM c UNION ALL SELECT * FROM c")
+            assertQuery("""
+                    WITH c AS (SELECT s, l FROM k UNION ALL (SELECT s, l FROM k ORDER BY 2 DESC LIMIT 1))
+                    SELECT * FROM c
+                    UNION ALL
+                    SELECT * FROM c
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -2108,7 +2270,18 @@ public class UnionTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns(thirdOfFour);
-            assertQuery("WITH top1 AS (" + top1 + ") SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT -3L UNION ALL SELECT * FROM top1 UNION ALL SELECT -4L")
+            assertQuery("WITH top1 AS (" + top1 + """
+                    )
+                    SELECT -1L v
+                    UNION ALL
+                    SELECT -2L
+                    UNION ALL
+                    SELECT -3L
+                    UNION ALL
+                    SELECT * FROM top1
+                    UNION ALL
+                    SELECT -4L
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -2119,7 +2292,16 @@ public class UnionTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns(thirdOfFour);
             // a join in the middle branch reads the set operation
-            assertQuery("SELECT 0L v, 0L v1 UNION ALL SELECT -1L, -1L UNION ALL SELECT * FROM t t1 JOIN (" + top1 + ") t2 ON t1.v = t2.v UNION ALL SELECT -2L, -2L")
+            assertQuery("""
+                    SELECT 0L v, 0L v1
+                    UNION ALL
+                    SELECT -1L, -1L
+                    UNION ALL
+                    SELECT * FROM t t1 JOIN (""" + top1 + """
+                    ) t2 ON t1.v = t2.v
+                    UNION ALL
+                    SELECT -2L, -2L
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
@@ -2128,6 +2310,33 @@ public class UnionTest extends AbstractCairoTest {
                             -1\t-1
                             3\t3
                             -2\t-2
+                            """);
+        });
+    }
+
+    @Test
+    public void testUnionNestedInRightAndFullJoinWithOrderByAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // The trailing ORDER BY and LIMIT of a set operation that a right or a full join reads
+            // apply to the whole set operation. The join reads 4 and 3 from it, and keeps the 4,
+            // which no row of its left side matches.
+            final String top2 = "SELECT v FROM t UNION ALL SELECT v + 1 FROM t ORDER BY 1 DESC LIMIT 2";
+            assertQuery("SELECT * FROM t t1 RIGHT JOIN (" + top2 + ") t2 ON t1.v = t2.v ORDER BY t2.v")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tv1
+                            3\t3
+                            null\t4
+                            """);
+            assertQuery("SELECT * FROM t t1 FULL JOIN (" + top2 + ") t2 ON t1.v = t2.v ORDER BY coalesce(t1.v, t2.v)")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tv1
+                            1\tnull
+                            2\tnull
+                            3\t3
+                            null\t4
                             """);
         });
     }
@@ -2202,7 +2411,10 @@ public class UnionTest extends AbstractCairoTest {
                             3\t3\t3
                             """);
             // the first join and the second join read a set operation each
-            assertQuery("SELECT * FROM t t1 JOIN (" + top1 + ") t2 ON t1.v = t2.v JOIN (SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY 1 LIMIT 1) t3 ON t1.v = t3.v + 2")
+            assertQuery("SELECT * FROM t t1 JOIN (" + top1 + """
+                    ) t2 ON t1.v = t2.v
+                    JOIN (SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY 1 LIMIT 1) t3 ON t1.v = t3.v + 2
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
@@ -2217,6 +2429,120 @@ public class UnionTest extends AbstractCairoTest {
                             v\tv1\tv2
                             0\t0\t0
                             3\t3\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testUnionNestedInTimeSeriesJoinWithLimitHasNoTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ts1 (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE ts2 (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // A UNION ALL has no designated timestamp, and its trailing LIMIT, which applies to
+            // the whole set operation, gives it none, so a time-series join rejects it on either
+            // side. The error points at the start of the bracketed sub-query, where it also points
+            // for a hand-written SELECT * FROM (<set operation>) LIMIT 3.
+            final String error = "TIMESTAMP column is required but not provided";
+            final String ts1Rows = """
+                    SELECT v, ts FROM ts1
+                    UNION ALL
+                    SELECT v + 1, ts FROM ts1
+                    """;
+            final String ts2Rows = """
+                    SELECT v, ts FROM ts2
+                    UNION ALL
+                    SELECT v + 1, ts FROM ts2
+                    """;
+            // the right side of the join, and last the hand-written spelling of the ASOF JOIN
+            assertQuery("SELECT a.v, b.v FROM ts1 a ASOF JOIN (" + ts2Rows + "LIMIT 3) b")
+                    .noLeakCheck()
+                    .fails(38, error);
+            assertQuery("SELECT a.v, b.v FROM ts1 a LT JOIN (" + ts2Rows + "LIMIT 3) b")
+                    .noLeakCheck()
+                    .fails(36, error);
+            assertQuery("SELECT a.v, b.v FROM ts1 a SPLICE JOIN (" + ts2Rows + "LIMIT 3) b")
+                    .noLeakCheck()
+                    .fails(40, error);
+            assertQuery("SELECT a.v, b.v FROM ts1 a ASOF JOIN (SELECT * FROM (" + ts2Rows + ") LIMIT 3) b")
+                    .noLeakCheck()
+                    .fails(38, error);
+            // the left side of the join, and the hand-written spelling of it
+            assertQuery("SELECT a.v, b.v FROM (" + ts1Rows + "LIMIT 3) a ASOF JOIN ts2 b")
+                    .noLeakCheck()
+                    .fails(22, error);
+            assertQuery("SELECT a.v, b.v FROM (SELECT * FROM (" + ts1Rows + ") LIMIT 3) a ASOF JOIN ts2 b")
+                    .noLeakCheck()
+                    .fails(22, error);
+            // a CTE: the error points at the set operation inside the CTE's definition
+            assertQuery("WITH c AS (" + ts2Rows + "LIMIT 3) SELECT a.v, b.v FROM ts1 a ASOF JOIN c b")
+                    .noLeakCheck()
+                    .fails(11, error);
+        });
+    }
+
+    @Test
+    public void testUnionNestedInTimeSeriesJoinWithOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ts1 (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE ts2 (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO ts1 VALUES
+                        (1, '2024-01-01T00:00:01'),
+                        (2, '2024-01-01T00:00:02'),
+                        (3, '2024-01-01T00:00:03'),
+                        (4, '2024-01-01T00:00:04')
+                    """);
+            execute("""
+                    INSERT INTO ts2 VALUES
+                        (10, '2024-01-01T00:00:00'),
+                        (20, '2024-01-01T00:00:02'),
+                        (30, '2024-01-01T00:00:03'),
+                        (40, '2024-01-01T00:00:05')
+                    """);
+            // The trailing ORDER BY of a set operation that a time-series join reads applies to
+            // the whole set operation, and gives the join the timestamp order it requires. The
+            // two branches return the rows of ts2 out of that order, so the ordered set operation
+            // holds the rows of ts2 in the order of ts2, and each join returns the rows it returns
+            // when it reads ts2 itself.
+            final String ts2Rows = """
+                    SELECT v, ts FROM ts2 WHERE v > 20
+                    UNION ALL
+                    SELECT v, ts FROM ts2 WHERE v <= 20
+                    ORDER BY ts
+                    """;
+            assertQuery("SELECT a.v, b.v FROM ts1 a ASOF JOIN (" + ts2Rows + ") b")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v\tv1
+                            1\t10
+                            2\t20
+                            3\t30
+                            4\t30
+                            """);
+            assertQuery("SELECT a.v, b.v FROM ts1 a LT JOIN (" + ts2Rows + ") b")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v\tv1
+                            1\t10
+                            2\t10
+                            3\t20
+                            4\t30
+                            """);
+            assertQuery("SELECT a.v, b.v FROM ts1 a SPLICE JOIN (" + ts2Rows + ") b")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v\tv1
+                            null\t10
+                            1\t10
+                            2\t20
+                            3\t30
+                            4\t30
+                            4\t40
                             """);
         });
     }

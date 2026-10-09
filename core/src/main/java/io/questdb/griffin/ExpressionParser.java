@@ -1968,6 +1968,15 @@ public class ExpressionParser {
                                             argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                         }
 
+                                        // The flush has counted the values the final branch delivered. An
+                                        // empty bracket, as in 'case when a then () end', delivers none, yet
+                                        // paramCount counts one for the branch all the same. Emitted with
+                                        // that count, the CASE would take an operand of the expression
+                                        // around it in place of the missing value, or none at all.
+                                        if (argStackDepth == 0) {
+                                            throw missingArgs(lastPos);
+                                        }
+
                                         // The final branch's value is already accounted for in paramCount and is
                                         // re-added below, so clear the local depth the flush loop left behind. This
                                         // keeps argStackDepth in step with the listener's operand stack: a CASE
@@ -1983,9 +1992,14 @@ public class ExpressionParser {
                                             argStackDepth += argStackDepthStack.pop();
                                         }
 
-                                        // exiting CASE context, pop stuff off the stacks
-                                        Scope scope = scopeStack.pop();
-                                        assert scope == Scope.CASE : "Should have popped CASE, but got " + scope;
+                                        // exiting CASE context, pop stuff off the stacks. An END written
+                                        // inside a bracket that is still open, as in 'case (when a then b
+                                        // end)', finds the bracket's scope on top in place of the CASE's.
+                                        // The flush above finds no CASE at all after 'case.*', whose
+                                        // wildcard replaces it.
+                                        if (node == null || scopeStack.pop() != Scope.CASE) {
+                                            throw SqlException.$(node != null ? node.position : lastPos, "unbalanced 'case'");
+                                        }
                                         node.paramCount = paramCount;
                                         // add the number of 'case' arguments to the original stack depth
                                         argStackDepth = onNode(listener, node, argStackDepth + paramCount, prevBranch);
@@ -2017,6 +2031,16 @@ public class ExpressionParser {
                                             argCount++;
                                         }
 
+                                        // Past the first keyword, the tokens before this one are the operand
+                                        // of a WHEN or the value of a THEN, and END counts one operand for
+                                        // each. The check above refuses a keyword that directly follows
+                                        // another. An empty bracket, as in 'case when () then 1 end',
+                                        // delivers no value either. Ahead of the first keyword no value is
+                                        // valid: it is the searched form, 'case when'.
+                                        if (paramCount > 0 && argStackDepth == 0) {
+                                            throw missingArgs(lastPos);
+                                        }
+
                                         if (paramCount == 0) {
                                             if (argCount == 0) {
                                                 // this is 'case when', we will indicate that this is regular 'case'
@@ -2041,9 +2065,17 @@ public class ExpressionParser {
                                                 break;
                                         }
 
-                                        if (node != null) {
-                                            opStack.push(node);
+                                        // A WHEN, THEN or ELSE written inside a bracket that is still open,
+                                        // as in 'case when (a when b) then c end', has just flushed that
+                                        // bracket off the operator stack along with its content. Parsing on
+                                        // would let the bracket's ')', ']' or ',' flush the CASE as well,
+                                        // and leave END, or the bracket itself, with nothing to close.
+                                        // The flush finds no CASE at all after 'case.*', whose wildcard
+                                        // replaces it, or once the AND of a BETWEEN has flushed it.
+                                        if (node == null || scopeStack.peek() != Scope.CASE) {
+                                            throw SqlException.$(node != null ? node.position : lastPos, "unbalanced 'case'");
                                         }
+                                        opStack.push(node);
 
                                         argStackDepth = 0;
                                         paramCount++;
@@ -2095,7 +2127,11 @@ public class ExpressionParser {
                                 throw SqlException.$(lastPos, "'.' is unexpected here");
                             }
                         } else if (prevBranch == BRANCH_DOT_DEREFERENCE) {
-                            argStackDepth++;
+                            // The bracket ahead of the dot has delivered the value to read the
+                            // member from, and the flush counts the member. The '.' takes those two,
+                            // so this branch adds no operand of its own. Counting one here would let
+                            // the next operator through with an operand missing, as in '(a).b +',
+                            // and it would then take an operand that belongs to something else.
                             final ExpressionNode dotDereference = expressionNodePool.next().of(
                                     ExpressionNode.OPERATION, activeRegistry.dot.operator.token,
                                     activeRegistry.dot.precedence, lastPos);

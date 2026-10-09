@@ -195,14 +195,14 @@ public class ConcurrentViewCycleTest extends AbstractViewTest {
             String viewName,
             StringSink sink,
             SqlExecutionContext ctx,
-            AtomicBoolean writersDone
+            AtomicBoolean isWritersDone
     ) throws SqlException {
         final int maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         int boundedAttempts = 0;
         while (true) {
             // The main thread sets the flag after it joins both writers, so an attempt that sees
             // it set compiles after the last ALTER VIEW committed.
-            final boolean isBounded = writersDone.get();
+            final boolean isBounded = isWritersDone.get();
             try {
                 engine.print("EXPLAIN SELECT * FROM " + viewName, sink, ctx);
                 return;

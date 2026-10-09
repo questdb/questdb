@@ -3380,6 +3380,39 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareVariableAsSubQueryReadTooManyTimesByViewBody() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (l LONG)");
+            execute("INSERT INTO k VALUES (1), (2), (3)");
+            execute("CREATE VIEW v_lim AS (DECLARE OVERRIDABLE @lim := 0 SELECT l FROM k WHERE l >= @lim AND l <= @lim)");
+            drainWalAndViewQueues();
+            final String declared = "DECLARE @one := (SELECT 1L l), @lim := (SELECT max(l) FROM k) SELECT count(), sum(l) FROM (";
+            // The statement never reads @lim itself. The body of v_lim reads it twice, and the
+            // second read parses a copy of the statement's sub-query while the parser is expanding
+            // v_lim. 100 reads of @one parse 99 copies, so that copy is the last the budget allows.
+            assertQuery(declared + readsOfOne(100) + " UNION ALL SELECT * FROM v_lim)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            101\t103
+                            """);
+            // One more read of @one spends the budget, so the copy v_lim's body asks for is the
+            // 101st. The statement declared the sub-query that copy would parse, so the error
+            // points at it in the statement's text. It does not point at the statement's read of
+            // v_lim, as it does for a sub-query the body of a view declares, see
+            // testDeclareVariableAsSubQueryReadTooManyTimesInsideViews.
+            assertQuery(declared + readsOfOne(101) + " UNION ALL SELECT * FROM v_lim)")
+                    .noLeakCheck()
+                    .fails(
+                            declared.indexOf("@lim := (") + "@lim := (".length(),
+                            "declared sub-queries are read too many times [max=100]"
+                    );
+        });
+    }
+
+    @Test
     public void testDeclareVariableAsSubQueryReadTooManyTimesInsideViews() throws Exception {
         assertMemoryLeak(() -> {
             // v_q reads its own @q twice, so every expansion of v_q parses one copy of @q. v_n1
@@ -4345,6 +4378,176 @@ public class DeclareTest extends AbstractSqlParserTest {
                     .returns("""
                             cast
                             sp052w
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableWithMalformedCaseBracketAroundWhen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // The WHEN inside the bracket flushes the bracket itself off the operator stack. The
+            // `)` after it used to flush the CASE in turn, and END, left with no CASE to close,
+            // failed with a NullPointerException.
+            assertQuery("DECLARE @x := CASE WHEN (v WHEN 1) THEN (1) ELSE (2) END SELECT @x FROM t")
+                    .fails(14, "unbalanced 'case'");
+            // The compiler that refused the statement parses a well-formed CASE next.
+            assertQuery("DECLARE @x := CASE WHEN (v > 1) THEN (1) ELSE (2) END SELECT @x FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            case
+                            2
+                            1
+                            1
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableWithMalformedCaseBracketBeforeWhen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // A bracket inside an open CASE belongs to the declared value, so a WHEN, THEN, ELSE
+            // or END written inside it meets the CASE while the bracket is still open. END used
+            // to close the bracket's scope in place of the CASE and fail with an AssertionError.
+            assertQuery("DECLARE @x := CASE (WHEN v > 1 THEN 1 ELSE 2 END) SELECT @x FROM t")
+                    .fails(14, "unbalanced 'case'");
+            // A list member fails the same way, at its own CASE.
+            assertQuery("DECLARE @x := (1, CASE (WHEN v > 1 THEN 1 ELSE 2 END)) SELECT v FROM t WHERE v IN @x")
+                    .fails(18, "unbalanced 'case'");
+            // The compiler that refused the statement parses a well-formed CASE next.
+            assertQuery("DECLARE @x := CASE WHEN (v > 1) THEN 1 ELSE 2 END SELECT @x FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            case
+                            2
+                            1
+                            1
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableWithMalformedCaseEmptyBracket() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // An empty bracket delivers no value, but the CASE counted one for it. It took the
+            // variable on the left of `:=` in place of the first missing value and found nothing
+            // left to take for the second: the statement failed with a NullPointerException.
+            assertQuery("DECLARE @x := CASE WHEN () THEN () ELSE 2 END SELECT @x FROM t")
+                    .fails(27, "missing arguments");
+            assertQuery("DECLARE @x := CASE WHEN () THEN () ELSE (v) END SELECT @x FROM t")
+                    .fails(27, "missing arguments");
+            assertQuery("DECLARE @x := (1, CASE WHEN (v > 1) THEN () ELSE () END) SELECT v FROM t WHERE v IN @x")
+                    .fails(44, "missing arguments");
+            // A single empty bracket used to fail past the value, with the variable gone from
+            // the left of `:=`. The error now points at the keyword that finds its value
+            // missing, as it does for `CASE WHEN THEN`.
+            assertQuery("DECLARE @x := CASE WHEN () THEN 1 ELSE 2 END SELECT @x FROM t")
+                    .fails(27, "missing arguments");
+            assertQuery("DECLARE @x := CASE WHEN (v > 1) THEN (()) ELSE 2 END SELECT @x FROM t")
+                    .fails(42, "missing arguments");
+            assertQuery("DECLARE @x := CASE WHEN (v > 1) THEN 1 ELSE () END SELECT @x FROM t")
+                    .fails(47, "missing arguments");
+            assertQuery("DECLARE @x := CASE WHEN (v > 1) THEN 1 WHEN () THEN 2 END SELECT @x FROM t")
+                    .fails(47, "missing arguments");
+            assertQuery("DECLARE @x := CASE v WHEN () THEN 1 ELSE 2 END SELECT @x FROM t")
+                    .fails(29, "missing arguments");
+            // The compiler that refused the statements parses a well-formed CASE next.
+            assertQuery("DECLARE @x := CASE WHEN (v > 1) THEN (1) ELSE (2) END SELECT @x FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            case
+                            2
+                            1
+                            1
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableWithMalformedCaseEmptyBracketBeforeCast() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // Both values are empty brackets and a cast follows END. ELSE is the first keyword
+            // to find its value missing.
+            assertQuery("DECLARE @x := CASE WHEN (v) THEN () ELSE () END::INT SELECT @x FROM t")
+                    .fails(36, "missing arguments");
+            // END finds the last value missing.
+            assertQuery("DECLARE @x := CASE WHEN (v > 1) THEN 1 ELSE () END::INT SELECT @x FROM t")
+                    .fails(47, "missing arguments");
+            assertQuery("DECLARE @x := CASE WHEN (v > 1) THEN (1) ELSE (2) END::INT SELECT @x FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            cast
+                            2
+                            1
+                            1
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableWithMalformedCaseEmptyBracketInNestedCase() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // The outer WHEN holds two operands, `1` and `v > 1`, so the inner CASE found a spare
+            // one to take in place of its empty ELSE value. No operand was missing in total: the
+            // statement parsed into a tree with the operands in the wrong places, and failed in
+            // the optimiser with a NullPointerException. The inner END now refuses its empty value.
+            assertQuery("""
+                    DECLARE @x := CASE WHEN 1 v > 1 THEN CASE WHEN (v = 1) THEN 'x' ELSE () END WHEN v > 2 THEN 'x' END
+                    SELECT @x FROM t
+                    """)
+                    .fails(72, "missing arguments");
+            assertQuery("""
+                    DECLARE @x := CASE WHEN v > 1 THEN CASE WHEN (v = 2) THEN 'x' ELSE () END WHEN v > 0 THEN 'z' END
+                    SELECT @x FROM t
+                    """)
+                    .fails(70, "missing arguments");
+            // A well-formed nested CASE with a bracket in every slot is unaffected.
+            assertQuery("""
+                    DECLARE @x := CASE WHEN (v > 1) THEN (CASE WHEN (v = 2) THEN ('x') ELSE ('y') END) WHEN (v > 0) THEN ('z') END
+                    SELECT @x FROM t
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            case
+                            z
+                            x
+                            y
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableWithMalformedCaseMemberAccess() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v FROM long_sequence(3))");
+            // A member access after a bracket used to count one operand more than it delivered.
+            // On the strength of it, an operator with an operand missing, or an access to an
+            // empty bracket, passed the operand check and took a value of the CASE in place of
+            // its own. The CASE came up short and failed with a NullPointerException.
+            assertQuery("DECLARE @x := CASE WHEN (v > 1) THEN (v).x + ELSE (v).x + END SELECT @x FROM t")
+                    .fails(43, "too few arguments for '+' [found=1,expected=2]");
+            assertQuery("DECLARE @x := CASE WHEN (v > 1) THEN ().v ELSE ().v END SELECT @x FROM t")
+                    .fails(40, "too few arguments for '.' [found=1,expected=2]");
+            // A well-formed member access parses as before: inside a CASE it reaches the type
+            // check, which refuses a LONG, and outside one it reads the cursor's column.
+            assertQuery("DECLARE @x := CASE WHEN (v > 1) THEN (v).x ELSE 2 END SELECT @x FROM t")
+                    .fails(38, "expression type mismatch, expected: RECORD, actual: LONG");
+            assertQuery("DECLARE @x := (pg_catalog.pg_class()).relnamespace SELECT @x x FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            x
+                            11
+                            2200
                             """);
         });
     }
