@@ -71,8 +71,8 @@ public class TableReadFailTest extends AbstractCairoTest {
                 mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
                 long version = mem.getLong(ColumnVersionReader.OFFSET_VERSION_64);
                 Assert.assertTrue(version >= 2);
-                // The one mismatch a live writer CAN produce: _cv published, _txn not yet. Here the writer never
-                // arrives, so the reader must give up on its deadline - and say which side it was waiting for.
+                // The one mismatch a live writer can produce: _cv published, _txn not yet. Here the writer never
+                // arrives, so the reader gives up on its deadline and says which side it waited for.
                 mem.putLong(ColumnVersionReader.OFFSET_VERSION_64, version + 1);
                 mem.close();
                 try {
@@ -103,13 +103,13 @@ public class TableReadFailTest extends AbstractCairoTest {
                 mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
                 long version = mem.getLong(ColumnVersionReader.OFFSET_VERSION_64);
                 Assert.assertTrue(version > 0);
-                // _txn still names `version`. A stable _cv one behind it is a state no writer can repair: _cv is
-                // published BEFORE the _txn that references it, so waiting is not an option to offer.
+                // _txn still names `version`. A stable _cv one behind it is a state no writer can repair: the
+                // writer publishes _cv before the _txn that references it, so waiting cannot help.
                 mem.putLong(ColumnVersionReader.OFFSET_VERSION_64, version - 1);
                 mem.close();
                 try {
                     // Frozen clock: the diagnosis must come from the ordering invariant, not from a deadline. The
-                    // tick guard turns a regression back into a bounded failure rather than a hung test.
+                    // tick guard turns a failure into a bounded one rather than a hung test.
                     AtomicInteger ticks = new AtomicInteger();
                     testMicrosClock = () -> {
                         if (ticks.incrementAndGet() > 100_000) {
@@ -179,7 +179,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                 long offset = mem.getLong((version & 1) == 0 ? ColumnVersionReader.OFFSET_OFFSET_A_64 : ColumnVersionReader.OFFSET_OFFSET_B_64);
                 long original = mem.getLong(offset);
                 // Leave the matching-version trailer in place, but tear its covered body: the reader must fall
-                // back to the previous commit, find it cannot satisfy _txn, and say so - once, with no retry.
+                // back to the previous commit, find it cannot satisfy _txn, and say so once, with no retry.
                 mem.putLong(offset, original ^ 0x5a5aL);
                 mem.close();
                 LogCapture capture = new LogCapture();
@@ -306,11 +306,10 @@ public class TableReadFailTest extends AbstractCairoTest {
                 mem.jumpTo(offset);
                 mem.close();
 
-                // The corruption leaves a STABLE version pointing at a torn primary area (record txn no longer
-                // matches) and an uninitialised fallback area -- permanent corruption, not a concurrent
-                // mid-commit whose version would keep churning. The branch's _txn A/B body-checksum guard
-                // fail-fasts on that (correct fail-loud) rather than spinning to a spin-lock timeout. (The
-                // retry/timeout path still applies when the version actually changes under the reader.)
+                // The corruption leaves a stable version pointing at a torn primary area (its record txn does not
+                // match) and an uninitialised fallback area: permanent corruption, not a concurrent commit. The
+                // _txn A/B body checksum makes the reader fail fast rather than spin to the spin-lock timeout,
+                // which still applies when the version changes under the reader.
                 try {
                     spinLockTimeout = 100;
                     reader.reload();
@@ -325,9 +324,8 @@ public class TableReadFailTest extends AbstractCairoTest {
                 mem.jumpTo(recOffset + TableUtils.TX_OFFSET_TXN_64);
                 mem.putLong(txn + 2);
                 // The restored record is hand-written, so it has no valid body checksum. Zero the slot to mark
-                // it absent AND clear its stamp: a stamp naming this record says a checksum WAS written for
-                // it, which would make this hand-written record read as TORN - correctly so, which is the
-                // point of the fail-fast asserted a few lines up - and the restore would never load.
+                // it absent and clear its stamp: a stamp naming this record says a checksum was written for it,
+                // so the record would read as torn, as the fail-fast above asserts, and never load.
                 mem.putLong(recOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_64, 0L);
                 mem.putInt(recOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_STAMP_32, 0);
                 mem.jumpTo(offset);
@@ -379,15 +377,15 @@ public class TableReadFailTest extends AbstractCairoTest {
             AbstractCairoTest.create(model);
             TableToken tableToken = engine.verifyTableName(x);
 
-            // Two commits, so the OTHER A/B area holds a complete, checksum-valid previous record --
-            // the one the fallback will land on.
+            // Two commits, so the other A/B area holds a complete, checksum-valid previous record: the one
+            // the fallback lands on.
             commitOneRow(x, 0);
             commitOneRow(x, 1);
 
-            // A reader that has already seen the current txn pins the scoreboard max there. That is what
-            // makes the fallback record unusable below: it carries the PREVIOUS txn, which the scoreboard
-            // then refuses. The scoreboard is malloc'd, so this models corruption discovered while the
-            // engine is live -- after a restart the fallback would simply succeed.
+            // A reader that has already seen the current txn pins the scoreboard max there, which makes the
+            // fallback record unusable below: it carries the previous txn, which the scoreboard refuses. The
+            // scoreboard is malloc'd, so this models corruption found while the engine is live; after a
+            // restart the fallback would succeed.
             try (TableReader pin = newOffPoolReader(configuration, x)) {
                 Assert.assertTrue(pin.getTxn() > 0);
             }
@@ -398,14 +396,13 @@ public class TableReadFailTest extends AbstractCairoTest {
             try (TableReader ignore = newOffPoolReader(configuration, x)) {
                 Assert.fail("a torn live _txn area must not open a reader");
             } catch (CairoException e) {
-                // The defect this pins: TxReader correctly detects the torn area and falls back to the
-                // intact previous one, but the scoreboard refuses that older txn, so the reader spun to
-                // its deadline and reported a contention-flavoured "Transaction read timeout". Name the
-                // torn _txn instead -- an operator must not go hunting for reader contention.
+                // TxReader detects the torn area and falls back to the intact previous one, but the scoreboard
+                // refuses that older txn. The error must name the torn _txn rather than report a read timeout
+                // that sends an operator hunting for reader contention.
                 TestUtils.assertContains(e.getFlyweightMessage(), "_txn live area is torn");
                 TestUtils.assertContains(e.getFlyweightMessage(), "table=" + x);
             }
-            // Prove the diagnosis ran on the path it claims: the A/B fallback must actually have fired.
+            // The diagnosis must come from the path it claims: the A/B fallback must have fired.
             Assert.assertTrue(
                     "the body-checksum fallback must have fired, else this test proves nothing",
                     TxReader.getBodyChecksumFallbackCount() > 0
@@ -417,16 +414,10 @@ public class TableReadFailTest extends AbstractCairoTest {
     }
 
     /**
-     * A torn live area is TERMINAL, so the diagnosis must not depend on time passing.
-     * <p>
-     * The retry loop's only exit was a wall-clock deadline. Freezing the clock is ordinary practice in this
-     * suite -- any test that drives time by hand does it, and {@code AbstractEntColdStorageFsTest} pins
-     * {@code currentMicros} for the whole class -- and {@code CairoTestConfiguration.getMillisecondClock}
-     * derives from that same frozen source. So the deadline could never arrive, and a condition the code
-     * already knew how to name became an unbounded 100%-CPU spin: enterprise CI burned its 20-minute
-     * per-test limit on it across the linux, mac and Replication jobs rather than failing in milliseconds.
-     * <p>
-     * Waiting never repairs a torn area, so there is nothing to wait for. The same error, without the wait.
+     * A torn live area is terminal, so the diagnosis must not depend on time passing. Tests that drive time
+     * by hand freeze {@code currentMicros}, and {@code CairoTestConfiguration.getMillisecondClock} derives
+     * from it, so a reader that waited for a deadline would spin forever. Waiting never repairs a torn area:
+     * the reader reports the same error without the wait.
      */
     @Test(timeout = 60_000)
     public void testTornLiveTxnAreaIsNamedEvenWhenTheClockCannotAdvance() throws Exception {
@@ -445,8 +436,8 @@ public class TableReadFailTest extends AbstractCairoTest {
             commitOneRow(x, 0);
             commitOneRow(x, 1);
 
-            // Pins the scoreboard max at the current txn, so the intact PREVIOUS record the fallback lands
-            // on is refused and the loop cannot converge -- the live-engine corruption case.
+            // Pins the scoreboard max at the current txn, so the scoreboard refuses the intact previous record
+            // the fallback lands on and the loop cannot converge: the live-engine corruption case.
             try (TableReader pin = newOffPoolReader(configuration, x)) {
                 Assert.assertTrue(pin.getTxn() > 0);
             }
@@ -484,9 +475,9 @@ public class TableReadFailTest extends AbstractCairoTest {
             execute("insert into w values ('2024-01-01T00:00:00.000000Z', 0)");
             drainWalQueue();
 
-            // Seed the metadata pool at THIS txn: the later get() then sees a moved version and goes down
-            // refresh() -> reloadSlow() -> readTxnSlow, the second call site with the same blind spot.
-            // (A tenant seeded at the corrupted txn would keep its still-valid snapshot and never reload.)
+            // Seed the metadata pool at this txn: the later get() then sees a moved version and goes down
+            // refresh() -> reloadSlow() -> readTxnSlow, the second call site that reads a torn _txn. A tenant
+            // seeded at the corrupted txn would keep its still-valid snapshot and never reload.
             engine.getTableMetadata(tableToken).close();
 
             execute("insert into w values ('2024-01-02T00:00:00.000000Z', 1)");
@@ -570,10 +561,10 @@ public class TableReadFailTest extends AbstractCairoTest {
     }
 
     /**
-     * Pokes a checksum-covered scalar in the version-selected (live) area of {@code _txn} and deliberately
-     * does NOT restamp the body checksum, leaving the area torn exactly as a partial writeback would. The
-     * area's internal txn guard still matches, so only the body checksum can catch this -- which sends
-     * TxReader to the intact previous A/B area, and the reader into its retry loop.
+     * Pokes a checksum-covered scalar in the version-selected (live) area of {@code _txn} without restamping
+     * the body checksum, leaving the area torn as a partial writeback would. The area's internal txn guard
+     * still matches, so only the body checksum catches this, which sends TxReader to the intact previous A/B
+     * area and the reader into its retry loop.
      */
     private void tearLiveTxnArea(TableToken tableToken) {
         try (Path path = new Path()) {
