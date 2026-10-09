@@ -547,13 +547,11 @@ public class TableSnapshotRestore implements QuietCloseable {
         if (isView) {
             copyViewMetadataFiles(srcPath, dstPath, recoveredMetaFiles);
         } else {
-            // Clear any stale adaptive durable-epoch anchor at the destination BEFORE laying down the
-            // restored _txn/_cv. A checkpoint/PITR restore-over-existing rewrites _txn/_cv, but a checkpoint
-            // does NOT capture the save point files (_epoch.manifest.0/1), so the destination's own
-            // pre-restore anchor would survive. Left in place, RecoveryCoordinator (which runs next in
-            // CairoEngine.completeInit and does NOT lineage-check the epoch) could rewind the freshly-restored
-            // _txn/_cv back to that stale cut. Symmetric to BackupRestoreAgent.removeStaleMetadataFiles (#23).
-            // Only tables and mat-views reach this branch (regular views have no _cv/epoch and no data).
+            // Remove any adaptive save point at the destination before laying down the restored _txn and _cv.
+            // A checkpoint does not capture the save point files (_epoch.manifest.0/1), so the destination's
+            // own save point would survive the restore, and RecoveryCoordinator, which runs next in
+            // CairoEngine.completeInit, could rewind the restored _txn and _cv to it. Only tables and mat
+            // views reach this branch; plain views have no _cv and no data.
             RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, dstPath, dstPathLen);
 
             // Copy metadata files from source to the destination table location
