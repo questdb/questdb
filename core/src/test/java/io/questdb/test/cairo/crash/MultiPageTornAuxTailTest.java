@@ -12,32 +12,24 @@ import org.junit.Test;
 import static io.questdb.cairo.ColumnType.LEGACY_VAR_SIZE_AUX_SHL;
 
 /**
- * Effectiveness probe for the proposed multi-page torn aux tail guard.
- *
- * <h2>Proposed guard (DROPPED — proved ineffective)</h2>
- * In each driver's setAppendPosition, after computing the last entry's data-end
- * (dataVectorSize), the spec proposed:
+ * Pins the writer's behaviour when several trailing aux entries of a string or array
+ * column are zeroed: the append after reopen throws nothing.
+ * <p>
+ * A guard in a driver's setAppendPosition of the form
  * <pre>
  *   long dataAppendOffset = dataMem.getAppendOffset();
  *   if (dataVectorSize == 0 &amp;&amp; dataAppendOffset &gt; 0) { throw ... }
  * </pre>
- *
- * <h2>Why the guard is ineffective</h2>
- * dataMem is a MemoryPMARImpl opened via openColumnFiles() → MemoryPMARImpl.of()
- * → close() + setExtendSegmentSize(). setExtendSegmentSize() calls clear(), which
- * sets appendPointer=-1 and baseOffset=1, so getAppendOffset()=1+(-1)=0. No
- * ff.length() or jumpTo() is called before setAppendPosition runs. Therefore
- * dataAppendOffset is ALWAYS 0 before the first jumpTo inside setAppendPosition,
- * making the condition (dataVectorSize==0 &amp;&amp; dataAppendOffset&gt;0) trivially
- * false — a permanent no-op regardless of the data file's actual size.
- *
- * <h2>These tests prove this empirically</h2>
- * We zero ZEROED_ENTRY_COUNT consecutive aux entries so that both the last and
- * second-to-last entries read 0. The existing single-entry monotonicity guard
- * passes (0 &gt;= 0). The proposed multi-page guard cannot fire because
- * dataAppendOffset==0 always. We verify no exception is thrown for STRING and ARRAY
- * (VARCHAR has an unrelated debug-only assert 'raw != 0' inside getDataVectorSize
- * that fires in test builds on zeroed entries, so we test it separately).
+ * cannot catch this layout. dataMem is a MemoryPMARImpl opened via openColumnFiles() ->
+ * MemoryPMARImpl.of() -> close() + setExtendSegmentSize(). setExtendSegmentSize() calls
+ * clear(), which sets appendPointer=-1 and baseOffset=1, so getAppendOffset() returns 0,
+ * and nothing calls ff.length() or jumpTo() before setAppendPosition runs. The condition
+ * is therefore always false, whatever the data file's actual size.
+ * <p>
+ * The tests zero ZEROED_ENTRY_COUNT consecutive aux entries so that both the last and
+ * second-to-last entries read 0, which also passes the single-entry monotonicity guard
+ * (0 &gt;= 0). Varchar is tested separately: a debug-only assert 'raw != 0' in
+ * getDataVectorSize fires on zeroed entries in test builds.
  */
 public class MultiPageTornAuxTailTest extends AbstractCrashConsistencyTest {
 
@@ -45,10 +37,6 @@ public class MultiPageTornAuxTailTest extends AbstractCrashConsistencyTest {
      * Number of consecutive aux entries to zero (simulates multi-entry tail loss).
      */
     private static final int ZEROED_ENTRY_COUNT = 4;
-
-    // -------------------------------------------------------------------------
-    // STRING: multi-page torn aux tail — guard cannot fire, no exception thrown
-    // -------------------------------------------------------------------------
 
     @Test
     public void testStringMultiPageTornAuxTailGuardIsIneffective() throws Exception {
@@ -83,9 +71,8 @@ public class MultiPageTornAuxTailTest extends AbstractCrashConsistencyTest {
 
             crashAndReopen();
 
-            // The proposed multi-page guard checks dataMem.getAppendOffset() before jumpTo.
-            // That value is always 0 (freshly opened MemoryPMARImpl). So the guard is a
-            // permanent no-op: (0 == 0 && 0 > 0) is never true. No exception is thrown.
+            // A guard on dataMem.getAppendOffset() before jumpTo cannot fire: that value is
+            // always 0 on a freshly opened MemoryPMARImpl, so (0 == 0 && 0 > 0) is never true.
             boolean exceptionThrown = false;
             try {
                 execute("insert into s values (" + (rows * 1_000_000L) + ", '" + longValue + "')");
@@ -95,7 +82,7 @@ public class MultiPageTornAuxTailTest extends AbstractCrashConsistencyTest {
                 engine.releaseAllWriters();
             }
 
-            // Key assertion: NO exception — the proposed guard is a no-op (DROP confirmed).
+            // no exception: an append-offset guard could not have caught this layout
             Assert.assertFalse(
                     "STRING: an exception was thrown, meaning some guard DID fire. " +
                             "If it's the multi-page guard, the DROP decision is wrong — re-investigate.",
@@ -103,10 +90,6 @@ public class MultiPageTornAuxTailTest extends AbstractCrashConsistencyTest {
             );
         });
     }
-
-    // -------------------------------------------------------------------------
-    // ARRAY: multi-page torn aux tail — guard cannot fire, no exception thrown
-    // -------------------------------------------------------------------------
 
     @Test
     public void testArrayMultiPageTornAuxTailGuardIsIneffective() throws Exception {
@@ -135,7 +118,7 @@ public class MultiPageTornAuxTailTest extends AbstractCrashConsistencyTest {
 
             crashAndReopen();
 
-            // Same as STRING: dataMem.getAppendOffset()==0 before jumpTo always → no-op guard.
+            // As for strings, dataMem.getAppendOffset() is 0 before jumpTo, so an append-offset guard cannot fire.
             boolean exceptionThrown = false;
             try {
                 execute("insert into a values (" + (rows * 1_000_000L) + ", ARRAY[9.0,9.0,9.0])");
@@ -145,7 +128,7 @@ public class MultiPageTornAuxTailTest extends AbstractCrashConsistencyTest {
                 engine.releaseAllWriters();
             }
 
-            // Key assertion: NO exception — the proposed guard is a no-op (DROP confirmed).
+            // no exception: an append-offset guard could not have caught this layout
             Assert.assertFalse(
                     "ARRAY: an exception was thrown, meaning some guard DID fire. " +
                             "If it's the multi-page guard, the DROP decision is wrong — re-investigate.",
