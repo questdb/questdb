@@ -37,7 +37,7 @@ import org.junit.Test;
 /**
  * A column-type change whose parquet->native prepass converts partitions must publish the whole
  * ALTER with a single {@code _txn} write. The writer already carries the ALTER's seqTxn while the
- * prepass runs, so an intermediate {@code _txn} would bind the OLD {@code _meta} to the NEW seqTxn;
+ * prepass runs, so an intermediate {@code _txn} would bind the old {@code _meta} to the new seqTxn;
  * anything that adopts that cut (an adaptive epoch, a crash in a syncing mode, an ALTER that fails
  * after the prepass) then skips the ALTER and keeps the old column type.
  * <p>
