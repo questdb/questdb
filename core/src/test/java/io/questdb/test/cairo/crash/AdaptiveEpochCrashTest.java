@@ -342,7 +342,7 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     /**
      * A power loss after every durability operation and after every deletion of a save-point removal on a table with
      * two save points, whose WAL below the newer one was purged under its floor: the exit a non-adaptive restart
-     * performs, and the demote clear.
+     * performs during recovery, followed by a start in the exit's mode and one in ADAPTIVE, and the demote clear.
      */
     @Test
     public void testPowerLossAfterEveryDeletionOfSavePointRemoval() throws Exception {
@@ -350,43 +350,50 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
             configureSavePoints();
             for (String removal : new String[]{"sync exit", "nosync exit", "demote clear"}) {
                 final boolean demote = "demote clear".equals(removal);
-                for (int deletions = 0; deletions < 2; deletions++) {
-                    for (int n = 1; n <= MAX_SWEEP; n++) {
-                        setCommitMode("adaptive");
-                        final Scenario s = newScenario("x_" + removal.charAt(0) + "_" + deletions + "_" + n);
-                        insertRows(s, 0, 2);
-                        drainWalQueue();
-                        engine.releaseAllWalWriters();
-                        publishSavePoint(s);
-                        purgeWal();
-                        markDurableBaseline();
-                        final Action action;
-                        if (demote) {
-                            // A replica's applied state has NOSYNC grade, so no rows are applied after the save point.
-                            action = () -> reconcileSavePoint(s, LocalDurabilityPolicy.REPLICA_SKIP);
-                        } else {
-                            insertRows(s, 1, 2);
+                final String exitMode = demote ? "adaptive" : removal.substring(0, removal.indexOf(' '));
+                for (String secondMode : demote ? new String[]{"adaptive"} : new String[]{exitMode, "adaptive"}) {
+                    for (int deletions = 0; deletions < 2; deletions++) {
+                        for (int n = 1; n <= MAX_SWEEP; n++) {
+                            setCommitMode("adaptive");
+                            final Scenario s = newScenario("x_" + removal.charAt(0) + secondMode.charAt(0) + "_" + deletions + "_" + n);
+                            insertRows(s, 0, 2);
                             drainWalQueue();
-                            cleanRestart(s, removal.substring(0, removal.indexOf(' ')));
-                            action = () -> {
-                                try (TableWriter ignore = getWriter(s.token)) {
-                                    Assert.assertNotNull(ignore);
-                                }
-                            };
-                        }
-                        final boolean crashed = deletions == 0 ? crashAtOperation(s, n, action) : crashAfterRemoval(s, n, action);
-                        final String label;
-                        if (crashed) {
-                            label = removal + ", power loss after " + (deletions == 0 ? "durability operation " : "deletion ") + n;
-                        } else {
-                            label = removal + " completed, then rows and a WAL purge";
-                            insertRows(s, 2, 2);
-                            drainWalQueue();
+                            engine.releaseAllWalWriters();
+                            publishSavePoint(s);
                             purgeWal();
-                        }
-                        powerLossAndCheck(s, label);
-                        if (!crashed) {
-                            break;
+                            markDurableBaseline();
+                            final Action action;
+                            if (demote) {
+                                // A replica's applied state has NOSYNC grade, so no rows are applied after the save point.
+                                action = () -> reconcileSavePoint(s, LocalDurabilityPolicy.REPLICA_SKIP);
+                            } else {
+                                insertRows(s, 1, 2);
+                                drainWalQueue();
+                                // Released up front, so the deletions counted are the exit's and no writer stays locked.
+                                engine.releaseAllReaders();
+                                engine.releaseAllWriters();
+                                engine.releaseAllWalWriters();
+                                action = () -> cleanRestart(s, exitMode);
+                            }
+                            final boolean crashed = deletions == 0 ? crashAtOperation(s, n, action) : crashAfterRemoval(s, n, action);
+                            final String label;
+                            if (crashed) {
+                                label = removal + ", power loss after " + (deletions == 0 ? "durability operation " : "deletion ") + n;
+                            } else if (secondMode.equals(exitMode)) {
+                                label = removal + " completed, then rows and a WAL purge";
+                                insertRows(s, 2, 2);
+                                drainWalQueue();
+                                purgeWal();
+                            } else {
+                                // No WAL purge here: crash() does not re-seed the durable content of a WAL directory
+                                // it brings back, so the second power loss of an ADAPTIVE start would empty it.
+                                label = removal + " completed";
+                            }
+                            setCommitMode(secondMode);
+                            powerLossAndCheck(s, label + (demote ? "" : ", second start " + secondMode));
+                            if (!crashed) {
+                                break;
+                            }
                         }
                     }
                 }
