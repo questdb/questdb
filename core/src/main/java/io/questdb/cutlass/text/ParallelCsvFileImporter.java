@@ -30,6 +30,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MapWriter;
@@ -661,6 +663,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     phaseBuildSymbolIndex();
                     movePartitions();
                     attachPartitions();
+                    flushCreatedTable();
                     updateImportStatus(CopyImportTask.STATUS_FINISHED, rowsHandled, rowsImported, errors);
                 } catch (Throwable t) {
                     cleanUp();
@@ -836,6 +839,14 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         createdWorkDir = true;
         LOG.info().$("temporary import directory [path='").$(workDirPath).I$();
+    }
+
+    private void flushCreatedTable() {
+        // The writer of a table this import created holds a non-WAL token, so it takes no save point. On an
+        // adaptive instance the import must be durable before COPY reports it done; a failed flush drops the table.
+        if (targetTableCreated && configuration.getCommitMode() == CommitMode.ADAPTIVE && writer.getMetadata().isWalEnabled()) {
+            DurableEpochManifest.fsyncTableFiles(configuration, tableToken, metadata.getTimestampType(), partitionBy);
+        }
     }
 
     private long getCurrentTimeMs() {
