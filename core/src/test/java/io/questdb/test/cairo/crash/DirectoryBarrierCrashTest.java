@@ -60,7 +60,8 @@ import java.util.Arrays;
  *   then the table directory, before the commit that publishes them. A failed one poisons the engine, as every
  *   failed barrier does.</li>
  *   <li>SYNC and ADAPTIVE fsync each column file ALTER COLUMN TYPE converts, data before aux, before the commit
- *   that publishes it. A failed one poisons the engine too.</li>
+ *   that publishes it, and each file a parquet conversion writes. A failed one poisons the engine too; under ASYNC
+ *   it only fails the statement.</li>
  *   <li>ADAPTIVE takes no directory barrier in {@code TableWriter.openPartition}: the durable epoch makes
  *   directory entries durable, and recovery re-creates the later ones when it replays the WAL. That holds
  *   also when {@code syncfs} is not filesystem-wide (macOS, Windows), where the epoch fsyncs the dirty
@@ -97,6 +98,11 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
+    public void testAdaptiveConvertToParquetWalFailedDataFsyncIsFailStop() throws Exception {
+        assertConvertToParquetSyncFailure("adaptive", true, new FsyncFailureFacade("produceParquetFromNative", 0, false));
+    }
+
+    @Test
     public void testAdaptiveEpochCoversPartitionDirs() throws Exception {
         assertAdaptiveWalPartitionsSurviveCrash(true, false, new CrashFaultFilesFacade());
     }
@@ -124,6 +130,12 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testAdaptiveWalSegmentsSurviveCrash() throws Exception {
         assertWalSegmentsSurviveCrash("adaptive");
+    }
+
+    @Test
+    public void testAsyncConvertToParquetNonWalFailedPmFsyncIsNotFailStop() throws Exception {
+        // ASYNC fsyncs _pm and the partition directory but not data.parquet, so the first fsync is that of _pm
+        assertConvertToParquetSyncFailure("async", false, new FsyncFailureFacade("produceParquetFromNative", 0, false));
     }
 
     @Test
@@ -219,6 +231,26 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
+    public void testSyncConvertToParquetNonWalFailedDataFsyncIsFailStop() throws Exception {
+        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("produceParquetFromNative", 0, false));
+    }
+
+    @Test
+    public void testSyncConvertToParquetNonWalFailedDirFsyncIsFailStop() throws Exception {
+        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("produceParquetFromNative", 2, false));
+    }
+
+    @Test
+    public void testSyncConvertToParquetNonWalFailedPmFsyncIsFailStop() throws Exception {
+        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("produceParquetFromNative", 1, false));
+    }
+
+    @Test
+    public void testSyncConvertToParquetNonWalFailedTxnMsyncIsFailStop() throws Exception {
+        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("commitTxWriter", 0, true));
+    }
+
+    @Test
     public void testSyncConvertToParquetNonWalSurvivesCrash() throws Exception {
         assertSyncSchemaChangeSurvivesCrash(false, false, "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'", this::assertParquetPartitionNames);
     }
@@ -226,6 +258,11 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testSyncConvertToParquetWalFailedBarrierIsFailStop() throws Exception {
         assertSyncSchemaChangeBarrierFailureIsFailStop(true, false, "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'", "fsyncConvertedPartitionDir");
+    }
+
+    @Test
+    public void testSyncConvertToParquetWalFailedDataFsyncIsFailStop() throws Exception {
+        assertConvertToParquetSyncFailure("sync", true, new FsyncFailureFacade("produceParquetFromNative", 0, false));
     }
 
     @Test
@@ -477,6 +514,23 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
+     * CONVERT TO PARQUET fsyncs {@code data.parquet} (SYNC and ADAPTIVE), then {@code _pm} and the new partition
+     * directory (every mode but NOSYNC), and its commit msyncs {@code _txn} (SYNC). One of those fails with a
+     * data-sync error. Under SYNC and ADAPTIVE the engine must be poisoned; under ASYNC, which promises nothing on
+     * a power loss, the statement fails and the engine keeps taking writes.
+     */
+    private void assertConvertToParquetSyncFailure(String commitMode, boolean wal, FsyncFailureFacade ff) throws Exception {
+        assertSyncFailure(
+                commitMode,
+                wal,
+                null,
+                () -> execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'"),
+                ff,
+                !"async".equals(commitMode)
+        );
+    }
+
+    /**
      * The column converter writes the new column through a mapping that it unmaps without {@code msync}, and the
      * crash model credits the later {@code fsync} only with bytes it saw written, so it cannot check the
      * converted values. It checks that each partition's file of the converted column survives under the name
@@ -513,9 +567,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
      * Reads the index files of every partition.
      */
     /**
-     * Fails one fsync of a change, in the given commit mode. The engine must be poisoned and refuse the next
-     * write; a non-WAL statement must also fail with a data-sync {@link CairoError}, and a WAL apply must not
-     * merely suspend the table while the engine keeps taking writes.
+     * Fails one fsync of a change, in the given commit mode: the engine must be poisoned.
      *
      * @param prepare   runs once the rows are inserted, before they are applied to a WAL table; null for none
      * @param change    the change whose fsync fails
@@ -530,54 +582,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
             String caller,
             int skipCount
     ) throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
-        final FsyncFailureFacade ff = new FsyncFailureFacade(caller, skipCount);
-        assertMemoryLeak(ff, () -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, s SYMBOL INDEX, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY "
-                    + (wal ? "WAL" : "BYPASS WAL"));
-            execute("""
-                    INSERT INTO x VALUES
-                        ('2024-01-01T00:00:00.000000Z', 'a', 1.0),
-                        ('2024-01-02T00:00:00.000000Z', 'b', 2.0),
-                        ('2024-01-03T00:00:00.000000Z', 'a', 3.0)
-                    """);
-            if (prepare != null) {
-                prepare.run();
-            }
-            drainWalQueue();
-            Throwable failure = null;
-            ff.isArmed = true;
-            try {
-                change.run();
-                drainWalQueue();
-            } catch (Throwable th) {
-                failure = th;
-            } finally {
-                ff.isArmed = false;
-            }
-            final boolean isPoisoned = engine.isDurabilityFailed();
-            Throwable nextWriteFailure = null;
-            try {
-                execute("INSERT INTO x (ts, s) VALUES ('2024-01-04T00:00:00.000000Z', 'c')");
-            } catch (Throwable th) {
-                nextWriteFailure = th;
-            }
-            engine.resetDurabilityFailure();
-            releaseEngineHandles();
-            Assert.assertEquals("the injected fsync failure must have been reached", 1, ff.failureCount);
-            Assert.assertTrue("a failed fsync must poison the engine, failure: " + failure, isPoisoned);
-            Assert.assertTrue(
-                    "a poisoned engine must refuse the next write, failure: " + nextWriteFailure,
-                    nextWriteFailure instanceof CairoError
-                            && nextWriteFailure.getMessage().contains("engine is poisoned by a failed durability barrier")
-            );
-            if (!wal) {
-                Assert.assertTrue(
-                        "the statement must fail with a data-sync CairoError, failure: " + failure,
-                        failure instanceof CairoError && CairoException.isDataSyncFailure(failure)
-                );
-            }
-        });
+        assertSyncFailure(commitMode, wal, prepare, change, new FsyncFailureFacade(caller, skipCount, false), true);
     }
 
     private void assertIndexedSymbolFilter() throws Exception {
@@ -629,6 +634,85 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
                 "produceNativeFromParquet",
                 0
         );
+    }
+
+    /**
+     * Fails one data sync of a change, in the given commit mode. When it is fail-stop, the engine must be poisoned
+     * and refuse the next write; a non-WAL statement must also fail with a data-sync {@link CairoError}, and a WAL
+     * apply must not merely suspend the table while the engine keeps taking writes. Otherwise the statement fails
+     * and the engine keeps taking writes.
+     *
+     * @param prepare    runs once the rows are inserted, before they are applied to a WAL table; null for none
+     * @param change     the change whose data sync fails
+     * @param ff         fails the data sync once armed
+     * @param isFailStop whether the failure must poison the engine
+     */
+    private void assertSyncFailure(
+            String commitMode,
+            boolean wal,
+            TestUtils.LeakProneCode prepare,
+            TestUtils.LeakProneCode change,
+            FsyncFailureFacade ff,
+            boolean isFailStop
+    ) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, s SYMBOL INDEX, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY "
+                    + (wal ? "WAL" : "BYPASS WAL"));
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'a', 1.0),
+                        ('2024-01-02T00:00:00.000000Z', 'b', 2.0),
+                        ('2024-01-03T00:00:00.000000Z', 'a', 3.0)
+                    """);
+            if (prepare != null) {
+                prepare.run();
+            }
+            drainWalQueue();
+            Throwable failure = null;
+            ff.isArmed = true;
+            try {
+                change.run();
+                drainWalQueue();
+            } catch (Throwable th) {
+                failure = th;
+            } finally {
+                ff.isArmed = false;
+            }
+            final boolean isPoisoned = engine.isDurabilityFailed();
+            Throwable nextWriteFailure = null;
+            try {
+                execute("INSERT INTO x (ts, s) VALUES ('2024-01-04T00:00:00.000000Z', 'c')");
+            } catch (Throwable th) {
+                nextWriteFailure = th;
+            }
+            engine.resetDurabilityFailure();
+            releaseEngineHandles();
+            Assert.assertEquals("the injected failure must have been reached", 1, ff.failureCount);
+            if (isFailStop) {
+                Assert.assertTrue("a failed data sync must poison the engine, failure: " + failure, isPoisoned);
+                Assert.assertTrue(
+                        "a poisoned engine must refuse the next write, failure: " + nextWriteFailure,
+                        nextWriteFailure instanceof CairoError
+                                && nextWriteFailure.getMessage().contains("engine is poisoned by a failed durability barrier")
+                );
+                if (!wal) {
+                    Assert.assertTrue(
+                            "the statement must fail with a data-sync CairoError, failure: " + failure,
+                            failure instanceof CairoError && CairoException.isDataSyncFailure(failure)
+                    );
+                }
+            } else {
+                Assert.assertFalse("the engine must keep taking writes, failure: " + failure, isPoisoned);
+                Assert.assertNull("the next write must succeed, failure: " + nextWriteFailure, nextWriteFailure);
+                if (!wal) {
+                    Assert.assertTrue(
+                            "the statement must fail with a CairoException, failure: " + failure,
+                            failure instanceof CairoException
+                    );
+                }
+            }
+        });
     }
 
     /**
@@ -802,23 +886,26 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * Once armed, fails one {@code fsync} or {@code fsyncAndClose} called from {@code caller}, the first after
-     * {@code skipCount} such calls, with a genuine data-sync failure, then behaves normally.
+     * Once armed, fails one {@code fsync} or {@code fsyncAndClose} called from {@code caller}, or one synchronous
+     * {@code msync} when {@code isMsync}, the first after {@code skipCount} such calls, with a genuine data-sync
+     * failure, then behaves normally.
      */
     private static final class FsyncFailureFacade extends TestFilesFacadeImpl {
         private final String caller;
+        private final boolean isMsync;
         int failureCount;
         boolean isArmed;
         private int skipCount;
 
-        FsyncFailureFacade(String caller, int skipCount) {
+        FsyncFailureFacade(String caller, int skipCount, boolean isMsync) {
             this.caller = caller;
             this.skipCount = skipCount;
+            this.isMsync = isMsync;
         }
 
         @Override
         public void fsync(long fd) {
-            if (isFailureDue()) {
+            if (!isMsync && isFailureDue()) {
                 throw CairoException.dataSyncFailure(5, "fsync").put("injected fsync failure");
             }
             super.fsync(fd);
@@ -826,12 +913,20 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
         @Override
         public void fsyncAndClose(long fd) {
-            if (isFailureDue()) {
+            if (!isMsync && isFailureDue()) {
                 // FilesFacadeImpl closes the fd before it throws. So must this fake, or the leak is its own.
                 super.close(fd);
                 throw CairoException.dataSyncFailure(5, "fsyncAndClose").put("injected fsync failure");
             }
             super.fsyncAndClose(fd);
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            if (isMsync && !async && isFailureDue()) {
+                throw CairoException.dataSyncFailure(5, "msync").put("injected msync failure");
+            }
+            super.msync(addr, len, async);
         }
 
         private boolean isFailureDue() {

@@ -1928,6 +1928,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
                 LOG.error().$("could not remove new partition dir on rollback [path=").$(other).I$();
             }
+            // ASYNC fsyncs _pm and the partition directory too, but promises nothing on a power loss: a failure
+            // there fails the statement only
+            if (CommitMode.isPowerLossDurable(effectiveCommitMode) && CairoException.isDataSyncFailure(th)) {
+                distressed = true;
+                engine.handleDataSyncFailure(th);
+            }
             throw th;
         } finally {
             path.trimTo(pathSize);
