@@ -87,7 +87,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final WalDirectoryPolicy walDirectoryPolicy;
     private final WalLocker walLocker;
     private final DirectUtf8StringZ walName = new DirectUtf8StringZ();
-    // FILE_SIZE bytes for reading an anchor marker, allocated on first use (only a replica needs it).
+    // DurableEpochManifest.FILE_SIZE bytes for reading the save point files, allocated on first use.
     private long anchorScratch;
     private long last = 0;
     private TableToken tableToken;
@@ -334,17 +334,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             try {
                                 final long partNo = Numbers.parseLong(walName);
                                 logic.trackSeqPart(partNo);
-                                // A part file EXISTING is not pending work -- it is just where the V2
-                                // txnlog stores its records. Only a part something still holds is.
-                                //
-                                // Reporting mere existence blocked the dropped-table path outright:
-                                // hasPendingTasks feeds exactly one decision (the "table is dropped,
-                                // but has WALs containing segments with pending tasks" branch), and a
-                                // V2 table always has at least part 0, so no V2 table could ever be
-                                // fully dropped and its txn_seq leaked on every DROP. V1 has no part
-                                // files at all, which is why this only surfaced when V2 became the
-                                // default. The genuine sequencer signal -- the .pending marker -- is
-                                // already folded in by discoverWalSegments via sequencerHasPendingTasks().
+                                // A part file that exists is not pending work: the V2 txnlog stores its
+                                // records there, and every V2 table has part 0, so counting existence would
+                                // keep a dropped table's txn_seq forever. Only a part something still holds
+                                // is pending. The sequencer's own signal, the .pending marker, is folded in
+                                // by discoverWalSegments via sequencerHasPendingTasks().
                                 hasPendingTasks |= walDirectoryPolicy.isSeqPartInUse(
                                         seqDirPathTl(tableToken),
                                         partNo
@@ -579,26 +573,16 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 }
             }
         }
-        // Under ADAPTIVE commit mode, WAL segments must be retained back to the last durable epoch
-        // so that adaptive crash-recovery can re-apply from that seqTxn.  The durableEpochSeqTxn
-        // defaults to 0 (retain everything) for a fresh adaptive table; the epoch job advances it
-        // as epochs are confirmed durable.  For non-adaptive modes this check is skipped entirely
-        // so existing behaviour is completely unchanged.
-        // On a replica (LocalDurabilityPolicy.REPLICA_SKIP) no epoch advances, so the tracker floor would
-        // pin the WAL at the last primary-tenure epoch, or at 0, and WAL would accumulate unboundedly.
-        // resolveCommitMode downgrades ADAPTIVE->NOSYNC in exactly that case, mirroring the epoch
-        // producer's own policy gate in ApplyWal2TableJob.maybeAdvanceDurableEpoch. A replica keeps its
-        // tables without an anchor (TableWriter.reconcileDurableEpochAnchor), which makes startup
-        // re-baseline at the live cut and needs no WAL. The floor still has to cover an anchor that is on
-        // disk: one the demote clear could not delete, one an in-flight epoch wrote after it, and every
-        // anchor between the demote and its table's next apply batch. Startup rewinds such a table to its
-        // anchor and replays the WAL from there, and nothing downloads WAL again, so keep that WAL for as
-        // long as the anchor exists. The marker is read AFTER _txn: an anchor published after the read
-        // names a cut at or above the seqTxn read, so it never needs WAL this sweep deletes.
+        // Under adaptive, the WAL is kept back to the table's save point, so recovery can replay from it (a fresh
+        // table's durableEpochSeqTxn is 0, which keeps all of it). Recovery falls back to the older generation
+        // when the newest one is damaged, so the floor is the lowest save point on disk: the WAL kept reaches back
+        // one save point interval further than the newest one.
+        // A replica (LocalDurabilityPolicy.REPLICA_SKIP) takes no save points, so its tracker floor would hold the
+        // WAL forever; resolveCommitMode turns adaptive into nosync here, as maybeAdvanceDurableEpoch does. Its
+        // floor still covers a save point left on disk after a demote: startup rewinds to it and nothing downloads
+        // WAL again. The save point files are read after _txn, so one published later needs no WAL this pass deletes.
         // In any mode, a table that holds a save point pin keeps the WAL from its save point: on a start outside
         // adaptive that is a refused conversion to non-WAL, which keeps its save point for the next start.
-        // Recovery falls back to the older generation when the newest one is damaged, so the floor is the lowest
-        // save point on disk: the WAL kept reaches back one save point interval further than the newest one.
         final int commitMode = engine.getConfiguration().getCommitMode();
         final int purgeFloorMode = LocalDurabilityPolicy.resolveCommitMode(commitMode, engine.getLocalDurabilityPolicy());
         final SeqTxnTracker tracker = purgeFloorMode == CommitMode.ADAPTIVE
@@ -750,8 +734,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     /**
-     * The sequencer directory, on a THREAD-LOCAL path: the discovery loop holds {@link #path} pinned at
-     * the parts directory while it iterates, so probing must not disturb it.
+     * The sequencer directory, on a thread-local path: the discovery loop holds {@link #path} at the parts
+     * directory while it iterates, so this lookup must not disturb it.
      */
     private Path seqDirPathTl(TableToken tableName) {
         return Path.getThreadLocal(configuration.getDbRoot())
@@ -807,11 +791,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             return false;
         }
         final long t = clock.getTicks();
-        // Deferred 2 (adaptive group commit): sweep the pending-flush registry on EVERY pass (the sweep has
-        // an empty-set fast path, so it is ~free when W=0 / nothing is pending). The age gate lives in
-        // WalWriter.forceDurableIfPending (flush only when the oldest pending commit is >= W old), so this
-        // makes an IDLE writer's last commit durable within ~W of the window elapsing even though commits
-        // stopped — the hard requirement. Independent of the (much slower) WAL-purge broad-sweep cadence.
+        // Sweep the adaptive group commit's pending-flush registry on every pass, independent of the slower
+        // purge cadence. WalWriter.forceDurableIfPending flushes only when the oldest pending commit is at least
+        // one group window old, so an idle writer's last commit becomes durable about one window after it, with
+        // no further commit to trigger the flush. The sweep is cheap when nothing is pending.
         boolean busy = false;
         final long groupWindowUs = configuration.getAdaptiveCommitGroupWindowUs();
         if (groupWindowUs > 0) {
