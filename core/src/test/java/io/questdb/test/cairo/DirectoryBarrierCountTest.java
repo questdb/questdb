@@ -63,13 +63,13 @@ import java.util.stream.Stream;
  *   <li>{@code TableWriter.openPartition} fsyncs the partition directory and the table directory under SYNC
  *   only. ADAPTIVE relies on its durable epoch and WAL replay, ASYNC and NOSYNC promise nothing.</li>
  *   <li>The WAL writer fsyncs a new segment's entry in {@code wal<N>} under SYNC and ADAPTIVE, and the table
- *   directory once per writer, when it has created {@code wal<N>}. ASYNC keeps only the segment directory
- *   fsync of a newly opened segment, as it always had.</li>
+ *   directory once per writer, when it has created {@code wal<N>}. ASYNC takes only the segment directory
+ *   fsync of a newly opened segment.</li>
  *   <li>A schema change swaps {@code _meta} and fsyncs {@code _meta.swp}, {@code _todo_} and the table
  *   directory twice, under SYNC and ADAPTIVE only.</li>
  *   <li>A schema change that rewrites data (ALTER COLUMN TYPE, CONVERT PARTITION) fsyncs the files it writes
- *   under SYNC and ADAPTIVE only, except what ADAPTIVE rebuilds from the WAL; ASYNC keeps only the parquet
- *   metadata and partition directory fsyncs it always had. SYNC also fsyncs the directories that name the new
+ *   under SYNC and ADAPTIVE only, except what ADAPTIVE rebuilds from the WAL; ASYNC takes only the parquet
+ *   metadata and partition directory fsyncs. SYNC also fsyncs the directories that name the new
  *   files: each partition directory ALTER COLUMN TYPE writes into, and the partition directory CONVERT
  *   PARTITION creates, then the table directory.</li>
  *   <li>The switch of a native partition to its parquet file links the files into a new partition directory and
