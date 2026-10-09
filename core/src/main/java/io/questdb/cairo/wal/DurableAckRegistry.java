@@ -40,14 +40,12 @@ import io.questdb.cairo.TableToken;
 public interface DurableAckRegistry {
 
     /**
-     * Frontier answer for a table directory that no longer resolves to a live table: the table was
-     * dropped, its directory was retired by {@code REBASE WAL}, or its dropped token was purged. The
-     * name registry records the drop durably ({@code tables.d} is synced) before the directory stops
-     * resolving, so the directory stays retired across a power loss. What a client committed to it
-     * went with it -- dropped with the table, or kept or discarded by the rebase that replaced it -- and
-     * a client replay could only re-create the table or duplicate rows. QWP therefore treats this
-     * answer as covering every seqTxn a connection committed to the directory, and never forwards the
-     * value itself.
+     * Frontier answer for a table directory that no longer resolves to a live table: the table is dropped,
+     * {@code REBASE WAL} retired the directory, or the dropped token is purged. The name registry syncs the drop
+     * to {@code tables.d} before the directory stops resolving, so the directory stays retired across a power
+     * loss. What a client committed to it went with it, and a replay could only re-create the table or
+     * duplicate rows, so QWP treats this answer as covering every seqTxn the connection committed to the
+     * directory and never forwards the value itself.
      * <p>
      * {@link Long#MIN_VALUE} keeps it below every real frontier, so a caller that does not know about
      * it still reads "nothing durable yet".
@@ -55,7 +53,7 @@ public interface DurableAckRegistry {
     long TABLE_GONE = Long.MIN_VALUE;
 
     /**
-     * Returns the highest seqTxn durably REPLICATED (uploaded to the configured object store) for
+     * Returns the highest seqTxn durably replicated (uploaded to the configured object store) for
      * the given table, or -1 if nothing has been replicated yet, the table is unknown to the
      * registry, or durable-ack tracking is not enabled on this server. This is the
      * {@link DurabilityTier#REPLICATED} (failover-safe) frontier.
@@ -105,9 +103,9 @@ public interface DurableAckRegistry {
     }
 
     /**
-     * Whether this server can offer the given {@link DurabilityTier}. Availability is server-level
-     * and must be honest: a granted tier is one whose acks will actually flow (e.g. LOCAL requires
-     * ADAPTIVE commit mode). Default: no tier available; concrete registries override.
+     * Whether this server can offer the given {@link DurabilityTier}. Availability is server-level: a server
+     * grants only a tier whose acks will flow; LOCAL, for example, requires ADAPTIVE commit mode. The default
+     * offers no tier.
      */
     default boolean isTierAvailable(int tier) {
         return false;

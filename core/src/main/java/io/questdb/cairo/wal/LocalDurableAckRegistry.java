@@ -31,24 +31,14 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * OSS default {@link DurableAckRegistry} that reports the local-fsync tier: the highest seqTxn
- * whose WAL commit was fdatasync'd (ADAPTIVE mode only) for each table.
- *
- * <p>This implementation resolves the table directory name to a {@link TableToken} via the engine's
- * table name registry, then reads {@link SeqTxnTracker#getLocalDurableSeqTxn()} from the
- * sequencer API. NOSYNC tables (or tables whose tracker has not yet recorded a local-durable txn)
- * return -1. A directory that no longer resolves to a live table returns
- * {@link DurableAckRegistry#TABLE_GONE}.
- *
- * <p>{@link #getReplicatedDurableSeqTxn(CharSequence)} always returns -1 in OSS (no upload pipeline).
- * Enterprise installations install their own registry via
- * {@link CairoEngine#setDurableAckRegistry(DurableAckRegistry)}, which can compose with or
- * supersede this local tier.
- *
- * <p>{@link #isEnabled()} and {@link #isTierAvailable(int)} answer {@code true} only under
- * ADAPTIVE commit mode, so a server that can never advance the local frontier denies the
- * {@code X-QWP-Request-Durable-Ack} opt-in at the handshake instead of leaving the client waiting
- * for frames that will not come.
+ * OSS default {@link DurableAckRegistry}, which reports the local-fsync tier: for each table, the highest
+ * seqTxn whose WAL commit is fdatasync'd, read from {@link SeqTxnTracker#getLocalDurableSeqTxn()}.
+ * {@link #getReplicatedDurableSeqTxn(CharSequence)} always returns -1, since OSS has no upload pipeline;
+ * Enterprise installs its own registry through {@link CairoEngine#setDurableAckRegistry(DurableAckRegistry)}.
+ * <p>
+ * {@link #isEnabled()} and {@link #isTierAvailable(int)} answer {@code true} only under ADAPTIVE commit
+ * mode, so a server that does not offer the tier denies the {@code X-QWP-Request-Durable-Ack} opt-in at the
+ * handshake instead of leaving the client waiting for frames that will not come.
  */
 public class LocalDurableAckRegistry implements DurableAckRegistry {
 
@@ -59,9 +49,8 @@ public class LocalDurableAckRegistry implements DurableAckRegistry {
     }
 
     /**
-     * Whether this server can serve the {@link DurabilityTier#LOCAL} tier. Mirrors the producer
-     * gate in {@code WalWriter.commit}: the local frontier advances only under ADAPTIVE, so any other
-     * mode reports -1 for every table forever. Shared with Enterprise's upload-backed registry.
+     * Whether this server can serve the {@link DurabilityTier#LOCAL} tier: only under ADAPTIVE, and not once
+     * a durability failure has stopped the engine. Shared with Enterprise's upload-backed registry.
      */
     public static boolean canServeLocalTier(CairoEngine engine) {
         return !engine.isDurabilityFailed()
@@ -69,12 +58,10 @@ public class LocalDurableAckRegistry implements DurableAckRegistry {
     }
 
     /**
-     * Shared local-fsync tier lookup: resolves {@code tableDirName} to a {@link TableToken} via
-     * the engine's table name registry, then reads
-     * {@link SeqTxnTracker#getLocalDurableSeqTxn()} from the sequencer API. Returns -1 if the
-     * table uses NOSYNC commit mode, has not yet committed a local-durable txn, or durability has
-     * failed, and {@link DurableAckRegistry#TABLE_GONE} if the directory no longer resolves to a
-     * live table.
+     * Resolves {@code tableDirName} to a {@link TableToken} through the engine's table name registry and
+     * reads {@link SeqTxnTracker#getLocalDurableSeqTxn()}. Returns -1 if the table has no local-durable txn
+     * yet, as under NOSYNC, or durability has failed, and {@link DurableAckRegistry#TABLE_GONE} if the
+     * directory no longer resolves to a live table.
      *
      * <p>"Does not resolve" covers a dropped table (the reverse-map item is marked dropped only
      * after {@code tables.d} recorded the drop and synced), a directory retired by
@@ -84,8 +71,8 @@ public class LocalDurableAckRegistry implements DurableAckRegistry {
      * table never reads as unknown here. The answer needs no per-drop state, which is why it also
      * covers the drop paths that never call {@link DurableAckRegistry#onTableDropped}.
      *
-     * <p>Extracted so Enterprise's upload-backed registry can compose the local tier without
-     * depending on a {@link LocalDurableAckRegistry} instance.
+     * <p>Static, so that Enterprise's upload-backed registry can compose the local tier without a
+     * {@link LocalDurableAckRegistry} instance.
      */
     public static long resolveLocalDurableSeqTxn(CairoEngine engine, CharSequence tableDirName) {
         if (engine.isDurabilityFailed()) {
@@ -116,7 +103,7 @@ public class LocalDurableAckRegistry implements DurableAckRegistry {
     }
 
     /**
-     * Returns -1 in OSS — no upload pipeline is available.
+     * Returns -1: OSS has no upload pipeline.
      */
     @Override
     public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
