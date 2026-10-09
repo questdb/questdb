@@ -34,27 +34,14 @@ import java.util.Set;
 import java.util.TreeSet;
 
 /**
- * Enforces, on Linux, the durability rule that only Windows polices: a barrier must be issued through a
- * handle that has write access.
- *
- * <p>On Windows {@code fsync} is {@code FlushFileBuffers}, which requires {@code GENERIC_WRITE} on the
- * handle and returns {@code ERROR_ACCESS_DENIED} (errno 5) for the {@code GENERIC_READ}-only handle
- * {@code openRO} produces. On POSIX an {@code O_RDONLY} fd fsyncs without error, so a barrier through a
- * read-only handle passes on Linux and fails on Windows. The Windows CI legs
- * ({@code ci/test-hosted-pipeline.yml}) run only on demand and in the merge queue, so this facade lets every
- * Linux run catch such a barrier.
- *
- * <p>Directories are exempt, which is why this is a runtime check rather than a source scan: a directory
- * barrier is impossible on Windows and every such site in the engine sits behind an {@code Os.isWindows()} /
- * {@code isRestrictedFileSystem()} guard, while on Linux those sites are legitimate. Only at {@code open}
- * time can a directory be told from a file.
- *
- * <p>{@code Os.isWindows()} is a runtime constant a test cannot fake, so this facade does not pretend to be
- * Windows. It models the single behaviour that differs.
- *
- * <p>Violations are recorded as well as thrown, so an assertion can name the offending path instead of
- * surfacing as a bare {@code [5] could not fsync [fd=...]}. Call {@link #assertNoReadOnlyFileBarrier()}
- * after the workload.
+ * Enforces on Linux the rule that only Windows polices: a barrier goes through a handle with write access. On
+ * Windows {@code fsync} is {@code FlushFileBuffers}, which returns {@code ERROR_ACCESS_DENIED} (errno 5) for the
+ * {@code GENERIC_READ}-only handle {@code openRO} produces, while POSIX fsyncs an {@code O_RDONLY} fd without
+ * error. The Windows CI legs run only on demand and in the merge queue, so this facade lets every Linux run
+ * catch such a barrier. Directories are exempt: the engine guards every directory barrier with
+ * {@code Os.isWindows()} or {@code isRestrictedFileSystem()}, and only {@code open} can tell a directory from a
+ * file. The facade records each violation as well as throwing it; call {@link #assertNoReadOnlyFileBarrier()}
+ * after the workload to name the offending path.
  */
 public class WindowsBarrierContractFilesFacade extends TestFilesFacadeImpl {
 
