@@ -56,30 +56,27 @@ public class Overrides {
     /**
      * Commit mode every test runs under, unless it sets one itself.
      * <p>
-     * The suite deliberately runs ADAPTIVE while the shipped default ({@link CommitMode#DEFAULT}) is
-     * NOSYNC, so the durable path is exercised everywhere rather than only by the tests that ask for it.
-     * Sweeping the suite the other way is a configuration change, not a code change:
+     * The suite runs ADAPTIVE while the shipped default ({@link CommitMode#DEFAULT}) is NOSYNC, so the
+     * durable path is exercised everywhere rather than only by the tests that ask for it. Sweeping the
+     * suite the other way is a configuration change:
      * <pre>mvn test -Dquestdb.test.commit.mode=nosync</pre>
      * <p>
-     * Main CI runs that sweep on every build: {@code ci/templates/select-test-commit-mode.yml} puts half the
+     * CI runs that sweep on every build: {@code ci/templates/select-test-commit-mode.yml} puts half the
      * jobs that share a test shard on NOSYNC and half on ADAPTIVE, and swaps them on the next run. A test
      * that needs one mode must pin it rather than rely on this default.
      * <p>
-     * Every path that builds a test configuration reads this, so flipping it moves the whole suite at
+     * Every path that builds a test configuration reads this, so changing it moves the whole suite at
      * once: here, {@code DefaultTestCairoConfiguration}, and {@code AbstractBootstrapTest}'s generated
-     * server.conf. {@code TestCommitModeSwitchTest} fails if a fourth path is ever added without it.
+     * server.conf. {@code TestCommitModeSwitchTest} fails if another path skips it.
      */
     public static final String TEST_COMMIT_MODE = System.getProperty("questdb.test.commit.mode", "adaptive");
 
     /**
-     * Whether {@code questdb.test.commit.mode} was NAMED on the command line, as opposed to defaulted.
+     * Whether {@code questdb.test.commit.mode} is set on the command line, as opposed to defaulted.
      * <p>
-     * The suite default is an invariant that {@code TestCommitModeSwitchTest} and ENT's
-     * {@code EntSuiteCommitModeTest} pin, so an unset property must still fail if someone moves the default
-     * without moving the guard. An explicitly named mode is an OPERATOR DECISION -- a deliberate sweep --
-     * and must not be reported as a regression in the default. Without this flag the two are
-     * indistinguishable, which is why the documented {@code -Dquestdb.test.commit.mode=nosync} sweep used to
-     * fail a guard assertion by construction.
+     * {@code TestCommitModeSwitchTest} and ENT's {@code EntSuiteCommitModeTest} pin the suite default, so an
+     * unset property must still fail if the default moves without the guard. An explicitly named mode is a
+     * deliberate sweep and must not be reported as a regression in the default.
      */
     public static final boolean TEST_COMMIT_MODE_EXPLICIT = System.getProperty("questdb.test.commit.mode") != null;
     private static final BuildInformationHolder buildInformationHolder = new BuildInformationHolder();
@@ -87,10 +84,10 @@ public class Overrides {
     /**
      * Skips the calling test unless the suite runs ADAPTIVE.
      * <p>
-     * For the adaptive-only machinery: the durable epoch manifest, the {@code _snapshot} /
-     * {@code _txn.epoch} / {@code _cv.epoch} anchor, {@code RecoveryCoordinator} roll-forward, the extra WAL
-     * purge floor, and the {@code wal_tables()} columns {@code durableEpochSeqTxn} / {@code localDurableSeqTxn}
-     * / {@code lastEpochTs}, which never move outside ADAPTIVE.
+     * For the adaptive-only machinery: the durable epoch manifest ({@code _epoch.manifest.0/1}),
+     * {@code RecoveryCoordinator} roll-forward, the extra WAL purge floor, and the {@code wal_tables()}
+     * columns {@code durableEpochSeqTxn} / {@code localDurableSeqTxn} / {@code lastEpochTs}, which never
+     * move outside ADAPTIVE.
      */
     public static void assumeAdaptiveCommitMode() {
         assumeCommitMode(CommitMode.ADAPTIVE);
@@ -99,18 +96,18 @@ public class Overrides {
     /**
      * Skips the calling test unless the suite is running one of {@code allowed}.
      * <p>
-     * For tests that assert behaviour only a particular durability grade produces and that CANNOT pin the
-     * mode themselves, because what they assert IS the ambient configuration (a booted server's
+     * For tests that assert behaviour only a particular durability grade produces and that cannot pin the
+     * mode themselves, because what they assert is the ambient configuration (a booted server's
      * {@code getCommitMode()}, a durable epoch having fired, a golden {@code wal_tables()} row). A test that
-     * CAN pin its own mode should keep doing so -- {@code setProperty(PropertyKey.CAIRO_COMMIT_MODE, ...)}
+     * can pin its own mode should do so -- {@code setProperty(PropertyKey.CAIRO_COMMIT_MODE, ...)}
      * for AbstractCairoTest descendants, {@code createDummyConfiguration(...)} for bootstrap ones -- because
      * a pinned test keeps running under every sweep and a skipped one does not.
      * <p>
-     * {@link Assume}, never an early {@code return}: an early return leaves the method GREEN, so a sweep
-     * under a different mode reports full success while the coverage has silently gone. A skip is counted
-     * and visible in the surefire report.
+     * {@link Assume}, never an early {@code return}: an early return reports the method as passed, so a
+     * sweep under a different mode reports full success without the coverage. A skip is counted and
+     * visible in the surefire report.
      * <p>
-     * Call it as the FIRST statement of the {@code @Test} method, before {@code assertMemoryLeak}: inside
+     * Call it as the first statement of the {@code @Test} method, before {@code assertMemoryLeak}: inside
      * the lambda the {@code AssumptionViolatedException} is wrapped by the leak-check harness and
      * re-reported as a failure.
      *
@@ -139,11 +136,11 @@ public class Overrides {
      * <p>
      * For tests that need a real fsync grade rather than the epoch machinery: {@code TableTransactionLogV1}
      * gates {@code crcSidecar.sync(...)} on {@code commitMode != CommitMode.NOSYNC}, so SYNC, ASYNC and
-     * ADAPTIVE all qualify. NOT the same condition as {@link #assumeAdaptiveCommitMode()} -- using the
-     * stricter one here would needlessly drop two thirds of the sweep matrix.
+     * ADAPTIVE all qualify. This is a weaker condition than {@link #assumeAdaptiveCommitMode()}, which
+     * would drop two thirds of the sweep matrix here.
      * <p>
-     * Note this is about durability GRADE, not about the sidecar existing: CRC entries are appended in every
-     * mode ({@code crcSidecar.append(...)} sits outside the gate), only their flush is graded.
+     * The condition is about the durability grade, not about the sidecar existing: CRC entries are appended
+     * in every mode ({@code crcSidecar.append(...)} sits outside the gate), only their flush is graded.
      */
     public static void assumeDurableCommitMode() {
         assumeCommitMode(CommitMode.SYNC, CommitMode.ASYNC, CommitMode.ADAPTIVE);
@@ -334,11 +331,8 @@ public class Overrides {
     private static void resetToDefaultTestProperties(Properties properties) {
         properties.clear();
         // Without this the two config paths disagree: a test that sets no property at all gets
-        // DefaultTestCairoConfiguration, but the moment it sets ANY property it switches to
-        // PropServerConfiguration and silently inherits the shipped default. That is how flipping the
-        // product default knocked out the partition-checksum suites -- coverage is maintained only under
-        // adaptive, so those tables stopped getting sidecars for a reason that had nothing to do with the
-        // code under test.
+        // DefaultTestCairoConfiguration, but a test that sets any property switches to
+        // PropServerConfiguration and would inherit the shipped default instead of the suite's mode.
         properties.setProperty(PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath(), TEST_COMMIT_MODE);
         properties.setProperty(PropertyKey.DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE.getPropertyPath(), "true");
         properties.setProperty(PropertyKey.CIRCUIT_BREAKER_THROTTLE.getPropertyPath(), "5");
