@@ -155,14 +155,12 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                     flags |= HEADER_FLAG_ASCII;
                 }
                 // Write the data vector before the aux entry that references it: the
-                // 48-bit data offset (written last, below) is the pointer and the data
-                // is its target, so the target is written first. Mirrors
-                // StringTypeDriver.appendValue (data putStr before the aux putLong) and
-                // the data-before-aux msync in TableWriter.syncColumns0. NB: program
-                // order only becomes durability order when an msync enforces it
-                // (commit.mode=sync/async). Under the default nosync nothing is synced,
-                // so this is correctness of intent, not a crash guarantee. The stored
-                // offset is unchanged - putVarchar returns the pre-write append offset.
+                // 48-bit data offset (written last, below) is the pointer, the data its
+                // target. StringTypeDriver.appendValue and the data-before-aux msync in
+                // TableWriter.syncColumns0 use the same order. Program order becomes
+                // durability order only where an msync enforces it (the sync and async
+                // commit modes). putVarchar returns the pre-write append offset, so the
+                // stored offset is unchanged.
                 offset = dataMem.putVarchar(value, 0, size);
                 if (offset >= VARCHAR_MAX_COLUMN_SIZE) {
                     throw CairoException.critical(0).put("varchar data column is too large [offset=")
@@ -604,7 +602,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         return dataEnd;
     }
 
-    // Reads the data-vector END (offset+size, or offset for null/inlined) of one aux entry from the fd.
+    // Reads the data-vector end (offset+size, or offset for null/inlined) of one aux entry from the fd.
     // Non-recursive; one entry only.
     private static long dataVectorEndAtFromFd(FilesFacade ff, long auxFd, long row) {
         final long auxFileOffset = VARCHAR_AUX_WIDTH_BYTES * row;
@@ -738,29 +736,17 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     @Override
     public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem) {
         if (pos > 0) {
-            // Crash-consistency guard. The data offset lives in bytes 8-15 of the aux
-            // entry and is written after the row's data bytes; on reopen we trust it to
-            // place the append cursor at the end of the data vector. A torn or partially
-            // flushed last entry can leave that offset zeroed while the 4-byte header
-            // still looks valid (header != 0), which would silently move the cursor
-            // inside committed data and let the next append overwrite live rows. Data
-            // offsets are contiguous and monotonic, so the last row's data must start
-            // at (or after) the previous row's data end; a start that falls before it
-            // is proof of a damaged aux vector. Fail loudly instead of corrupting.
-            //
-            // Scope: this O(1) check catches a single torn last entry. It cannot catch
-            // a whole unflushed aux page (many consecutive zeroed entries), where the
-            // previous entry is also zero so the comparison is 0 < 0. That residual
-            // window is inherent to commit.mode=nosync (the default), which performs no
-            // msync/fsync at all - recent commits may be lost or torn on power loss by
-            // design. Use commit.mode=sync (or snapshots/WAL) when durability matters.
-            //
-            // Read entry[pos-2]'s data end FIRST, while its own page is the one mapped:
-            // this aux memory is paged (MemoryPMARImpl maps ~one segment at a time and
-            // unmaps the rest), so reading getAppendAddress()-WIDTH off entry[pos-1]
-            // would dereference the prior, now-unmapped segment whenever (pos-1)*WIDTH
-            // lands on a page boundary - garbage / SIGSEGV, a false positive on large
-            // tables.
+            // Crash-consistency guard. Reopen places the append cursor from the data
+            // offset in bytes 8-15 of the last aux entry, written after the row's data. A
+            // torn entry can leave that offset zeroed under a valid-looking header, and
+            // the next append would overwrite committed rows. Data offsets are monotonic,
+            // so a last row that starts before the previous row's data end proves the aux
+            // vector is damaged, and the open fails. This O(1) check catches one torn
+            // entry, not a whole unflushed aux page (zeroed entries compare 0 < 0), which
+            // nosync may lose on power loss by design.
+            // Read entry[pos-2]'s data end first, while its page is mapped: the paged aux
+            // memory (MemoryPMARImpl) would otherwise touch an unmapped page whenever
+            // (pos-1)*WIDTH lands on a page boundary.
             long prevDataVectorSize = -1;
             if (pos > 1) {
                 auxMem.jumpTo(getAuxVectorOffset(pos - 2));
