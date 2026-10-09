@@ -44,18 +44,17 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * DATA BEFORE POINTER for WAL segment structural changes.
+ * Data before pointer for WAL segment structural changes.
  * <p>
- * A segment's {@code _meta} names its columns, and WAL apply resolves those names to files. So the files
- * must be in place BEFORE the metadata that points at them is published — otherwise a crash on the
- * {@code _meta.swp} barrier leaves durable metadata naming a file that does not exist, the segment becomes
- * permanently unappliable, and recovery suspends the table with
- * {@code "WAL segment column too short for committed row range [... actual=-1]"} (actual=-1 = MISSING file).
+ * A segment's {@code _meta} names its columns, and WAL apply resolves those names to files, so the files
+ * must be in place before the metadata that points at them is published. Otherwise a crash on the
+ * {@code _meta.swp} barrier leaves durable metadata naming a file that does not exist, the segment can never
+ * be applied, and recovery suspends the table with
+ * {@code "WAL segment column too short for committed row range [... actual=-1]"} (actual=-1 means a missing
+ * file).
  * <p>
- * These tests assert the ORDER directly rather than crashing: by the time {@code _meta.swp} is opened, the
- * column file the new metadata will name must already exist on disk. That makes them deterministic and,
- * unlike a crash sweep over this workload, actually discriminating — reverting either ordering fix turns
- * them red.
+ * The tests assert the order directly rather than crashing: by the time {@code _meta.swp} is opened, the
+ * column file the new metadata will name must already exist on disk. That keeps them deterministic.
  */
 public class WalWriterStructuralPublishOrderTest extends AbstractCairoTest {
 
@@ -67,8 +66,8 @@ public class WalWriterStructuralPublishOrderTest extends AbstractCairoTest {
         final List<String> ops = new ArrayList<>();
 
         /**
-         * {@code mustContain} disambiguates the SEGMENT metadata ({@code .../walN/<seg>/_meta}) from the
-         * table-level one at the table root — they share a suffix, and only the segment's names the columns
+         * {@code mustContain} disambiguates the segment metadata ({@code .../walN/<seg>/_meta}) from the
+         * table-level one at the table root: they share a suffix, and only the segment's names the columns
          * that WAL apply resolves.
          */
         int indexOfFirst(String kind, String mustContain, String suffix) {
@@ -208,15 +207,14 @@ public class WalWriterStructuralPublishOrderTest extends AbstractCairoTest {
      * ADAPTIVE device-barrier handshake for the structural null-backfill.
      * <p>
      * Adding a column to a segment that already holds uncommitted rows backfills nulls into the new
-     * column's files. That write happens on the STRUCTURAL path, which sequences via events-only barriers
+     * column's files. That write happens on the structural path, which sequences via events-only barriers
      * ({@code syncAdaptiveEventsBeforeSequencing}) and never runs {@code syncIfRequired0}'s per-column
-     * fdatasync loop — so the backfill has to carry its own device barrier.
+     * fdatasync loop, so the backfill carries its own device barrier.
      * <p>
-     * The var-size helpers used to rely on {@code msync(MS_SYNC)} implicitly being a range-fsync. That
-     * makes the durability grade depend on kernel behaviour rather than on an explicit barrier, and under
-     * a group-commit window (W&gt;0) it forces a synchronous device flush the design deliberately defers.
-     * Every other ADAPTIVE path in this class pairs an ordering msync with an explicit fdatasync; this
-     * pins that the backfill does too.
+     * Relying on {@code msync(MS_SYNC)} as an implicit range fsync would make the durability grade depend on
+     * kernel behaviour, and under a group-commit window (W&gt;0) it would force a synchronous device flush
+     * that the window defers. Every other ADAPTIVE path in this class pairs an ordering msync with an explicit
+     * fdatasync; this test checks that the backfill does too.
      */
     @Test
     public void testAdaptiveVarColumnBackfillGetsExplicitDeviceBarrier() throws Exception {
@@ -236,7 +234,7 @@ public class WalWriterStructuralPublishOrderTest extends AbstractCairoTest {
                     op.withContext(ctx);
                     w.apply(op, true);
                 }
-                // VARCHAR backfills the AUX vector; its data vector has a zero min entry size, so
+                // VARCHAR backfills the aux vector; its data vector has a zero min entry size, so
                 // setVarColumnDataFileNull legitimately writes and flushes nothing. The aux file is the
                 // one carrying bytes, so it is the one that must carry the barrier.
                 Assert.assertTrue("the backfill never created the new column's aux file - this test is "
