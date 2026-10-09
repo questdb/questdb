@@ -52,17 +52,12 @@ public class MemoryPMARImplTest {
     public static TemporaryFolder temp = new TemporaryFolder();
 
     /**
-     * {@link MemoryPMARImpl#release(long)} msyncs completed pages according to the commit mode threaded in
-     * via {@code setCommitMode()}, not the instance-global mode. TableWriter threads its own grade because a
-     * table not yet enrolled in adaptive runs at SYNC while the instance runs ADAPTIVE, and its completed
-     * pages must still be msync'd on release. {@code release()} consults the global configuration only as
-     * the {@link CommitMode#UNSET} ("never threaded") fallback, so a {@code null} configuration (a NOSYNC
-     * global) isolates the threaded mode: with SYNC threaded in, the completed pages are msync'd although
-     * the global mode resolves to NOSYNC.
-     *
-     * <p>UNSET and explicit NOSYNC skip the msync, ASYNC uses {@code msync(async=true)}, and an adaptive
-     * {@code applyLazy} column skips even with SYNC threaded in: the epoch and WAL replay make it durable,
-     * not the release msync.
+     * {@link MemoryPMARImpl#release(long)} msyncs completed pages per the commit mode threaded in via
+     * {@code setCommitMode()}, not the instance-global mode, and falls back to the global configuration only for
+     * {@link CommitMode#UNSET}. A {@code null} configuration (a NOSYNC global) isolates the threaded mode: with
+     * SYNC threaded in, the completed pages are msync'd. UNSET and explicit NOSYNC skip the msync, ASYNC uses
+     * {@code msync(async=true)}, and an adaptive {@code applyLazy} column skips it even with SYNC threaded in,
+     * since the epoch and WAL replay make it durable.
      */
     @Test
     public void testReleaseHonorsThreadedCommitModeOverGlobalNosync() throws Exception {
