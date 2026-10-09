@@ -158,11 +158,10 @@ public class TableConverter {
                                 path.trimTo(rootLen).concat(dirNameSink);
                                 RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, path, path.size());
 
-                                txWriter.resetLagValuesUnsafe();
-
                                 int convertedTimestampType = ColumnType.TIMESTAMP;
                                 int convertedPartitionBy = PartitionBy.NONE;
                                 if (walEnabled) {
+                                    txWriter.resetLagValuesUnsafe();
                                     try (TableWriterMetadata metadata = new TableWriterMetadata(token)) {
                                         metadata.reload(metaPath, metaMem);
                                         convertedTimestampType = metadata.getTimestampIndex() < 0
@@ -183,6 +182,9 @@ public class TableConverter {
                                 } else {
                                     if (!tableNameRegistry.isWalTableDropped(dirName) && tableSequencerAPI.prepareToConvertToNonWal(token)) {
                                         removeWalPersistence(path, rootLen, ff, dirNameSink);
+                                        // Only once the WAL is gone: a kill before it leaves _txn at the replayed
+                                        // seqTxn, so the next start finds nothing to replay.
+                                        txWriter.resetLagValuesUnsafe();
                                     } else {
                                         LOG.info().$("WAL table will not be converted to non-WAL, table is dropped [dirName=").$(dirNameSink).I$();
                                         continue;

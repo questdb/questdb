@@ -1467,6 +1467,93 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     /**
+     * A kill inside the conversion body, before or after it removes the sequencer, in every start mode and whether
+     * the WAL was purged or not, leaves a table the next start converts with every row once: the table's
+     * {@code _txn} keeps its replayed seqTxn until the WAL is gone, so the next start finds nothing to replay. The
+     * kill is modelled by a failure at the sequencer's removal, which leaves {@code _convert} for the next start.
+     */
+    @Test
+    public void testConversionToNonWalKillAroundSequencerRemovalKeepsEveryRow() throws Exception {
+        final AtomicBoolean killBeforeRemoval = new AtomicBoolean();
+        final AtomicBoolean killAfterRemoval = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean rmdir(Path name, boolean haltOnError) {
+                if (Utf8s.endsWithAscii(name, WalUtils.SEQ_DIR)) {
+                    if (killBeforeRemoval.get()) {
+                        throw CairoException.critical(0).put("kill before the sequencer is removed [path=").put(name).put(']');
+                    }
+                    if (killAfterRemoval.get()) {
+                        super.rmdir(name, haltOnError);
+                        throw CairoException.critical(0).put("kill after the sequencer is removed [path=").put(name).put(']');
+                    }
+                }
+                return super.rmdir(name, haltOnError);
+            }
+        };
+        try {
+            assertMemoryLeak(ff, () -> {
+                final List<String> failures = new ArrayList<>();
+                for (String mode : new String[]{"nosync", "adaptive"}) {
+                    for (boolean afterRemoval : new boolean[]{false, true}) {
+                        for (boolean purge : new boolean[]{false, true}) {
+                            final String label = mode + " start, kill " + (afterRemoval ? "after" : "before") + " the removal, WAL " + (purge ? "purged" : "kept");
+                            final String name = "kill_" + mode + (afterRemoval ? "_after" : "_before") + (purge ? "_purged" : "_kept");
+                            setCommitMode("nosync");
+                            execute("CREATE TABLE " + name + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                            for (int i = 0; i < 3; i++) {
+                                execute("INSERT INTO " + name + " VALUES ('2024-09-0" + (i + 1) + "T00:00:00.000000Z', " + i + ")");
+                                drainWalQueue();
+                                engine.releaseAllWalWriters();
+                            }
+                            if (purge) {
+                                drainPurgeJob();
+                            }
+                            final TableToken tt = engine.verifyTableName(name);
+                            execute("ALTER TABLE " + name + " SET TYPE BYPASS WAL");
+                            engine.releaseAllWriters();
+                            engine.releaseAllReaders();
+                            engine.releaseAllWalWriters();
+
+                            setCommitMode(mode);
+                            engine.getTxnScoreboardPool().remove(tt);
+                            engine.getTableSequencerAPI().resetForReboot(tt);
+                            new RecoveryCoordinator(engine).recover();
+                            (afterRemoval ? killAfterRemoval : killBeforeRemoval).set(true);
+                            try {
+                                engine.load();
+                            } finally {
+                                killBeforeRemoval.set(false);
+                                killAfterRemoval.set(false);
+                            }
+                            if (!engine.verifyTableName(name).isWal()) {
+                                failures.add(label + ": the modelled kill did not stop the conversion");
+                                continue;
+                            }
+
+                            engine.releaseAllWriters();
+                            engine.releaseAllReaders();
+                            engine.getTxnScoreboardPool().remove(tt);
+                            engine.getTableSequencerAPI().resetForReboot(tt);
+                            new RecoveryCoordinator(engine).recover();
+                            engine.load();
+                            final TableToken converted = engine.verifyTableName(name);
+                            final long rows = rowCount(converted);
+                            if (converted.isWal() || rows != 3) {
+                                failures.add(label + ": at the next start wal=" + converted.isWal() + ", rows=" + rows);
+                            }
+                            engine.releaseAllReaders();
+                        }
+                    }
+                }
+                Assert.assertEquals("[]", failures.toString());
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    /**
      * A failed flush of the replayed WAL stops the engine, whether it is the conversion's own flush or the apply
      * job's save point inside the replay (at the shipped interval). The production callback halts the process in
      * that call, and the next start, with a healthy disk, rewinds to the save point, replays again and converts
