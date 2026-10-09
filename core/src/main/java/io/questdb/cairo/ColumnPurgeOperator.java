@@ -154,10 +154,10 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     /**
-     * True when the table's durable epoch cut still sits inside the superseded range, so recovery would
-     * restore a {@code _txn}/{@code _cv} that names these column files. Separate from the reader check
-     * because it holds even when no reader does -- notably at startup, where there are no readers by
-     * construction but the on-disk anchor is exactly what the next recovery will restore to.
+     * True when the table's save point still lies inside the superseded range, so recovery would restore a
+     * {@code _txn}/{@code _cv} that names these column files. Separate from the reader check because it holds
+     * when no reader does, notably at startup, where there are no readers but the save point is what the
+     * next recovery restores.
      */
     private boolean checkEpochHoldsVersion(long columnVersion, ColumnPurgeTask task) {
         return task.getTableToken().isWal()
@@ -404,12 +404,11 @@ public class ColumnPurgeOperator implements Closeable {
                         // When a backup checkpoint is in progress, defer column purge — the
                         // checkpoint may reference these column versions via snapshotted metadata.
                         //
-                        // The epoch is consulted in EVERY mode, including STARTUP_ONLY. That mode skips the
-                        // reader check because at startup there are no readers to hold anything -- but the
-                        // durable epoch is not a reader, it is the cut the next recovery restores to. Purging
-                        // a version the anchor still names leaves recovery restoring a _txn/_cv whose column
-                        // files are gone, which surfaces later as "SymbolMap does not exist" when the writer
-                        // reopens, and suspends the table.
+                        // The save point is checked in every mode, STARTUP_ONLY included. That mode skips the
+                        // reader check because no readers exist at startup, but the save point is not a reader:
+                        // it is what the next recovery restores. Purging a version it names would leave
+                        // recovery restoring a _txn/_cv whose column files are gone, and the writer reopen would
+                        // fail ("SymbolMap does not exist") and suspend the table.
                         if (engine.getCheckpointStatus().isInProgress()
                                 || checkEpochHoldsVersion(columnVersion, task)
                                 || (scoreboardUseMode != ScoreboardUseMode.STARTUP_ONLY && checkScoreboardHasReadersBeforeUpdate(columnVersion, task))) {
