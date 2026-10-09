@@ -902,12 +902,9 @@ public class TxReader implements Closeable, Mutable {
      */
     private boolean unsafeVerifyBodyChecksum() {
         // The stamp decides first, and it decides both questions at once. If it does not name this record,
-        // no checksum was ever written FOR this record -- the slot is legacy, or it belongs to a record a
-        // binary without the checksum overwrote in place -- so it is not evidence about this one. If it DOES
-        // name this record then a checksum was written for it, and a slot that is now zero or wrong is a
-        // torn write. That second half is why the stamp replaces the capability watermark rather than merely
-        // working around it: it recovers the same detection without recording a promise a downgrade cannot
-        // withdraw.
+        // no checksum was ever written FOR this record (a released record), so the slot is not evidence
+        // about it. If it DOES name this record then a checksum was written for it, and a slot that is now
+        // zero or wrong is a torn write.
         if (!unsafeChecksumStampNamesThisRecord(baseOffset, roTxMemBase.getLong(baseOffset + TX_OFFSET_TXN_64))) {
             return true;
         }
@@ -920,11 +917,7 @@ public class TxReader implements Closeable, Mutable {
 
     /**
      * True when the checksum slot at {@code areaBaseOffset} was written for the record now occupying that
-     * area, rather than for an earlier one whose bytes a binary without the checksum overwrote in place.
-     * <p>
-     * The XOR tags the checksum coverage as well as the low 32 bits of the txn. A previous development
-     * checksum with a bare-txn stamp must not be checked using the new coverage. A stale stamp from the
-     * current format aliases only after 2^32 txns; an old-format stamp is at least 2^31 txns away.
+     * area. A released record never wrote the slot, see {@link TableUtils#TX_BODY_CHECKSUM_STAMP_XOR}.
      * <p>
      * 0 remains the "no stamp" sentinel for legacy and freshly reset records. One txn in 2^32 therefore
      * goes unverified, when its encoded stamp is zero.

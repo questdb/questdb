@@ -548,8 +548,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void resetStructureVersionUnsafe() {
         txMemBase.putLong(readBaseOffset + TX_OFFSET_STRUCT_VERSION_64, 0);
-        // Released converters perform this store without refreshing the checksum. Exclude the field
-        // rather than requiring an older binary to understand our checksum.
+        // The body checksum leaves the structure version out, so this in-place reset keeps it valid.
     }
 
     public void resetTimestamp() {

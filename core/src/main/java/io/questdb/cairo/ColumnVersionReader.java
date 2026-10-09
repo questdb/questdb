@@ -115,9 +115,9 @@ public class ColumnVersionReader implements Closeable, Mutable {
             p += BLOCK_SIZE_BYTES;
         }
 
-        // Checkpoint copies use the same version-stamped 16-byte trailer as regular commits.
+        // Checkpoint copies use the same 16-byte trailer as regular commits.
         long areaAddr = mem.appendAddressFor(offset, size + TableUtils.CV_CHECKSUM_TRAILER_SIZE);
-        mem.putLong(offset + size, TableUtils.CV_CHECKSUM_MAGIC ^ version);
+        mem.putLong(offset + size, TableUtils.CV_CHECKSUM_MAGIC);
         mem.putLong(offset + size + Long.BYTES, TableUtils.calculateCvAreaChecksum(areaAddr, size));
     }
 
@@ -278,8 +278,8 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
     /**
      * Whether the area holding column version {@code areaVersion}, the live one or its predecessor in the
-     * other slot, can be loaded: it lies within the file, and its trailer checksum matches when the trailer
-     * names that version. An area whose trailer names no version passes unverified, as on every load path.
+     * other slot, can be loaded: it lies within the file, and its trailer checksum matches when it has a
+     * trailer. An area without a trailer passes unverified, as on every load path.
      * Version 0 is the empty state of a file that has never committed. Reads the file only: the loaded column
      * versions stay as they are.
      */
@@ -295,7 +295,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
         final long offset = mem.getLong(areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
         final long size = mem.getLong(areaA ? OFFSET_SIZE_A_64 : OFFSET_SIZE_B_64);
         final long fileLength = mem.getFilesFacade().length(mem.getFd());
-        return isAreaWithinFile(offset, size, fileLength) && unsafeVerifyAreaChecksum(offset, size, areaVersion, fileLength);
+        return isAreaWithinFile(offset, size, fileLength) && unsafeVerifyAreaChecksum(offset, size, fileLength);
     }
 
     public ColumnVersionReader ofRO(FilesFacade ff, LPSZ fileName) {
@@ -417,7 +417,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
             if (isAreaWithinFile(offset, size, fileLength)) {
                 mem.resize(offset + size);
                 readUnsafe(offset, size, cachedColumnVersionList, mem);
-                isIntact = unsafeVerifyAreaChecksum(offset, size, version, fileLength);
+                isIntact = unsafeVerifyAreaChecksum(offset, size, fileLength);
             } else {
                 isIntact = false;
             }
@@ -544,7 +544,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
         }
         mem.resize(offset + size);
         readUnsafe(offset, size, cachedColumnVersionList, mem);
-        if (!unsafeVerifyAreaChecksum(offset, size, version, fileLength)) {
+        if (!unsafeVerifyAreaChecksum(offset, size, fileLength)) {
             LOG.error().$("_cv body checksum mismatch on self-read [version=").$(version)
                     .$(", offset=").$(offset).$(", size=").$(size).$(']').$();
         }
@@ -580,9 +580,9 @@ public class ColumnVersionReader implements Closeable, Mutable {
      * for a trailer / no MAGIC - back-compat). Guards every read against EOF (see
      * {@link #unsafeVerifyAreaChecksum}).
      * <p>
-     * Note this fallback is only ever reached when the PRIMARY (version-selected) area had a PRESENT,
-     * version-stamped trailer whose checksum mismatched. Legacy areas, including those with a stale
-     * trailer left by an older writer, are accepted as unverified on the primary path.
+     * Note this fallback is only ever reached when the PRIMARY (version-selected) area had a PRESENT
+     * trailer whose checksum mismatched. Legacy areas, which carry no trailer, are accepted as unverified
+     * on the primary path.
      */
     private boolean unsafeLoadAndVerifyOtherArea(long selectedVersion) {
         // The selected area used slot (selectedVersion & 1); the prior commit lives in the opposite slot.
@@ -605,18 +605,17 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
         mem.resize(otherOffset + otherSize);
         readUnsafe(otherOffset, otherSize, cachedColumnVersionList, mem);
-        return unsafeVerifyAreaChecksum(otherOffset, otherSize, selectedVersion - 1, realLen);
+        return unsafeVerifyAreaChecksum(otherOffset, otherSize, realLen);
     }
 
     /**
-     * The 16-byte trailer contains {@code [CV_CHECKSUM_MAGIC ^ areaVersion][checksum]}.
-     * A missing or stale stamp is unverified: an old binary can overwrite a body without clearing
-     * its former trailer. Only a matching stamp claims checksum coverage. Check the real file length
-     * before mapping the trailer to avoid accessing beyond EOF, then classify a matching checksum.
+     * The 16-byte trailer contains {@code [CV_CHECKSUM_MAGIC][checksum]}. Without the MAGIC there is no
+     * trailer and the area is unverified. Check the real file length before mapping the trailer to avoid
+     * accessing beyond EOF.
      * The caller brackets this check with stable version reads under concurrent commits, and passes the real
      * file length it read for the same check.
      */
-    private boolean unsafeVerifyAreaChecksum(long offset, long size, long areaVersion, long realLen) {
+    private boolean unsafeVerifyAreaChecksum(long offset, long size, long realLen) {
         if (realLen < offset + size + TableUtils.CV_CHECKSUM_TRAILER_SIZE) {
             // Absent: the file is too short to hold a 16-byte trailer (old-format / freshly-created). Skip
             // (back-compatible). Crucially we never resize/read at offset+size here, so no mapping past EOF.
@@ -624,19 +623,12 @@ public class ColumnVersionReader implements Closeable, Mutable {
         }
         // Safe to map the 16-byte trailer now that the real file is known to cover it.
         mem.resize(offset + size + TableUtils.CV_CHECKSUM_TRAILER_SIZE);
-        // The version in the first trailer word ties the checksum to this specific commit.
-        // An old writer can reuse the body without clearing a prior trailer; in that case its
-        // stale stamp is not evidence about this body, so avoid even hashing it.
-        long expectedStamp = TableUtils.CV_CHECKSUM_MAGIC ^ areaVersion;
-        if (mem.getLong(offset + size) != expectedStamp) {
-            return true;
-        }
         return ChecksumTrailer.classify(
-                expectedStamp,
+                mem.getLong(offset + size),
                 mem.getLong(offset + size + Long.BYTES),
                 mem.addressOf(offset),
                 size,
-                expectedStamp
+                TableUtils.CV_CHECKSUM_MAGIC
         ) != ChecksumTrailer.MISMATCH;
     }
 
