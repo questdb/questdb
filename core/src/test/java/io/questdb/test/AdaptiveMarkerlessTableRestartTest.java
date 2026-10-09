@@ -40,19 +40,14 @@ import org.junit.Before;
 import org.junit.Test;
 
 /**
- * A WAL table's generation-zero epoch anchor is published at CREATE time
- * ({@code DurableEpochManifest.publishInitial} in {@code CairoEngine}'s create path), not by the first
- * write. Without it {@code RecoveryCoordinator.recoverTable} refuses to fall back to live state on the
- * next startup -- and that refusal fails the {@code engine} component, so a single markerless table takes
- * the whole instance down rather than just itself.
+ * A WAL table on an adaptive instance gets its generation-zero epoch anchor at CREATE time
+ * ({@code DurableEpochManifest.publishInitial} in {@code CairoEngine}'s create path), not at its first
+ * write, so it is never applied lazily without a save point behind it.
  *
  * <p>{@link TestUtils#createTable(io.questdb.cairo.CairoEngine, io.questdb.cairo.TableStructure)} builds a
- * table the low-level way: it writes the files, registers the token and the sequencer entry, and used to
- * skip the anchor. Any test that created a table that way and then restarted a server would blame the
- * restart -- which is exactly how this surfaced, in enterprise's AccessControlFuzzTest.
- *
- * <p>Both tests below assert the same invariant from the two creation paths, so they stay honest about
- * the utility being equivalent to the engine rather than merely close to it.
+ * table the low-level way: it writes the files and registers the token and the sequencer entry. The two
+ * tests assert that it leaves the same anchor as the engine's SQL create path, and that the table survives
+ * a restart either way.
  */
 public class AdaptiveMarkerlessTableRestartTest extends AbstractBootstrapTest {
 
@@ -83,7 +78,7 @@ public class AdaptiveMarkerlessTableRestartTest extends AbstractBootstrapTest {
                 }
             }
             // The control for the case below: same shape of table, same absence of writes, created the
-            // way a user creates one. If this ever fails, the guard is not merely test-visible.
+            // way a user creates one.
             try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
                 serverMain.start();
                 Assert.assertNotNull(serverMain.getEngine().verifyTableName("x"));
@@ -115,10 +110,7 @@ public class AdaptiveMarkerlessTableRestartTest extends AbstractBootstrapTest {
                 }
             }
 
-            // The consequence, and the reason this matters: without the anchor RecoveryCoordinator refuses
-            // the live-state fallback, and that refusal fails the engine component -- so one markerless
-            // table used to take the whole instance down with it, which is how it surfaced (enterprise
-            // AccessControlFuzzTest, whose tables are built this way, died on its restart leg).
+            // The table must also survive a restart.
             try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
                 serverMain.start();
                 Assert.assertNotNull(serverMain.getEngine().verifyTableName("z"));
