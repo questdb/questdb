@@ -192,7 +192,7 @@ public class LiveViewRefreshDisabledTest extends AbstractBootstrapTest {
                 // than the rollover threshold.
                 PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT.getEnvVarName(), "1",
                 PropertyKey.CAIRO_WAL_PURGE_INTERVAL.getEnvVarName(), "10",
-                // ADAPTIVE (the default commit mode) puts a SECOND floor under the purge: WAL is
+                // ADAPTIVE (the suite's default commit mode) puts a second floor under the purge: WAL is
                 // retained back to the table's last durable epoch, and durableEpochSeqTxn is 0 until
                 // the first one fires. At the 60s default cadence that floor outlives this test's 60s
                 // poll, so every segment survives and the assertion below fails for a reason that has
