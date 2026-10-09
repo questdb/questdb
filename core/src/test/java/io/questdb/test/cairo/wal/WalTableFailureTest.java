@@ -51,6 +51,9 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
+import io.questdb.cutlass.line.udp.LineUdpLexer;
+import io.questdb.cutlass.line.udp.LineUdpParserImpl;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
@@ -63,10 +66,12 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.LongHashSet;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -2056,6 +2061,41 @@ public class WalTableFailureTest extends AbstractCairoTest {
             testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table4", 24, TOO_MANY_OPEN_FILES.text());
             testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table5", 12, OUT_OF_MMAP_AREAS.text());
         }
+    }
+
+    @Test
+    public void testWalTableUdpRollbackDropsSavedLag() throws Exception {
+        assertMemoryLeak(() -> {
+            // outside ADAPTIVE the old UDP receiver appends to a WAL table's writer directly
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            final TableToken token = saveWalLag("('2022-02-25', 1_000_000, 'c', 'c1')");
+            // a fresh writer drops the saved lag in memory only and appends at the committed rows, over the
+            // lag's bytes; the receiver closes without a commit, so the pool's rollback reloads the lag from _txn
+            engine.releaseAllWriters();
+            try (
+                    LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration());
+                    LineUdpLexer lexer = new LineUdpLexer(4096)
+            ) {
+                lexer.withParser(parser);
+                final byte[] lines = """
+                        x v=7i 1645830000000000000
+                        x v=8i 1645830060000000000
+                        x v=9i 1645830120000000000
+                        """.getBytes(Files.UTF_8);
+                final long mem = Unsafe.malloc(lines.length, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < lines.length; i++) {
+                        Unsafe.putByte(mem + i, lines[i]);
+                    }
+                    lexer.parse(mem, mem + lines.length);
+                } finally {
+                    Unsafe.free(mem, lines.length, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertSavedLagRows("('2022-02-25', 1_000_000, 'c', 'c1')");
+        });
     }
 
     @Test
