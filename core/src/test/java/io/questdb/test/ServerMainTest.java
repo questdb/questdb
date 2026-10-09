@@ -1063,6 +1063,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.horizon.join.max.offsets\tQDB_CAIRO_SQL_HORIZON_JOIN_MAX_OFFSETS\t10000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.join.enabled\tQDB_CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.asof.join.enabled\tQDB_CAIRO_SQL_PARALLEL_ASOF_JOIN_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.asof.join.virtual.key.enabled\tQDB_CAIRO_SQL_ASOF_JOIN_VIRTUAL_KEY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.enabled\tQDB_CAIRO_SQL_PARALLEL_WINDOW_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.key.runs.enabled\tQDB_CAIRO_SQL_PARALLEL_WINDOW_KEY_RUNS_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.chain.enabled\tQDB_CAIRO_SQL_PARALLEL_WINDOW_CHAIN_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +

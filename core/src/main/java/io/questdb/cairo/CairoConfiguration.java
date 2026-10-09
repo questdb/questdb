@@ -1492,6 +1492,14 @@ public interface CairoConfiguration {
     boolean isSqlJitSymbolInBitsetEnabled();
 
     /**
+     * Plans a non-keyed ASOF JOIN whose two sides are filtered by the same SYMBOL equality, such as
+     * (... WHERE sym = $1) t ASOF JOIN (... WHERE sym = $1) q, as the keyed parallel ASOF JOIN on those columns.
+     */
+    default boolean isSqlAsOfJoinVirtualKeyEnabled() {
+        return true;
+    }
+
+    /**
      * Binds an uncorrelated scalar sub-query compared with a column, such as bid >= (SELECT ...), as a
      * constant of each execution, so the filter stays JIT-compiled.
      */
