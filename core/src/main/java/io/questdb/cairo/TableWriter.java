@@ -695,7 +695,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.appendTimestampSetter = timestampSetter;
             discardWalLag("open");
             configureAppendPosition();
-            purgeUnusedPartitions();
+            purgeUnusedPartitionsAtOpen();
             minSplitPartitionTimestamp = findMinSplitPartitionTimestamp();
             clearTodoLog();
             if (isLostTxnRepublishRequired) {
@@ -909,7 +909,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 try {
                     ff.fsyncAndClose(openRO(ff, path.$(), LOG));
                 } catch (CairoException e) {
-                    if (e.isDataSyncFailure()) {
+                    // NOSYNC and ASYNC promise nothing on a power loss: a failure there is non-critical
+                    if (CommitMode.isPowerLossDurable(effectiveCommitMode) && e.isDataSyncFailure()) {
                         distressed = true;
                         engine.handleDataSyncFailure(e);
                     }
@@ -1258,7 +1259,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     ff.fsync(parquetMetaFd);
                                 }
                             } catch (Throwable t) {
-                                if (CairoException.isDataSyncFailure(t)) {
+                                // ASYNC promises nothing on a power loss: a failed fsync there only fails the attach
+                                if (CommitMode.isPowerLossDurable(effectiveCommitMode) && CairoException.isDataSyncFailure(t)) {
                                     distressed = true;
                                     engine.handleDataSyncFailure(t);
                                 }
@@ -1276,7 +1278,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     try {
                                         ff.fsyncAndClose(dirFd);
                                     } catch (Throwable failure) {
-                                        if (CairoException.isDataSyncFailure(failure)) {
+                                        if (CommitMode.isPowerLossDurable(effectiveCommitMode) && CairoException.isDataSyncFailure(failure)) {
                                             distressed = true;
                                             engine.handleDataSyncFailure(failure);
                                         }
@@ -1895,10 +1897,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
         boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
-        squashPartitionForce(partitionIndex);
-        long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        long partitionNameTxn;
         int newPartitionDirLen = 0;
+        boolean isTxnWriteStarted = false;
         try {
+            // inside the try, so that a failed data sync of the squash stops the engine too
+            squashPartitionForce(partitionIndex);
+            partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
             setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
             if (!ff.exists(path.$())) {
                 throw CairoException.nonCritical().put("partition directory does not exist [path=").put(path).put(']');
@@ -1930,11 +1935,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.setPartitionParquet(partitionTimestamp, parquetFileLength);
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
             txWriter.bumpPartitionTableVersion();
+            isTxnWriteStarted = true;
             commitTxWriter();
 
         } catch (Throwable th) {
-            if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+            // A failed _txn msync does not undo the write: the page cache holds a _txn that names the new
+            // directory, so it stays. The old one is removed only after the commit, so a power loss finds it too.
+            if (newPartitionDirLen > 0 && !isTxnWriteStarted && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
                 LOG.error().$("could not remove new partition dir on rollback [path=").$(other).I$();
+            }
+            // ASYNC fsyncs _pm and the partition directory too, but promises nothing on a power loss: a failure
+            // there fails the statement only
+            if (CommitMode.isPowerLossDurable(effectiveCommitMode) && CairoException.isDataSyncFailure(th)) {
+                distressed = true;
+                engine.handleDataSyncFailure(th);
             }
             throw th;
         } finally {
@@ -2030,6 +2044,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         int newPartitionDirLen = 0;
+        boolean isTxnWriteStarted = false;
         try {
             // set the parquet file full path
             setPathForParquetPartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
@@ -2076,6 +2091,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     columnVersionWriter.commit();
                     txWriter.setColumnVersion(columnVersionWriter.getVersion());
                 }
+                isTxnWriteStarted = true;
                 commitTxWriter();
             } else {
                 pendingParquetToNativeConversions.add(partitionTimestamp);
@@ -2084,8 +2100,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
         } catch (Throwable th) {
-            if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+            // A failed _txn msync does not undo the write: the page cache holds a _txn that names the new
+            // directory, so it stays. The old one is removed only after the commit, so a power loss finds it too.
+            if (newPartitionDirLen > 0 && !isTxnWriteStarted && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
                 LOG.error().$("could not remove new partition dir on rollback [path=").$(other).I$();
+            }
+            if (CairoException.isDataSyncFailure(th)) {
+                distressed = true;
+                engine.handleDataSyncFailure(th);
             }
             throw th;
         } finally {
@@ -4207,6 +4229,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
 
         int newPartitionDirLen = 0;
+        boolean isTxnWriteStarted = false;
         try {
             setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
             final int partitionDirLen = path.size();
@@ -4266,10 +4289,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
             txWriter.setPartitionParquet(partitionTimestamp, parquetFileSize);
             txWriter.bumpPartitionTableVersion();
+            isTxnWriteStarted = true;
             commitTxWriter();
         } catch (Throwable e) {
-            if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+            // A failed _txn msync does not undo the write: the page cache holds a _txn that names the new
+            // directory, so it stays. The old one is removed only after the commit, so a power loss finds it too.
+            if (newPartitionDirLen > 0 && !isTxnWriteStarted && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
                 LOG.error().$("could not remove partition dir [path=").$(other).I$();
+            }
+            // the stop also keeps the writer's rollback from purging the old version
+            if (CommitMode.isPowerLossDurable(effectiveCommitMode) && CairoException.isDataSyncFailure(e)) {
+                distressed = true;
+                engine.handleDataSyncFailure(e);
             }
             throw e;
         } finally {
@@ -13304,6 +13335,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             handleHousekeepingException(e);
         } finally {
             pendingParquetToNativeConversions.clear();
+        }
+    }
+
+    // A failed _txn flush that stopped the engine, then a restart without a power loss, leaves the page cache
+    // holding a _txn the device never got, and the device's _txn may name a partition version this one does not.
+    // Under SYNC the open therefore makes _txn durable before it removes any version. ADAPTIVE restores _txn from
+    // its durable epoch copy at boot, and NOSYNC and ASYNC promise nothing on a power loss.
+    private void purgeUnusedPartitionsAtOpen() {
+        if (PartitionBy.isPartitioned(partitionBy)) {
+            try {
+                ff.iterateDir(path.$(), removePartitionDirsNotAttached);
+                if (partitionRemoveCandidates.size() > 0 && effectiveCommitMode == CommitMode.SYNC) {
+                    txWriter.rewriteAndFsync();
+                }
+                processPartitionRemoveCandidates();
+            } finally {
+                partitionRemoveCandidates.clear();
+                path.trimTo(pathSize);
+            }
         }
     }
 

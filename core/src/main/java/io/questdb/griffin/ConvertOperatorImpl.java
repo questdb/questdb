@@ -87,6 +87,9 @@ public class ConvertOperatorImpl implements Closeable {
     private final TableWriter tableWriter;
     private final Clock timer;
     private CharSequence columnName;
+    private volatile int dataSyncFailureErrno;
+    // Non-null once a conversion task fails a data-sync barrier.
+    private volatile String dataSyncFailureOperation;
     private long fixedFd;
     private int partitionUpdated;
     private SymbolMapReaderImpl symbolMapReader;
@@ -181,9 +184,14 @@ public class ConvertOperatorImpl implements Closeable {
             }
         }
 
-        if (checkStatus && asyncProcessingErrorCount.get() > 0) {
-            throw CairoException.critical(0)
-                    .put("column conversion failed, see logs for details [table=").put(tableWriter.getTableToken())
+        // A task's failed data-sync barrier is rethrown even when the caller has its own error to rethrow,
+        // so that the caller stops the engine
+        if ((checkStatus || dataSyncFailureOperation != null) && asyncProcessingErrorCount.get() > 0) {
+            final String dataSyncOperation = dataSyncFailureOperation;
+            final CairoException ex = dataSyncOperation != null
+                    ? CairoException.dataSyncFailure(dataSyncFailureErrno, dataSyncOperation)
+                    : CairoException.critical(0);
+            throw ex.put("column conversion failed, see logs for details [table=").put(tableWriter.getTableToken())
                     .put(", tableDir=").put(tableWriter.getTableToken().getDirName())
                     .put(", column=").put(columnName)
                     .put(']');
@@ -220,6 +228,7 @@ public class ConvertOperatorImpl implements Closeable {
             int queueCount = 0;
             countDownLatch.reset();
             asyncProcessingErrorCount.set(0);
+            dataSyncFailureOperation = null;
             long start = timer.getTicks();
             long totalRows = 0;
 
@@ -479,6 +488,15 @@ public class ConvertOperatorImpl implements Closeable {
                 }
             }
         } catch (Throwable th) {
+            // The task may run on another thread: keep what the engine's fail-stop needs for the converting
+            // thread to rethrow
+            for (Throwable cursor = th; cursor != null; cursor = cursor.getCause()) {
+                if (cursor instanceof CairoException e && e.isDataSyncFailure()) {
+                    dataSyncFailureErrno = e.getErrno();
+                    dataSyncFailureOperation = e.getDataSyncOperation();
+                    break;
+                }
+            }
             asyncProcessingErrorCount.incrementAndGet();
             LogRecord log = LOG.critical().$("failed to convert column, column is corrupt [at=")
                     .$(tableWriter.getTableToken())
