@@ -44,15 +44,11 @@ import java.util.Map;
 
 /**
  * The apply-path {@code BlockFileWriter} writes of a materialized view's refresh state ({@code _mv.s}) and
- * definition ({@code _mv}) follow the node's role: a replica ({@link LocalDurabilityPolicy#REPLICA_SKIP})
- * skips their fsync, since they are a rebuildable cache, while a primary or single node
- * ({@link LocalDurabilityPolicy#ALWAYS_ON}) keeps it. The commit mode stays adaptive throughout, so only the
- * {@code LocalDurabilityPolicy.resolveCommitMode} gate at each site can suppress the sync. The CREATE-time
- * definition writes in {@code SequencerMetadata.create} stay durable on every role.
- *
- * <p>The plain-view definition ({@code _view}) has no test here: on a single node {@code CREATE VIEW} and
- * {@code ALTER VIEW} write it through {@code SqlCompilerImpl}'s own {@code BlockFileWriter}, and the apply-path
- * site runs only when a replica replays the event, so covering it needs replication.
+ * definition ({@code _mv}) follow the node's role: a replica ({@link LocalDurabilityPolicy#REPLICA_SKIP}) skips
+ * their fsync, while a primary or single node ({@link LocalDurabilityPolicy#ALWAYS_ON}) keeps it. The commit mode
+ * stays adaptive, so only the {@code LocalDurabilityPolicy.resolveCommitMode} gate can suppress the sync. The
+ * CREATE-time definition writes in {@code SequencerMetadata.create} stay durable on every role. The plain-view
+ * definition ({@code _view}) has no test: its apply-path site runs only when a replica replays the event.
  */
 public class AdaptiveReplicaBlockFileSkipTest extends AbstractCairoTest {
 
