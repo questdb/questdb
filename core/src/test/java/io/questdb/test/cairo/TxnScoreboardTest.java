@@ -305,13 +305,13 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     }
 
     /**
-     * The epoch pin (EPOCH_ID_A) and CHECKPOINT_ID are independent virtual pins that must NOT
+     * The epoch pin (EPOCH_ID_A) and CHECKPOINT_ID are independent virtual pins that must not
      * collide: pinning the same txn under both must succeed (each occupies a distinct internal
      * slot), holding either one must keep the txn unavailable for purge, and the txn becomes
-     * available only after BOTH are released. A reader at id 0 (the lowest real reader id) must also
-     * not collide with either virtual pin. This is the safety property the adaptive epoch pin relies
-     * on (Plan 3B): an epoch pin and a concurrent checkpoint pin on overlapping partition-version
-     * txns must coexist without one clobbering the other's slot.
+     * available only after both are released. A reader at id 0 (the lowest real reader id) must also
+     * not collide with either virtual pin. The adaptive epoch pin relies on this: an epoch pin and a
+     * concurrent checkpoint pin on overlapping partition-version txns must coexist without one
+     * clobbering the other's slot.
      */
     @Test
     public void testEpochAndCheckpointPinsDoNotCollide() throws Exception {
@@ -319,29 +319,29 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             try (final TxnScoreboard scoreboard = newTxnScoreboard()) {
                 final long txn = 42;
 
-                // Both virtual pins acquire the SAME txn. acquireTxn would refuse the second
+                // Both virtual pins acquire the same txn. acquireTxn would refuse the second
                 // acquisition of a txn at-or-below max via the same slot, so virtual pins use
-                // incrementTxn (no max gate) -- exactly as DatabaseCheckpointAgent / the epoch path do.
+                // incrementTxn (no max gate), as DatabaseCheckpointAgent and the epoch path do.
                 Assert.assertTrue("checkpoint pin must take", scoreboard.incrementTxn(TxnScoreboard.CHECKPOINT_ID, txn));
                 Assert.assertTrue("epoch pin must take (distinct slot)", scoreboard.incrementTxn(TxnScoreboard.EPOCH_ID_A, txn));
 
                 // A real reader at id 0 pins the same txn too: must also coexist (distinct slot).
                 Assert.assertTrue("reader id 0 must take same txn", scoreboard.incrementTxn(0, txn));
 
-                // While ANY pin is held, the txn's version range is NOT available for purge.
+                // While any pin is held, the txn's version range is not available for purge.
                 Assert.assertFalse("range held by 3 pins", scoreboard.isRangeAvailable(txn, txn + 1));
 
                 // Release the reader: still held by the two virtual pins.
                 scoreboard.releaseTxn(0, txn);
                 Assert.assertFalse("range still held by epoch+checkpoint", scoreboard.isRangeAvailable(txn, txn + 1));
 
-                // Release the checkpoint pin: the epoch pin alone must STILL hold the range
+                // Release the checkpoint pin: the epoch pin alone must still hold the range
                 // (proves the checkpoint release did not clobber the epoch slot).
                 scoreboard.releaseTxn(TxnScoreboard.CHECKPOINT_ID, txn);
                 Assert.assertFalse("range still held by epoch alone", scoreboard.isRangeAvailable(txn, txn + 1));
                 Assert.assertEquals("epoch is the min holder", txn, getMin(scoreboard));
 
-                // Release the epoch pin: now the range is finally free.
+                // Release the epoch pin: the range is free.
                 scoreboard.releaseTxn(TxnScoreboard.EPOCH_ID_A, txn);
                 Assert.assertTrue("range free after both virtual pins released", scoreboard.isRangeAvailable(txn, txn + 1));
                 assertScoreboardMinOrNoLocks(scoreboard);
@@ -353,7 +353,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     /**
      * Symmetric to {@link #testEpochAndCheckpointPinsDoNotCollide} but releases in the opposite
      * order (epoch first, then checkpoint) to prove neither release clobbers the other slot
-     * regardless of order. Also pins the two virtual ids on DIFFERENT txns to confirm each tracks
+     * regardless of order. Also pins the two virtual ids on different txns to confirm each tracks
      * its own value independently.
      */
     @Test
@@ -385,9 +385,9 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     }
 
     /**
-     * The two PING-PONG epoch pins (EPOCH_ID_A / EPOCH_ID_B) must coexist on DIFFERENT txns: this is
-     * exactly the INV-5 double-pin window in {@code TableWriter.advance()} — the NEW epoch txn is
-     * pinned in the free slot BEFORE the PRIOR epoch txn is released from the other slot, so a
+     * The two ping-pong epoch pins (EPOCH_ID_A / EPOCH_ID_B) must coexist on different txns: this is
+     * the double-pin window in {@code TableWriter.advanceDurableEpoch()} - the new epoch txn is
+     * pinned in the free slot before the prior epoch txn is released from the other slot, so a
      * concurrent partition purge never sees an unprotected gap between epoch generations. The test
      * mimics that handover: pin prior in A; pin new in B (both held); release prior from A; only the
      * new txn remains held; finally release new from B.
@@ -403,13 +403,13 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 Assert.assertTrue(scoreboard.incrementTxn(TxnScoreboard.EPOCH_ID_A, priorEpochTxn));
                 Assert.assertEquals(priorEpochTxn, getMin(scoreboard));
 
-                // INV-5: pin the NEW epoch in slot B BEFORE releasing the prior. Both coexist now.
+                // Pin the new epoch in slot B before releasing the prior. Both coexist.
                 Assert.assertTrue("new epoch must pin in the other ping-pong slot", scoreboard.incrementTxn(TxnScoreboard.EPOCH_ID_B, newEpochTxn));
                 Assert.assertFalse("prior epoch range held", scoreboard.isRangeAvailable(priorEpochTxn, priorEpochTxn + 1));
                 Assert.assertFalse("new epoch range held", scoreboard.isRangeAvailable(newEpochTxn, newEpochTxn + 1));
                 Assert.assertEquals("prior is still the min while both held", priorEpochTxn, getMin(scoreboard));
 
-                // Release the prior from slot A: only the new epoch remains protected. No gap was ever exposed.
+                // Release the prior from slot A: only the new epoch remains protected, with no gap exposed.
                 scoreboard.releaseTxn(TxnScoreboard.EPOCH_ID_A, priorEpochTxn);
                 Assert.assertTrue("prior epoch range now free", scoreboard.isRangeAvailable(priorEpochTxn, priorEpochTxn + 1));
                 Assert.assertFalse("new epoch range still held by slot B", scoreboard.isRangeAvailable(newEpochTxn, newEpochTxn + 1));
