@@ -184,8 +184,9 @@ public class ConvertOperatorImpl implements Closeable {
             }
         }
 
-        if (checkStatus && asyncProcessingErrorCount.get() > 0) {
-            // A failed data-sync barrier keeps its flag, so that the caller stops the engine
+        // A task's failed data-sync barrier is rethrown even when the caller has its own error to rethrow,
+        // so that the caller stops the engine
+        if ((checkStatus || dataSyncFailureOperation != null) && asyncProcessingErrorCount.get() > 0) {
             final String dataSyncOperation = dataSyncFailureOperation;
             final CairoException ex = dataSyncOperation != null
                     ? CairoException.dataSyncFailure(dataSyncFailureErrno, dataSyncOperation)
@@ -487,8 +488,8 @@ public class ConvertOperatorImpl implements Closeable {
                 }
             }
         } catch (Throwable th) {
-            // The task may run on another thread, and a CairoException is thread-local: keep what the
-            // engine's fail-stop needs for the converting thread to rethrow
+            // The task may run on another thread: keep what the engine's fail-stop needs for the converting
+            // thread to rethrow
             for (Throwable cursor = th; cursor != null; cursor = cursor.getCause()) {
                 if (cursor instanceof CairoException e && e.isDataSyncFailure()) {
                     dataSyncFailureErrno = e.getErrno();

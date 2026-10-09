@@ -27,15 +27,20 @@ package io.questdb.test.cairo.crash;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnTaskJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.Sequence;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.ColumnTask;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -44,6 +49,7 @@ import org.junit.Test;
 
 import java.io.File;
 import java.util.Arrays;
+import java.util.function.BooleanSupplier;
 
 /**
  * Every commit mode that promises durability keeps its promise with only the directory barriers it takes.
@@ -146,6 +152,62 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testSyncAlterColumnTypeNonWalFailedFixedFsyncIsFailStop() throws Exception {
         assertColumnConversionFsyncFailureIsFailStop("sync", false, "LONG", 0);
+    }
+
+    /**
+     * A pool worker runs the conversion task of the first partition and fails its fsync, while the converting
+     * thread, already past the error check of the second partition, fails to open that partition's new column
+     * file with a plain error. The worker's data-sync failure must still poison the engine.
+     */
+    @Test
+    public void testSyncAlterColumnTypeNonWalFailedWorkerFsyncIsFailStop() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        final WorkerFsyncMaskingFacade ff = new WorkerFsyncMaskingFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, s SYMBOL INDEX, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'a', 1.0),
+                        ('2024-01-02T00:00:00.000000Z', 'b', 2.0),
+                        ('2024-01-03T00:00:00.000000Z', 'a', 3.0)
+                    """);
+            ff.mainThread = Thread.currentThread();
+            final Sequence subSeq = engine.getMessageBus().getColumnTaskSubSeq();
+            final RingQueue<ColumnTask> queue = engine.getMessageBus().getColumnTaskQueue();
+            // runs the column tasks as the shared write pool's ColumnTaskJob does
+            final Thread worker = new Thread(() -> {
+                while (!ff.isWorkerStopped) {
+                    long cursor = subSeq.next();
+                    if (cursor > -1) {
+                        ColumnTaskJob.processColumnTask(queue.get(cursor), cursor, subSeq);
+                    } else {
+                        Os.pause();
+                    }
+                }
+            }, "column-task-worker");
+            worker.start();
+            Throwable failure = null;
+            ff.isArmed = true;
+            try {
+                execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
+            } catch (Throwable th) {
+                failure = th;
+            } finally {
+                ff.isArmed = false;
+                ff.isWorkerStopped = true;
+                worker.join();
+            }
+            final boolean isPoisoned = engine.isDurabilityFailed();
+            engine.resetDurabilityFailure();
+            releaseEngineHandles();
+            Assert.assertTrue("the worker's fsync must have failed", ff.isWorkerFsyncFailed);
+            Assert.assertTrue("the converting thread's open must have failed", ff.isMainOpenFailed);
+            Assert.assertTrue("a worker's failed fsync must poison the engine, failure: " + failure, isPoisoned);
+            Assert.assertTrue(
+                    "the statement must fail with a data-sync CairoError, failure: " + failure,
+                    failure instanceof CairoError && CairoException.isDataSyncFailure(failure)
+            );
+        });
     }
 
     @Test
@@ -956,6 +1018,57 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         @Override
         public void syncfs(long fd) {
             fsync(fd);
+        }
+    }
+
+    /**
+     * Holds a pool worker's fsync of a conversion task until the converting thread has opened the second
+     * partition's source column, then fails it with a data-sync error, and fails the converting thread's open of
+     * the second partition's new column file with a plain error once the worker's fsync has failed.
+     */
+    private static final class WorkerFsyncMaskingFacade extends TestFilesFacadeImpl {
+        volatile boolean isArmed;
+        volatile boolean isMainAtSecondPartition;
+        volatile boolean isMainOpenFailed;
+        volatile boolean isWorkerFsyncFailed;
+        volatile boolean isWorkerStopped;
+        volatile Thread mainThread;
+        private int mainOpenRoCount;
+        private int mainOpenRwCount;
+
+        @Override
+        public void fsync(long fd) {
+            if (isArmed && !isWorkerFsyncFailed && Thread.currentThread() != mainThread && isCalledFrom("cthConvertPartitionHandler")) {
+                waitFor(() -> isMainAtSecondPartition);
+                isWorkerFsyncFailed = true;
+                throw CairoException.dataSyncFailure(5, "fsync").put("injected worker fsync failure");
+            }
+            super.fsync(fd);
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            if (isArmed && Thread.currentThread() == mainThread && isCalledFrom("openColumnsRO") && ++mainOpenRoCount == 2) {
+                isMainAtSecondPartition = true;
+            }
+            return super.openRO(name);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            if (isArmed && !isMainOpenFailed && Thread.currentThread() == mainThread && isCalledFrom("openColumnsRW") && ++mainOpenRwCount == 2) {
+                waitFor(() -> isWorkerFsyncFailed);
+                isMainOpenFailed = true;
+                return -1;
+            }
+            return super.openRW(name, opts);
+        }
+
+        private static void waitFor(BooleanSupplier condition) {
+            final long deadline = System.currentTimeMillis() + 10_000;
+            while (!condition.getAsBoolean() && System.currentTimeMillis() < deadline) {
+                Os.pause();
+            }
         }
     }
 }
