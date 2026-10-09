@@ -368,13 +368,13 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     /**
-     * Adaptive group-commit (Deferred 2) deferred device flush of the sequencer txn log
-     * (part-before-header). Must be called holding the sequencer WRITE lock (the same lock {@code nextTxn}
-     * takes), so it cannot race a concurrent sequencer append/rotation of the txn-log mmaps.
+     * Flushes the sequencer transaction log to the device, parts before the header, for the adaptive group
+     * commit. The caller holds the sequencer write lock, the lock {@code nextTxn} takes, so no append or rotation
+     * of the log's mappings runs concurrently.
      *
-     * @return the highest seqTxn this flush covered. Read under the WRITE lock, where no append is in flight,
-     * so everything at or below it was in the log before the fdatasync; anything sequenced once the lock is
-     * released is not covered. Passed on to {@link SeqTxnTracker#markWriterDurable(int, long, long)}.
+     * @return the highest seqTxn this flush covers. It is read under the write lock, where no append is in
+     * flight, so every txn at or below it is in the log before the fdatasync; a txn sequenced after the lock is
+     * released is not covered. The caller passes it to {@link SeqTxnTracker#markWriterDurable(int, long, long)}.
      */
     public long fdatasyncTxnLog() {
         assert !closed;
@@ -382,8 +382,8 @@ public class TableSequencerImpl implements TableSequencer {
         try {
             tableTransactionLog.fdatasyncTxnLog();
         } catch (Throwable th) {
-            // Fence while the caller still holds the WRITE lock: the next writer to take it would fdatasync the
-            // same file, and the kernel has already reported this error, so that call can return 0.
+            // Fence while the caller still holds the write lock: the next writer to take it would fdatasync the
+            // same file, and that call can return 0 because the kernel has already reported this error.
             seqTxnTracker.fenceDurableFrontier(th);
             throw th;
         }
@@ -620,15 +620,11 @@ public class TableSequencerImpl implements TableSequencer {
                 txnMaxTimestamp,
                 txnRowCount
         );
-        // Task 1b (CRITICAL-2 residual): for an ADAPTIVE group-commit (W>0) deferral, register this writer's
-        // durable-ack contiguous-prefix pin ATOMICALLY with the seqTxn assignment — under the sequencer WRITE
-        // lock and BEFORE the caller's notifyTxnCommitted publishes this txn to tracker.seqTxn. This closes the
-        // mid-flight window in which a peer writer's markWriterDurable, seeing the advanced seqTxn while this
-        // txn is sequenced-but-not-yet-pinned, would empty the pin map and over-claim this still-non-durable
-        // txn into the frontier. registerWriterPending is putIfAbsent, so a writer's later commits in the same
-        // un-flushed batch do NOT lower its pin; the pin is dropped only by the writer's own post-fdatasync
-        // markWriterDurable (WalWriter.flushPendingDurable) or reset on reboot (resetDurableFrontier). Gated to
-        // ADAPTIVE+W>0 so W=0 and legacy SYNC/ASYNC/NOSYNC are byte-identical (they never pin/markWriterDurable).
+        // Under adaptive group commit, pin this writer's txn under the sequencer write lock, before the caller's
+        // notifyTxnCommitted publishes it to the tracker. Otherwise a peer writer's markWriterDurable could see
+        // the new seqTxn with no pin for it and advance the durable frontier over a txn that is not yet durable.
+        // registerWriterPending is putIfAbsent, so later commits in the same batch keep the writer's first pin;
+        // the writer's own markWriterDurable after its flush, or resetDurableFrontier at start-up, drops it.
         if (effectiveMode == io.questdb.cairo.CommitMode.ADAPTIVE
                 && engine.getConfiguration().getAdaptiveCommitGroupWindowUs() > 0) {
             seqTxnTracker.registerWriterPending(walId, txn);
