@@ -16846,11 +16846,20 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             printSql(groupByStatement);
             final String expectedOrdered = sink.toString();
             final String orderedStatement = "SELECT * FROM (" + statement + ") ORDER BY " + orderBy;
-            assertQuery(orderedStatement)
-                    .noLeakCheck()
-                    .assertsPlanContaining("Sample By\n");
+            // When the statement has a timestamp, the chain below spends the first execution of its factory on a pass
+            // that reads the timestamps alone, and compares the rows from the second execution on. So this pair
+            // compiles a factory of its own and compares the rows of the first execution; the chain adds the second
+            // pass, the calculateSize() check and the factory properties.
             printSql(orderedStatement);
             TestUtils.assertEquals(expectedOrdered, sink);
+            // ORDER BY ts alone follows the order of the cursor and adds no sort. Every other ORDER BY sorts a copy of
+            // the rows, and the copy supports random access.
+            assertQuery(orderedStatement)
+                    .noLeakCheck()
+                    .timestamp(select.startsWith("SELECT ts") ? "ts" : null)
+                    .supportsRandomAccess(!"ts".equals(orderBy))
+                    .withPlanContaining("Sample By\n")
+                    .returns(expectedOrdered);
         }
     }
 

@@ -11115,6 +11115,45 @@ public class SampleByTest extends AbstractCairoTest {
                             2024-01-01T00:00:00.000000Z\tb\t8.0
                             2025-01-01T00:00:00.000000Z\tb\t64.0
                             """);
+
+            // The cursor rewinds the arguments of the aggregates after the NULL bucket, as it does after every
+            // bucket of the grid. timestamp_sequence() counts the rows that an aggregate reads since the last
+            // rewind, so min() and max() show where the count starts: at 0 in every bucket. Without the rewind
+            // after the NULL bucket, the first bucket of the grid counts on from 3.
+            createNullBucketTable();
+            final String rowCounters = "count() c, min(timestamp_sequence(0, 1)::LONG) mn, max(timestamp_sequence(0, 1)::LONG) mx"
+                    + " FROM ((SELECT * FROM nb ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY 1M";
+            assertQuery("SELECT ts, " + rowCounters)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n", "fill: none\n")
+                    .returns("""
+                            ts\tc\tmn\tmx
+                            \t3\t0\t2
+                            2024-01-01T00:00:00.000000Z\t3\t0\t2
+                            2024-02-01T00:00:00.000000Z\t1\t0\t0
+                            2024-03-01T00:00:00.000000Z\t1\t0\t0
+                            2024-04-01T00:00:00.000000Z\t1\t0\t0
+                            2025-01-01T00:00:00.000000Z\t1\t0\t0
+                            """);
+            // the keys of a bucket share the count
+            assertQuery("SELECT ts, sym, " + rowCounters)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n", "keys: [ts,sym]\n")
+                    .returns("""
+                            ts\tsym\tc\tmn\tmx
+                            \tb\t2\t0\t2
+                            \ta\t1\t1\t1
+                            2024-01-01T00:00:00.000000Z\ta\t2\t0\t1
+                            2024-01-01T00:00:00.000000Z\tb\t1\t2\t2
+                            2024-02-01T00:00:00.000000Z\ta\t1\t0\t0
+                            2024-03-01T00:00:00.000000Z\tb\t1\t0\t0
+                            2024-04-01T00:00:00.000000Z\ta\t1\t0\t0
+                            2025-01-01T00:00:00.000000Z\tb\t1\t0\t0
+                            """);
         });
     }
 
@@ -11390,11 +11429,20 @@ public class SampleByTest extends AbstractCairoTest {
                     final String expected = sink.toString();
                     final String statement = "SELECT * FROM (" + selects[i] + " FROM ((SELECT * FROM nm ORDER BY ts) TIMESTAMP(ts))"
                             + " SAMPLE BY " + sampleBy + ") ORDER BY " + orderBys[i];
-                    assertQuery(statement)
-                            .noLeakCheck()
-                            .assertsPlanContaining("Sample By\n");
+                    // The chain below spends the first execution of its factory on a pass that reads the timestamps
+                    // alone, and compares the rows from the second execution on. So this pair compiles a factory of
+                    // its own and compares the rows of the first execution; the chain adds the second pass, the
+                    // calculateSize() check and the factory properties.
                     printSql(statement);
                     TestUtils.assertEquals(expected, sink);
+                    // ORDER BY ts alone follows the order of the cursor and adds no sort. ORDER BY ts, sym sorts a
+                    // copy of the rows, and the copy supports random access.
+                    assertQuery(statement)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .supportsRandomAccess(!"ts".equals(orderBys[i]))
+                            .withPlanContaining("Sample By\n")
+                            .returns(expected);
                 }
             }
             // the NULL bucket holds the rows 10, 20, ..., 20,000
@@ -23081,11 +23129,20 @@ public class SampleByTest extends AbstractCairoTest {
             printSql(groupByStatement);
             final String expectedOrdered = sink.toString();
             final String orderedStatement = "SELECT * FROM (" + statement + ") ORDER BY " + orderBy;
-            assertQuery(orderedStatement)
-                    .noLeakCheck()
-                    .assertsPlanContaining("Sample By\n");
+            // When the statement has a timestamp, the chain below spends the first execution of its factory on a pass
+            // that reads the timestamps alone, and compares the rows from the second execution on. So this pair
+            // compiles a factory of its own and compares the rows of the first execution; the chain adds the second
+            // pass, the calculateSize() check and the factory properties.
             printSql(orderedStatement);
             TestUtils.assertEquals(expectedOrdered, sink);
+            // ORDER BY ts alone follows the order of the cursor and adds no sort. Every other ORDER BY sorts a copy of
+            // the rows, and the copy supports random access.
+            assertQuery(orderedStatement)
+                    .noLeakCheck()
+                    .timestamp(select.startsWith("SELECT ts") ? "ts" : null)
+                    .supportsRandomAccess(!"ts".equals(orderBy))
+                    .withPlanContaining("Sample By\n")
+                    .returns(expectedOrdered);
         }
     }
 
@@ -23107,6 +23164,11 @@ public class SampleByTest extends AbstractCairoTest {
                 TestFaultFunctionFactory.disarm();
             }
             Assert.assertEquals(1, TestFaultFunctionFactory.faultsTriggered());
+            // assertFactory() starts with a pass that reads the timestamps alone, so compare the rows of the first
+            // execution after the fault here
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                assertCursor(expected, cursor, factory.getMetadata(), true);
+            }
             assertFactory(factory)
                     .withContext(sqlExecutionContext)
                     .timestamp("ts")
@@ -23137,6 +23199,11 @@ public class SampleByTest extends AbstractCairoTest {
                         Assert.assertTrue(cursor.hasNext());
                     }
                 }
+                // assertFactory() starts with a pass that reads the timestamps alone, so compare the rows of the
+                // first execution after the partial read here
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor(expected, cursor, factory.getMetadata(), true);
+                }
                 assertFactory(factory)
                         .withContext(sqlExecutionContext)
                         .timestamp("ts")
@@ -23146,9 +23213,11 @@ public class SampleByTest extends AbstractCairoTest {
         }
     }
 
-    // Compiles a statement without FILL once and executes it through assertBinds(): over the base that starts with
+    // Executes one compiled factory of a statement without FILL over a sequence of bases: the base that starts with
     // the NULL, twice; with key b, whose only row holds the NULL, filtered out; over the NULL again; with key a
-    // filtered out, which leaves the row with the NULL alone; and over the first two bases again.
+    // filtered out, which leaves the row with the NULL alone; and over the first two bases again. The sequence runs
+    // twice, each time on a factory of its own: with one execution per base, whose rows the helper compares, and
+    // through assertBinds().
     private void assertSampleByNullBucketReExecution(
             String sql,
             String planFragment,
@@ -23198,6 +23267,18 @@ public class SampleByTest extends AbstractCairoTest {
                 header + buckets,
                 bindVariableService -> bindVariableService.setStr(0, "b")
         ));
+        // assertBinds() starts every case with a pass that reads the timestamps alone. So this loop executes a
+        // factory of its own once per case, and compares the rows of the first execution after each change of $1.
+        try (RecordCursorFactory factory = select(sql)) {
+            for (int i = 0, n = cases.size(); i < n; i++) {
+                final BindVarTuple testCase = cases.getQuick(i);
+                bindVariableService.clear();
+                testCase.getBinds().assignBindVariables(bindVariableService);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor(testCase.getExpected(), cursor, factory.getMetadata(), true);
+                }
+            }
+        }
         assertQuery(sql)
                 .noLeakCheck()
                 .timestamp("ts")
