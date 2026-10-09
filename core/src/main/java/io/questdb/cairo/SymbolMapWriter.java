@@ -90,10 +90,8 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     private int symbolIndexInTxWriter;
 
     /**
-     * Legacy form: no append-only narrowing, so the symbol CHAR memory keeps its full-extent msync.
-     * Byte-identical to the pre-adaptive behaviour, which is what every caller outside
-     * {@link TableWriter} wants -- only a table column that knows it is under
-     * {@link CommitMode#ADAPTIVE} may narrow.
+     * Keeps the full-extent msync of the symbol char memory, which every caller outside {@link TableWriter}
+     * wants: only a table column under {@link CommitMode#ADAPTIVE} may narrow it.
      */
     public SymbolMapWriter(
             CairoConfiguration configuration,
@@ -119,10 +117,9 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     }
 
     /**
-     * @param charMemAppendOnly true to narrow the symbol CHAR memory's SYNC msync to the appended
-     *                          range (safe only under {@link CommitMode#ADAPTIVE} table columns);
-     *                          false (legacy/default) keeps the full-extent msync, byte-identical
-     *                          to master.
+     * @param charMemAppendOnly true to narrow the symbol char memory's msync to the appended range (safe
+     *                          only for {@link CommitMode#ADAPTIVE} table columns); false keeps the
+     *                          full-extent msync
      */
     public SymbolMapWriter(
             CairoConfiguration configuration,
@@ -184,14 +181,10 @@ public class SymbolMapWriter implements Closeable, MapWriter {
                     MemoryTag.MMAP_INDEX_WRITER,
                     configuration.getWriterFileOpenOpts()
             );
-            // Symbol CHAR memory stores symbol string values strictly by appending (charMem.putStr)
-            // and moving the cursor with jumpTo/truncate; it never does in-place put*(offset,..).
-            // Safe to narrow the SYNC msync to the written range -- but ONLY under ADAPTIVE (see
-            // charMemAppendOnly javadoc on the ctor param); legacy modes pass false so charMem takes
-            // the full-extent msync path (byte-identical to master). NOTE: only charMem is ever
-            // append-only; offsetMem stays full-extent (updateNullFlag does an in-place putBool at
-            // offset 0) and the bitmap index .k/.v stay full-extent (random-access writes below the
-            // high-water mark).
+            // The char memory only appends (charMem.putStr) and moves its cursor with jumpTo or truncate; it
+            // never writes in place, so its msync may narrow to the written range, under ADAPTIVE only (see
+            // the charMemAppendOnly parameter). offsetMem stays full-extent (updateNullFlag writes in place at
+            // offset 0), and so do the bitmap index .k/.v files (random-access writes below the cursor).
             charMem.setAppendOnly(charMemAppendOnly);
 
             // move append pointer for symbol values in the correct place
@@ -500,9 +493,9 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
     /**
      * Re-applies the CHAR memory's append-only narrowing (see the ctor's {@code charMemAppendOnly}
-     * javadoc). Called by {@code TableWriter.reapplyColumnCommitMode} when adaptive enrolment moves an
-     * already-open writer to {@link CommitMode#ADAPTIVE}, so the flag doesn't stay stale until this
-     * symbol writer is next reopened.
+     * javadoc). Called by {@code TableWriter.reapplyColumnCommitMode} when enrolment moves an already-open
+     * writer to {@link CommitMode#ADAPTIVE}, so the flag does not stay stale until this symbol writer
+     * reopens.
      */
     @Override
     public void setAppendOnly(boolean appendOnly) {
@@ -554,9 +547,9 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
     @Override
     public void syncFlushFinishIfExtended() {
-        // Same ordering as sync(): char (data) before offset (offset->char pointer) before the index.
-        // Only matters for the rare extend fdatasyncs; non-extending files are made durable by the
-        // batch's _cv device flush.
+        // Same order as sync(): char (data), then offset (the pointer into char), then the index. The order
+        // matters only for a memory whose stage 3 flushes by itself; the others are already durable through
+        // the batch's syncfs.
         charMem.syncFlushFinishIfExtended();
         offsetMem.syncFlushFinishIfExtended();
         indexWriter.syncFlushFinishIfExtended();

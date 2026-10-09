@@ -35,60 +35,30 @@ import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 
 /**
- * Detects whether the ext4 filesystem backing the QuestDB database root has the
- * {@code fast_commit} feature enabled.
+ * Detects whether the ext4 filesystem holding the database root has the {@code fast_commit} feature
+ * enabled.
  *
- * <p>Why this matters: the Linux <em>batched</em> column-flush optimization reserved for the
- * adaptive durable epoch (see {@code TableWriter.fsyncMaterializedState}, gated by
- * {@link CairoConfiguration#isAdaptiveEpochColumnSyncBatched()}; ordinary SYNC/ASYNC apply uses
- * the per-file {@code msync} baseline instead — {@code MS_SYNC} for SYNC, {@code MS_ASYNC} for
- * ASYNC) makes a within-page write durable with only
- * {@code msync(MS_ASYNC)} + {@code sync_file_range(WAIT_AFTER)} per column (the column
- * bytes reach the device cache) and a single {@code fdatasync} of the {@code _cv} file as
- * the one device-cache flush. That is durable ONLY when the {@code _cv} fsync also
- * <em>journals</em> the columns' extent conversions, which is the case under the default
- * shared journal of ext4-jbd2 (and xfs). Under ext4 {@code fast_commit} the journal is
- * <em>per-inode</em>: a fsync of {@code _cv} journals only {@code _cv}'s inode, so the
- * within-page column bytes are never journaled and revert on power loss. This dependency
- * is proven by {@code BatchedFlushSharedJournalDependencyTest}. When fast_commit is
- * detected we therefore DISABLE the batched path and fall back to the proven per-file
- * {@code msync(MS_SYNC)} baseline plus one filesystem-wide {@code syncfs} (slower, but
- * durable everywhere).
+ * <p>The batched column flush of the adaptive save point (see {@code TableWriter.syncColumnsBatchedSync},
+ * gated by {@link CairoConfiguration#isAdaptiveEpochColumnSyncBatched()}) writes each column back with
+ * {@code msync(MS_ASYNC)} and {@code sync_file_range(WAIT_AFTER)}, with no per-file device flush, and relies
+ * on one later flush to also journal the columns' extent conversions, as the shared journal of ext4 (jbd2)
+ * and xfs does. Under ext4 {@code fast_commit} the journal is per inode, so that assumption does not hold.
+ * When this check finds {@code fast_commit}, the configuration turns the batched flush off, and the save
+ * point falls back to per-file {@code msync(MS_SYNC)} plus one filesystem-wide {@code syncfs}. Ordinary SYNC
+ * and ASYNC commits flush per file and do not use the batched flush.
  *
- * <h2>The detectable signal (and its reliability)</h2>
- * {@code fast_commit} is an ext4 <em>superblock</em> incompat feature, NOT a
- * {@code /proc/mounts} mount option, so the {@link WriteBarrierCheck} approach of parsing
- * mount options does not directly find it (and {@code dumpe2fs}/raw superblock reads need
- * root). The reliable <em>unprivileged</em> signal for a MOUNTED ext4 filesystem is the
- * world-readable {@code /proc/fs/ext4/<dev>/options} pseudo-file: the kernel's
- * {@code ext4_show_options()} emits a literal {@code fast_commit} token there exactly when
- * the feature is active on that mount. (Note: the sibling {@code /proc/fs/ext4/<dev>/fc_info}
- * file is NOT a reliable signal — modern kernels register it unconditionally, present even
- * when fast_commit is OFF.)
+ * <p>{@code fast_commit} is a superblock feature, not a mount option, so {@code /proc/mounts} does not show
+ * it. The unprivileged signal for a mounted ext4 filesystem is {@code /proc/fs/ext4/<dev>/options}, where
+ * {@code ext4_show_options()} lists a {@code fast_commit} token exactly when the feature is active. The
+ * sibling {@code fc_info} file is not a signal: kernels create it whether or not the feature is on. To find
+ * the options file, the check takes the device of the longest-prefix mount of the database root in
+ * {@code /proc/mounts} and uses its basename or, for a device-mapper alias such as
+ * {@code /dev/mapper/vg-lv}, the basename of the symlink target ({@code dm-0}).
  *
- * <p>Mapping DB-root to that pseudo-file:
- * <ol>
- *   <li>find the device of the longest-prefix mount of the DB root in {@code /proc/mounts}
- *       (same parsing as {@link WriteBarrierCheck}, but returning the <em>device</em> field);</li>
- *   <li>derive the kernel device name that ext4 registers under: the basename of the device,
- *       except that LVM/device-mapper aliases ({@code /dev/mapper/vg-lv}) are symlinks to
- *       {@code ../dm-N}, so if {@code /proc/fs/ext4/<basename>} is absent we dereference the
- *       device symlink and use the basename of its target (e.g. {@code dm-0});</li>
- *   <li>read {@code /proc/fs/ext4/<dev>/options} and look for the {@code fast_commit} token.</li>
- * </ol>
- *
- * <p><b>Reliability caveat:</b> this is best-effort and will frequently be {@link #UNKNOWN}
- * — on non-Linux, on non-ext4 (xfs/zfs/tmpfs/overlay), inside containers without
- * {@code /proc/fs/ext4} visibility, or when the device name cannot be resolved to a proc
- * entry. UNKNOWN is treated as "not detected": the batched optimization stays ON (the
- * operator override property is the reliable safety valve when detection cannot tell). The
- * fallback this drives is the EXISTING proven per-file {@code msync(MS_SYNC)} path plus one
- * filesystem-wide {@code syncfs}, so an over-eager positive only loses the optimization
- * (safe), never durability.
- *
- * <p>This class is Linux-only. On all other platforms {@link #classifyDbRoot} returns
- * {@link #UNKNOWN} and never throws. The core parsing ({@link #classify}) is pure / IO-free
- * so it is exercised in unit tests with injected content.
+ * <p>The result is often {@link #UNKNOWN}: off Linux, off ext4, in a container without
+ * {@code /proc/fs/ext4}, or when the device cannot be resolved. {@link #UNKNOWN} keeps the batched flush on;
+ * the operator property overrides it when detection cannot tell. A false positive only costs the
+ * optimization, never durability. {@link #classify} reads no files, so tests drive it with injected content.
  */
 public final class FastCommitCheck {
 
@@ -97,7 +67,7 @@ public final class FastCommitCheck {
      */
     public static final int FAST_COMMIT_ENABLED = 2;
     /**
-     * The DB-root mount was found and fast_commit is NOT present (shared journal / safe).
+     * The DB-root mount was found and fast_commit is not present (shared journal).
      */
     public static final int FAST_COMMIT_NOT_DETECTED = 1;
     /**
@@ -117,15 +87,14 @@ public final class FastCommitCheck {
     }
 
     /**
-     * The one commit-mode gate the startup advisory takes. {@link #logAdvisory} applies it to decide
-     * whether to emit, and {@link #checkAndReport} applies it as a cheap early-out before
-     * {@link #classifyDbRoot} touches {@code /proc}, so the two sites cannot drift apart.
+     * The commit-mode gate of the startup advisory. {@link #logAdvisory} applies it to decide whether to
+     * emit, and {@link #checkAndReport} applies it before {@link #classifyDbRoot} reads {@code /proc}, so
+     * the two sites cannot drift apart.
      * <p>
-     * ADAPTIVE reaches the batched flush through the durable-epoch cadence; SYNC reaches it once, when a
-     * start makes the tables that still have an adaptive save point durable before removing it
-     * ({@code RecoveryCoordinator.recover}). NOSYNC and ASYNC reach it that same one-off way but
-     * stay silent on purpose: NOSYNC is {@link CommitMode#DEFAULT}, so warning them would fire on
-     * nearly every install, almost none of which ever enrolled a table in adaptive.
+     * ADAPTIVE reaches the batched flush through its save points; SYNC reaches it once, when a start makes
+     * the tables that still have a save point durable before removing it ({@code RecoveryCoordinator.recover}).
+     * NOSYNC and ASYNC reach it the same one-off way but stay silent: NOSYNC is {@link CommitMode#DEFAULT},
+     * and a warning would fire on nearly every install, almost none of which ever enrolled a table.
      *
      * @param commitMode the configured commit mode, a {@link CommitMode} constant
      * @return {@code true} if the advisory applies to this commit mode
@@ -135,10 +104,9 @@ public final class FastCommitCheck {
     }
 
     /**
-     * The whole startup step in one call: apply {@link #advisoryAppliesTo}, then {@link #classifyDbRoot},
-     * then {@link #logAdvisory}. The caller keeps no commit-mode predicate of its own, so nothing can
-     * narrow away from the gate the advisory itself takes. The early-out matters beyond tidiness:
-     * {@link #classifyDbRoot} reads {@code /proc}, which modes that will never report must not pay for.
+     * The whole startup step: {@link #advisoryAppliesTo}, then {@link #classifyDbRoot}, then
+     * {@link #logAdvisory}. The caller keeps no commit-mode predicate of its own, so it cannot drift from the
+     * advisory's gate, and modes that never report do not pay for the {@code /proc} reads.
      *
      * @param log        destination log
      * @param ff         FilesFacade used for native file IO
@@ -155,28 +123,13 @@ public final class FastCommitCheck {
     }
 
     /**
-     * Pure classifier. Decides, from already-read content, whether the mount covering
-     * {@code dbRootAbsPath} is an ext4 filesystem with {@code fast_commit} enabled.
-     *
-     * <p>This takes the two pieces of content the live reader would have fetched, so it is
-     * fully unit-testable with no real {@code /proc} access:
+     * Decides, from content already read, whether the mount covering {@code dbRootAbsPath} is ext4 with
+     * {@code fast_commit} enabled. Reads no files.
      * <ul>
-     *   <li>{@code procMountsContent} — the text of {@code /proc/mounts}, used only to find the
-     *       longest-prefix mount of {@code dbRootAbsPath} and confirm it is {@code ext4};</li>
-     *   <li>{@code ext4OptionsContent} — the text of that device's
-     *       {@code /proc/fs/ext4/<dev>/options} pseudo-file (or {@code null} if it could not be
-     *       read / does not exist). The presence of the {@code fast_commit} token decides
-     *       ENABLED vs NOT_DETECTED.</li>
-     * </ul>
-     *
-     * <p>Decision table:
-     * <ul>
-     *   <li>no matching mount, or matching mount is not ext4 → {@link #UNKNOWN}
-     *       (the within-page batched-flush concern is ext4-fast_commit-specific);</li>
-     *   <li>ext4 mount but {@code ext4OptionsContent == null} (proc entry unreadable) →
-     *       {@link #UNKNOWN};</li>
-     *   <li>ext4 mount and options contain {@code fast_commit} → {@link #FAST_COMMIT_ENABLED};</li>
-     *   <li>ext4 mount and options present without the token → {@link #FAST_COMMIT_NOT_DETECTED}.</li>
+     *   <li>no matching mount, or a mount that is not ext4: {@link #UNKNOWN};</li>
+     *   <li>ext4, but {@code ext4OptionsContent} is {@code null}: {@link #UNKNOWN};</li>
+     *   <li>ext4, and the options hold a {@code fast_commit} token: {@link #FAST_COMMIT_ENABLED};</li>
+     *   <li>ext4, and the options hold no such token: {@link #FAST_COMMIT_NOT_DETECTED}.</li>
      * </ul>
      *
      * @param procMountsContent  full text of {@code /proc/mounts}
@@ -193,12 +146,11 @@ public final class FastCommitCheck {
             return UNKNOWN;
         }
         if (!mount.fsType.equals("ext4")) {
-            // fast_commit / per-inode journaling is an ext4-specific concern; for any other
-            // filesystem the shared-journal assumption is either guaranteed (xfs) or N/A.
+            // fast_commit is an ext4 feature.
             return UNKNOWN;
         }
         if (ext4OptionsContent == null) {
-            // ext4, but we couldn't read its options pseudo-file (container, race, perms).
+            // ext4, but its options file could not be read (container, race, permissions).
             return UNKNOWN;
         }
         return hasFastCommitToken(ext4OptionsContent) ? FAST_COMMIT_ENABLED : FAST_COMMIT_NOT_DETECTED;
@@ -232,7 +184,7 @@ public final class FastCommitCheck {
             final String options = readExt4Options(ff, mount.device);
             return classify(mounts, dbRoot, options);
         } catch (Throwable t) {
-            // Never break startup due to fast_commit detection failure.
+            // A detection failure must not break startup.
             LOG.debug().$("fast_commit check failed [reason=").$(t.getMessage()).$(']').$();
             return UNKNOWN;
         }
@@ -263,18 +215,12 @@ public final class FastCommitCheck {
         return true;
     }
 
-    // -----------------------------------------------------------------------
-    // Package-private helpers (used by tests for white-box assertions)
-    // -----------------------------------------------------------------------
 
     /**
-     * Derive the ext4 proc/sysfs device basename for a {@code /proc/mounts} device field.
-     * Plain block devices map by basename ({@code /dev/sda1} → {@code sda1}). LVM/device-mapper
-     * aliases ({@code /dev/mapper/vg-lv}) are symlinks to {@code dm-N}, so when the direct
-     * basename has no {@code /proc/fs/ext4} entry we fall back to the symlink target's basename.
-     *
-     * <p>Pure: the "does this proc entry exist?" check and the "resolve this symlink" step are
-     * injected via {@code probe}, so the mapping is unit-testable without a real device tree.
+     * Derives the {@code /proc/fs/ext4} device name for a {@code /proc/mounts} device field. A block device
+     * maps by basename ({@code /dev/sda1} to {@code sda1}). A device-mapper alias ({@code /dev/mapper/vg-lv})
+     * is a symlink to {@code dm-N}, so when the basename has no {@code /proc/fs/ext4} entry, the symlink
+     * target's basename is used. {@code probe} answers both questions, so tests need no real device tree.
      *
      * @param device the {@code /proc/mounts} device field (e.g. {@code /dev/sda1}, {@code /dev/mapper/vg-lv})
      * @param probe  resolves device names to proc-entry existence / symlink targets
@@ -306,10 +252,9 @@ public final class FastCommitCheck {
      * True if the comma/newline/whitespace-delimited ext4 options text contains a {@code fast_commit} token.
      */
     public static boolean hasFastCommitToken(CharSequence options) {
-        // The /proc/fs/ext4/<dev>/options file lists one option token per line; mount-option
-        // strings elsewhere are comma-delimited. Accept either: split on newline AND comma and
-        // match the exact token "fast_commit" (so "fast_commit_xyz" would not false-match, though
-        // no such token exists). Tokens may carry a "=value" suffix which we strip before matching.
+        // /proc/fs/ext4/<dev>/options lists one token per line, while mount-option strings are
+        // comma-delimited. Split on both and match the exact token "fast_commit" after stripping any
+        // "=value" suffix.
         final int len = options.length();
         int start = 0;
         while (start <= len) {
@@ -332,9 +277,6 @@ public final class FastCommitCheck {
         return false;
     }
 
-    // -----------------------------------------------------------------------
-    // Private helpers
-    // -----------------------------------------------------------------------
 
     private static String basename(String path) {
         int slash = path.lastIndexOf('/');
@@ -453,9 +395,7 @@ public final class FastCommitCheck {
     }
 
     /**
-     * Read the entire content of a small text file into a Java {@link String} via native memory.
-     * Returns {@code null} if the file cannot be opened, has unknown length, or exceeds {@code maxBytes}.
-     * (Mirrors the equivalent reader in {@link WriteBarrierCheck}.)
+     * True if {@code s} holds exactly {@code ascii} in {@code [from, to)}.
      */
     private static boolean regionEqualsAscii(CharSequence s, int from, int to, String ascii) {
         if (to - from != ascii.length()) {

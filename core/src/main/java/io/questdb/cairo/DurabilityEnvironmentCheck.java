@@ -35,41 +35,36 @@ import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 
 /**
- * Detects environments where a durability-promising commit mode ({@link CommitMode#SYNC} /
- * {@link CommitMode#ADAPTIVE}) cannot actually deliver power-loss durability, so startup can say so.
+ * Detects environments where a commit mode that promises power-loss durability ({@link CommitMode#SYNC},
+ * {@link CommitMode#ADAPTIVE}) cannot deliver it, so startup can say so.
  *
- * <p>Complements {@link WriteBarrierCheck} (mount mounted {@code nobarrier}) and {@link FastCommitCheck}
- * (ext4 per-inode journaling) with the cases those two miss:
+ * <p>It covers what {@link WriteBarrierCheck} (a {@code nobarrier} mount) and {@link FastCommitCheck}
+ * (ext4 per-inode journaling) miss:
  *
  * <ol>
- *   <li><b>{@link #FLUSH_NOT_A_BARRIER_FS}</b> — macOS only. {@code fcntl(F_FULLFSYNC)} is documented as
- *       implemented on "HFS, MS-DOS (FAT), Universal Disk Format (UDF) and APFS" and nowhere else, so on an
- *       SMB/NFS/FUSE/exFAT db root the call fails with ENOTSUP and the engine falls back to plain
- *       {@code fsync} — which on Darwin does NOT flush the drive's write cache. The degradation is silent.</li>
- *   <li><b>{@link #HOST_DOWNGRADES_FLUSH}</b> — Linux guest on an Apple hypervisor. The guest does
- *       everything right (ext4 emits {@code REQ_OP_FLUSH}, virtio-blk carries it), but the host implements
- *       that flush as {@code fsync()} on the disk image rather than {@code F_FULLFSYNC}: Lima/Colima's vz
- *       driver hard-codes {@code VZDiskImageSynchronizationModeFsync}, whose own framework header says it
- *       "does not ensure the data is moved from the disk's internal cache to permanent storage". Nothing the
- *       user can configure changes this today, so the message must not suggest a fix.</li>
- *   <li><b>{@link #GUEST_DISCARDS_FLUSH}</b> — a virtio block device reporting {@code write through}. The
- *       guest kernel then believes the device has no volatile cache and stops issuing flushes ENTIRELY. This
- *       is user-caused: it is the {@code echo 'write through' > /sys/block/vda/queue/write_cache} tweak
- *       circulated as a fix for slow VM disks. Unlike the other two it IS undoable, so it is the one worth
- *       shouting about.</li>
+ *   <li>{@link #FLUSH_NOT_A_BARRIER_FS}, macOS only. {@code fcntl(F_FULLFSYNC)} is documented for HFS,
+ *       MS-DOS (FAT), UDF and APFS only, so on an SMB, NFS, FUSE or exFAT database root the call fails with
+ *       ENOTSUP and the engine falls back to {@code fsync}, which on Darwin does not flush the drive's write
+ *       cache.</li>
+ *   <li>{@link #HOST_DOWNGRADES_FLUSH}: a Linux guest on an Apple hypervisor. The guest issues
+ *       {@code REQ_OP_FLUSH} correctly, but the host implements it as {@code fsync()} on the disk image, not
+ *       {@code F_FULLFSYNC} (Lima/Colima's vz driver uses {@code VZDiskImageSynchronizationModeFsync}, which
+ *       its framework header says does not move data out of the disk's cache). The user cannot configure
+ *       this away, so the message suggests no fix.</li>
+ *   <li>{@link #GUEST_DISCARDS_FLUSH}: a virtio block device that reports {@code write through}, so the
+ *       guest kernel issues no flushes at all. A user sets this by hand
+ *       ({@code echo 'write through' > /sys/block/vda/queue/write_cache}, a tip for slow VM disks), and it
+ *       can be undone, so it is logged as an error.</li>
  * </ol>
  *
- * <p><b>Why the signal is the hypervisor and not the filesystem type.</b> An earlier design warned on
- * virtiofs, which would have been wrong: virtiofs on a LINUX host is perfectly durable, because a host
- * {@code fsync()} there really is a device barrier. The hazard is the host platform's fsync semantics, not
- * the transport, so the probe reads DMI to ask "is my host macOS" instead.
+ * <p>The signal is the host platform, read from DMI, not the filesystem type: virtiofs on a Linux host is
+ * durable, because a host {@code fsync()} there is a device barrier.
  *
- * <p><b>Known blind spot:</b> QEMU-on-macOS reports {@code sys_vendor=QEMU}, which does not reveal the host
- * OS, so that configuration is undetectable from inside the guest and reports {@link #OK}. Absence of a
- * warning is therefore not proof of durability.
+ * <p>Blind spot: QEMU on macOS reports {@code sys_vendor=QEMU}, which does not reveal the host, so that
+ * configuration reports {@link #OK}. The absence of a warning does not prove durability.
  *
- * <p>Best-effort throughout: any probe failure yields {@link #OK} rather than a false alarm, and the pure
- * {@link #classify} is IO-free so the decision table is unit-testable without a real {@code /proc}.
+ * <p>Best-effort: any detection failure yields {@link #OK} rather than a false alarm, and {@link #classify}
+ * reads no files, so tests drive the decision table directly.
  */
 public final class DurabilityEnvironmentCheck {
 
@@ -82,7 +77,7 @@ public final class DurabilityEnvironmentCheck {
      */
     public static final int HOST_DOWNGRADES_FLUSH = 1 << 1;
     /**
-     * Nothing detected. Also returned when detection is impossible — see the class blind-spot note.
+     * Nothing detected. Also returned when detection is impossible (see the blind spot in the class javadoc).
      */
     public static final int OK = 0;
     /**
@@ -100,12 +95,10 @@ public final class DurabilityEnvironmentCheck {
     }
 
     /**
-     * The one commit-mode gate the durability advisories take. {@link #logAdvisories} applies it to decide
-     * whether to emit, and {@link #checkAndReport} applies it as an early-out before the probe runs, so the
-     * two sites cannot drift apart.
-     * <p>
-     * SYNC and ADAPTIVE both promise power-loss durability, and every condition this class detects
-     * contradicts that promise. NOSYNC/ASYNC promise nothing, so there is nothing to contradict.
+     * The commit-mode gate of the durability advisories. {@link #logAdvisories} applies it to decide whether
+     * to emit, and {@link #checkAndReport} applies it before {@link #probe} runs, so the two sites cannot drift
+     * apart. SYNC and ADAPTIVE promise power-loss durability, which every condition this class detects
+     * contradicts; NOSYNC and ASYNC promise none.
      *
      * @param commitMode the configured commit mode, a {@link CommitMode} constant
      * @return {@code true} if the advisories apply to this commit mode
@@ -115,13 +108,9 @@ public final class DurabilityEnvironmentCheck {
     }
 
     /**
-     * The whole startup step in one call: apply {@link #advisoryAppliesTo}, resolve the macOS filesystem
-     * name the decision needs, then {@link #probe} and {@link #logAdvisories}. The caller keeps no
-     * commit-mode predicate of its own, so there is nothing left that can narrow away from the predicate
-     * the advisories themselves take.
-     * <p>
-     * The early-out runs before the filesystem-name resolution, so a mode that will never report pays for
-     * no {@code statfs}.
+     * The whole startup step: {@link #advisoryAppliesTo}, then the macOS filesystem name the decision needs,
+     * then {@link #probe} and {@link #logAdvisories}. The caller keeps no commit-mode predicate of its own, so
+     * it cannot drift from the advisories' gate, and a mode that never reports pays for no {@code statfs}.
      *
      * @param log        destination log
      * @param ff         files facade
@@ -134,15 +123,14 @@ public final class DurabilityEnvironmentCheck {
         if (!advisoryAppliesTo(commitMode)) {
             return false;
         }
-        // On macOS the decision needs the db root's filesystem NAME, which getFileSystemStatus writes into
-        // the path buffer (the same call Bootstrap.verifyFileSystem uses for its SUPPORTED/UNSUPPORTED line).
+        // On macOS the decision needs the db root's filesystem name, which getFileSystemStatus writes into
+        // the path buffer (the same call Bootstrap.verifyFileSystem uses).
         String fsName = null;
         if (Os.isOSX()) {
             path.of(dbRoot);
             if (Files.exists(path.$())) {
-                // A zero return means statfs failed and the buffer was NOT written, so path still holds the
-                // db root. Using it would emit "fs=/var/lib/questdb/db" and raise a false durability alarm
-                // naming a path as a filesystem.
+                // A zero return means statfs failed and left the db root in the buffer, which must not be
+                // reported as a filesystem name.
                 if (Files.getFileSystemStatus(path.$()) != 0) {
                     path.seekZ();
                     fsName = path.toString();
@@ -189,7 +177,7 @@ public final class DurabilityEnvironmentCheck {
     }
 
     /**
-     * Live probe. Reads the platform interfaces and classifies. Never throws.
+     * Live check. Reads the platform interfaces and classifies. Never throws.
      *
      * @param ff           files facade
      * @param dbRootFsName db root filesystem name already resolved by the caller (macOS), else {@code null}
@@ -211,10 +199,9 @@ public final class DurabilityEnvironmentCheck {
     }
 
     /**
-     * The Linux half of {@link #probe}, with NO platform gate, so the /sys reads and the device scan can be
-     * driven on any platform through an injected {@link FilesFacade}. Keeping the {@code Os} check in the
-     * caller is deliberate: a probe that gates internally can only be tested on the platform it targets,
-     * which is exactly how the {@code FastCommitCheck} reader bug survived.
+     * The Linux half of {@link #probe}, with no platform gate, so tests can drive the {@code /sys} reads and
+     * the device scan on any platform through an injected {@link FilesFacade}. The {@code Os} check stays in
+     * the caller.
      */
     public static int probeGuest(FilesFacade ff) {
         return classify(
@@ -226,10 +213,9 @@ public final class DurabilityEnvironmentCheck {
     }
 
     /**
-     * Emit the advisories for {@code flags}. Separated from the probe so the messages and their log LEVELS
-     * are assertable without a matching platform: only {@link #GUEST_DISCARDS_FLUSH} is something an
-     * operator can undo, so it alone is an error; the other two are notices about environments that cannot
-     * currently be fixed.
+     * Emits the advisories for {@code flags}. It is separate from {@link #probe} so tests can assert the messages
+     * and their log levels on any platform. Only {@link #GUEST_DISCARDS_FLUSH} can be undone by an operator,
+     * so it alone is an error; the other two are notices about environments that cannot be fixed.
      *
      * @return true if anything was logged
      */
@@ -283,20 +269,17 @@ public final class DurabilityEnvironmentCheck {
     }
 
     /**
-     * Return {@code "write through"} if ANY virtio block device reports it, else the last value read.
+     * Returns {@code "write through"} if any virtio block device reports it, else the last value read.
      * <p>
-     * Deliberately scans rather than resolving the db root's own device: the tweak that causes this is
-     * applied by hand per device, and every {@code vd*} device belongs to this VM, so one of them being set
-     * is the signal worth reporting. Over-reporting here is acceptable — under-reporting is not, because the
-     * consequence is that no flush reaches the host at all.
+     * It scans every {@code vd*} device rather than resolving the db root's own: the setting is applied by
+     * hand per device, and every such device belongs to this VM. Over-reporting is acceptable;
+     * under-reporting is not, because then no flush reaches the host.
      */
     private static String readWorstVirtioWriteCache(FilesFacade ff) {
         String last = null;
         final Utf8StringSink nameSink = new Utf8StringSink();
-        // Assemble the sysfs path with StringSink, NOT Path.concat: concat inserts Files.SEPARATOR, which is
-        // '\' on Windows, so the probe asked for "/sys/block\vda\queue\write_cache" and every read missed.
-        // These are literal Linux sysfs paths and the separator in them is always '/', on every platform the
-        // probe (or a test driving it through an injected FilesFacade) runs on.
+        // Build the sysfs path with StringSink, not Path.concat: concat inserts Files.SEPARATOR, which is '\'
+        // on Windows, while these literal sysfs paths always use '/', whatever platform a test runs them on.
         final StringSink pathSink = new StringSink();
         try (Path path = new Path()) {
             path.of(SYS_BLOCK);

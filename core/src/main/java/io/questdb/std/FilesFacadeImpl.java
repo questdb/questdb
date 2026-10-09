@@ -39,14 +39,12 @@ public class FilesFacadeImpl implements FilesFacade {
     public static final int _16M = 16 * 1024 * 1024;
     private final static Log LOG = LogFactory.getLog(FilesFacadeImpl.class);
     private static final long ZFS_MAGIC_NUMBER = 0x2fc12fc1;
-    // Per-thread upgrade flags that keep the fault-injection seam intact on the one platform where a
-    // durable primitive is a DIFFERENT syscall from the overridable method it otherwise delegates to
-    // (barrierFsync/fsyncDurable on Darwin, renameDurable on Windows). The strong method sets its flag
-    // around a call to the OVERRIDABLE weak method (fdatasync/fsync/rename); when that call reaches this
-    // class's implementation, the flag swaps in the real strong syscall. A fault-injecting facade that
-    // overrides only the weak method keeps intercepting the durable variant on every platform -- calling
-    // the static directly instead makes the harness go quiet rather than red on exactly the platform the
-    // bypass targets (see DurableRenamePublishTest).
+    // Per-thread upgrade flags for the platforms where a durable primitive is a different syscall from the
+    // overridable method it otherwise delegates to (barrierFsync and fsyncDurable on Darwin, renameDurable on
+    // Windows). The strong method sets its flag around a call to the overridable weak method (fdatasync,
+    // fsync, rename); when the call reaches this class, the flag swaps in the strong syscall. A
+    // fault-injecting facade that overrides only the weak method then still intercepts the durable variant
+    // on every platform.
     private static final ThreadLocal<Boolean> BARRIER_FSYNC_VIA_FDATASYNC = ThreadLocal.withInitial(() -> Boolean.FALSE);
     private static final ThreadLocal<Boolean> FSYNC_DURABLE_VIA_FSYNC = ThreadLocal.withInitial(() -> Boolean.FALSE);
     private static final ThreadLocal<Boolean> RENAME_DURABLE_VIA_RENAME = ThreadLocal.withInitial(() -> Boolean.FALSE);
@@ -257,19 +255,14 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public void barrierFsync(long fd) {
         if (!Os.isOSX()) {
-            // Off Darwin this IS fdatasync (see Files.barrierFsync), so route through the OVERRIDABLE
-            // method rather than the static. Fault-injecting facades -- CrashFaultFilesFacade above all,
-            // which models device-cache and journal state per syscall -- override fdatasync; calling the
-            // static directly would silently remove every WAL commit barrier from the crash harness's view
-            // on exactly the platform CI runs on, and the crash tests would pass vacuously.
+            // Off Darwin this is fdatasync (see Files.barrierFsync). Route through the overridable method,
+            // not the static: fault-injecting facades override fdatasync, and the static would hide every
+            // WAL commit barrier from them.
             fdatasync(fd);
             return;
         }
-        // On Darwin the barrier is a DIFFERENT fcntl, so it cannot simply delegate -- but calling the
-        // static directly would bypass every facade that overrides fdatasync, breaking the very seam the
-        // comment above protects, on the one platform where the barrier fcntl matters. Set the per-thread
-        // upgrade flag and route through the OVERRIDABLE fdatasync; when the call reaches this class's
-        // fdatasync, the flag swaps in the real barrier syscall.
+        // On Darwin the barrier is a different fcntl. Set the per-thread upgrade flag and route through the
+        // overridable fdatasync; this class's fdatasync swaps in the barrier syscall.
         BARRIER_FSYNC_VIA_FDATASYNC.set(Boolean.TRUE);
         try {
             fdatasync(fd);
@@ -281,13 +274,12 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public void fsyncDurable(long fd) {
         if (!Os.isOSX()) {
-            // Off Darwin this IS fsync; delegate to the overridable method for the same reason as
-            // barrierFsync above.
+            // Off Darwin this is fsync; route through the overridable method, as barrierFsync does.
             fsync(fd);
             return;
         }
-        // Darwin needs F_FULLFSYNC; same seam-preserving pattern as barrierFsync above -- route through
-        // the OVERRIDABLE fsync with the upgrade flag set.
+        // Darwin needs F_FULLFSYNC: as in barrierFsync, route through the overridable fsync with the
+        // upgrade flag set.
         FSYNC_DURABLE_VIA_FSYNC.set(Boolean.TRUE);
         try {
             fsync(fd);
@@ -298,16 +290,11 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public void fsyncAndClose(long fd) {
-        // EVERY directory barrier in the engine funnels through here, and a directory fsync is what makes a
-        // freshly written file's DENTRY durable -- without it the data survives a power cut but the name
-        // pointing at it does not, inverting data-before-pointer. So this has to be the barrier that really
-        // flushes the device: Files.fsyncDurable is F_FULLFSYNC on Darwin (where plain fsync is not a
-        // barrier) and is literally fsync everywhere else, so this is a no-op off Darwin.
-        //
-        // Upgrading HERE rather than at the ~20 call sites is deliberate. Routing a new primitive to each
-        // site moved them off the method that every fault-injecting FilesFacade overrides, and three tests
-        // (RecoveryCoordinatorTest, TableWriterTest, and the crash facades) silently stopped intercepting --
-        // the failure mode where the harness goes quiet instead of red.
+        // Every directory barrier in the engine goes through here, and a directory fsync makes a new file's
+        // name durable: without it the data survives a power cut but the name pointing at it does not. So this
+        // must flush the device: Files.fsyncDurable is F_FULLFSYNC on Darwin, where plain fsync is not a
+        // barrier, and fsync everywhere else. The upgrade sits here rather than at each call site, so the call
+        // sites stay on the method that fault-injecting facades override.
         int res = Files.fsyncDurable(fd);
         if (res == 0) {
             close(fd);
@@ -594,16 +581,12 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public int renameDurable(LPSZ from, LPSZ to) {
         if (!Os.isWindows()) {
-            // Off Windows this IS rename(2) (see Files.renameDurable); delegate to the OVERRIDABLE method
-            // for the same reason as barrierFsync above -- a fault-injecting facade that intercepts rename()
-            // must keep intercepting the durable variant, or the harness goes quiet instead of red.
+            // Off Windows this is rename(2) (see Files.renameDurable). Route through the overridable method,
+            // as barrierFsync does, so a facade that intercepts rename() intercepts this too.
             return rename(from, to);
         }
-        // On Windows the durable move is a DIFFERENT syscall, so it cannot simply delegate -- but calling
-        // the static directly would bypass every fault-injecting facade that overrides rename(), and the
-        // suite-wide ADAPTIVE commit mode routes every metadata swap through this method. Same
-        // seam-preserving pattern as barrierFsync: set the per-thread upgrade flag and route through the
-        // OVERRIDABLE rename; this class's rename swaps in the write-through move.
+        // On Windows the durable move is a different syscall. Set the per-thread upgrade flag and route
+        // through the overridable rename(); this class's rename() swaps in the write-through move.
         RENAME_DURABLE_VIA_RENAME.set(Boolean.TRUE);
         try {
             return rename(from, to);

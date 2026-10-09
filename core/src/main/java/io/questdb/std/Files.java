@@ -70,7 +70,7 @@ public final class Files {
     // sync_file_range(2) flags (Linux). Values are part of the stable kernel ABI.
     // WAIT_BEFORE: wait for already-in-flight writeback over the range to finish before starting.
     public static final int SYNC_FILE_RANGE_WAIT_BEFORE = 1;
-    // WRITE: initiate writeback of dirty pages in the range to the device (does NOT flush the device cache).
+    // WRITE: initiate writeback of dirty pages in the range to the device (does not flush the device cache).
     public static final int SYNC_FILE_RANGE_WRITE = 2;
     // WAIT_AFTER: wait for the writeback initiated above to reach the device cache before returning.
     public static final int SYNC_FILE_RANGE_WAIT_AFTER = 4;
@@ -194,43 +194,40 @@ public final class Files {
     }
 
     /**
-     * Device-durability barrier: once this returns 0, the file's data is on STABLE storage and survives a
-     * power cut. This — not {@link #fsync(long)} — is the primitive every durability claim must be built on.
+     * Device-durability barrier: once this returns 0, the file's data is on stable storage and survives a
+     * power cut. Durability claims build on this, not on {@link #fsync(long)}.
      * <p>
-     * Per platform: {@code fdatasync(2)} on Linux/FreeBSD, {@code fcntl(F_FULLFSYNC)} on macOS, and
-     * {@code FlushFileBuffers} on Windows. The macOS case is the one that bites: {@code fsync(2)} there
-     * pushes pages to the drive but does NOT flush the drive's write cache, so it is durable against process
-     * death only. On a filesystem that rejects {@code F_FULLFSYNC} (network mounts, some FUSE) this degrades
-     * to {@code fsync}, which is then the strongest barrier that filesystem offers.
+     * {@code fdatasync(2)} on Linux and FreeBSD, {@code fcntl(F_FULLFSYNC)} on macOS, {@code FlushFileBuffers}
+     * on Windows. On macOS {@code fsync(2)} pushes pages to the drive but does not flush the drive's write
+     * cache, so it only survives process death. On a filesystem that rejects {@code F_FULLFSYNC} (network
+     * mounts, some FUSE) this falls back to {@code fsync}, the strongest barrier that filesystem offers.
      */
     public static int fdatasync(long fd) {
         return fdatasync0(toOsFd(fd));
     }
 
     /**
-     * ORDERING barrier, not a durability barrier. Writes issued before this reach the medium before writes
-     * issued after it, but the data may still sit in the drive's volatile cache when this returns — so a
-     * commit must NEVER be acknowledged as durable on the strength of this call alone.
+     * Ordering barrier, not a durability barrier: writes issued before it reach the medium before writes
+     * issued after it, but the data may still sit in the drive's volatile cache when it returns, so a commit
+     * must not be acknowledged as durable on this call alone.
      * <p>
-     * Use it for the intra-commit barriers whose requirement is ordering (WAL column data and {@code _event}
-     * before the sequencer record), and establish durability afterwards with {@link #fdatasync(long)} at the
-     * commit point. Because that flushes the DEVICE cache rather than a single file, everything ordered
-     * before it becomes durable with it.
+     * Use it where a commit needs ordering (WAL column data and {@code _event} before the sequencer record),
+     * and make the commit durable with {@link #fdatasync(long)} at the commit point: that flushes the device
+     * cache, so everything ordered before it becomes durable with it.
      * <p>
-     * {@code F_BARRIERFSYNC} on macOS. On Linux/FreeBSD/Windows there is no cheaper-than-durable barrier, so
-     * this maps to the durable primitive and the split costs nothing.
+     * {@code F_BARRIERFSYNC} on macOS. Linux, FreeBSD and Windows have no cheaper barrier, so it maps to the
+     * durable primitive there.
      */
     public static int barrierFsync(long fd) {
         return barrierFsync0(toOsFd(fd));
     }
 
     /**
-     * {@link #fsync(long)}'s contract -- data AND all metadata -- with the device cache actually flushed.
+     * {@link #fsync(long)}'s contract, data and all metadata, with the device cache flushed.
      * <p>
-     * Distinct from {@link #fdatasync(long)} on purpose: fdatasync may skip metadata that is not needed to
-     * read the data back, so the two are not interchangeable where a caller has asked for fsync. Use this
-     * when fsync semantics are required AND the data must survive power loss; on macOS plain
-     * {@code fsync(2)} does not flush the drive's write cache, which is the gap this closes.
+     * Not interchangeable with {@link #fdatasync(long)}, which may skip metadata that reading the data back
+     * does not need. Use this where fsync semantics are required and the data must survive power loss; on
+     * macOS plain {@code fsync(2)} does not flush the drive's write cache.
      */
     public static int fsyncDurable(long fd) {
         return fsyncDurable0(toOsFd(fd));
@@ -241,28 +238,27 @@ public final class Files {
     }
 
     /**
-     * Linux sync_file_range(2): initiate (and optionally wait for) writeback of the file's page-cache
-     * pages over {@code [offset, offset+nbytes)} to the backing device's cache, WITHOUT issuing a device
-     * cache flush. Use the {@code SYNC_FILE_RANGE_*} flag constants. To make the written-back data durable
-     * the caller MUST follow with {@link #fdatasync(long)}/{@link #fsync(long)} (a device flush).
+     * Linux sync_file_range(2): starts, and optionally waits for, writeback of the file's page-cache pages
+     * over {@code [offset, offset+nbytes)} to the device's cache, without a device cache flush. Takes the
+     * {@code SYNC_FILE_RANGE_*} flags. Durability needs a following device flush ({@link #fdatasync(long)},
+     * {@link #fsync(long)} or {@link #syncfs(long)}).
      * <p>
-     * Only acts on pages the kernel already tracks as dirty: mmap-dirtied pages must first be flushed to
-     * the page cache via {@link #msync(long, long, boolean)} (or written via {@code write()}), otherwise the
-     * dirty mmap pages are invisible to this call. On non-Linux platforms this is a no-op returning 0.
+     * It acts only on pages the kernel tracks as dirty: mmap-dirtied pages must first reach the page cache
+     * through {@link #msync(long, long, boolean)}, or be written with {@code write()}. A no-op returning 0
+     * off Linux.
      */
     public static int syncFileRange(long fd, long offset, long nbytes, int flags) {
         return syncFileRange0(toOsFd(fd), offset, nbytes, flags);
     }
 
     /**
-     * Linux syncfs(2): write back ALL dirty data of the WHOLE filesystem containing {@code fd}, journal
-     * every pending metadata change on that filesystem (crucially the ext4 unwritten-&gt;written extent
-     * conversions of every inode — what makes just-committed column extents truly durable, not just their
-     * data blocks), and issue ONE device cache flush. A single call thus replaces N per-file
-     * {@link #fdatasync(long)} device flushes for a batched SYNC commit. Like {@link #syncFileRange}, it
-     * only writes back pages the kernel already tracks as dirty, so mmap-dirtied pages must first be made
-     * known-dirty via {@link #msync(long, long, boolean)}. On non-Linux platforms this falls back to an
-     * fsync of {@code fd}.
+     * Linux syncfs(2): writes back all dirty data of the filesystem containing {@code fd}, journals every
+     * pending metadata change on it (including the ext4 unwritten-to-written extent conversions that make
+     * just-written column extents durable), and issues one device cache flush, in place of one
+     * {@link #fdatasync(long)} per file in a batched flush. Like {@link #syncFileRange}, it writes back only
+     * pages the kernel tracks as dirty, so mmap-dirtied pages must first go through
+     * {@link #msync(long, long, boolean)}. Off Linux it flushes {@code fd} only ({@code F_FULLFSYNC} on
+     * macOS).
      */
     public static int syncfs(long fd) {
         return syncfs0(toOsFd(fd));
@@ -608,19 +604,16 @@ public final class Files {
     }
 
     /**
-     * Renames {@code oldName} to {@code newName} such that the rename itself is durable on return.
+     * Renames {@code oldName} to {@code newName} so that the rename is durable on return.
      * <p>
-     * POSIX offers nothing to attach to the call: {@code rename(2)} is atomic but not durable, and the
-     * caller makes the new dentry durable by fsync'ing the parent DIRECTORY afterwards. This is therefore
-     * literally {@link #rename(LPSZ, LPSZ)} off Windows.
+     * On POSIX {@code rename(2)} is atomic but not durable; the caller makes the new name durable by fsyncing
+     * the parent directory afterwards, so off Windows this is {@link #rename(LPSZ, LPSZ)}.
      * <p>
-     * Windows is where it matters. {@code FlushFileBuffers} accepts file handles only, so there is no
-     * directory to fsync and the engine's directory barriers are all skipped there -- which left a rename
-     * that PUBLISHES an already-fsynced file with no barrier at all. {@code MOVEFILE_WRITE_THROUGH} is the
-     * documented equivalent: the move does not return until it is flushed to disk.
+     * On Windows {@code FlushFileBuffers} accepts file handles only, so there is no directory to fsync and the
+     * engine's directory barriers are skipped. {@code MOVEFILE_WRITE_THROUGH} makes the move return only once
+     * it is flushed to disk.
      * <p>
-     * Failure semantics and the destination-exists behaviour are identical to {@link #rename(LPSZ, LPSZ)}
-     * on both platforms.
+     * Failure semantics and the destination-exists behaviour match {@link #rename(LPSZ, LPSZ)}.
      */
     public static int renameDurable(LPSZ oldName, LPSZ newName) {
         return fdCache.renameDurable(oldName, newName);

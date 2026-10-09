@@ -38,17 +38,12 @@ import io.questdb.std.str.Utf8s;
  * Detects whether the filesystem backing the QuestDB database root has write-barriers
  * disabled (mounted with {@code nobarrier} or {@code barrier=0}).
  *
- * <p>With {@code cairo.commit.mode=sync}, QuestDB relies on {@code fsync}/{@code fdatasync}
- * issuing a device cache flush to guarantee power-loss durability. On a filesystem mounted
- * without write barriers the kernel suppresses that flush, so committed data can silently
- * be lost on power failure even though fsync returns success.
+ * <p>The durable commit modes rely on {@code fsync}/{@code fdatasync} issuing a device cache flush for
+ * power-loss durability. On a filesystem mounted without write barriers the kernel suppresses that flush,
+ * so committed data can be lost on power failure even though fsync returns success.
  *
- * <p>This class is Linux-only (it reads {@code /proc/mounts}).  On all other platforms
- * {@link #classifyDbRoot} returns {@link #UNKNOWN} and no warning is emitted.
- *
- * <p>The core parsing logic ({@link #classify}) is deliberately pure / IO-free so it can
- * be exercised in unit tests with injected content, without access to the real
- * {@code /proc/mounts}.
+ * <p>Linux only (it reads {@code /proc/mounts}): on other platforms {@link #classifyDbRoot} returns
+ * {@link #UNKNOWN}. {@link #classify} reads no files, so tests drive it with injected content.
  */
 public final class WriteBarrierCheck {
 
@@ -86,7 +81,7 @@ public final class WriteBarrierCheck {
      * The kernel uses {@code \040} (octal) to encode spaces in the mountpoint field; this
      * implementation decodes that escape before comparing path prefixes.
      *
-     * <p>Matching rule: pick the mount whose mountpoint is the LONGEST path-component
+     * <p>Matching rule: pick the mount whose mountpoint is the longest path-component
      * prefix of {@code dbRootAbsPath}. A path-component prefix means the mountpoint is
      * either equal to {@code dbRootAbsPath} OR {@code dbRootAbsPath} starts with
      * {@code mountpoint + "/"}, ensuring that {@code /data} does not match {@code /database}.
@@ -96,7 +91,7 @@ public final class WriteBarrierCheck {
      *   <li>{@code nobarrier}
      *   <li>{@code barrier=0}
      * </ul>
-     * ext4/xfs with barriers enabled do NOT emit {@code barrier=1}; absence of a disabling
+     * ext4/xfs with barriers enabled do not emit {@code barrier=1}; absence of a disabling
      * token is therefore taken as barriers-presumed-enabled.
      *
      * @param procMountsContent full text of {@code /proc/mounts}
@@ -188,14 +183,9 @@ public final class WriteBarrierCheck {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Package-private helpers (used by tests for white-box assertions)
-    // -----------------------------------------------------------------------
 
     static boolean hasBarriersDisabled(String options) {
-        // Options are comma-separated tokens.  We look for exact token matches to avoid
-        // false positives (e.g., "nobarriers" should not match "nobarrier", though in
-        // practice no such option exists).
+        // Options are comma-separated tokens; match whole tokens only.
         int start = 0;
         int len = options.length();
         while (start < len) {
@@ -222,9 +212,6 @@ public final class WriteBarrierCheck {
         return mountpoint.equals("/");
     }
 
-    // -----------------------------------------------------------------------
-    // Private helpers
-    // -----------------------------------------------------------------------
 
     /**
      * Decode {@code \040}-style kernel octal escape sequences in a mount path string.
@@ -260,11 +247,6 @@ public final class WriteBarrierCheck {
         return c >= '0' && c <= '7';
     }
 
-    /**
-     * Read the entire content of a small text file (e.g. {@code /proc/mounts}) into a
-     * Java {@link String} using native memory.  Returns {@code null} if the file cannot
-     * be opened or is larger than {@code maxBytes}.
-     */
 
     /**
      * Split a single line (from {@code lineStart} inclusive to {@code lineEnd} exclusive)

@@ -34,24 +34,14 @@ import io.questdb.std.str.Utf8s;
 /**
  * Reader for {@code /proc} and {@code /sys} pseudo-files.
  *
- * <p>Exists because pseudo-files cannot be read like regular files: <b>they do not report a usable
- * size</b>. Measured on Linux 6.8:
- * <pre>
- *   /proc/mounts                 fstat=0     readable=2007
- *   /proc/fs/ext4/&lt;dev&gt;/options  fstat=0     readable=305
- *   /sys/... (sysfs)             fstat=4096  readable=11
- * </pre>
- * Sizing a read from {@code ff.length(fd)} therefore reads ZERO bytes from procfs and yields an empty
- * string, or over-reads sysfs and rejects the short read. Both failures are silent: the caller sees
- * "empty file" rather than an error, and a detector built on it reports "nothing detected" forever.
+ * <p>Pseudo-files do not report a usable size: procfs files report 0 from {@code fstat}, and sysfs files
+ * report a page while holding a few bytes. A read sized from {@code ff.length(fd)} therefore reads nothing
+ * from procfs, or over-reads sysfs and rejects the short read. Both fail silently: the caller sees an
+ * empty file, and a detector built on it never detects anything. {@link FastCommitCheck},
+ * {@link WriteBarrierCheck} and {@link DurabilityEnvironmentCheck} share this reader for that reason.
  *
- * <p>That is not hypothetical. {@link FastCommitCheck} and {@link WriteBarrierCheck} each carried their own
- * copy of a length-sized reader, so both were permanently inert on Linux — the ext4 {@code fast_commit}
- * guard never fired (leaving the unsafe batched flush enabled) and the {@code nobarrier} startup warning
- * never printed. One shared, tested reader replaces both copies so a third consumer cannot reintroduce it.
- *
- * <p>The whole content is fetched with a single {@code pread} of up to {@code maxBytes}, which is correct
- * for every pseudo-file of interest and avoids the torn-snapshot risk of reading procfs incrementally.
+ * <p>The content is fetched with a single {@code pread} of up to {@code maxBytes}, which suits every
+ * pseudo-file read here and avoids a torn snapshot from reading procfs incrementally.
  */
 public final class ProcFs {
 
@@ -63,7 +53,7 @@ public final class ProcFs {
      *
      * @param ff       files facade (injectable, so callers are testable without a real {@code /proc})
      * @param path     absolute path of the pseudo-file
-     * @param maxBytes cap on the read; sized generously by the caller, NOT taken from the file's stat size
+     * @param maxBytes cap on the read; sized generously by the caller, not taken from the file's stat size
      * @return the content, or {@code null} if the file could not be opened or read
      */
     public static String read(FilesFacade ff, String path, int maxBytes) {

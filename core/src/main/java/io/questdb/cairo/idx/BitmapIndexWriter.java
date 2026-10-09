@@ -169,10 +169,10 @@ public class BitmapIndexWriter implements IndexWriter {
     }
 
     public void commit() {
-        // appliesColumnSync (SYNC/ASYNC only) rather than `!= NOSYNC`: the .k/.v files are re-derivable
-        // from the durable WAL just like the column they index, so under ADAPTIVE they stay lazy on the
-        // apply path and are made durable by the epoch (TableWriter.fsyncMaterializedState forces
-        // sync(false) on every indexer, then one filesystem-wide syncfs). See IndexWriter.setCommitMode.
+        // SYNC and ASYNC only: the .k/.v files are re-derivable from the durable WAL like the column they
+        // index, so under ADAPTIVE they stay lazy on the apply path, and a save point makes them durable
+        // (TableWriter.fsyncMaterializedState calls sync(false) on every indexer, then one filesystem-wide
+        // syncfs). See IndexWriter.setCommitMode.
         final int commitMode = indexCommitMode;
         if (CommitMode.appliesColumnSync(commitMode)) {
             sync(commitMode == CommitMode.ASYNC);
@@ -472,8 +472,8 @@ public class BitmapIndexWriter implements IndexWriter {
 
     /**
      * fsync the index files after {@link #sync(boolean)}'s msync, in the same value-before-key order.
-     * Lets the adaptive epoch's single trailing device barrier cover them: fcntl(2) words that guarantee
-     * as applying to data "fsync'd on the same device before".
+     * Lets a save point's single trailing device barrier cover them: fcntl(2) words that guarantee as
+     * applying to data "fsync'd on the same device before".
      */
     public void fsyncFiles() {
         fsyncIfOpen(valueMem.getFd());
@@ -487,8 +487,8 @@ public class BitmapIndexWriter implements IndexWriter {
     }
 
     /**
-     * Batched SYNC stage 1 (Linux): push both index files' dirty pages to the page cache. Kicks are
-     * order-free (no device flush, no durability ordering yet), so value/key order does not matter here.
+     * Batched flush, stage 1 (Linux): pushes both index files' dirty pages to the page cache. Kicks flush
+     * nothing to the device, so the value and key order does not matter here.
      */
     public void syncFlushKick() {
         valueMem.syncFlushKick();
@@ -496,8 +496,8 @@ public class BitmapIndexWriter implements IndexWriter {
     }
 
     /**
-     * Batched SYNC stage 2 (Linux): write both index files' pages back to the device cache (WAIT_AFTER).
-     * Drains are order-free for the same reason as kicks.
+     * Batched flush, stage 2 (Linux): writes both index files' pages back to the device cache (WAIT_AFTER).
+     * Order does not matter, as for kicks.
      */
     public void syncFlushDrain() {
         valueMem.syncFlushDrain();
@@ -505,9 +505,9 @@ public class BitmapIndexWriter implements IndexWriter {
     }
 
     /**
-     * Batched SYNC stage 3: fdatasync only the index file(s) that EXTENDED. The value-before-key ordering
-     * matters here because these fdatasyncs are the durability points: persist the .v (data) extend before
-     * the .k (pointer) extend so a crash can never expose a key block beyond the durable value data.
+     * Batched flush, stage 3: finishes both index files, the .v (data) before the .k (pointer), the order
+     * {@link #sync(boolean)} uses, so a memory that flushes in this stage never exposes a key block beyond
+     * the durable value data.
      */
     public void syncFlushFinishIfExtended() {
         valueMem.syncFlushFinishIfExtended();

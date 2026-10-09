@@ -75,9 +75,9 @@ public interface FilesFacade {
     void fdatasync(long fd);
 
     /**
-     * ORDERING barrier only — see {@link Files#barrierFsync(long)}. Never acknowledge a commit as durable
-     * on the strength of this alone; pair it with {@link #fdatasync(long)} at the commit point. Defaults to
-     * {@link #fdatasync(long)} so existing implementations keep their (stronger) behaviour.
+     * Ordering barrier only, see {@link Files#barrierFsync(long)}. A commit is not durable on this alone;
+     * pair it with {@link #fdatasync(long)} at the commit point. The default calls {@link #fdatasync(long)},
+     * the stronger barrier.
      */
     default void barrierFsync(long fd) {
         fdatasync(fd);
@@ -86,9 +86,9 @@ public interface FilesFacade {
     void fsync(long fd);
 
     /**
-     * {@link #fsync(long)} semantics (data AND metadata) with the device write cache actually flushed.
-     * Not interchangeable with {@link #fdatasync(long)}, which may skip metadata not needed to read the
-     * data back. Default delegates to {@link #fsync(long)} so existing implementations keep working.
+     * {@link #fsync(long)} semantics (data and metadata) with the device write cache flushed. Not
+     * interchangeable with {@link #fdatasync(long)}, which may skip metadata not needed to read the data
+     * back. The default calls {@link #fsync(long)}.
      */
     default void fsyncDurable(long fd) {
         fsync(fd);
@@ -97,28 +97,21 @@ public interface FilesFacade {
     void fsyncAndClose(long fd);
 
     /**
-     * Linux sync_file_range(2): initiate writeback of the file's page-cache pages over
+     * Linux sync_file_range(2): starts writeback of the file's page-cache pages over
      * {@code [offset, offset+nbytes)} to the device cache without a device flush (see the
-     * {@code Files.SYNC_FILE_RANGE_*} flags). A no-op returning 0 on non-Linux platforms.
-     * Durability still requires a following {@link #fdatasync(long)}/{@link #fsync(long)}.
-     * <p>
-     * Provided as a {@code default} so existing implementors keep compiling; fault-injection
-     * facades may override it to model writeback/device-cache semantics.
+     * {@code Files.SYNC_FILE_RANGE_*} flags). A no-op returning 0 off Linux. Durability still needs a
+     * following device flush. Fault-injection facades may override it to model writeback.
      */
     default int syncFileRange(long fd, long offset, long nbytes, int flags) {
         return Files.syncFileRange(fd, offset, nbytes, flags);
     }
 
     /**
-     * Linux syncfs(2): make the WHOLE filesystem containing {@code fd} durable in one device flush —
-     * writes back all dirty data and journals every pending metadata change (including ext4
-     * unwritten-&gt;written extent conversions for every inode), then flushes the device cache. Used by the
-     * batched SYNC commit to make all just-drained column extents truly durable with a single flush
-     * instead of one {@link #fdatasync(long)} per column. Falls back to an fsync of {@code fd} on
-     * non-Linux platforms. See {@link Files#syncfs(long)}.
-     * <p>
-     * Provided as a {@code default} so existing implementors keep compiling; fault-injection facades
-     * (e.g. the crash model) override it to model the whole-filesystem journal-commit + flush.
+     * Linux syncfs(2): makes the filesystem containing {@code fd} durable in one device flush. It writes back
+     * all dirty data and journals every pending metadata change (including ext4 extent conversions), then
+     * flushes the device cache. The batched flush uses it in place of one {@link #fdatasync(long)} per column.
+     * Off Linux it flushes {@code fd} only (see {@link #isSyncfsFileSystemWide()} and
+     * {@link Files#syncfs(long)}). Fault-injection facades override it to model the filesystem-wide flush.
      */
     default void syncfs(long fd) {
         int res = Files.syncfs(fd);
@@ -139,10 +132,10 @@ public interface FilesFacade {
     /**
      * Whether {@link #syncFileRange(long, long, long, int)} is worth issuing against {@code root}.
      * <p>
-     * {@code sync_file_range} is a Linux page-cache optimisation: it starts (and optionally waits for)
-     * writeback WITHOUT journalling any metadata, so it is only ever ADVISORY -- callers must still take a
-     * real barrier afterwards. On ZFS the page-cache model does not match (durability is a txg commit), so
-     * the call buys nothing and is skipped rather than risking the known mmap interactions.
+     * {@code sync_file_range} is a Linux page-cache optimisation: it starts, and optionally waits for,
+     * writeback without journalling metadata, so callers must still take a real barrier afterwards. On ZFS
+     * the page-cache model does not match (durability is a txg commit), so the call buys nothing and is
+     * skipped rather than risking the known mmap interactions.
      *
      * @param root an existing path on the filesystem in question
      * @return {@code true} if a drain pass is likely to help
@@ -249,13 +242,12 @@ public interface FilesFacade {
     int rename(LPSZ from, LPSZ to);
 
     /**
-     * The publish-by-rename barrier: the rename itself is durable by the time this returns.
+     * The publish-by-rename barrier: the rename is durable when this returns.
      * <p>
-     * On POSIX this IS {@link #rename(LPSZ, LPSZ)} — the caller makes the new dentry durable by fsync'ing
-     * the parent directory afterwards, which it already does. Windows has no directory handle to fsync, so
-     * there the implementation asks the move itself to write through. Defaults to {@link #rename(LPSZ, LPSZ)}
-     * so existing implementations keep their current behaviour and every facade that intercepts
-     * {@code rename} keeps intercepting this too.
+     * On POSIX this is {@link #rename(LPSZ, LPSZ)}: the caller makes the new name durable by fsyncing the
+     * parent directory afterwards. Windows has no directory handle to fsync, so there the implementation asks
+     * the move itself to write through. The default calls {@link #rename(LPSZ, LPSZ)}, so a facade that
+     * intercepts {@code rename} intercepts this too.
      */
     default int renameDurable(LPSZ from, LPSZ to) {
         return rename(from, to);
