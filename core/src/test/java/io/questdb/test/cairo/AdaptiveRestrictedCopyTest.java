@@ -45,16 +45,12 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * The adaptive durability path must never publish a file by whole-file copy onto a destination that
- * already exists.
- * <p>
- * {@code FilesFacade.copy} is portable only when the destination is absent. On POSIX it is
- * {@code creat(O_TRUNC)} and silently replaces whatever is there; on Windows it is
- * {@code CopyFileW(.., bFailIfExists=TRUE)} and returns {@link Files#WINDOWS_ERROR_FILE_EXISTS}. Two adaptive
- * sites write over a live file: the save point file of a reused A/B generation, and the recovery roll-forward
- * that restores {@code _meta}/{@code _txn}/{@code _cv} over the live ones. These tests run both workloads
- * behind a files facade that reproduces the Windows refusal, so the failure shows on every platform, with the
- * refusal counter naming the file that was copied over.
+ * The adaptive durability path must never publish a file by whole-file copy onto an existing destination.
+ * {@code FilesFacade.copy} replaces the destination on POSIX ({@code creat(O_TRUNC)}) but fails on Windows with
+ * {@link Files#WINDOWS_ERROR_FILE_EXISTS}. Two adaptive sites write over a live file: the save point file of a
+ * reused A/B generation, and the recovery roll-forward that restores {@code _meta}/{@code _txn}/{@code _cv}. The
+ * tests run both behind a facade that reproduces the Windows refusal on every platform, with a refusal counter
+ * naming the file that was copied over.
  */
 public class AdaptiveRestrictedCopyTest extends AbstractCairoTest {
 
