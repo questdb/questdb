@@ -31,27 +31,25 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Self-check for the crash model: a file RENAMED while its handles are still open must keep its durability
- * accounting.
+ * Self-checks for the crash model. A file renamed while its handles are still open must keep its
+ * durability accounting.
  * <p>
  * {@code fdToPath} and {@code mmapAddrToPath} are both populated when the handle is created, so without
- * re-keying them on rename every later {@code write}/{@code fsync}/{@code fdatasync}/{@code msync} is
- * attributed to a path that no longer exists. The renamed file then looks NEVER-WRITTEN to the model and
- * {@code crash()} truncates it to zero — even though its bytes are physically on disk and were properly
- * barriered.
+ * re-keying them on rename every later {@code write}/{@code fsync}/{@code fdatasync}/{@code msync} would be
+ * attributed to a path that no longer exists. The renamed file would then look never written to the model
+ * and {@code crash()} would truncate it to zero, although its bytes are on disk and barriered.
  * <p>
- * This is not hypothetical: {@code WalWriter.renameColumnFiles} renames a WAL column file with its column
- * memory (and fd) still open, so an ALTER RENAME COLUMN hit this on every crash sweep. It produced a
- * convincing FALSE POSITIVE — "WAL segment column too short for committed row range [... actual=0]",
- * a table left permanently suspended — that reads exactly like a product durability bug. It cost a long
- * investigation before the model itself was suspected, which is why it gets a self-check of its own.
+ * {@code WalWriter.renameColumnFiles} renames a WAL column file with its column memory and fd still open, so
+ * an ALTER RENAME COLUMN in a crash sweep depends on the re-keying. Without it the sweep reports a false
+ * "WAL segment column too short for committed row range [... actual=0]" and a suspended table, which reads
+ * like a product durability bug.
  */
 public class CrashModelRenameDurabilityTest extends AbstractCairoTest {
 
     @Test
     public void testDurableBytesSurviveARenameWithTheHandleStillOpen() throws Exception {
         // POSIX-only, same gate as AbstractCrashConsistencyTest.assumeCrashHarnessSupported(): the test
-        // fsyncs an open PARENT DIRECTORY handle (Windows has none to open) and ends in crash(), which
+        // fsyncs an open parent directory handle (Windows has none to open) and ends in crash(), which
         // truncates files -- the harness's POSIX-only half. The re-keying under test is covered by the
         // Linux and macOS legs.
         org.junit.Assume.assumeFalse("crash harness is POSIX-only", io.questdb.std.Os.isWindows());
@@ -62,7 +60,7 @@ public class CrashModelRenameDurabilityTest extends AbstractCairoTest {
                 from.of(root).concat("rn_before.d");
                 to.of(root).concat("rn_after.d");
 
-                // Write and barrier under the ORIGINAL name, keeping the fd open across the rename -- the
+                // Write and barrier under the original name, keeping the fd open across the rename -- the
                 // shape WalWriter uses.
                 final long fd = ff.openRW(from.$(), io.questdb.cairo.CairoConfiguration.O_NONE);
                 Assert.assertTrue("could not open the source file", fd > -1);
@@ -71,15 +69,14 @@ public class CrashModelRenameDurabilityTest extends AbstractCairoTest {
                     try {
                         io.questdb.std.Vect.memset(buf, 128, 1);
                         Assert.assertEquals(128, ff.write(fd, buf, 128, 0));
-                        ff.fsync(fd);            // durable under the ORIGINAL name
+                        ff.fsync(fd);            // durable under the original name
                         ff.markDurableBaseline(root);
 
-                        // More durable bytes AFTER the rename, through the same still-open fd.
+                        // More durable bytes after the rename, through the same still-open fd.
                         Assert.assertEquals(Files.FILES_RENAME_OK, ff.rename(from.$(), to.$()));
-                        // A rename publishes a dentry in the PARENT, which needs its own barrier before
-                        // the new name is durable -- exactly what WalWriter.renameColumnFiles now does.
-                        // Without it crash() correctly restores the ORIGINAL name and this test would be
-                        // asserting against a file that legitimately does not exist.
+                        // A rename publishes a dentry in the parent, which needs its own barrier before
+                        // the new name is durable, as WalWriter.renameColumnFiles does. Without it crash()
+                        // restores the original name and the renamed file legitimately does not exist.
                         try (Path dir = new Path()) {
                             dir.of(root);
                             final long dirFd = ff.openRO(dir.$());
@@ -88,7 +85,7 @@ public class CrashModelRenameDurabilityTest extends AbstractCairoTest {
                             ff.close(dirFd);
                         }
                         Assert.assertEquals(128, ff.write(fd, buf, 128, 128));
-                        ff.fsync(fd);            // must be attributed to the NEW name
+                        ff.fsync(fd);            // must be attributed to the new name
                     } finally {
                         io.questdb.std.Unsafe.free(buf, 128, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
                     }
@@ -113,13 +110,12 @@ public class CrashModelRenameDurabilityTest extends AbstractCairoTest {
     /**
      * The force-close reclaim must name itself when it strands a live handle.
      * <p>
-     * Without this, using an fd that {@code reclaimLingeringNonCacheFds} already closed surfaces only as
+     * Otherwise, using an fd that {@code reclaimLingeringNonCacheFds} already closed surfaces only as
      * {@code "Invalid fd=..., not found in cache"} raised deep inside {@code FdCache}, from whatever
-     * unrelated code touches the descriptor next. That is exactly how the writer-release ordering bug in
-     * {@code AbstractAdaptiveCrashTest#releaseEngineHandles} presented: a failure thousands of crash points
-     * away from its cause, in {@code TableWriter.doClose -> freeSymbolMapWriters}. That ordering is not
-     * cheaply unit-testable (the condition needs the sweep's multi-iteration context), so the next best
-     * guarantee is that if it ever regresses, the very first misuse says so.
+     * unrelated code touches the descriptor next, possibly thousands of crash points away from the cause.
+     * The writer-release ordering in {@code AbstractAdaptiveCrashTest#releaseEngineHandles} that could strand
+     * such a handle needs the sweep's multi-iteration context and is not cheaply unit-testable, so this test
+     * makes the first misuse name the reclaim instead.
      */
     @Test
     public void testUsingAForceClosedFdIsAttributedToTheReclaim() throws Exception {
