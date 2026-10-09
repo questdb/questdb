@@ -1182,6 +1182,9 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.INT);
     }
 
+    // Float representation of 2^63 (exclusive upper bound for LONG).
+    // Long.MAX_VALUE (9223372036854775807L) converted to float rounds up to 2^63 (9223372036854775808.0f).
+    // Using '<' against 2^63 ensures boundary values just above LONG range fail with inconvertibleValue.
     @SuppressWarnings("unused")
     // used by the row copier
     public static long implicitCastFloatAsLong(float value) {
