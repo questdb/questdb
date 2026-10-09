@@ -75,9 +75,6 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public static final long ROW_COUNT_OFFSET = MAX_TIMESTAMP_OFFSET + Long.BYTES;
     public static final long RESERVED_OFFSET = ROW_COUNT_OFFSET + Long.BYTES;
     public static final long RECORD_SIZE = RESERVED_OFFSET + Long.BYTES;
-    private static final long CHECKSUM_CAPABILITY_MAGIC = 0x54584E434B533031L; // TXNCKS01
-    private static final long HEADER_CHECKSUM_MAGIC_OFFSET = HEADER_SEQ_PART_SIZE_32 + Integer.BYTES;
-    private static final long HEADER_CHECKSUM_FROM_TXN_OFFSET = HEADER_CHECKSUM_MAGIC_OFFSET + Long.BYTES;
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV2.class);
     private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
     private final CairoConfiguration configuration;
@@ -308,8 +305,6 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         txnMem.putLong(0L);
         txnMem.putLong(tableCreateTimestamp);
         txnMem.putInt(partTransactionCount);
-        txnMem.putLong(HEADER_CHECKSUM_MAGIC_OFFSET, CHECKSUM_CAPABILITY_MAGIC);
-        txnMem.putLong(HEADER_CHECKSUM_FROM_TXN_OFFSET, 0L);
         sync0();
     }
 

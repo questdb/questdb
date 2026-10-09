@@ -2168,7 +2168,7 @@ public class CheckpointTest extends AbstractCairoTest {
             // Fabricate a stale adaptive durable-epoch anchor at the table root (a table that had run in
             // adaptive commit mode). The checkpoint does not carry it, so a restore-over-existing leaves it.
             fabricateStaleEpochTrio(token);
-            Assert.assertTrue("precondition: fabricated epoch trio must exist", epochTrioExists(token));
+            Assert.assertTrue("precondition: fabricated epoch trio must exist", staleSavePointExists(token));
 
             engine.clear();
             engine.closeNameRegistry();
@@ -2257,21 +2257,13 @@ public class CheckpointTest extends AbstractCairoTest {
             final String dbRoot = configuration.getDbRoot();
             final int s = src.of(dbRoot).concat(token).size();
             final int d = dst.of(dbRoot).concat(token).size();
-            // A generation-one save point file and the marker of older layouts; their content is irrelevant to the clear.
+            // A generation-one save point file; its content is irrelevant to the clear.
             Assert.assertTrue(ff.copy(
                     src.trimTo(s).concat(TableUtils.TXN_FILE_NAME).$(),
                     dst.trimTo(d).concat(DurableEpochManifest.FILE_NAME).put(".1").$()) >= 0);
-            Assert.assertTrue(ff.touch(dst.trimTo(d).concat(TableUtils.SNAPSHOT_FILE_NAME).$()));
         }
     }
 
-    private boolean epochTrioExists(TableToken token) {
-        try (Path p = new Path()) {
-            final int len = p.of(configuration.getDbRoot()).concat(token).size();
-            return ff.exists(p.trimTo(len).concat(TableUtils.SNAPSHOT_FILE_NAME).$())
-                    || staleSavePointExists(token);
-        }
-    }
 
     private int readSavedLagTxnCount(TableToken token, boolean negativeLagChecksum) {
         try (TxReader txReader = new TxReader(configuration.getFilesFacade())) {

@@ -121,9 +121,6 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    // Development builds of the adaptive commit work stamped 3 to 6, and stored an enrolment record at byte 53 and
-    // a body length and checksum in the padding at [64, 80). Nothing reads those bytes; such a file passes every
-    // gate up to LATEST.
     public static final short META_FORMAT_MINOR_VERSION_LATEST = 2;
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
     public static final short META_FORMAT_MINOR_VERSION_TABLE_FORMAT = 2;
@@ -199,18 +196,9 @@ public final class TableUtils {
      */
     public static final String TXN_FILE_NAME = "_txn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
-    // Per-table save point marker of older development layouts, only ever removed now. Resided in the table
-    // directory as a sibling of _txn and _cv. NOT to be confused with the legacy
-    // checkpoint snapshot file (CHECKPOINT_LEGACY_META_FILE_NAME = "_snapshot"), which lives inside the
-    // .checkpoint directory and has a completely different format.
-    public static final String SNAPSHOT_FILE_NAME = "_snapshot";
     // Magic sentinel for the epoch-marker slot checksum trailer (mirrors CV_CHECKSUM_MAGIC approach).
     // Spells " EPOCHKSM" on disk (LE) — distinctive, vanishingly unlikely to collide with epoch data.
     public static final long SNAPSHOT_CHECKSUM_MAGIC = 0x4D534B4843504F45L; // " EPOCHKSM" LE
-    // Suffix of the separate save point copies (_txn.epoch, _cv.epoch, _meta.epoch and their .0/.1 forms)
-    // that older development layouts wrote into the table dir. A save point is now one file per generation,
-    // DurableEpochManifest.FILE_NAME; the suffix only lets anchor removal and the REBASE WAL clone skip leftovers.
-    public static final String EPOCH_COPY_SUFFIX = ".epoch";
     // transaction file structure
     // @formatter:off
     public static final int TX_BASE_HEADER_SECTION_PADDING = 12; // Add some free space into header for future use
@@ -222,8 +210,6 @@ public final class TableUtils {
     public static final long TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 = TX_BASE_OFFSET_B_32 + 4;
     public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 + 4;
     public static final int TX_BASE_HEADER_SIZE = (int) Math.max(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 + 4 + TX_BASE_HEADER_SECTION_PADDING, 64);
-    // Capability marker for the _txn body checksum. It is a property of the FILE ("from this txn on, every
-    // record carries a checksum"), so it lives in the BASE HEADER and not in the record's per-area reserved
     public static final long TX_OFFSET_MAP_WRITER_COUNT_32 = 128;
     public static final long TX_OFFSET_TXN_64 = 0;
     public static final long TX_OFFSET_TRANSIENT_ROW_COUNT_64 = TX_OFFSET_TXN_64 + 8;

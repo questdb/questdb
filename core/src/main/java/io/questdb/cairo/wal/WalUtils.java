@@ -639,8 +639,8 @@ public class WalUtils {
     }
 
     // Whether a top-level file should be COPIED into a rebase clone (everything except transient markers and
-    // the SOURCE table's adaptive epoch anchors). The anchors are deliberately excluded: the clone resets
-    // _txn/_meta to a brand-new table, so every copied .epoch payload/manifest would be bound to metadata this
+    // the SOURCE table's save point files). The save point is deliberately excluded: the clone resets
+    // _txn/_meta to a brand-new table, so a copied save point would be bound to metadata this
     // table no longer has and could never validate - leaving a published dir that recovery reads as "no
     // trustworthy adaptive epoch generation" and refuses to start on. The clone publishes its OWN
     // generation-zero baseline instead (see cloneTableDirForRebase).
@@ -650,9 +650,7 @@ public class WalUtils {
                 || Chars.equals(name, REBASE_NEW_FILE_NAME)
                 || Chars.equals(name, REBASE_SOURCE_FILE_NAME)
                 || Chars.equals(name, TableUtils.TXN_SCOREBOARD_FILE_NAME)
-                || Chars.equals(name, TableUtils.SNAPSHOT_FILE_NAME)
-                || Chars.startsWith(name, DurableEpochManifest.FILE_NAME)
-                || Chars.contains(name, TableUtils.EPOCH_COPY_SUFFIX)) {
+                || Chars.startsWith(name, DurableEpochManifest.FILE_NAME)) {
             return false;
         }
         return !Chars.endsWith(name, WAL_PENDING_FS_MARKER);

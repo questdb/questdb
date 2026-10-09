@@ -507,8 +507,8 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
     }
 
     /**
-     * One file per generation: a save point leaves no separate copy files, and its manifest is the header
-     * followed by byte copies of the live {@code _txn}, {@code _cv} and {@code _meta}, and nothing else.
+     * One file per generation: a save point's manifest is the header followed by byte copies of the live
+     * {@code _txn}, {@code _cv} and {@code _meta}, and nothing else.
      */
     @Test
     public void testSavePointIsOneFilePerGeneration() throws Exception {
@@ -526,10 +526,6 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
             long sections = 0;
             try (Path p = new Path()) {
                 for (String name : names) {
-                    for (String suffix : new String[]{"", ".0", ".1"}) {
-                        p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(name).put(TableUtils.EPOCH_COPY_SUFFIX).put(suffix);
-                        Assert.assertFalse("no separate copy file: " + p, ff.exists(p.$()));
-                    }
                     sections += liveLength(tt, name);
                 }
                 p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(DurableEpochManifest.FILE_NAME).put(".0");
@@ -925,17 +921,11 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
 
     /**
      * Points {@code p} at the file that holds the save point's copy of {@code fileName} in {@code generation},
-     * and returns the copy's offset and length in it: the separate copy file of the older layout, else the
-     * file's section in the generation's manifest (sizes in the header at 48, 64 and 80; sections in
-     * {@code _txn}, {@code _cv}, {@code _meta} order after the header).
+     * and returns the copy's offset and length in it: the file's section in the generation's manifest (sizes in
+     * the header at 48, 64 and 80; sections in {@code _txn}, {@code _cv}, {@code _meta} order after the header).
      */
     private long[] savedCopy(Path p, TableToken tt, int generation, String fileName) {
         final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(fileName)
-                .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation);
-        if (ff.exists(p.$())) {
-            return new long[]{0, ff.length(p.$())};
-        }
         p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(DurableEpochManifest.FILE_NAME).put('.').put(generation);
         final long txnSize = readLong(ff, p, 48);
         final long cvSize = readLong(ff, p, 64);
