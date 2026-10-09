@@ -375,12 +375,6 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                             };
                         }
                         final boolean crashed = deletions == 0 ? crashAtOperation(s, n, action) : crashAfterRemoval(s, n, action);
-                        if (!crashed && "sync exit".equals(removal)) {
-                            // Not judged: the SYNC replay rewrites a partition directory the rewind left on disk
-                            // and does not sync its entry, which the exit does not flush yet.
-                            dropScenario(s);
-                            break;
-                        }
                         final String label;
                         if (crashed) {
                             label = removal + ", power loss after " + (deletions == 0 ? "durability operation " : "deletion ") + n;
@@ -416,6 +410,7 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                 for (int op = 1; op <= MAX_SWEEP; op++) {
                     setCommitMode(restore ? "nosync" : "adaptive");
                     final Scenario s = newScenario("m" + (restore ? 'r' : promote ? 'p' : 's') + op);
+                    s.enrolmentMarkerChecked = true;
                     insertRows(s, 0, 2);
                     drainWalQueue();
                     engine.releaseAllWalWriters();
@@ -443,6 +438,49 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                     powerLossAndCheck(s, crashed
                             ? baseline + ", power loss after durability operation " + op
                             : baseline + " completed, then rows and a WAL purge");
+                    if (!crashed) {
+                        break;
+                    }
+                }
+            }
+            assertNoRowFailures();
+        });
+    }
+
+    /**
+     * A power loss at every durability operation of recovery's restore, from the creation baseline and from a
+     * periodic save point, with {@code _meta}, {@code _txn} and {@code _cv} all ahead of the save point: a column
+     * added, rows and an UPDATE applied lazily after it, then a kill. The next start must finish the restore and
+     * read back every row, and a start after it must change nothing.
+     */
+    @Test
+    public void testPowerLossAtEveryDurabilityOperationOfRestore() throws Exception {
+        runWithFaultFacade(() -> {
+            configureSavePoints();
+            for (String savePoint : new String[]{"creation baseline", "periodic save point"}) {
+                final boolean periodic = savePoint.startsWith("periodic");
+                for (int op = 1; op <= MAX_SWEEP; op++) {
+                    setCommitMode("adaptive");
+                    final Scenario s = newScenario("r" + (periodic ? 'p' : 'c') + op);
+                    if (periodic) {
+                        insertRows(s, 0, 2);
+                        drainWalQueue();
+                        publishSavePoint(s);
+                    }
+                    execute("alter table " + s.table + " add column c int");
+                    insertRows(s, 1, 2);
+                    execute("update " + s.table + " set c = 7");
+                    drainWalQueue();
+                    engine.releaseAllReaders();
+                    engine.releaseAllWriters();
+                    engine.releaseAllWalWriters();
+                    restart(s);
+                    // A kill keeps the page cache: the live files ahead of the save point are on disk.
+                    markDurableBaseline();
+                    final boolean crashed = crashAtOperation(s, op, () -> new RecoveryCoordinator(engine).recover());
+                    powerLossAndCheck(s, crashed
+                            ? "restore from the " + savePoint + ", power loss after durability operation " + op
+                            : "restore from the " + savePoint + " completed");
                     if (!crashed) {
                         break;
                     }
@@ -707,6 +745,17 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         }
     }
 
+    // A table that has a valid save point is enrolled, so a marker that asks for its enrolment must not remain.
+    private String checkEnrolmentMarker(Scenario s) {
+        if (!s.enrolmentMarkerChecked || savePointCount(s) == 0) {
+            return null;
+        }
+        try (Path p = new Path()) {
+            p.of(configuration.getDbRoot()).concat(s.token).concat("_epoch.enrol");
+            return configuration.getFilesFacade().exists(p.$()) ? "an enrolment marker remains next to a valid save point" : null;
+        }
+    }
+
     // Compares the table with the rows its scenario committed: every covered row reads back with its value, and any
     // other row is one whose commit was not covered.
     private String checkRows(Scenario s) {
@@ -811,7 +860,7 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     // a durable mode and `covered` says the durable frontier covers it. Rows at the day's start precede every row
     // inserted otherwise.
     private void insertRows(Scenario s, int day, int count, boolean covered, boolean mayFail, boolean atDayStart) {
-        final StringBuilder sql = new StringBuilder("insert into ").append(s.table).append(" values ");
+        final StringBuilder sql = new StringBuilder("insert into ").append(s.table).append("(ts, v) values ");
         final long[] ts = new long[count];
         final long[] v = new long[count];
         for (int i = 0; i < count; i++) {
@@ -973,6 +1022,9 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                 insertRows(s, 3, 1);
                 drainWalQueue();
                 failure = checkRows(s);
+                if (failure == null) {
+                    failure = checkEnrolmentMarker(s);
+                }
                 if (failure != null) {
                     failure = "after a write that followed recovery, " + failure;
                 }
@@ -981,6 +1033,9 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
             if (failure == null && !"nosync".equals(commitMode)) {
                 powerLoss(s);
                 failure = recoverAndCheck(s);
+                if (failure == null) {
+                    failure = checkEnrolmentMarker(s);
+                }
                 if (failure != null) {
                     failure = "after a second power loss, " + failure;
                 }
@@ -1277,6 +1332,7 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         final Map<Long, Long> optional = new TreeMap<>();
         final String table;
         final Map<Long, Long> unsynced = new TreeMap<>();
+        boolean enrolmentMarkerChecked;
         String firedAt;
         TableToken token;
 

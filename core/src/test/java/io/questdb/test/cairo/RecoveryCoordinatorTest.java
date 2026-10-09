@@ -58,19 +58,29 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.crash.CrashFaultFilesFacade;
 import io.questdb.test.std.SyncAttributingFilesFacade;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 
 import static org.junit.Assert.assertTrue;
 
@@ -392,6 +402,298 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     @Test
     public void testCleanRestartRestoresNothing() throws Exception {
         assertCleanRestartRestoresNothing("clean_restart");
+    }
+
+    /**
+     * A clean restart is not a recovery, whichever save point the live files stand at: the creation baseline of a
+     * table nothing has written yet, or the save point a table created outside adaptive takes when its writer
+     * enrols it. Recovery restores nothing, counts nothing and changes no file of the table, at this start and at
+     * the next.
+     */
+    @Test
+    public void testCleanRestartAtFirstSavePointCountsNoRecovery() throws Exception {
+        try {
+            assertMemoryLeak(() -> {
+                final List<String> failures = new ArrayList<>();
+                for (String origin : new String[]{"creation", "enrolment"}) {
+                    final boolean enrolment = "enrolment".equals(origin);
+                    setCommitMode(enrolment ? "nosync" : "adaptive");
+                    final String name = "clean_" + origin;
+                    execute("CREATE TABLE " + name + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    final TableToken tt = engine.verifyTableName(name);
+                    if (enrolment) {
+                        execute("INSERT INTO " + name + " VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                        drainWalQueue();
+                        engine.releaseAllWriters();
+                        setCommitMode("adaptive");
+                        try (TableWriter writer = getWriter(tt)) {
+                            Assert.assertNotNull(writer);
+                        }
+                    }
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+                    engine.releaseAllWalWriters();
+                    Assert.assertTrue("precondition: the " + origin + " published a save point", hasSavePointFile(tt));
+                    for (int start = 1; start < 3; start++) {
+                        final Map<String, byte[]> before = readTableFiles(tt, false);
+                        final long events = TestUtils.getMetricValue(engine, "questdb_wal_adaptive_recovery_events_total");
+                        engine.getTxnScoreboardPool().remove(tt);
+                        engine.getTableSequencerAPI().resetForReboot(tt);
+                        new RecoveryCoordinator(engine).recover();
+                        final long counted = TestUtils.getMetricValue(engine, "questdb_wal_adaptive_recovery_events_total") - events;
+                        final long incarnation = engine.getTableSequencerAPI().getTxnTracker(tt).getRecoveryIncarnation();
+                        final List<String> changed = changedFiles(before, readTableFiles(tt, false));
+                        if (counted != 0 || incarnation != 0 || !changed.isEmpty()) {
+                            failures.add(origin + ", start " + start + ": recovery events +" + counted + ", incarnation " + incarnation + ", changed " + changed);
+                        }
+                    }
+                    assertQuery("SELECT count() FROM " + name)
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\n" + (enrolment ? 1 : 0) + "\n");
+                }
+                Assert.assertEquals("a clean restart is not a recovery", "[]", failures.toString());
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    /**
+     * A lineage discard removes the save point and publishes none: the table is then not enrolled, and its first
+     * writer enrols it at the live cut. A second start in between leaves the table as it is.
+     */
+    @Test
+    public void testLineageDiscardLeavesEnrolmentToWriter() throws Exception {
+        org.junit.Assume.assumeFalse("replants files over existing destinations, which Windows forbids", Os.isWindows());
+        try {
+            assertMemoryLeak(() -> {
+                setCommitMode("adaptive");
+                execute("create table lin_writer (ts timestamp, v long) timestamp(ts) partition by day wal");
+                execute("insert into lin_writer values ('2024-09-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                execute("insert into lin_writer values ('2024-09-02T00:00:00.000000Z', 2)");
+                drainWalQueue();
+                final TableToken pre = engine.verifyTableName("lin_writer");
+                Assert.assertTrue("precondition: a save point beyond seqTxn 0", readTxnSeqTxn(pre) > 0);
+                copyEpochArtifacts(pre, false);
+
+                execute("alter table lin_writer set type bypass wal");
+                engine.releaseInactive();
+                engine.load();
+                execute("alter table lin_writer set type wal", sqlExecutionContext);
+                engine.releaseInactive();
+                engine.load();
+
+                final TableToken tt = engine.verifyTableName("lin_writer");
+                Assert.assertEquals("the conversion re-seeds the lineage at seqTxn 0", 0L, readTxnSeqTxn(tt));
+                copyEpochArtifacts(tt, true);
+
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                new RecoveryCoordinator(engine).recover();
+                Assert.assertEquals("the discarded save point must not rewind the live cut", 0L, readTxnSeqTxn(tt));
+                Assert.assertFalse("a lineage discard publishes no save point", hasSavePointFile(tt));
+                Assert.assertFalse("a lineage discard leaves no enrolment marker", epochArtifactExists(tt, "_epoch.enrol", ""));
+
+                final Map<String, byte[]> before = readTableFiles(tt, false);
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                new RecoveryCoordinator(engine).recover();
+                Assert.assertEquals("a second start leaves a table that is not enrolled as it is",
+                        "[]", changedFiles(before, readTableFiles(tt, false)).toString());
+
+                try (TableWriter writer = getWriter(tt)) {
+                    Assert.assertNotNull(writer);
+                }
+                try (Path p = new Path()) {
+                    p.of(engine.getConfiguration().getDbRoot()).concat(tt);
+                    final io.questdb.cairo.DurableEpochManifest.Candidate[] saved = io.questdb.cairo.DurableEpochManifest.loadCandidates(
+                            engine.getConfiguration().getFilesFacade(), p, p.size(), tt.getTableId());
+                    Assert.assertTrue("the writer enrols the table", saved.length > 0);
+                    Assert.assertEquals("the writer enrols at the live cut", 0L, saved[0].epochSeqTxn);
+                }
+                execute("insert into lin_writer values ('2024-09-03T00:00:00.000000Z', 3)");
+                drainWalQueue();
+                assertQuery("select count() from lin_writer")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n3\n");
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    /**
+     * The boot cost outside adaptive: for each WAL table without a save point, recovery makes at most two existence
+     * checks and no other file system call. Measured as the difference between a database of one such table and
+     * one of eleven.
+     */
+    @Test
+    public void testNosyncBootCostsAtMostTwoExistenceChecksPerWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            setCommitMode("nosync");
+            final int extraTables = 10;
+            for (int i = 0; i <= extraTables; i++) {
+                execute("CREATE TABLE boot_cost_" + i + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO boot_cost_" + i + " VALUES ('2024-09-01T00:00:00.000000Z', " + i + ')');
+                if (i == 0) {
+                    drainWalQueue();
+                }
+            }
+            drainWalQueue();
+            final Map<String, Integer> eleven = countRecoveryCalls();
+            for (int i = 1; i <= extraTables; i++) {
+                execute("DROP TABLE boot_cost_" + i);
+            }
+            drainWalQueue();
+            final Map<String, Integer> one = countRecoveryCalls();
+            final Map<String, Integer> perTable = new TreeMap<>();
+            for (Map.Entry<String, Integer> e : eleven.entrySet()) {
+                final int delta = e.getValue() - one.getOrDefault(e.getKey(), 0);
+                if (delta != 0) {
+                    perTable.put(e.getKey(), delta);
+                }
+            }
+            final int existenceChecks = perTable.getOrDefault("exists", 0);
+            perTable.remove("exists");
+            Assert.assertTrue("at most two existence checks per WAL table, got " + existenceChecks + " for " + extraTables + " tables",
+                    existenceChecks <= 2 * extraTables);
+            Assert.assertEquals("no other file system call per WAL table, for " + extraTables + " tables and "
+                    + existenceChecks + " existence checks", "{}", perTable.toString());
+        });
+    }
+
+    /**
+     * A power loss tore {@code _meta} while recovery wrote the save point's copy over it, and the next start runs
+     * outside adaptive. The table still has a valid save point, so it is enrolled: the start restores it, boots, and
+     * the WAL replays every row, whatever the tear left: an empty file, half of the copy, or the copy's length
+     * without its bytes.
+     */
+    @Test
+    public void testNosyncStartAfterTornMetaRestoreBoots() throws Exception {
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000L);
+        try {
+            assertMemoryLeak(() -> {
+                final List<String> failures = new ArrayList<>();
+                for (String tear : new String[]{"empty", "half", "zeros"}) {
+                    setCommitMode("adaptive");
+                    final String name = "torn_meta_" + tear;
+                    execute("CREATE TABLE " + name + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("INSERT INTO " + name + " VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                    drainWalQueue();
+                    final TableToken tt = engine.verifyTableName(name);
+                    try (TableWriter writer = getWriter(tt)) {
+                        writer.advanceDurableEpoch(engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+                    }
+                    final long savePointSeqTxn = readTxnSeqTxn(tt);
+                    final byte[] savedMeta = readTableFiles(tt, true).get(TableUtils.META_FILE_NAME);
+                    execute("ALTER TABLE " + name + " ADD COLUMN c INT");
+                    execute("INSERT INTO " + name + " VALUES ('2024-09-02T00:00:00.000000Z', 2, 7)");
+                    drainWalQueue();
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+                    engine.releaseAllWalWriters();
+                    Assert.assertEquals("precondition: the save point is still the one whose _meta was read",
+                            savePointSeqTxn, newestSavePointSeqTxn(tt));
+                    Assert.assertTrue("precondition: the live files are ahead of the save point", readTxnSeqTxn(tt) > savePointSeqTxn);
+                    final byte[] torn = switch (tear) {
+                        case "empty" -> new byte[0];
+                        case "half" -> Arrays.copyOf(Arrays.copyOf(savedMeta, savedMeta.length / 2), savedMeta.length);
+                        default -> new byte[savedMeta.length];
+                    };
+                    Files.write(Paths.get(engine.getConfiguration().getDbRoot().toString(), tt.getDirName(), TableUtils.META_FILE_NAME), torn);
+
+                    setCommitMode("nosync");
+                    engine.getTxnScoreboardPool().remove(tt);
+                    engine.getTableSequencerAPI().resetForReboot(tt);
+                    try {
+                        new RecoveryCoordinator(engine).recover();
+                    } catch (CairoException e) {
+                        failures.add(tear + " _meta: the start refused: " + e.getFlyweightMessage());
+                        continue;
+                    }
+                    engine.notifyWalTxnRepublisher(tt);
+                    drainWalQueue();
+                    if (engine.getTableSequencerAPI().isSuspended(tt)) {
+                        failures.add(tear + " _meta: the table is suspended");
+                        continue;
+                    }
+                    try {
+                        assertQuery("SELECT * FROM " + name)
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
+                                        ts\tv\tc
+                                        2024-09-01T00:00:00.000000Z\t1\tnull
+                                        2024-09-02T00:00:00.000000Z\t2\t7
+                                        """);
+                    } catch (Throwable th) {
+                        failures.add(tear + " _meta: the table reads back wrong: " + th.getMessage());
+                    }
+                }
+                Assert.assertEquals("[]", failures.toString());
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        }
+    }
+
+    /**
+     * The safe way back from adaptive: an adaptive run, a clean stop, then a start outside adaptive in which nothing
+     * writes the table, so no writer opens it. The start itself leaves the table durable without its save point: a
+     * power loss right after it, with no recovery to follow (an older release), finds every byte the start left in the
+     * table's files, and no save point.
+     */
+    @Test
+    public void testSafeWayBackLeavesUnwrittenTableDurableWithoutSavePoint() throws Exception {
+        org.junit.Assume.assumeFalse("the crash model rewrites files under a live engine, which Windows forbids", Os.isWindows());
+        final CrashFaultFilesFacade crashFf = new CrashFaultFilesFacade();
+        crashFf.setDbRoot(root);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        try {
+            assertMemoryLeak(crashFf, () -> {
+                final List<String> failures = new ArrayList<>();
+                for (String mode : new String[]{"nosync", "sync"}) {
+                    setCommitMode("adaptive");
+                    final String name = "way_back_" + mode;
+                    execute("CREATE TABLE " + name + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    final TableToken tt = engine.verifyTableName(name);
+                    crashFf.markDurableBaseline(engine.getConfiguration().getDbRoot());
+                    execute("INSERT INTO " + name + " VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                    drainWalQueue();
+                    execute("INSERT INTO " + name + " VALUES ('2024-09-02T00:00:00.000000Z', 2), ('2024-09-03T00:00:00.000000Z', 3)");
+                    drainWalQueue();
+                    Assert.assertFalse("precondition: the instrument sees the lazily applied bytes a power loss would lose",
+                            bytesLostAtPowerLoss(crashFf, tt, readTableFiles(tt, true)).isEmpty());
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+                    engine.releaseAllWalWriters();
+                    Assert.assertEquals("precondition: the clean stop leaves a save point at the live cut", readTxnSeqTxn(tt), newestSavePointSeqTxn(tt));
+
+                    setCommitMode(mode);
+                    engine.getTxnScoreboardPool().remove(tt);
+                    engine.getTableSequencerAPI().resetForReboot(tt);
+                    new RecoveryCoordinator(engine).recover();
+                    if (hasSavePointFile(tt)) {
+                        failures.add(mode + " start: the save point remains");
+                    }
+                    final Map<String, byte[]> started = readTableFiles(tt, true);
+                    final List<String> lost = bytesLostAtPowerLoss(crashFf, tt, started);
+                    crashFf.crash(engine.getConfiguration().getDbRoot());
+                    lost.addAll(changedPrefixes(started, readTableFiles(tt, true)));
+                    if (!lost.isEmpty()) {
+                        failures.add(mode + " start: a power loss after it loses bytes of " + lost);
+                    }
+                    engine.getTableSequencerAPI().resetForReboot(tt);
+                }
+                Assert.assertEquals("[]", failures.toString());
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
     }
 
     /**
@@ -2126,6 +2428,77 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         return epochSeqTxn;
     }
 
+    private static List<String> changedFiles(Map<String, byte[]> before, Map<String, byte[]> after) {
+        final List<String> changed = new ArrayList<>();
+        for (Map.Entry<String, byte[]> e : before.entrySet()) {
+            if (!Arrays.equals(e.getValue(), after.get(e.getKey()))) {
+                changed.add(e.getKey());
+            }
+        }
+        for (String name : after.keySet()) {
+            if (!before.containsKey(name)) {
+                changed.add(name);
+            }
+        }
+        return changed;
+    }
+
+    // Files whose bytes a power loss would not keep, by the crash model's durable content: a file may come back longer,
+    // with the space a writer allocated and a close trimmed, but never without the bytes it holds now.
+    private static List<String> bytesLostAtPowerLoss(
+            CrashFaultFilesFacade crashFf,
+            TableToken tt,
+            Map<String, byte[]> files
+    ) {
+        final Map<String, byte[]> durable = new TreeMap<>();
+        for (String name : files.keySet()) {
+            final byte[] content = crashFf.durableContentOf(Paths.get(engine.getConfiguration().getDbRoot().toString(), tt.getDirName(), name).toString());
+            if (content != null) {
+                durable.put(name, content);
+            }
+        }
+        return changedPrefixes(files, durable);
+    }
+
+    private static List<String> changedPrefixes(Map<String, byte[]> before, Map<String, byte[]> after) {
+        final List<String> changed = new ArrayList<>();
+        for (Map.Entry<String, byte[]> e : before.entrySet()) {
+            final byte[] kept = after.get(e.getKey());
+            if (kept == null || kept.length < e.getValue().length || !Arrays.equals(e.getValue(), Arrays.copyOf(kept, e.getValue().length))) {
+                changed.add(e.getKey());
+            }
+        }
+        return changed;
+    }
+
+    // The file system calls one recovery pass makes, by facade method name.
+    private Map<String, Integer> countRecoveryCalls() {
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
+        engine.releaseAllWalWriters();
+        final Map<String, Integer> calls = new TreeMap<>();
+        final FilesFacade ffBefore = AbstractCairoTest.ff;
+        final FilesFacade delegate = engine.getConfiguration().getFilesFacade();
+        AbstractCairoTest.ff = (FilesFacade) Proxy.newProxyInstance(
+                FilesFacade.class.getClassLoader(),
+                new Class<?>[]{FilesFacade.class},
+                (proxy, method, args) -> {
+                    calls.merge(method.getName(), 1, Integer::sum);
+                    try {
+                        return method.invoke(delegate, args);
+                    } catch (InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                }
+        );
+        try {
+            new RecoveryCoordinator(engine).recover();
+        } finally {
+            AbstractCairoTest.ff = ffBefore;
+        }
+        return calls;
+    }
+
     private boolean epochArtifactExists(TableToken tt, CharSequence base, CharSequence suffix) {
         final io.questdb.std.FilesFacade ff = engine.getConfiguration().getFilesFacade();
         try (Path p = new Path()) {
@@ -2226,6 +2599,11 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         }
+    }
+
+    private boolean hasSavePointFile(TableToken tt) {
+        return epochArtifactExists(tt, io.questdb.cairo.DurableEpochManifest.FILE_NAME, ".0")
+                || epochArtifactExists(tt, io.questdb.cairo.DurableEpochManifest.FILE_NAME, ".1");
     }
 
     private long newestSavePointSeqTxn(TableToken tt) {
@@ -2371,6 +2749,29 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             tx.unsafeLoadAll();
             return tx.getSeqTxn();
         }
+    }
+
+    // Every file of the table by its path relative to the table directory; without the WAL and the sequencer when
+    // materializedOnly is set.
+    private Map<String, byte[]> readTableFiles(TableToken tt, boolean materializedOnly) {
+        final java.nio.file.Path dir = Paths.get(engine.getConfiguration().getDbRoot().toString(), tt.getDirName());
+        final Map<String, byte[]> files = new TreeMap<>();
+        try (Stream<java.nio.file.Path> stream = Files.walk(dir)) {
+            stream.filter(Files::isRegularFile).forEach(p -> {
+                final String name = dir.relativize(p).toString();
+                if (materializedOnly && (name.startsWith(WalUtils.WAL_NAME_BASE) || name.startsWith(WalUtils.SEQ_DIR))) {
+                    return;
+                }
+                try {
+                    files.put(name, Files.readAllBytes(p));
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return files;
     }
 
     private void setCommitMode(String mode) {

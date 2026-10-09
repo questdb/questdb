@@ -33,12 +33,27 @@ import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.std.Os;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.crash.CrashFaultFilesFacade;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Stream;
 
 /**
  * An adaptive replica ({@link LocalDurabilityPolicy#REPLICA_SKIP}) advances no durable epoch and keeps no WAL
@@ -286,6 +301,45 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplicaMakesTableDurableBeforeItRemovesSavePoint() throws Exception {
+        // A primary's save point lags rows it applied lazily, then the node becomes a replica. Before the writer
+        // removes the save point, every file of the table must be durable: a replica keeps no purge floor, so once
+        // the save point is gone nothing else brings back the WAL those rows came from.
+        org.junit.Assume.assumeFalse("the crash model rewrites files under a live engine, which Windows forbids", Os.isWindows());
+        final SavePointRemovalFacade removalFf = new SavePointRemovalFacade();
+        removalFf.setDbRoot(root);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000L);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 0);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        assertMemoryLeak(removalFf, () -> {
+            try {
+                setAdaptive(true);
+                execute("create table replica_flush (ts timestamp, v long) timestamp(ts) partition by day wal");
+                final TableToken tt = engine.verifyTableName("replica_flush");
+                insertAndRelease("replica_flush", 1, 1, false);
+                Assert.assertEquals("setup: a save point at the first batch", 1, readAnchorSeqTxn(tt));
+                removalFf.markDurableBaseline(configuration.getDbRoot());
+                suppressCadenceEpoch(tt);
+                insertAndRelease("replica_flush", 2, 3, false);
+                Assert.assertEquals("setup: the save point lags the applied rows", 1, readAnchorSeqTxn(tt));
+                Assert.assertFalse("setup: the lazily applied rows are not durable", removalFf.notDurableFiles(tt).isEmpty());
+
+                removalFf.watch(tt);
+                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
+                try (TableWriter writer = getWriter(tt)) {
+                    writer.reconcileDurableEpochAnchor();
+                }
+                Assert.assertTrue("the replica removes the save point", removalFf.removalSeen);
+                Assert.assertEquals("files not durable when the replica removed the save point",
+                        "[]", removalFf.notDurableAtRemoval.toString());
+                Assert.assertEquals("the save point is gone", -1, readAnchorSeqTxn(tt));
+            } finally {
+                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+            }
+        });
+    }
+
+    @Test
     public void testTenureTableWriterPooledAtGracefulShutdown() throws Exception {
         // Control: graceful shutdown with the writer still pooled; the close-time epoch runs under ALWAYS_ON.
         run(() -> {
@@ -423,5 +477,60 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
     @FunctionalInterface
     private interface Scenario {
         void run() throws Exception;
+    }
+
+    // Records which files of a watched table were not durable when its first save point file was removed.
+    private static final class SavePointRemovalFacade extends CrashFaultFilesFacade {
+        final List<String> notDurableAtRemoval = new ArrayList<>();
+        boolean removalSeen;
+        private TableToken watched;
+
+        @Override
+        public void remove(LPSZ name) {
+            onRemove(name);
+            super.remove(name);
+        }
+
+        @Override
+        public boolean removeQuiet(LPSZ name) {
+            onRemove(name);
+            return super.removeQuiet(name);
+        }
+
+        // Files of the table outside its WAL and sequencer whose bytes differ from what a power loss would keep.
+        List<String> notDurableFiles(TableToken tt) {
+            final java.nio.file.Path dir = Paths.get(configuration.getDbRoot().toString(), tt.getDirName());
+            final List<String> notDurable = new ArrayList<>();
+            try (Stream<java.nio.file.Path> stream = Files.walk(dir)) {
+                stream.filter(Files::isRegularFile).forEach(p -> {
+                    final String name = dir.relativize(p).toString();
+                    if (name.startsWith(WalUtils.WAL_NAME_BASE) || name.startsWith(WalUtils.SEQ_DIR) || name.startsWith("_epoch")) {
+                        return;
+                    }
+                    try {
+                        if (!Arrays.equals(durableContentOf(p.toAbsolutePath().toString()), Files.readAllBytes(p))) {
+                            notDurable.add(name);
+                        }
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                });
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+            return notDurable;
+        }
+
+        void watch(TableToken tt) {
+            watched = tt;
+        }
+
+        private void onRemove(LPSZ name) {
+            if (watched != null && !removalSeen && Utf8s.containsAscii(name, watched.getDirName())
+                    && Utf8s.containsAscii(name, DurableEpochManifest.FILE_NAME + '.')) {
+                removalSeen = true;
+                notDurableAtRemoval.addAll(notDurableFiles(watched));
+            }
+        }
     }
 }
