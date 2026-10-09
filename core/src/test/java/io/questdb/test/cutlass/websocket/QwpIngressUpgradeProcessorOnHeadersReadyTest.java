@@ -851,18 +851,14 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
                     "subprotocol confirmation must track the client's offer, not just enablement: " + response,
                     expectedSubprotocolConfirmed,
                     response.contains(confirmation));
-            // Backward-compat guarantee for the confirm-token refactor of
-            // QwpIngressHttpProcessor.responseSize/writeResponse: tier
-            // negotiation has landed, so this ingress processor now always
-            // drives those methods through the `Utf8Sequence` confirm-token
-            // overloads (never the legacy `boolean` ones) -- but for a legacy
-            // "true"/absent header, the negotiated DEFAULT grant resolves to
-            // the same historical RESPONSE_DURABLE_ACK_TOKEN_ENABLED token the
-            // old `boolean` overloads produced, so the wire bytes stay
-            // byte-identical: either the exact historical
-            // "X-QWP-Durable-Ack: enabled" confirmation, or no such header at
-            // all. The browser subprotocol carries the same legacy meaning, so
-            // a subprotocol grant echoes that token too.
+            // Backward compatibility of the confirmation header: the ingress
+            // processor drives QwpIngressHttpProcessor.responseSize/writeResponse
+            // through the `Utf8Sequence` confirm-token overloads, and for a
+            // legacy "true" or absent header the negotiated default grant
+            // resolves to RESPONSE_DURABLE_ACK_TOKEN_ENABLED. The wire bytes are
+            // either the exact "X-QWP-Durable-Ack: enabled" confirmation or no
+            // such header at all. The browser subprotocol carries the same legacy
+            // meaning, so a subprotocol grant echoes that token too.
             if (expectedEnabled) {
                 Assert.assertTrue(
                         "enabled handshake must carry the legacy X-QWP-Durable-Ack: enabled confirmation, got: " + response,
