@@ -41,21 +41,17 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Mechanism-level proof that append-only memories narrow the SYNC-mode msync to the written range,
- * and that the contiguous (CMARW) memory additionally SKIPs msync when nothing new was appended.
- *
- * <p>Uses a recording FilesFacade that counts every msync and records its (addr, len). This asserts
- * on the actual {@code sync()} behaviour of {@link MemoryCMARWImpl} (symbol char mem) and
- * {@link MemoryPMARImpl} (column data/aux vectors):
+ * Proves that append-only memories narrow the SYNC-mode msync to the written range, and that the contiguous
+ * memory (CMARW) also skips the msync when nothing new is appended. A recording FilesFacade counts every msync
+ * and records its address and length, against {@link MemoryCMARWImpl} (symbol char memory) and
+ * {@link MemoryPMARImpl} (column data and aux vectors):
  * <ul>
- *   <li>(a) appendOnly CMARW synced twice with no write between → the 2nd sync issues NO msync (skip),
- *       and a CMARW sync after a write msyncs the NARROWED length (== appendOffset), not the full
- *       mapped extent.</li>
- *   <li>(b) appendOnly PMAR (NARROW-ONLY) synced after writing N bytes into the active page msyncs
- *       exactly N bytes (the in-page written length), not the whole page window.</li>
+ *   <li>(a) an append-only CMARW synced twice with no write between issues no msync on the second sync, and a
+ *       sync after a write msyncs the narrowed length ({@code appendOffset}), not the full mapped extent;</li>
+ *   <li>(b) an append-only PMAR synced after writing N bytes into the active page msyncs exactly N bytes, not
+ *       the whole page window.</li>
  * </ul>
- * The default-false control case (no setAppendOnly) is checked to still msync the full extent so the
- * non-appendOnly path is unchanged.
+ * The controls, without {@code setAppendOnly}, still msync the full extent.
  */
 public class AppendOnlySyncNarrowingTest {
 
@@ -68,9 +64,7 @@ public class AppendOnlySyncNarrowingTest {
             final long pageSize = Files.PAGE_SIZE; // one OS page
             final RecordingFilesFacade ff = new RecordingFilesFacade();
 
-            // ---------------------------------------------------------------------------------
-            // (a) CMARW (symbol char mem): NARROW on write + SKIP when nothing new was appended.
-            // ---------------------------------------------------------------------------------
+            // (a) An append-only CMARW (symbol char memory) narrows on write and skips when nothing new is appended.
             try (Path path = new Path().of(temp.newFile("char.d").getAbsolutePath())) {
                 try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
                         ff, path.$(), pageSize, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)) {
@@ -87,7 +81,7 @@ public class AppendOnlySyncNarrowingTest {
 
                     ff.clear();
                     mem.sync(false);
-                    // NARROW: exactly one msync, over [pageAddress, appendOffset), not the full page extent.
+                    // Narrow: exactly one msync, over [pageAddress, appendOffset), not the full page extent.
                     Assert.assertEquals("appendOnly CMARW must issue exactly one narrowed msync",
                             1, ff.msyncCount);
                     Assert.assertEquals("CMARW msync length must be narrowed to appendOffset",
@@ -95,7 +89,7 @@ public class AppendOnlySyncNarrowingTest {
                     Assert.assertTrue("narrowed length must be well below the full mapped extent",
                             ff.lastMsyncLen < pageSize);
 
-                    // SKIP: sync again with no write in between -> no msync at all.
+                    // Skip: a second sync with no write in between issues no msync.
                     ff.clear();
                     mem.sync(false);
                     Assert.assertEquals("appendOnly CMARW must SKIP msync when nothing new appended",
@@ -115,9 +109,7 @@ public class AppendOnlySyncNarrowingTest {
                 }
             }
 
-            // ---------------------------------------------------------------------------------
-            // (a-control) default (NOT appendOnly) CMARW must still msync the FULL mapped extent.
-            // ---------------------------------------------------------------------------------
+            // (a) control: a default CMARW, not append-only, msyncs the full mapped extent.
             try (Path path = new Path().of(temp.newFile("char_ctrl.d").getAbsolutePath())) {
                 try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
                         ff, path.$(), pageSize, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)) {
@@ -139,9 +131,7 @@ public class AppendOnlySyncNarrowingTest {
                 }
             }
 
-            // ---------------------------------------------------------------------------------
-            // (b) PMAR (column data/aux vector): NARROW-ONLY — msync the in-page written length.
-            // ---------------------------------------------------------------------------------
+            // (b) An append-only PMAR (column data and aux vectors) only narrows: it msyncs the in-page written length.
             try (Path path = new Path().of(temp.newFile("col.d").getAbsolutePath())) {
                 try (MemoryPMARImpl mem = new MemoryPMARImpl(
                         ff, path.$(), pageSize, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
@@ -165,9 +155,7 @@ public class AppendOnlySyncNarrowingTest {
                 }
             }
 
-            // ---------------------------------------------------------------------------------
-            // (b-control) default (NOT appendOnly) PMAR must still msync the full page window.
-            // ---------------------------------------------------------------------------------
+            // (b) control: a default PMAR, not append-only, msyncs the full page window.
             try (Path path = new Path().of(temp.newFile("col_ctrl.d").getAbsolutePath())) {
                 try (MemoryPMARImpl mem = new MemoryPMARImpl(
                         ff, path.$(), pageSize, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
@@ -187,18 +175,16 @@ public class AppendOnlySyncNarrowingTest {
     }
 
     /**
-     * The append-only SKIP must NOT survive a REWIND of the append cursor.
+     * The append-only skip must not survive a rewind of the append cursor.
      *
      * <p>{@code MemoryCMARWImpl.sync()} skips the msync when {@code appendOffset} and {@code size} are both
-     * unchanged since the last sync. The naive reading of that condition ("nothing appended => nothing
-     * dirty") is FALSE across a rollback: {@code WalWriter.rollback0()} -&gt; {@code setAppendPosition()} -&gt;
-     * {@code jumpTo(lower)} rewinds the cursor and the next commit re-appends DIFFERENT bytes over the same
-     * range. For a fixed-width column the cursor lands on exactly its old value, so both watermarks match
-     * again and the rewritten bytes would never be msync'd.
+     * unchanged since the last sync. Across a rollback that does not mean nothing is dirty:
+     * {@code WalWriter.rollback0()} -&gt; {@code setAppendPosition()} -&gt; {@code jumpTo(lower)} rewinds the
+     * cursor, and the next commit re-appends different bytes over the same range. For a fixed-width column the
+     * cursor lands on its old value, so both watermarks match again.
      *
-     * <p>{@code jumpTo()} closes the hole by lowering {@code lastSyncedAppendOffset} on any backwards move.
-     * This test drives that exact sequence and asserts the msync happens; the FORWARD control below pins
-     * that the fix does not over-invalidate and destroy the skip optimisation itself.
+     * <p>{@code jumpTo()} lowers {@code lastSyncedAppendOffset} on any backwards move, so the rewritten bytes
+     * are msynced. The forward control checks that a {@code jumpTo} that does not move back keeps the skip.
      */
     @Test
     public void testAppendOnlySkipInvalidatedByRewind() throws Exception {
@@ -226,16 +212,15 @@ public class AppendOnlySyncNarrowingTest {
                     mem.sync(false);
                     Assert.assertEquals("baseline: idle sync must skip", 0, ff.msyncCount);
 
-                    // FORWARD control: a jumpTo to the CURRENT offset must not disturb the watermark, so
-                    // the skip must still hold. Guards against over-invalidating and killing the
-                    // optimisation this fix is meant to preserve.
+                    // Forward control: a jumpTo to the current offset keeps the watermark, so the skip
+                    // still holds.
                     mem.jumpTo(100);
                     ff.clear();
                     mem.sync(false);
                     Assert.assertEquals("forward/no-op jumpTo must not defeat the skip", 0, ff.msyncCount);
 
-                    // ROLLBACK: rewind to 80 and re-append 20 DIFFERENT bytes. The cursor returns to
-                    // exactly 100 and `size` is unchanged -- the precise shape that used to skip.
+                    // Rollback: rewind to 80 and re-append 20 different bytes. The cursor returns to 100
+                    // and `size` is unchanged, so both match the watermarks of the last sync.
                     mem.jumpTo(80);
                     for (int i = 0; i < 20; i++) {
                         mem.putByte((byte) 0xB);
@@ -258,8 +243,8 @@ public class AppendOnlySyncNarrowingTest {
                     Assert.assertEquals("skip must be restored after the post-rollback sync",
                             0, ff.msyncCount);
 
-                    // A deeper rewind that is only PARTLY refilled must also msync (watermark dropped to
-                    // 40, cursor ends at 60 > 40).
+                    // A deeper rewind that is only partly refilled must also msync: the watermark drops to
+                    // 40 and the cursor ends at 60.
                     mem.jumpTo(40);
                     for (int i = 0; i < 20; i++) {
                         mem.putByte((byte) 0xC);
@@ -272,7 +257,7 @@ public class AppendOnlySyncNarrowingTest {
                 }
             }
 
-            // Control: a NON-appendOnly memory never skips, so the rewind hook must not change it.
+            // Control: a memory that is not append-only never skips, and the rewind hook does not change that.
             try (Path path = new Path().of(temp.newFile("rewind_ctrl.d").getAbsolutePath())) {
                 try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
                         ff, path.$(), pageSize, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)) {
