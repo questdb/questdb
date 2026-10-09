@@ -34,27 +34,23 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * The GATE for the SYNC-mode flush-batching safety net.
+ * Self-check of {@link CrashFaultFilesFacade}'s content and device-flush model.
  * <p>
- * These tests PROVE that {@link CrashFaultFilesFacade}'s content + device-flush-batching model classifies
- * durable-vs-lossy sync schemes correctly, by writing known bytes through a real mmap'd region, running a
- * specific sync sequence, crashing, and asserting the content is exactly as durable (or as lost) as the OS
- * contract dictates. They must catch a model that is too LENIENT (tests 2, 4, 5, 6, 7) AND a model that is
- * too STRICT (tests 1, 3, 8). A future commit will swap the product commit path to MS_ASYNC +
- * sync_file_range + a single batched flush; only because this model is proven here can that swap be trusted.
+ * Each test writes known bytes through a real mmap'd region, runs a specific sync sequence, crashes, and asserts
+ * the content is exactly as durable, or as lost, as the OS contract dictates. Together they catch a model that is
+ * too lenient (a lost write survives) and one that is too strict (a durable write is lost).
  *
- * <p><b>Tests 6–8</b> additionally pin the METADATA-JOURNALING dimension (data-at-device vs
- * metadata-journaled): data reaching the device cache via {@code sync_file_range} is NOT durable until a
- * JOURNAL COMMIT journals its (within-page) extent conversion. ST6 proves data-at-device alone is lost; ST7
- * proves that under per-inode journaling ({@code modelSharedJournal=false}, i.e. ext4 fast_commit) a
- * new-allocation file needs its OWN journal commit; ST8 proves the default shared journal (ext4 jbd2 / xfs)
- * makes one file's commit cover the others. ST7+ST8 are the executable statement of the dependency the
- * batched optimization's within-page durability rests on.
+ * <p>Tests 6 to 8 cover data at the device versus journaled metadata: data that reached the device cache via
+ * {@code sync_file_range} is not durable until a journal commit journals its within-page extent conversion.
+ * Test 6 shows data-at-device alone is lost; test 7 shows that under per-inode journaling
+ * ({@code modelSharedJournal=false}, ext4 fast_commit) a new-allocation file needs its own journal commit; test 8
+ * shows the default shared journal (ext4 jbd2, xfs) makes one file's commit cover the others. Tests 7 and 8 state
+ * the dependency the batched flush's within-page durability rests on.
  *
- * <p>Marker convention: 0xBB is a "new write" we are testing for survival; 0xAA is a previously-made-durable
- * value; an allocated-but-never-durable file reads back as 0x00 (lost). All sync ops go through {@code ff}
- * (the crash facade) so the model intercepts them; the bytes are written into a MAP_SHARED mmap whose dirty
- * pages share the page cache with the read() that the model uses to snapshot device-cache/durable content.
+ * <p>Markers: 0xBB is a new write tested for survival; 0xAA is a previously durable value; an allocated but never
+ * durable file reads back as 0x00 (lost). All sync ops go through {@code ff} (the crash facade) so the model
+ * intercepts them; the bytes are written into a MAP_SHARED mmap whose dirty pages share the page cache with the
+ * read() the model uses to snapshot device-cache and durable content.
  */
 public class CrashModelSelfCheckTest extends AbstractTest {
 
@@ -63,9 +59,9 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     private static final int SIZE = 256;           // bytes per test file (a sub-page region is fine)
 
     /**
-     * Test 1 — current scheme is durable.
-     * write -> msync(MS_SYNC) -> crash -> content PRESENT.
-     * Proves the model is not too strict: the per-file sync used by today's code survives.
+     * Test 1: the per-file sync is durable.
+     * write -> msync(MS_SYNC) -> crash -> content present.
+     * The model is not too strict.
      */
     @Test
     public void test1_currentSchemeDurable() throws Exception {
@@ -81,10 +77,10 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     }
 
     /**
-     * Test 2 — async-only is lost.
+     * Test 2: async-only is lost.
      * write A (durable via MS_SYNC) -> overwrite B -> msync(MS_ASYNC) only -> crash -> reverts to A.
-     * Proves the model is not too lenient: MS_ASYNC reaches neither device cache nor a flush, so the
-     * post-async write must NOT survive.
+     * The model is not too lenient: MS_ASYNC reaches neither the device cache nor a flush, so the post-async write
+     * does not survive.
      */
     @Test
     public void test2_asyncOnlyLost() throws Exception {
@@ -102,12 +98,11 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     }
 
     /**
-     * Test 3 — batched WITH wait is durable (the batching semantic).
+     * Test 3: batched with wait is durable.
      * A,B: write -> msync(MS_ASYNC) both -> sync_file_range(WRITE|WAIT_AFTER) both -> fdatasync(A) only ->
-     * crash -> BOTH A and B content PRESENT.
-     * Proves a SINGLE device flush promotes BOTH files' device-cache content — i.e. the optimization is
-     * validatable: async msync makes pages visible, sync_file_range pushes them to the device cache, and
-     * one fdatasync flushes the whole device cache.
+     * crash -> A and B content present.
+     * One device flush promotes both files' device-cache content: async msync makes the pages visible,
+     * sync_file_range pushes them to the device cache, and one fdatasync flushes the whole device cache.
      */
     @Test
     public void test3_batchedWithWaitDurable() throws Exception {
@@ -131,11 +126,10 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     }
 
     /**
-     * Test 4 — batched WITHOUT the sync_file_range step is lost for the un-flushed file.
-     * A,B: write -> msync(MS_ASYNC) both -> fdatasync(A) only (NO sync_file_range) -> crash ->
-     * A PRESENT, B LOST.
-     * Proves the model catches the unsafe shortcut: without sync_file_range, B's writeback never reached the
-     * device cache, so the batched flush cannot make it durable.
+     * Test 4: batched without the sync_file_range step is lost for the unflushed file.
+     * A,B: write -> msync(MS_ASYNC) both -> fdatasync(A) only (no sync_file_range) -> crash -> A present, B lost.
+     * Without sync_file_range, B's writeback never reached the device cache, so the batched flush cannot make it
+     * durable.
      */
     @Test
     public void test4_batchedWithoutWaitLost() throws Exception {
@@ -156,11 +150,10 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     }
 
     /**
-     * Test 5 — sync_file_range WITHOUT a preceding msync is a no-op (the footgun).
-     * fresh C: write -> sync_file_range(WRITE|WAIT_AFTER) WITHOUT msync -> fdatasync(other file D) ->
-     * crash -> C LOST.
-     * Proves the model encodes the real Linux footgun: sync_file_range cannot see mmap-dirty pages that were
-     * never msync'd into the page cache, so the batched flush leaves C's content un-persisted.
+     * Test 5: sync_file_range without a preceding msync is a no-op.
+     * fresh C: write -> sync_file_range(WRITE|WAIT_AFTER) without msync -> fdatasync(other file D) -> crash -> C lost.
+     * sync_file_range cannot see mmap-dirty pages that were never msync'd into the page cache, so the batched flush
+     * leaves C's content unpersisted.
      */
     @Test
     public void test5_syncFileRangeWithoutMsyncNoop() throws Exception {
@@ -180,12 +173,11 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     }
 
     /**
-     * Test 6 — data-at-device WITHOUT a journal commit is lost (the metadata-journaling dimension).
-     * fresh A: write -> msync(MS_ASYNC) -> sync_file_range(WRITE|WAIT_AFTER) -> NO journal commit at all ->
-     * crash -> A LOST.
-     * Proves data-at-device alone is NOT durable: the bytes reached the device cache, but the file is freshly
-     * allocated, so its written-data extent conversion was never journaled (sync_file_range does not journal,
-     * and nothing else flushed). On crash the unwritten extent reads back as zero.
+     * Test 6: data-at-device without a journal commit is lost.
+     * fresh A: write -> msync(MS_ASYNC) -> sync_file_range(WRITE|WAIT_AFTER) -> no journal commit -> crash -> A lost.
+     * The bytes reached the device cache, but the file is freshly allocated, so its written-data extent conversion
+     * was never journaled (sync_file_range does not journal, and nothing else flushed). After the crash the
+     * unwritten extent reads back as zero.
      */
     @Test
     public void test6_dataAtDeviceWithoutJournalLost() throws Exception {
@@ -195,7 +187,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             Mapped m = mapAndFill(ff, a, NEW);
             ff.msync(m.addr, SIZE, true);  // MS_ASYNC -> pteFlushed (pages visible to sync_file_range)
             ff.syncFileRange(m.fd, 0, SIZE, Files.SYNC_FILE_RANGE_WRITE | Files.SYNC_FILE_RANGE_WAIT_AFTER); // data-at-device
-            // No msync(MS_SYNC), no fdatasync, no fsync anywhere -> the extent conversion is never journaled.
+            // No msync(MS_SYNC), no fdatasync, no fsync anywhere, so the extent conversion is never journaled.
             Assert.assertEquals("precondition: data reached the device", SIZE, ff.syncedDataEndOf(a.toString()));
             Assert.assertEquals("precondition: but nothing is journaled", 0L, ff.journaledDataEndOf(a.toString()));
             unmapAndClose(ff, m);
@@ -205,12 +197,12 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     }
 
     /**
-     * Test 7 — THE KEY ONE: per-inode journaling exposes the new-allocation dependency.
-     * {@code modelSharedJournal=false} (ext4 fast_commit world). A,B: write -> msync(MS_ASYNC) both ->
-     * sync_file_range(WRITE|WAIT_AFTER) both -> fdatasync(A) ONLY -> crash -> A durable, B LOST.
-     * Proves that without the shared journal, B's at-device new-allocation content is NOT made durable by
-     * A's fdatasync: a per-inode commit journals only A's extent conversion, so B's written-data extent was
-     * never journaled and reverts to zero on crash. New-allocation content needs the file's OWN journal commit.
+     * Test 7: per-inode journaling exposes the new-allocation dependency.
+     * {@code modelSharedJournal=false} (ext4 fast_commit). A,B: write -> msync(MS_ASYNC) both ->
+     * sync_file_range(WRITE|WAIT_AFTER) both -> fdatasync(A) only -> crash -> A durable, B lost.
+     * Without the shared journal, A's fdatasync does not make B's at-device new-allocation content durable: a
+     * per-inode commit journals only A's extent conversion, so B's extent reverts to zero on crash. New-allocation
+     * content needs the file's own journal commit.
      */
     @Test
     public void test7_perInodeJournalingNewAllocationLost() throws Exception {
@@ -238,17 +230,16 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     }
 
     /**
-     * Test 8 — contrast: the SHARED journal makes the new-allocation content durable.
-     * Identical to ST7 but {@code modelSharedJournal=true} (default ext4 jbd2 / xfs). A,B: write ->
-     * msync(MS_ASYNC) both -> sync_file_range both -> fdatasync(A) ONLY -> crash -> A AND B durable.
-     * Documents the dependency's resolution: a single filesystem-wide journal commit (A's fdatasync) ALSO
-     * journals B's pending extent conversion, so B's at-device data becomes durable without B's own fsync.
-     * This is exactly the mechanism the batched optimization's {@code _cv} flush relies on.
+     * Test 8: the shared journal makes the new-allocation content durable.
+     * Identical to test 7 but {@code modelSharedJournal=true} (default ext4 jbd2, xfs). A,B: write ->
+     * msync(MS_ASYNC) both -> sync_file_range both -> fdatasync(A) only -> crash -> A and B durable.
+     * A single filesystem-wide journal commit (A's fdatasync) also journals B's pending extent conversion, so B's
+     * at-device data becomes durable without B's own fsync. The batched flush's {@code _cv} flush relies on this.
      */
     @Test
     public void test8_sharedJournalNewAllocationDurable() throws Exception {
         final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
-        ff.modelSharedJournal = true; // default; stated explicitly for contrast with ST7
+        ff.modelSharedJournal = true; // default; stated explicitly for contrast with test 7
         final String dir = temp.newFolder("model8").getAbsolutePath();
         try (Path a = new Path().of(dir).concat("a.d"); Path b = new Path().of(dir).concat("b.d")) {
             Mapped ma = mapAndFill(ff, a, NEW);
@@ -269,22 +260,17 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     }
 
     /**
-     * Test 9 — syncfs journals EVERYONE even under PER-INODE journaling (the batched-flush SALVAGE property).
-     * Identical setup to ST7 ({@code modelSharedJournal=false}, i.e. ext4 fast_commit / per-inode journaling,
-     * under which a single inode's {@code fdatasync} does NOT journal another inode's extent conversions —
-     * ST7 proves B is LOST there). The ONLY change: replace {@code fdatasync(A)} with a single
-     * {@code syncfs(A)}. Outcome FLIPS — A AND B are BOTH durable, because {@code syncfs(2)} writes back the
-     * WHOLE filesystem and journals EVERY inode's pending extent conversions in one device flush, regardless
-     * of journal policy. This is EXACTLY the property the batched SYNC commit relies on to make all just-
-     * drained columns durable with one flush; the real ext4 power-cut harness proved the old
-     * {@code fdatasync}/foreign-{@code _cv}-flush reliance corrupted columns, and a micro-test proved
-     * {@code syncfs} survives the same cut. Contrast directly with ST7 (same world, {@code fdatasync} -> B
-     * lost) and ST8 (different world: shared journal needed to save B via {@code fdatasync}).
+     * Test 9: syncfs journals every inode even under per-inode journaling.
+     * The setup of test 7 ({@code modelSharedJournal=false}, where a single inode's {@code fdatasync} does not
+     * journal another inode's extent conversions and B is lost), with {@code fdatasync(A)} replaced by one
+     * {@code syncfs(A)}. A and B are both durable, because {@code syncfs(2)} writes back the whole filesystem and
+     * journals every inode's pending extent conversions in one device flush, whatever the journal policy. The
+     * batched SYNC commit relies on this to make all drained columns durable with one flush.
      */
     @Test
     public void test9_syncfsJournalsEveryoneUnderPerInodeJournaling() throws Exception {
         final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
-        ff.modelSharedJournal = false; // ext4 fast_commit: a per-inode fdatasync(A) would NOT journal B (ST7)
+        ff.modelSharedJournal = false; // ext4 fast_commit: a per-inode fdatasync(A) would not journal B (test 7)
         final String dir = temp.newFolder("model9").getAbsolutePath();
         try (Path a = new Path().of(dir).concat("a.d"); Path b = new Path().of(dir).concat("b.d")) {
             Mapped ma = mapAndFill(ff, a, NEW);
@@ -295,8 +281,8 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             ff.syncFileRange(ma.fd, 0, SIZE, flags); // A -> device cache (NOT journaled)
             ff.syncFileRange(mb.fd, 0, SIZE, flags); // B -> device cache (NOT journaled)
             ff.syncfs(ma.fd); // WHOLE-FS journal commit + flush: journals BOTH A and B despite per-inode policy
-            // Mutation check: if syncfs only journaled its own fd (like fdatasync under per-inode journaling),
-            // B's journaled end would still be 0 here and the post-crash B-durable assertion below would fail.
+            // If syncfs journaled only its own fd (like fdatasync under per-inode journaling), B's journaled end would
+            // still be 0 here and the post-crash B-durable assertion below would fail.
             Assert.assertEquals("syncfs must journal B too (whole-fs commit)", SIZE, ff.journaledDataEndOf(b.toString()));
             Assert.assertEquals("syncfs journals A", SIZE, ff.journaledDataEndOf(a.toString()));
             unmapAndClose(ff, ma);
@@ -308,11 +294,11 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     }
 
     /**
-     * Test 10 — syncfs also persists dirty pages after their mapping and fd are closed.
-     * A is mmap-written and then unmapped WITHOUT msync/sync_file_range, so the facade's ordinary
-     * written-data watermark remains unaware of the store. syncfs(B) must still persist A's complete
-     * current image: the kernel keeps dirty MAP_SHARED pages in the page cache after munmap, and syncfs
-     * writes them back filesystem-wide. This is the all-columns-closed epoch case.
+     * Test 10: syncfs also persists dirty pages after their mapping and fd are closed.
+     * A is mmap-written and unmapped without msync/sync_file_range, so the facade's written-data watermark does not
+     * know about the store. syncfs(B) still persists A's complete current image: the kernel keeps dirty MAP_SHARED
+     * pages in the page cache after munmap, and syncfs writes them back filesystem-wide. This is the epoch case
+     * where every column is already closed.
      */
     @Test
     public void test10_syncfsPersistsUnmappedDirtyPages() throws Exception {
@@ -333,7 +319,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     }
 
     /**
-     * Test 11 — a ranged sync persists its range only.
+     * Test 11: a ranged sync persists its range only.
      * Page 0 of A is written through its own mapping and released with msync(MS_ASYNC) + munmap, as a paged
      * WAL column releases a page. Page 1 is written through a second mapping and msync(MS_SYNC)'d, which on
      * Linux is a RANGE fsync: it writes back the dirty pages of that range only. After a crash page 1
@@ -359,7 +345,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     }
 
     /**
-     * Test 12 — sync_file_range persists its range only (with a journal commit after it).
+     * Test 12: sync_file_range persists its range only (with a journal commit after it).
      * Same two pages; page 1 gets msync(MS_ASYNC) + sync_file_range over its own range, and a shared-journal
      * fdatasync of another file journals the extent. Page 1 survives; page 0, never written back, must not.
      */
@@ -385,7 +371,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     }
 
     /**
-     * Test 13 — fdatasync persists pages released before it.
+     * Test 13: fdatasync persists pages released before it.
      * Same two pages, page 1 left with msync(MS_ASYNC), then fdatasync(A): it writes back every dirty page of
      * the file, mapped or already unmapped, so both pages survive. This is the WAL commit barrier covering
      * the pages released during the transaction; a model failing it is too strict.
@@ -410,7 +396,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     }
 
     /**
-     * Test 14 — fsync persists a store made through a mapping that was never msync'd.
+     * Test 14: fsync persists a store made through a mapping that was never msync'd.
      * A is written through a mapping and unmapped with no msync (as a null backfill writes a column through
      * its own mapping), then fsync(A). fsync writes back every dirty page of the file, so A survives. A model
      * that only counts msync'd or write()-n bytes as written is too strict: it drops A and blames a later,
@@ -432,7 +418,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     }
 
     /**
-     * Test 15 — a shrink frees the bytes past the new end for good.
+     * Test 15: a shrink frees the bytes past the new end for good.
      * A holds two durable pages of PRIOR. It shrinks (truncate to zero, truncate to one page, or a copy of an
      * empty file over it, which truncates with O_TRUNC) and grows back to two pages. A freed page 0 is written
      * again through a mapping and released with msync(MS_ASYNC); page 1 is written through a mapping and then
@@ -468,8 +454,6 @@ public class CrashModelSelfCheckTest extends AbstractTest {
         Assert.assertEquals("", failures.toString());
     }
 
-    // === helpers ===
-
     private static final class Mapped {
         final long fd;
         final long addr;
@@ -481,7 +465,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     }
 
     /**
-     * Open RW, allocate SIZE bytes, mmap MAP_RW via the facade, and fill the region with {@code value}.
+     * Opens RW, allocates SIZE bytes, mmaps MAP_RW via the facade, and fills the region with {@code value}.
      */
     private static Mapped mapAndFill(CrashFaultFilesFacade ff, Path path, byte value) {
         long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
@@ -503,7 +487,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     }
 
     /**
-     * Reopen RO and assert every byte equals {@code expected}.
+     * Reopens RO and asserts every byte equals {@code expected}.
      */
     private static void assertAllBytes(String msg, CrashFaultFilesFacade ff, Path path, byte expected) {
         byte[] got = readBack(ff, path);
@@ -513,7 +497,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     }
 
     /**
-     * Reopen RO and assert NOT every byte equals {@code notExpected} (the write was lost / rolled back).
+     * Reopens RO and asserts not every byte equals {@code notExpected} (the write was lost or rolled back).
      */
     private static void assertNoBytes(String msg, CrashFaultFilesFacade ff, Path path, byte notExpected) {
         byte[] got = readBack(ff, path);
@@ -528,7 +512,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     }
 
     /**
-     * Assert that OS page {@code page} of {@code got} holds only {@code NEW} ({@code present}), or not only it.
+     * Asserts that OS page {@code page} of {@code got} holds only {@code NEW} ({@code present}), or not only it.
      */
     private static void assertPage(String msg, byte[] got, int page, boolean present) {
         boolean allNew = true;
@@ -565,7 +549,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             long n = ff.read(rd, buf, size, 0);
             byte[] out = new byte[size];
             for (int i = 0; i < size; i++) {
-                // bytes past EOF (file rolled back shorter than size) read as 0 -> treated as "not the marker".
+                // Bytes past EOF (file rolled back shorter than size) read as 0, which is not the marker.
                 out[i] = i < n ? Unsafe.getUnsafe().getByte(buf + i) : 0;
             }
             return out;
@@ -639,7 +623,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     }
 
     /**
-     * Open A, reserve two OS pages, write page 0 through its own mapping and release it as a paged WAL column
+     * Opens A, reserves two OS pages, writes page 0 through its own mapping and releases it as a paged WAL column
      * does (msync(MS_ASYNC), then munmap), then write page 1 through a second mapping and unmap it unsynced.
      * Returns the open fd; the caller maps page 1 again to sync it.
      */
