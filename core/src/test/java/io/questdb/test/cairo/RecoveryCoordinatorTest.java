@@ -1400,6 +1400,73 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     /**
+     * A conversion that fails with an ordinary error on a start outside adaptive leaves the table a WAL table with its
+     * save point, which recovery skipped for the conversion. The run that follows applies and purges WAL, and the next
+     * start rewinds the table to that save point again, so the WAL after it must still be there.
+     */
+    @Test
+    public void testConversionToNonWalFailedOnNosyncStartKeepsEveryRow() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        final AtomicBoolean failRemoval = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (failRemoval.get() && Utf8s.containsAscii(name, io.questdb.cairo.DurableEpochManifest.FILE_NAME)) {
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        try {
+            assertMemoryLeak(ff, () -> {
+                buildAdaptiveLazyGapTable("conv");
+                final TableToken tt = engine.verifyTableName("conv");
+                execute("ALTER TABLE conv SET TYPE BYPASS WAL");
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                engine.releaseAllWalWriters();
+
+                // A NOSYNC start whose conversion fails on an ordinary error.
+                setCommitMode("nosync");
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                new RecoveryCoordinator(engine).recover();
+                failRemoval.set(true);
+                try {
+                    engine.load();
+                } finally {
+                    failRemoval.set(false);
+                }
+                Assert.assertTrue("precondition: the conversion failed, the table is still a WAL table", engine.verifyTableName("conv").isWal());
+                Assert.assertTrue("precondition: the save point outlived the NOSYNC start", hasSavePointFile(tt));
+
+                // The NOSYNC run: a row, the apply, a WAL purge.
+                execute("INSERT INTO conv VALUES ('2024-09-02T00:00:00.000000Z', 100)");
+                drainWalQueue();
+                engine.releaseAllWalWriters();
+                engine.releaseAllWriters();
+                drainPurgeJob();
+                assertQuery("SELECT count() FROM conv").noRandomAccess().expectSize().returns("count\n8\n");
+
+                // The next start; the conversion succeeds this time.
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                engine.getTxnScoreboardPool().remove(tt);
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                new RecoveryCoordinator(engine).recover();
+                engine.load();
+                Assert.assertFalse("the table must be converted", engine.verifyTableName("conv").isWal());
+                assertQuery("SELECT count() FROM conv").noRandomAccess().expectSize().returns("count\n8\n");
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        }
+    }
+
+    /**
      * A failed flush of the replayed WAL stops the engine, whether it is the conversion's own flush or the apply
      * job's save point inside the replay (at the shipped interval). The production callback halts the process in
      * that call, and the next start, with a healthy disk, rewinds to the save point, replays again and converts
