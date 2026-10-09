@@ -124,12 +124,10 @@ public interface TableTransactionLogFile extends Closeable {
     long endMetadataChangeEntry();
 
     /**
-     * Device-flushes ({@code fdatasync}) the sequencer log files in the durability-ordered
-     * part-before-header sequence (so the header's {@code maxTxn} is never device-visible before the record
-     * it points to). Used by the adaptive GROUP-COMMIT batched flush (Deferred 2): under {@code W > 0} the
-     * per-commit {@code sync0()} does the SYNC-grade {@code msync} (page-cache, ordered) but DEFERS the
-     * device flush; this performs that deferred device flush as the final (seq) step of the batched
-     * data→events→seq fdatasync. A no-op when the log is closed.
+     * Flushes the sequencer log files to the device with {@code fdatasync}, parts before the header, so the
+     * header's {@code maxTxn} never reaches the device before the record it points to. The adaptive group commit
+     * calls this as the last step of its batched flush: with a group window above zero, the per-commit
+     * {@code sync0()} only syncs the page cache with {@code msync}. A no-op when the log is closed.
      */
     void fdatasyncTxnLog();
 
