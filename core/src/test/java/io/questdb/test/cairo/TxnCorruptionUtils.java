@@ -48,8 +48,7 @@ import static io.questdb.cairo.TableUtils.TX_OFFSET_TXN_64;
  * place, nothing truncated, no version bump.
  * <p>
  * The layout is the one documented on {@code TableUtils}: the base header holds the version word (its
- * parity selects area A or B), each area's offset, and -- from the capability change -- the capability
- * magic and watermark.
+ * parity selects area A or B) and each area's offset and sizes.
  */
 public final class TxnCorruptionUtils {
 
@@ -57,12 +56,11 @@ public final class TxnCorruptionUtils {
     }
 
     /**
-     * Makes both areas look like records written before the body checksum existed: checksum slot AND stamp
+     * Makes both areas look like records written before the body checksum existed: checksum slot and stamp
      * zeroed, every other byte untouched.
      * <p>
-     * Both halves matter. Zeroing only the checksum leaves the stamp naming the record, which says a
-     * checksum WAS written for it and has since gone -- a torn write, not a legacy record. That is a
-     * different scenario, and {@link #tearChecksumSlots} is the helper for it.
+     * Zeroing only the checksum would leave the stamp naming the record, which reads as a checksum that has
+     * gone missing: a torn write, not a legacy record. {@link #tearChecksumSlots} is the helper for that case.
      */
     public static void makeAreasLookLegacy(CairoEngine engine, String tableName) {
         final FilesFacade ff = engine.getConfiguration().getFilesFacade();
@@ -177,16 +175,14 @@ public final class TxnCorruptionUtils {
     }
 
     /**
-     * Restores both areas' checksum slots and stamps to values captured before a commit.
+     * Restores both areas' checksum slots and stamps to values captured before a commit, which reproduces a
+     * commit made by a QuestDB that predates the body checksum. That binary's commit path is this one minus the
+     * {@code storeBodyChecksum} call: it writes the body, the symbol counts and the A/B offset and size ints,
+     * then fences and bumps the version word, and never touches {@code [116,128)}. Both the checksum and the
+     * stamp keep what they held before.
      * <p>
-     * This is how a test reproduces a commit made by an older QuestDB. That binary's commit path is
-     * byte-for-byte this one minus the {@code storeBodyChecksum} call: it writes the body, the symbol
-     * counts, the A/B offset/size ints, then fences and bumps the version word -- and never touches
-     * {@code [116,128)}, because on that binary neither the checksum nor the stamp exists there. So both
-     * keep whatever they held before, which is exactly what restoring them produces.
-     * <p>
-     * The stamp must be restored along with the checksum. Leaving a fresh stamp beside a stale checksum
-     * describes no binary that ever existed -- it would claim the old checksum belongs to the new record.
+     * The stamp is restored along with the checksum: a fresh stamp beside a stale checksum would claim that the
+     * old checksum belongs to the new record, which no binary produces.
      */
     public static void writeBodyChecksumSlots(
             CairoEngine engine,
@@ -209,9 +205,9 @@ public final class TxnCorruptionUtils {
     }
 
     /**
-     * Zeroes the body-checksum slot of BOTH A and B areas while leaving their stamps -- and every other byte
-     * -- untouched. That is precisely what a partial page write leaves behind: the stamp still names the
-     * record, so the reader knows a checksum was written for it and is now gone.
+     * Zeroes the body-checksum slot of both A and B areas, leaving their stamps and every other byte untouched,
+     * as a partial page write does: the stamp still names the record, so the reader knows that a checksum
+     * existed for it and is gone.
      */
     public static void tearChecksumSlots(CairoEngine engine, String tableName) {
         final FilesFacade ff = engine.getConfiguration().getFilesFacade();
