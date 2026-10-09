@@ -2273,10 +2273,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final boolean periodRefresh = rangeFrom == Numbers.LONG_NULL;
 
         final MatViewState viewState = stateStore.getViewState(viewToken);
-        // A SURGICAL REPAIR is the one case where a range refresh runs on an INVALID view: the view
-        // was deliberately invalidated so nothing stale is served while exactly this refresh
-        // recomputes the affected window. Any OTHER invalidation still blocks, so this cannot be
-        // used to resurrect a view that genuinely needs a full rebuild.
+        // A surgical repair is the one case where a range refresh runs on an invalid view: the view is
+        // invalidated so nothing stale is served while this refresh recomputes the affected window. Any
+        // other invalidation still blocks, so a view that needs a full rebuild stays invalid.
         if (viewState == null || viewState.isDropped()
                 || (!viewState.isRepairPending() && (viewState.hasPendingInvalidationReason() || viewState.isInvalid()))) {
             return false;
@@ -2383,10 +2382,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     // backoff and counter so a future transient error starts from a fresh budget.
                     viewState.resetRefreshRetry();
                     if (repairing && viewState.isRepairPending()) {
-                        // The repair landed: the stranded window has been recomputed from the
-                        // recovered base, so the view is consistent again. Clear the invalidation
-                        // DURABLY (a state record with invalid=false) -- only now, and only on the
-                        // success path, so a failure anywhere above leaves the view invalid.
+                        // The repair landed: the stranded window is recomputed from the recovered
+                        // base, so the view is consistent. Clear the invalidation durably (a state
+                        // record with invalid=false), and only on this success path, so a failure
+                        // anywhere above leaves the view invalid.
                         fencedResetMatViewState(
                                 walWriter,
                                 viewState.getLastRefreshBaseTxn(),

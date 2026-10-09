@@ -775,14 +775,14 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
-     * Reason string marking an invalidation that a SURGICAL REPAIR can clear. A crash can leave a
-     * view holding aggregates for base txns the RPO window discarded; rather than forcing a FULL
-     * rebuild, the view is invalidated with THIS reason (so nothing stale is ever served -- the
-     * fail-safe direction) and a RANGE refresh recomputes only the affected window, then clears it.
+     * Reason string of an invalidation that a surgical repair can clear. A crash can leave a view holding
+     * aggregates for base txns the crash discarded. Instead of a full rebuild, the view is invalidated with
+     * this reason, so nothing stale is served, and a range refresh recomputes only the affected window and
+     * then clears it.
      * <p>
-     * Durable: it is persisted as the invalidation reason, so a crash DURING a repair is re-detected
-     * on the next load and the repair re-planned. In-memory {@link #repairPending} is what the
-     * refresh job consults, because {@link #markAsInvalid} does not retain the reason.
+     * The reason is persisted, so a crash during a repair is detected again on the next load and the repair
+     * re-planned. The refresh job consults the in-memory {@link #repairPending}, because
+     * {@link #markAsInvalid} does not retain the reason.
      */
     public static final String REPAIR_PENDING_REASON = "surgical repair pending";
     private volatile boolean repairPending;
@@ -808,7 +808,7 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
-     * Arms a surgical repair over [lo, hi]; the view stays INVALID until the range refresh clears it.
+     * Arms a surgical repair over [lo, hi]; the view stays invalid until the range refresh clears it.
      */
     public void markRepairPending(long lo, long hi) {
         repairRangeLo = lo;
