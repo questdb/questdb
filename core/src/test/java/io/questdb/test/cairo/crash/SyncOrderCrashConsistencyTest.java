@@ -8,21 +8,14 @@ import org.junit.Test;
 import java.util.List;
 
 /**
- * Asserts that for the O3 merge path (O3CopyJob.syncColumns), the varchar data file (.d) is
- * fsync'd before the aux/index file (.i) that holds offsets into it.
+ * Checks that on the O3 merge path (O3CopyJob.syncColumns) the varchar data file (.d) is fsynced
+ * before the aux file (.i) that holds offsets into it.
  *
- * <p>The invariant "data durable before the pointer to it" prevents a crash window where the
- * .i file is durable with an offset that points past the durable extent of .d, which would
- * silently return corrupt data on reopen.
+ * <p>Data must be durable before the pointer to it. Otherwise a crash can leave a durable .i whose
+ * offsets point past the durable extent of .d, and the reopened table silently returns corrupt data.
  *
- * <p>This test covers Fix 2 (O3CopyJob.syncColumns block reorder).
- * Fix 1 (BitmapIndexWriter.sync) swaps msync order, not fsync order; msync gives an address
- * rather than an fd, so the facade cannot attribute it to a file without mmap-range tracking.
- * The BitmapIndexWriter swap is therefore covered by code inspection and the existing bitmap
- * index regression suite (BitmapIndexTest), not by this fsync-order probe.
- *
- * <p>RED before Fix 2 (aux synced before data → firstAuxIdx &lt; firstDataIdx).
- * GREEN after Fix 2 (data synced before aux → firstDataIdx &lt; firstAuxIdx).
+ * <p>BitmapIndexWriter.sync orders msync calls, not fsync calls. msync takes an address rather than
+ * an fd, so the facade cannot attribute it to a file and this test does not cover it.
  */
 public class SyncOrderCrashConsistencyTest extends AbstractCrashConsistencyTest {
 
@@ -44,11 +37,12 @@ public class SyncOrderCrashConsistencyTest extends AbstractCrashConsistencyTest 
                     execute("insert into o values (" + (base + i * 10_000_000L) + ", 'inorder-row-" + i + "')");
                 }
 
-                // Clear sync order recorded during the in-order inserts so we only observe the O3 merge.
+                // Clear the sync order recorded during the in-order inserts; the checks below look at the
+                // O3 merge only.
                 crashFf.reset();
 
-                // Insert an OUT-OF-ORDER row: a timestamp before the last in-order row, same partition.
-                // This forces the O3 merge path → O3CopyJob.syncColumns → fsync of .d then .i.
+                // Insert an out-of-order row: a timestamp before the last in-order row, same partition.
+                // This forces the O3 merge path -> O3CopyJob.syncColumns -> fsync of .d then .i.
                 execute("insert into o values (" + (base - 5_000_000L) + ", 'ooo-row')");
 
                 List<String> order = crashFf.getSyncOrder();
@@ -70,8 +64,8 @@ public class SyncOrderCrashConsistencyTest extends AbstractCrashConsistencyTest 
                 }
 
                 if (firstDataIdx < 0 || firstAuxIdx < 0) {
-                    // The O3 path may have both paths under temporary names or no fsync fired.
-                    // Log what we saw and report a diagnostic failure rather than a false pass.
+                    // The O3 path may have both paths under temporary names, or no fsync fired.
+                    // Report the recorded sync order as a diagnostic failure rather than a false pass.
                     StringBuilder sb = new StringBuilder("O3 fsync order did not contain both v.d and v.i. Recorded sync order:\n");
                     for (int i = 0; i < order.size(); i++) {
                         sb.append("  [").append(i).append("] ").append(order.get(i)).append('\n');

@@ -20,65 +20,15 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * A key entry whose value-block offset points PAST the mapped value extent must fail with a clean
- * {@link CairoException}, not take the process down.
- *
- * <h3>Why this exists</h3>
- * Found by the VM crash harness ({@code tools/durability/vm}), not by the modelled suite. Replaying a
- * recorded adaptive W=50ms run to flush boundary 13776 and opening the result reproduced, deterministically:
- * <pre>
- *   TableWriter switched partition [path=/t~1/2024-01-16.1295, rowCount=54000]
- *   TableWriter recovering index [fd=...]
- *   SIGSEGV (0xb) ... J io.questdb.cairo.vm.api.MemoryCR.getLong(J)J
- * </pre>
- * The filesystem was clean (ext4 recovery completed, mounted r/w) and the reconstruction healthy, so the
- * engine was handed a coherent crash state and still walked off a mapping.
- *
- * <h3>The gap</h3>
- * {@link BitmapIndexWriter}'s open path validates both files, but only at HEADER level:
- * <pre>
- *   key:   keyMemSize &lt; keyCount * KEY_ENTRY_SIZE + KEY_FILE_RESERVED   -&gt; throw
- *   value: valueMemSize &gt; ff.length(valueFd)                            -&gt; throw
- *   valueMem.of(..., valueMemSize, ...)                                  // maps exactly valueMemSize
- * </pre>
- * {@code rollbackValues} then trusts a PER-ENTRY pointer with no bounds check at all:
- * <pre>
- *   long blockOffset = keyMem.getLong(offset + KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
- *   BitmapIndexUtils.seekValueBlockRTL(valueCount, blockOffset, valueMem, ...);
- * </pre>
- * Both header guards pass, and the seek then reads outside {@code valueMem}. This is a pointer that is
- * durable ahead of the data it names -- the invariant class adaptive commit is built around -- surfacing on
- * the index rather than on {@code _txn}.
- *
- * <h3>ROOT CAUSE: the bounds check is an assert, so it does not exist in production</h3>
- * <pre>
- *   // AbstractMemoryCR
- *   public long addressOf(long offset) {
- *       offset -= shiftAddressRight;
- *       assert checkOffsetMapped(offset);   // &lt;-- disabled without -ea
- *       return pageAddress + offset;
- *   }
- * </pre>
- * The only thing standing between a bad {@code blockOffset} and a wild pointer is a Java assertion:
- * <ul>
- *   <li><b>under {@code -ea}</b> (how this repo runs tests) it raises {@code AssertionError} -- survivable,
- *       and what this test observes;</li>
- *   <li><b>without {@code -ea}</b> (the shipped binary, and the {@code CrashVerifier} the VM harness runs)
- *       it is a no-op, {@code addressOf} returns {@code pageAddress + offset} unchecked, and
- *       {@code Unsafe.getLong} takes SIGSEGV.</li>
- * </ul>
- * That asymmetry is why no modelled test catches this: every JUnit run has assertions ON, so the failure
- * mode the shipped binary actually exhibits is never the one exercised. It took a real mapping, with
- * assertions off, to show it as a segfault.
- *
- * <h3>The required fix</h3>
- * An explicit bounds check -- {@code blockOffset} within the mapped value extent -- raising
- * {@link CairoException}. An assertion is not a guard for a value read off disk that a crash can corrupt.
- *
- * <h3>State before the fix</h3>
- * This test FAILS with {@code AssertionError} from {@code addressOf} (under {@code -ea}). That is the
- * defect reproduced, and it is the same call chain the VM harness saw as SIGSEGV:
- * {@code rollbackValues -> seekValueBlockRTL -> MemoryCR.getLong -> addressOf}.
+ * A key entry whose value-block offset points past the mapped value extent must make
+ * {@link BitmapIndexWriter#rollbackValues(long)} fail with a clean {@link CairoException}, not take the
+ * process down.
+ * <p>
+ * The writer's open path validates the key and value files only at header level, and {@code rollbackValues}
+ * then follows a per-entry block offset into the value mapping. A crash can leave that offset durable ahead
+ * of the value data it names. The memory layer checks the offset only with an {@code assert} in
+ * {@code AbstractMemoryCR.addressOf}, which does not run without {@code -ea}, so the writer itself must
+ * bounds-check the offset. The test corrupts one key entry while leaving every header field intact.
  */
 public class BitmapIndexRollbackBoundsTest extends AbstractCairoTest {
 
@@ -87,7 +37,7 @@ public class BitmapIndexRollbackBoundsTest extends AbstractCairoTest {
     private static final int N = 4096;
 
     /**
-     * Mirrors BitmapIndexTest#create: the 3-arg writer ctor OPENS an index, it does not create one.
+     * Creates empty key and value files: the writer constructor opens an index, it does not create one.
      */
     private static void create(CairoConfiguration configuration, Path path, CharSequence name, int valueBlockCapacity) {
         int plen = path.size();
@@ -125,10 +75,9 @@ public class BitmapIndexRollbackBoundsTest extends AbstractCairoTest {
                     w.commit();
                 }
 
-                // 2. Corrupt ONE key entry's last-value-block offset so it points
-                //    past the value extent, leaving every HEADER field untouched.
-                //    Both open-time guards therefore still pass -- which is the
-                //    point: the state is reachable, not obviously malformed.
+                // 2. Corrupt one key entry's last-value-block offset so it points
+                //    past the value extent, leaving every header field untouched.
+                //    Both open-time guards therefore still pass.
                 final long entry = BitmapIndexUtils.getKeyEntryOffset(KEY);
                 long valueMemSize;
                 try (MemoryMARW km = Vm.getCMARWInstance()) {
@@ -165,8 +114,8 @@ public class BitmapIndexRollbackBoundsTest extends AbstractCairoTest {
 
     @Test
     public void testHealthyIndexStillRollsBack() throws Exception {
-        // Negative control. A bounds check that rejects VALID indexes would be
-        // worse than none: it would turn every recovery into a failure.
+        // The bounds check must accept a valid index; rejecting one would turn
+        // every recovery into a failure.
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(root)) {
                 final int plen = path.size();

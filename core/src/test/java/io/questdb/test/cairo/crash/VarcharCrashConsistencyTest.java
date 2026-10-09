@@ -13,9 +13,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Proves the harness reproduces the (already fixed) VARCHAR torn-aux bug: zeroing the last aux
- * entry's offset bytes via tornTail and reopening must NOT silently overwrite committed rows.
- * Green on HEAD (the setAppendPosition guard throws); RED on the pre-fix commit (silent overwrite).
+ * Checks that a torn last varchar aux entry is detected rather than applied: zeroing the offset bytes of the last
+ * aux entry with tornTail and reopening must not silently overwrite committed rows. The setAppendPosition guard
+ * throws on this layout.
  */
 public class VarcharCrashConsistencyTest extends AbstractCrashConsistencyTest {
 
@@ -34,7 +34,7 @@ public class VarcharCrashConsistencyTest extends AbstractCrashConsistencyTest {
             }
             markDurableBaseline();
 
-            // queue torn-tail: zero bytes 8-15 of the last committed aux entry (the bug trigger)
+            // queue a torn tail: zero bytes 8-15 of the last committed aux entry
             TableToken tt = engine.verifyTableName("v");
             try (Path aux = new Path()) {
                 aux.of(engine.getConfiguration().getDbRoot()).concat(tt)
@@ -46,7 +46,7 @@ public class VarcharCrashConsistencyTest extends AbstractCrashConsistencyTest {
 
             crashAndReopen();
 
-            // append drives setAppendPosition recovery -> guard must throw, not corrupt
+            // the append drives setAppendPosition recovery; the guard must throw, not corrupt
             boolean detected = false;
             try {
                 execute("insert into v values (" + (rows * 1_000_000L) + ", 'newrow" + SPLIT + "')");
@@ -55,10 +55,8 @@ public class VarcharCrashConsistencyTest extends AbstractCrashConsistencyTest {
             }
             engine.releaseAllWriters();
 
-            // row 0 must never be silently wrong, regardless of detection.
-            // If the reader itself throws CairoException/CairoError (e.g., "varchar is outside of
-            // file boundary") after the writer guard fired, that is also a loud-detection outcome —
-            // still not silent corruption.
+            // row 0 must never be silently wrong, whether or not the writer detected the tear. A reader
+            // CairoException or CairoError (e.g. "varchar is outside of file boundary") also counts as detection.
             try {
                 List<String> actual = readVarcharColumn("v", "x");
                 if (!actual.isEmpty()) {

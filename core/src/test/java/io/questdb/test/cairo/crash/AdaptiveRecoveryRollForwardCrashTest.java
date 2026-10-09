@@ -40,32 +40,28 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * The HEADLINE end-to-end crash oracle for the adaptive durable-epoch ROLL-FORWARD (Plan 3 Task C).
- *
- * <p>This is the keystone proof that ADAPTIVE is crash-safe end to end:
+ * End-to-end crash check of the adaptive save point roll-forward:
  * <ol>
- *   <li>ADAPTIVE table; ingest+apply N txns; fire a durable epoch at seqTxn=K (columns + {@code _txn}
- *       forced durable, {@code _snapshot} + {@code _txn.epoch}/{@code _cv.epoch} recorded).</li>
- *   <li>Ingest+apply M MORE txns LAZILY. After Plan 3 Task C Part 1 the O3-applied columns are
- *       GENUINELY non-durable ({@code O3CopyJob}/PMAR-release column sync skipped under ADAPTIVE), and
- *       so are the {@code _txn}/{@code _cv} pointers that expose them (their commit sites are gated on
- *       {@code CommitMode.appliesColumnSync} too). Only the WAL is fdatasync-durable. The negative
- *       control therefore promotes {@code _txn}/{@code _cv} to durable EXPLICITLY, modelling a kernel
- *       writeback -- see the comment at that call site.</li>
- *   <li>Record the rows a reader sees pre-crash (all N+M).</li>
- *   <li>{@code crash()} — drops the non-durable post-epoch column data; keeps the fsync/msync'd state
- *       (incl. the rewound-able epoch cut) and the durable WAL.</li>
- *   <li>RESTART the engine -> {@link io.questdb.cairo.RecoveryCoordinator} restores the epoch cut, the
- *       boot path re-applies {@code (K, frontier]} from the durable WAL -> ALL N+M rows present and
- *       correct, table NOT suspended.</li>
- *   <li>NEGATIVE CONTROL: the identical crash with recovery DISABLED loses the post-epoch rows (or the
- *       table opens torn) — proving recovery does real work and that Part 1 made the columns truly
- *       lazy (the row loss the Plan-3B test could not reproduce).</li>
+ *   <li>ADAPTIVE table; ingest and apply K txns; a durable epoch fires at seqTxn=K (columns and
+ *       {@code _txn} made durable, a save point written to {@code _epoch.manifest.0/1}).</li>
+ *   <li>Ingest and apply M more txns lazily. The applied columns are not durable (column sync is skipped
+ *       under ADAPTIVE), and neither are the {@code _txn}/{@code _cv} pointers that expose them (their
+ *       commit sites are gated on {@code CommitMode.appliesColumnSync}). Only the WAL is fdatasync-durable.
+ *       The test makes {@code _txn}/{@code _cv} durable explicitly, modelling a kernel writeback; see the
+ *       comment at that call site.</li>
+ *   <li>Record the rows a reader sees before the crash (all K+M).</li>
+ *   <li>{@code crash()} drops the non-durable post-epoch column data and keeps the fsync/msync'd state
+ *       (including the save point) and the durable WAL.</li>
+ *   <li>Restart: {@link io.questdb.cairo.RecoveryCoordinator} restores the save point and the boot path
+ *       re-applies {@code (K, frontier]} from the durable WAL, so all K+M rows are present and correct and
+ *       the table is not suspended.</li>
+ *   <li>Control: the same crash with recovery disabled loses the post-epoch rows or opens torn, which shows
+ *       that recovery does real work and that the applied columns are lazy.</li>
  * </ol>
  *
  * <p>Runs under per-inode journaling ({@code modelSharedJournal=false}) so a journal commit on
- * {@code _txn} does NOT incidentally journal the column files: the post-epoch columns are durable
- * ONLY if something explicitly flushed them, which under truly-lazy adaptive nothing does.
+ * {@code _txn} does not journal the column files as a side effect: the post-epoch columns are durable only
+ * if something explicitly flushed them, which under lazy adaptive apply nothing does.
  */
 public class AdaptiveRecoveryRollForwardCrashTest extends AbstractCrashConsistencyTest {
 
@@ -73,7 +69,7 @@ public class AdaptiveRecoveryRollForwardCrashTest extends AbstractCrashConsisten
     private static final int M = 5; // txns after the epoch (lazily applied)
 
     /**
-     * GREEN path: restart with recovery ENABLED -> all N+M rows rebuilt from the durable WAL.
+     * Restart with recovery enabled: all K+M rows are rebuilt from the durable WAL.
      */
     @Test
     public void testRollForwardRebuildsPostEpochRowsAfterCrash() throws Exception {
@@ -81,10 +77,10 @@ public class AdaptiveRecoveryRollForwardCrashTest extends AbstractCrashConsisten
     }
 
     /**
-     * NEGATIVE CONTROL (RED without the fix): restart with recovery DISABLED. The post-epoch columns
-     * were never made durable (Part 1), so the crash drops them; without recovery rewinding the cut
-     * and re-applying the WAL, the reopened table is MISSING the post-epoch rows (fewer than N+M) or
-     * opens torn/suspended. This proves recovery does real work AND that the columns are truly lazy.
+     * Control: restart with recovery disabled. The post-epoch columns are not durable, so the crash drops
+     * them; without recovery rewinding the cut and re-applying the WAL, the reopened table is missing the
+     * post-epoch rows (fewer than K+M) or opens torn or suspended. This shows that recovery does real work
+     * and that the columns are lazy.
      */
     @Test
     public void testNegativeControlWithoutRecoveryLosesPostEpochRows() throws Exception {
@@ -93,8 +89,8 @@ public class AdaptiveRecoveryRollForwardCrashTest extends AbstractCrashConsisten
 
     private void assertRollForward(boolean recoveryEnabled) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        // Epoch on the FIRST applied batch (interval 0), then we disable it before the post-epoch
-        // batch so those M rows are applied with NO further epoch.
+        // Epoch on the first applied batch (interval 0); the test disables it before the post-epoch
+        // batch so those M rows are applied with no further epoch.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
@@ -110,56 +106,52 @@ public class AdaptiveRecoveryRollForwardCrashTest extends AbstractCrashConsisten
 
                 final TableToken tt = engine.verifyTableName("t");
 
-                // Now DISABLE the epoch so the next M rows are applied LAZILY (no new durable cut).
+                // Disable the epoch so the next M rows are applied lazily (no new durable cut).
                 setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
                 for (int i = K; i < K + M; i++) {
                     execute("insert into t values ('2024-10-01T0" + i + ":00:00.000000Z', " + i + ")");
                 }
                 drainWalQueue();
 
-                // Pre-crash: a reader sees ALL N+M rows.
+                // Before the crash a reader sees all K+M rows.
                 final List<Long> pre = readVs(engine);
                 Assert.assertEquals("pre-crash must see all N+M rows", K + M, pre.size());
 
-                // Model the KERNEL writing back _txn's (and _cv's) dirty mmap pages before the crash, with no
-                // msync from QuestDB. This is what constructs the state recovery exists to repair: the commit
-                // POINTER survives at the post-epoch frontier while the column DATA it exposes does not.
+                // Model the kernel writing back the dirty mmap pages of _txn and _cv before the crash, with no
+                // msync from QuestDB. This builds the state recovery exists to repair: the commit pointer
+                // survives at the post-epoch frontier while the column data it exposes does not.
                 //
-                // It has to be explicit now. It used to happen by accident, because TxWriter.commit /
-                // ColumnVersionWriter.commit read the GLOBAL commit mode and branched on `!= NOSYNC`, so they
-                // msync'd _txn/_cv on EVERY adaptive apply -- the very per-commit cost the lazy-apply gate
-                // exists to remove. With those sites correctly gated on appliesColumnSync, a crash rolls the
-                // pointer back with the data and ordinary WAL replay repairs the table on its own. That is a
-                // strictly better outcome, but it is INCIDENTAL: the kernel may write back a mapped page at
-                // any moment, so the skew is still reachable in production and RecoveryCoordinator is still
-                // what GUARANTEES the rewind. Forcing it here keeps this control testing recovery rather than
-                // a side effect of an unrelated flush.
+                // TxWriter.commit and ColumnVersionWriter.commit do not msync under ADAPTIVE (gated on
+                // appliesColumnSync), so without this a crash rolls the pointer back with the data and plain
+                // WAL replay repairs the table. The kernel may write back a mapped page at any moment, though,
+                // so the skew is reachable in production and RecoveryCoordinator is what guarantees the
+                // rewind; forcing it here keeps the control testing recovery.
                 final String tableDir = engine.getConfiguration().getDbRoot() + java.io.File.separator + tt.getDirName();
                 crashFf.markFileDurable(tableDir + java.io.File.separator + TableUtils.TXN_FILE_NAME);
                 crashFf.markFileDurable(tableDir + java.io.File.separator + TableUtils.COLUMN_VERSION_FILE_NAME);
 
-                // CRASH: drop non-durable column data; keep fsync/msync'd state + the durable WAL.
-                // crashAndReopen() releases all readers + writers (so the next open re-reads from disk).
+                // Crash: drop non-durable column data; keep the fsync/msync'd state and the durable WAL.
+                // crashAndReopen() releases all readers and writers, so the next open re-reads from disk.
                 crashAndReopen();
 
-                // SIMULATE RESTART on the same engine (a second CairoEngine on the same db root spins the
-                // registry reload), in the SAME ORDER a real boot does it:
-                //   1) RecoveryCoordinator.recover() — the startup hook (CairoEngine.completeInit). The
-                //      GREEN path runs it (rewinds _txn/_cv to the epoch cut). The NEGATIVE CONTROL omits
-                //      it (recovery disabled) — modelling the kill-switch / "recovery did not run".
-                //   2) notifyWalTxnRepublisher(tt) — UNINITIALISES the in-memory SeqTxnTracker and triggers
-                //      a rescan, so the boot WAL apply (CheckWalTransactionsJob) RE-INITIALISES writerTxn
-                //      from the on-disk _txn and re-checks the table, exactly as a fresh engine does (the
-                //      live tracker otherwise caches the pre-crash frontier and nothing would re-apply).
+                // Simulate a restart on the same engine (a second CairoEngine on the same db root spins the
+                // registry reload), in the order a real boot uses:
+                //   1) RecoveryCoordinator.recover(), the startup hook (CairoEngine.completeInit). The
+                //      recovery path runs it (rewinds _txn/_cv to the epoch cut). The control omits it,
+                //      modelling the kill switch or "recovery did not run".
+                //   2) notifyWalTxnRepublisher(tt) uninitialises the in-memory SeqTxnTracker and triggers
+                //      a rescan, so the boot WAL apply (CheckWalTransactionsJob) re-initialises writerTxn
+                //      from the on-disk _txn and re-checks the table, as a fresh engine does (the live
+                //      tracker otherwise caches the pre-crash frontier and nothing would re-apply).
                 if (recoveryEnabled) {
                     new io.questdb.cairo.RecoveryCoordinator(engine).recover();
                 }
                 engine.notifyWalTxnRepublisher(tt);
 
-                // Boot WAL apply: GREEN -> tracker re-inits at the rewound epoch seqTxn=K, sees the
-                // sequencer frontier=K+M, re-derives (K, K+M] from the durable WAL. NEGATIVE CONTROL ->
-                // tracker re-inits at the SURVIVING frontier (_txn was never rewound), so nothing is
-                // re-applied and the read hits the columns the crash truncated to the epoch (torn).
+                // Boot WAL apply. With recovery the tracker re-initialises at the rewound epoch seqTxn=K,
+                // sees the sequencer frontier K+M and re-derives (K, K+M] from the durable WAL. In the control
+                // it re-initialises at the surviving frontier (_txn is not rewound), so nothing is re-applied
+                // and the read hits the columns the crash truncated to the epoch (torn).
                 drainWalQueue();
 
                 final boolean suspended = engine.getTableSequencerAPI().isSuspended(tt);
@@ -172,12 +164,10 @@ public class AdaptiveRecoveryRollForwardCrashTest extends AbstractCrashConsisten
                         Assert.assertEquals("row " + i + " value", Long.valueOf(i), post.get(i));
                     }
                 } else {
-                    // NEGATIVE CONTROL: without recovery, the post-epoch column data the crash dropped is
-                    // never re-applied. The table MUST therefore be torn — the full, correct identity
-                    // result {0,1,..,N+M-1} must NOT come back. Acceptable torn outcomes: the K epoch'd
-                    // rows correct but the M post-epoch rows MISSING/WRONG (e.g. read back as zeros), a
-                    // loud read error, fewer rows, or a suspended table. Anything but the full correct
-                    // result proves recovery does real work AND that Part 1 made the columns truly lazy.
+                    // Control: without recovery, the post-epoch column data the crash dropped is never
+                    // re-applied, so the full identity result {0,1,..,K+M-1} must not come back. Acceptable
+                    // torn outcomes: the K epoch'd rows correct but the M post-epoch rows missing or wrong
+                    // (for example read back as zeros), a loud read error, fewer rows, or a suspended table.
                     final boolean fullCorrect = !suspended
                             && post.size() == (K + M)
                             && post.indexOf(TORN_SENTINEL) < 0
@@ -188,9 +178,9 @@ public class AdaptiveRecoveryRollForwardCrashTest extends AbstractCrashConsisten
                                     + ") -> recovery did no real work / columns not lazy",
                             fullCorrect
                     );
-                    // Stronger: the K epoch'd rows survived (durable cut), so the loss is specifically in
-                    // the M POST-epoch rows — at least one of indices [K, K+M) must be missing or wrong.
-                    // (Skip this sharper check on a loud torn read, where no rows are readable at all.)
+                    // The K epoch'd rows survive (durable cut), so the loss is in the M post-epoch rows: at
+                    // least one of indices [K, K+M) must be missing or wrong. This check is skipped on a loud
+                    // torn read, where no rows are readable at all.
                     final boolean tornRead = post.size() == 1 && post.get(0) == TORN_SENTINEL;
                     if (!suspended && !tornRead) {
                         boolean postEpochLost = post.size() < (K + M);
@@ -213,12 +203,12 @@ public class AdaptiveRecoveryRollForwardCrashTest extends AbstractCrashConsisten
         }
     }
 
-    // Returned (as the single element) when a read throws a loud Cairo/JVM error — a torn read is an
-    // acceptable negative-control outcome. Distinct from any real row value (which are 0..K+M-1).
+    // Returned as the single element when a read throws a loud Cairo or JVM error; a torn read is an
+    // acceptable control outcome. Distinct from any real row value (0..K+M-1).
     private static final long TORN_SENTINEL = Long.MIN_VALUE;
 
     /**
-     * Strict read: all rows in order, throwing on any error (used to ASSERT the GREEN recovery path).
+     * Strict read: all rows in order, throwing on any error (for the recovery-enabled assertions).
      */
     private List<Long> readVs(CairoEngine eng) {
         final List<Long> out = new ArrayList<>();
@@ -239,9 +229,9 @@ public class AdaptiveRecoveryRollForwardCrashTest extends AbstractCrashConsisten
     }
 
     /**
-     * Tolerant read for the NEGATIVE CONTROL: a torn post-crash table may throw a loud Cairo/JVM error
-     * (e.g. SIGBUS reading a column truncated below {@code _txn}'s row count) — that is an acceptable
-     * "recovery did real work" outcome, returned as a single {@link #TORN_SENTINEL}.
+     * Tolerant read for the control: a torn post-crash table may throw a loud Cairo or JVM error (for
+     * example SIGBUS reading a column truncated below {@code _txn}'s row count). That is an acceptable
+     * outcome, returned as a single {@link #TORN_SENTINEL}.
      */
     private List<Long> readVsAllowTorn(CairoEngine eng) {
         try {

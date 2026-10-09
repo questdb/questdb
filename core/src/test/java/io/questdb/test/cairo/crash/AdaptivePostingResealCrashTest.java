@@ -146,7 +146,7 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                 discardPurgeQueue();
                 final long epochsBeforeRecovery = TestUtils.getMetricValue(engine, EPOCH_METRIC);
                 recoverAfterCrash(new TableToken[]{token});
-                // The pass's save point was lost when recovery applies its WAL again, which takes a new one.
+                // Recovery takes a new save point when it applies the pass's WAL again, after a lost save point.
                 final boolean savePointLost = TestUtils.getMetricValue(engine, EPOCH_METRIC) > epochsBeforeRecovery;
                 evictPurgeLogScoreboard();
                 Assert.assertFalse(where + ": recovery suspended the table", anyTableSuspended(token));
@@ -169,9 +169,9 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                 if (savePointLost) {
                     assertOneGenerationPerPartitionAndColumn(tableDir, where);
                 } else {
-                    // The pass's save point was durable, so there was nothing to roll back. The generation the pass
-                    // superseded waits on a purge log row, and the purge log is not a WAL table, so ADAPTIVE does
-                    // not make that row durable: another leak, not this one.
+                    // The pass's save point is durable, so recovery rolls nothing back. The generation the pass
+                    // superseded waits on a purge log row that ADAPTIVE does not make durable, since the purge log
+                    // is not a WAL table; this test does not cover that row.
                     savePointKept++;
                 }
                 // A smaller database keeps the next power loss quick.

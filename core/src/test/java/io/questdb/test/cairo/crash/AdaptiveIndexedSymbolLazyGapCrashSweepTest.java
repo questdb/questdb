@@ -45,35 +45,17 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * SP-D Task W2: the ADAPTIVE <b>indexed-symbol lazy-gap</b> crash sweep — drives an adaptive WAL table
- * with a {@code symbol index} column with a sustained lazy gap (K durable-epoch rows -&gt; disable epoch
- * -&gt; M more rows applied LAZILY) through {@link AbstractAdaptiveCrashSweepTest#forEachAdaptiveCrashPoint},
- * and asks whether adaptive recovery is crash-safe not just for row DATA but for the SYMBOL DICTIONARY and
- * its INDEX after a rewind + partial WAL roll-forward.
- *
- * <p>Mirrors {@link AdaptiveO3LazyGapCrashSweepTest} (the proven W1-INV lazy-gap template) structurally —
- * same K/M lazy-gap technique, same driver, same base oracle (identity prefix by {@code v}, not suspended,
- * full restore at k=N, monotonic floor) — but the schema is {@code (ts timestamp, s symbol index, v long)}
- * with {@code s} cycling a small rotating set ({@code {"a","b","c"}}, by {@code v % 3}) so BOTH the symbol
- * dictionary and its bitmap index grow across the lazy gap, and adds the schema-specific oracle clause this
- * task exists to check: INDEX/DATA CONSISTENCY (SP-D1 plan Task W2, review watch-item i).
- *
- * <h3>Why plain (non-O3) timestamps here, unlike the W1/W1-INV template</h3>
- * W1 already isolates the O3-merge-path variable for adaptive recovery. Conflating O3 forcing with the
- * symbol/index variable this task targets would make a future RED result ambiguous (an O3-merge bug vs a
- * symbol/index recovery bug). This workload therefore uses plain ascending per-hour timestamps (a pure
- * tail append every commit, single {@code partition by day} bucket) so a bug found here is unambiguously
- * about indexed-symbol lazy-gap recovery, not O3.
- *
- * <h3>The index/data-consistency oracle (this task's raison d'être)</h3>
- * At every crash point, beyond the base identity-prefix-by-{@code v} check (which here ALSO asserts each
- * surviving row's {@code s} equals the exact symbol it was committed with — a wrong symbol string is
- * dictionary/aux corruption), the oracle additionally reads, for EACH of the three symbol values, {@code
- * select v from t where s = '<val>' order by v} (the INDEXED path) and compares it against the expected
- * set computed from the SAME non-indexed full-table scan already used for the base identity check. Never
- * MORE than expected (an index pointing at a rewound-away/phantom row); never SILENTLY fewer than expected
- * absent a loud torn-read exception (a missed surviving row); never a wrong value at any position (index/data
- * skew). The three per-symbol counts must also sum to the non-indexed scan's total surviving count.
+ * ADAPTIVE lazy-gap crash sweep over an indexed symbol column. A durable epoch is taken over LAZY_K rows,
+ * further epochs are disabled, and LAZY_M more rows are applied lazily, so the symbol dictionary and its
+ * bitmap index grow across the lazy gap. {@link AbstractAdaptiveCrashSweepTest#forEachAdaptiveCrashPoint}
+ * crashes at every durability op of the lazy phase. At each point the oracle checks the identity prefix by
+ * {@code v}, each surviving row's symbol, and that the indexed lookup for every symbol agrees with a
+ * non-indexed scan after the rewind and partial WAL roll-forward.
+ * <p>
+ * The schema is {@code (ts timestamp, s symbol index, v long)}, with {@code s} cycling {@code {"a","b","c"}}
+ * by {@code v % 3} and plain ascending timestamps in one day partition, so every apply is a tail append and
+ * a failure points at indexed-symbol recovery, not O3. {@link AdaptiveO3LazyGapCrashSweepTest} covers the
+ * O3 variable with the same structure.
  */
 public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepTest {
 
@@ -87,7 +69,7 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
      */
     private static final int LAZY_K = 4;
     /**
-     * Post-epoch rows applied LAZILY (epoch disabled) — the sustained lazy gap this sweep crashes into.
+     * Post-epoch rows applied lazily (epochs disabled): the lazy gap this sweep crashes into.
      */
     private static final int LAZY_M = 5;
     /**
@@ -96,22 +78,21 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
     private static final int ROWS = LAZY_K + LAZY_M; // 9 -> 3 rows per symbol (evenly distributed by v%3)
 
     /**
-     * THE HEADLINE, ISOLATED indexed-symbol lazy-gap sweep. Builds a durable epoch at seqTxn=LAZY_K,
-     * disables further epochs, then sweeps a crash across EVERY durability op of the LAZY_M lazily-applied
-     * rows, running the full recovery triple and oracle at each. Asserts, at every crash point k:
+     * Builds a durable epoch at seqTxn=LAZY_K, disables further epochs, then sweeps a crash across every
+     * durability op of the LAZY_M lazy rows, running the recovery triple and the oracle at each. Asserts, at
+     * every crash point k:
      * <ol>
-     *   <li>the table is NOT suspended after recovery;</li>
-     *   <li>no silent corruption — surviving rows ordered by {@code v} are an exact identity prefix
-     *       {@code {0..m-1}}, AND each surviving row's symbol matches {@code SYMBOLS[v % 3]} exactly (a
-     *       loud torn read tolerated; a wrong/absent {@code v} OR a wrong symbol string is a FAILURE);</li>
-     *   <li><b>index/data consistency</b> — see the class javadoc;</li>
-     *   <li>a follow-up write+read succeeds on the recovered table (including extending the symbol
-     *       dictionary with a brand-new distinct value);</li>
-     *   <li>the recovered count is monotonic non-decreasing in k, rising from a short prefix to the full
-     *       set, and equals ALL {@code ROWS} at k=N.</li>
+     *   <li>the table is not suspended after recovery;</li>
+     *   <li>no silent corruption: surviving rows ordered by {@code v} are an exact identity prefix
+     *       {@code {0..m-1}} and each row's symbol is {@code SYMBOLS[v % 3]} (a loud torn read is tolerated,
+     *       a wrong or absent {@code v} or a wrong symbol fails);</li>
+     *   <li>index/data consistency: the indexed lookup for each symbol returns exactly the surviving rows
+     *       with that symbol (see {@link LazyGapIndexedSymbolWorkload#oracle});</li>
+     *   <li>a follow-up write and read succeed on the recovered table, adding a new value to the symbol
+     *       dictionary;</li>
+     *   <li>the recovered count never decreases with k, rises from a short prefix and reaches all
+     *       {@code ROWS} at k=N.</li>
      * </ol>
-     * A suspended table, a zero-fill/gap, a wrong symbol, or an index/data skew here would be a real
-     * adaptive indexed-symbol lazy-gap recovery bug.
      */
     @Test
     public void testIndexedSymbolLazyGapSweepRecoversCleanlyAtEveryCrashPoint() throws Exception {
@@ -127,7 +108,7 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
             Assert.assertEquals("default cap must not truncate this small workload", r.n, r.sweptPoints);
             Assert.assertFalse("small workload must not be truncated", r.truncated);
 
-            // Oracle clause (Bar-2 durable-survival FLOOR): recovered counts non-decreasing in k.
+            // Recovered counts never decrease with k.
             for (int k = 2; k <= r.sweptPoints; k++) {
                 Assert.assertTrue(
                         "recovered counts must be non-decreasing at k=" + k + " ("
@@ -146,7 +127,7 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
                     r.recoveredByK()[1] >= LAZY_K
             );
 
-            // At the LAST crash point k=N, recovery restores ALL committed rows.
+            // At the last crash point k=N, recovery restores all committed rows.
             Assert.assertEquals(
                     "k=N must recover ALL committed rows (W=0 => every returned commit's WAL is durable)",
                     ROWS, r.recoveredByK()[r.sweptPoints]
@@ -155,7 +136,7 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
     }
 
     /**
-     * The rewinding crash point, pinned by phase rather than by an op count: this many lazy rows are applied,
+     * The rewinding crash point, chosen by phase rather than by op count: this many lazy rows are applied,
      * each as its own txn, and the crash fires on the first durability op of the next lazy row's commit,
      * before that row's WAL is durable. Recovery rewinds {@code _txn}/{@code _cv} to the LAZY_K durable-epoch
      * cut and replays the applied rows from the durable WAL, a partial result ({@code LAZY_K} plus this many
@@ -164,29 +145,15 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
     private static final int REWIND_APPLIED_LAZY_ROWS = 2;
 
     /**
-     * DATA BEFORE POINTER, for an indexed-symbol lazy gap.
-     *
-     * <p>This test used to be a negative control asserting that disabling {@code
-     * RecoveryCoordinator.recover()} could NOT reproduce the correct result — i.e. that recovery was the
-     * only thing standing between a crash and lost/zero-filled rows. That was true, and it stopped being
-     * true, for a good reason. {@code _txn} (like {@code _cv} and the index files) used to make its
-     * per-commit flush decision on the INSTANCE-GLOBAL {@code cairo.commit.mode} with a {@code != NOSYNC}
-     * branch, so under ADAPTIVE every apply eagerly msync'd the commit pointer — publishing rows whose
-     * column data was still only lazily durable. Recovery's epoch rewind was what repaired that. Gating
-     * those writes on the table's EFFECTIVE mode made the pointer as lazy as the data it describes, and
-     * with it the torn-forward window disappeared.
-     *
-     * <p>A {@code _txn} flushed on the instance-global mode claims the applied lazy rows past the LAZY_K=4
-     * durable cut (seqTxn 6 at this test's crash point), and the recovery-disabled arm reads them back
-     * zero-filled, {@code [0, 0, 0, 1, 2, 3]} where {@code [0, 1, 2, 3, 4, 5]} is committed. With the
-     * effective-mode gate {@code _txn} sits exactly at the durable cut and both arms read back the same
-     * correct prefix.
-     *
-     * <p>So the comparison the old assertion made can no longer distinguish anything, and re-pinning it
-     * would only pin the absence of a fixed defect. What is asserted instead is the invariant that replaced
-     * it, and which fails loudly if that gate ever regresses: <b>after the crash and before any recovery,
-     * {@code _txn} must not claim a seqTxn beyond the durable epoch cut.</b> Roll-forward's own value is
-     * still proved directly by {@link AdaptiveRecoveryRollForwardCrashTest}.
+     * Data before pointer, for an indexed-symbol lazy gap. {@code _txn}, {@code _cv} and the index files make
+     * their per-commit flush decision on the table's effective commit mode, so under ADAPTIVE the commit
+     * pointer is as lazily durable as the column data it describes. After a crash in the lazy phase, and
+     * before any recovery runs, {@code _txn} must therefore not claim a seqTxn beyond the durable epoch cut.
+     * A {@code _txn} flushed on the instance-wide mode would claim seqTxn 6 at this crash point, past the
+     * LAZY_K=4 cut, and the arm without recovery would read the lazy rows back zero-filled. The same crash
+     * runs with and without {@code RecoveryCoordinator.recover()}; both arms must keep the pointer at or
+     * below the cut and read back the same valid prefix. {@link AdaptiveRecoveryRollForwardCrashTest} covers
+     * roll-forward itself.
      */
     @Test
     public void testCommitPointerNeverPublishedAheadOfDataForIndexedSymbolLazyGap() throws Exception {
@@ -199,9 +166,8 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
                 .$(" withoutRecovery.vs=").$(withoutRecovery.vs.toString())
                 .$(" withoutRecovery.syms=").$(withoutRecovery.syms.toString()).$();
 
-        // WITH recovery (the supported/default configuration): must be a fully valid, correct
-        // identity+symbol prefix — a failure here would be a real bug in the ENABLED-recovery path itself,
-        // not merely a negative-control finding.
+        // With recovery (the default configuration) the result must be a valid identity and symbol prefix;
+        // a failure here is a bug in the recovery path itself.
         assertValidIdentityAndSymbolPrefix("withRecovery", withRecovery);
         Assert.assertTrue(
                 "the crash (recovery enabled) must land on a non-degenerate "
@@ -215,9 +181,7 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
                 LAZY_K + REWIND_APPLIED_LAZY_ROWS, withRecovery.vs.size()
         );
 
-        // WITHOUT recovery: disabled-recovery must not show MORE surviving rows than recovery-enabled at
-        // the identical crash point (a sanity bound; more rows without recovery than with it would be a
-        // different, stranger anomaly, not ordinary data loss).
+        // Sanity bound: without recovery, no more rows survive than with recovery at the same crash point.
         Assert.assertTrue(
                 "recovery-disabled must not show MORE surviving rows than recovery-enabled at the same "
                         + "crash point (withoutRecovery.vs=" + withoutRecovery.vs
@@ -225,11 +189,9 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
                 withoutRecovery.vs.size() <= withRecovery.vs.size()
         );
 
-        // THE INVARIANT (data before pointer), asserted BEFORE the row check below so that a regression
-        // reports its CAUSE rather than its symptom. The crash left _txn at or below the durable epoch cut
-        // in both arms: no reader can be shown a row whose column data was never flushed, recovery or not.
-        // A TxWriter gate on the instance-global mode (`!= NOSYNC`) takes this seqTxn to 6 against a cut of
-        // LAZY_K=4.
+        // Data before pointer, asserted before the row check below so a regression reports its cause rather
+        // than its symptom: with _txn at or below the durable epoch cut in both arms, no reader sees a row
+        // whose column data is not durable, recovery or not.
         for (VsAndSyms arm : new VsAndSyms[]{withRecovery, withoutRecovery}) {
             Assert.assertTrue(
                     "the crash must not leave _txn claiming past the durable epoch cut: the commit pointer "
@@ -239,20 +201,18 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
             );
         }
 
-        // And the consequence: because the pointer is never ahead of its data, the recovery-DISABLED arm is
-        // not merely "tolerable" here -- it is correct. Held to the same bar. This is where the corruption
-        // surfaces (`row 1 silently WRONG v expected:<1> but was:<0>`) at crash points whose torn-forward
-        // pointer slips past the assertion above.
+        // As a consequence the arm without recovery is correct too. A pointer ahead of its data that the
+        // check above misses shows up here as a zero-filled v.
         assertValidIdentityAndSymbolPrefix("withoutRecovery", withoutRecovery);
     }
 
     /**
-     * Runs the LAZY_K/LAZY_M lazy-gap scenario once: LAZY_K rows -&gt; durable epoch -&gt; LAZY_M more rows
-     * applied lazily (epoch disabled) -&gt; crash on the first durability op of the commit of lazy row
-     * {@code appliedLazyRows} (counted from 0), after that many lazy applies -&gt; the
-     * recovery triple with {@code RecoveryCoordinator.recover()} included or skipped per {@code
-     * recoveryOn} -&gt; returns the recovered (v, s) pairs ordered by v (tolerant of a loud torn read).
-     * Leak-safe: drops the table + reclaims per-cycle fds before returning, mirroring the sweep driver.
+     * Runs the lazy-gap scenario once, outside the sweep driver: LAZY_K rows -&gt; durable epoch -&gt; LAZY_M
+     * rows applied lazily (epochs disabled) -&gt; a crash on the first durability op of the commit of lazy row
+     * {@code appliedLazyRows} (counted from 0) -&gt; the recovery triple, with
+     * {@code RecoveryCoordinator.recover()} run or skipped per {@code recoveryOn}. Returns the recovered
+     * (v, s) pairs ordered by v (tolerating a loud torn read) and the pre-recovery {@code _txn} seqTxn.
+     * Drops the table and closes per-cycle fds before returning, as the sweep driver does.
      */
     private VsAndSyms runLazyGapCrashScenario(int appliedLazyRows, boolean recoveryOn) throws Exception {
         final VsAndSyms[] resultBox = new VsAndSyms[1];
@@ -277,7 +237,7 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
                 }
                 drainWalQueue();
 
-                // Disable further epochs: the next LAZY_M rows are applied LAZILY (no new durable cut).
+                // Disable further epochs: the next LAZY_M rows are applied lazily (no new durable cut).
                 setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
 
                 final Set<Long> fdBaseline = new HashSet<>(crashFf.noCacheOpenFdsSnapshot());
@@ -309,7 +269,7 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
                 LOG.info().$("[indexed-symbol lazy-gap negative control] recovery=").$(recoveryOn)
                         .$(" crash at k=").$(crashOp - base).$(" of the lazy batch: ").$(crashedOp).$();
 
-                // Driver-faithful recovery EXCEPT the recovery-enabled flag is the toggled variable.
+                // The sweep driver's recovery steps, except that recover() runs only when recoveryOn is set.
                 engine.releaseAllReaders();
                 engine.releaseAllWriters();
                 engine.releaseAllWalWriters();
@@ -318,7 +278,7 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
                     engine.getTableSequencerAPI().getTxnTracker(tt).setUnsuspended();
                 }
                 engine.getTxnScoreboardPool().remove(tt); // fresh-restart model (see the driver's javadoc)
-                // The commit pointer as the crash left it, BEFORE anything gets a chance to repair it.
+                // The commit pointer as the crash left it, before anything gets a chance to repair it.
                 preRecoverySeqTxn[0] = readOnDiskTxnSeqTxn(tt, PartitionBy.DAY);
                 if (recoveryOn) {
                     new RecoveryCoordinator(engine).recover();
@@ -376,7 +336,7 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0"); // W = 0 (synchronous)
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);        // setup re-affirms/flips per phase
-        // Recovery roll-forward left at its default (enabled) — we WANT it to run and prove it recovers.
+        // Recovery roll-forward stays at its default (enabled), so the sweep exercises it.
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
             body.run();
@@ -397,7 +357,7 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
     }
 
     /**
-     * count(*) — the committed row count from table metadata (reliable even if a column read would tear).
+     * count(*): the committed row count from table metadata (reliable even if a column read would tear).
      */
     private long rowCount(String table) {
         try (RecordCursorFactory f = select("select count() from " + table)) {
@@ -441,10 +401,9 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
     }
 
     /**
-     * Read {@code select v, s ... order by v} (the NON-indexed full-table scan — no predicate on {@code
-     * s}), returning the (v, s) pairs gathered so far. A loud torn read (CairoException/CairoError/SIGBUS
-     * -InternalError on a truncated column) is an acceptable crash outcome — the (possibly partial) result
-     * read before the tear is returned rather than rethrown.
+     * Reads {@code select v, s ... order by v} (the non-indexed full-table scan, no predicate on {@code s}) and
+     * returns the (v, s) pairs gathered. A loud torn read (CairoException/CairoError/SIGBUS-InternalError on a
+     * truncated column) is an acceptable crash outcome: the partial result read before the tear is returned.
      */
     private VsAndSyms readVAndSOrderedByVAllowTorn(String table) {
         final List<Long> vs = new ArrayList<>();
@@ -467,9 +426,9 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
     }
 
     /**
-     * Read {@code select v from t where s = '<sym>' order by v} — the INDEXED path — returning the values
-     * gathered so far and whether a loud torn-read exception occurred (distinguished from a legitimate,
-     * fully-completed short read, so the oracle can tell "torn" apart from a SILENT under/over-count).
+     * Reads {@code select v from t where s = '<sym>' order by v} through the index and returns the values
+     * gathered and whether a loud torn-read exception occurred, so the oracle can tell a torn read from a
+     * silent under- or over-count.
      */
     private TornRead readVForSymbolOrderedByVAllowTorn(String table, String sym) {
         final List<Long> out = new ArrayList<>();
@@ -490,9 +449,9 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
     }
 
     /**
-     * W2 — the indexed-symbol lazy-gap workload. {@code setup} builds the durable epoch prefix (LAZY_K
-     * rows with the epoch enabled, then the epoch DISABLED), so the driver's swept {@code commit} phase is
-     * the LAZY_M lazily-applied rows — a sustained lazy gap over a growing symbol dictionary + index.
+     * The indexed-symbol lazy-gap workload. {@code setup} builds the durable epoch prefix (LAZY_K rows with
+     * epochs enabled, then disables epochs), so the driver's swept {@code commit} phase is the LAZY_M rows,
+     * applied lazily over a growing symbol dictionary and index.
      */
     private final class LazyGapIndexedSymbolWorkload implements AdaptiveCrashWorkload {
         private String table;
@@ -501,7 +460,7 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
         @Override
         public TableToken[] setup(int iteration) throws Exception {
             table = "sym_lazygap";
-            // Epoch ENABLED for the LAZY_K-row prefix so a durable cut is taken at seqTxn=LAZY_K.
+            // Epochs enabled for the LAZY_K-row prefix, so a durable cut is taken at seqTxn=LAZY_K.
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
             execute("drop table if exists " + table);
             drainWalQueue();
@@ -509,15 +468,15 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
                     + "partition by day wal");
             tt = engine.verifyTableName(table);
 
-            // LAZY_K rows -> apply -> durable epoch at seqTxn=LAZY_K. Plain ascending timestamps (pure
-            // tail append) -- see the class javadoc for why this workload does NOT force O3.
+            // LAZY_K rows -> apply -> durable epoch at seqTxn=LAZY_K. Plain ascending timestamps (tail
+            // append), so this workload never goes through O3.
             for (int i = 0; i < LAZY_K; i++) {
                 insertRow(table, i);
             }
             drainWalQueue();
 
-            // DISABLE further epochs: the driver's swept commit() phase (the LAZY_M rows) is applied
-            // LAZILY, building the sustained gap between the durable cut and the frontier.
+            // Disable further epochs: the driver's swept commit() phase (the LAZY_M rows) is applied
+            // lazily, building the gap between the durable cut and the frontier.
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
             return new TableToken[]{tt};
         }
@@ -525,15 +484,15 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
         @Override
         public void commit() throws Exception {
             for (int i = LAZY_K; i < LAZY_K + LAZY_M; i++) {
-                // v=LAZY_K..ROWS-1, applied LAZILY (epoch disabled) so the columns (data, symbol dict,
-                // index) are non-durable until recovery re-derives them. W=0: the WAL commit fdatasyncs
-                // synchronously -> an armed crash propagates here.
+                // v=LAZY_K..ROWS-1, applied lazily (epochs disabled), so the columns (data, symbol dictionary,
+                // index) are not durable until recovery re-derives them. W=0: the WAL commit fdatasyncs
+                // synchronously, so an armed crash propagates here.
                 insertRow(table, i);
-                // ADAPTIVE lazy apply (no epoch) -> _txn msync only. An armed crash here is swallowed by
-                // ApplyWal2TableJob's catch(Throwable) into a table SUSPEND (no throw).
+                // ADAPTIVE lazy apply with no epoch: the table files are not synced. An armed crash here is
+                // swallowed by ApplyWal2TableJob's catch(Throwable) and suspends the table (no throw).
                 drainWalQueue();
                 if (anyTableSuspended(tt)) {
-                    return; // stop as a real power loss would, so we don't durably mask the injection point
+                    return; // stop as a real power loss would, so the injection point is not durably masked
                 }
             }
         }
@@ -546,9 +505,9 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
                     engine.getTableSequencerAPI().isSuspended(tt)
             );
 
-            // (2) No silent corruption: surviving rows ORDERED BY v are an exact identity PREFIX {0..m-1},
-            // AND each surviving row's SYMBOL matches SYMBOLS[v % 3] exactly. A loud torn read is tolerated
-            // (prefix read so far); a wrong/absent v OR a wrong symbol string is a FAILURE.
+            // (2) No silent corruption: surviving rows ordered by v are an exact identity prefix {0..m-1},
+            // and each surviving row's symbol is SYMBOLS[v % 3]. A loud torn read is tolerated (prefix read
+            // so far); a wrong or absent v or a wrong symbol string fails.
             final VsAndSyms base = readVAndSOrderedByVAllowTorn(table);
             final int m = base.vs.size();
             for (int i = 0; i < m; i++) {
@@ -578,11 +537,10 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
                     recovered >= LAZY_K
             );
 
-            // (3) INDEX/DATA CONSISTENCY — for each symbol value, the indexed lookup must return EXACTLY
-            // the v's committed with that symbol among the m surviving (base-scan-confirmed) rows: never
-            // MORE (an index pointing at a rewound-away/phantom row -> CORRUPTION); absent a loud torn-read
-            // exception on the indexed query itself, never fewer either (a SILENTLY missed surviving row ->
-            // CORRUPTION); and never a wrong value at any position (index/data skew -> CORRUPTION).
+            // (3) Index/data consistency: for each symbol, the indexed lookup returns exactly the v values
+            // committed with that symbol among the m surviving rows of the base scan. More rows means an index
+            // entry for a rewound or phantom row; fewer rows without a loud torn read on the indexed query
+            // means a silently missed surviving row; a wrong value at any position means index/data skew.
             int sumIndexed = 0;
             boolean anySymbolTorn = false;
             for (String sym : SYMBOLS) {
@@ -618,7 +576,7 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
                     sumIndexed += actual.values.size();
                 }
             }
-            // Cross-check the total via the NON-indexed scan: if no per-symbol query tore, the three
+            // Cross-check the total via the non-indexed scan: if no per-symbol query tore, the three
             // indexed per-symbol counts must sum to exactly the non-indexed scan's surviving row count (m).
             if (!anySymbolTorn) {
                 Assert.assertEquals(
@@ -633,10 +591,9 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
                 Assert.assertEquals("k=N: the full identity set must read back clean", ROWS, m);
             }
 
-            // (4) Clean reopen: a follow-up write + read must succeed on the recovered table, INCLUDING
-            // extending the (possibly recovered) symbol dictionary with a brand-new distinct value. Use a
-            // LATER day (a fresh partition, plain append) so the follow-up check is independent of the
-            // lazy-gap path.
+            // (4) A follow-up write and read succeed on the recovered table and add a new value to the
+            // recovered symbol dictionary. The row goes on a later day (a new partition, plain append), so the
+            // check does not depend on the lazy-gap path.
             execute("insert into " + table + " values ('2024-10-09T00:00:00.000000Z', 'z', 999)");
             drainWalQueue();
             Assert.assertEquals(

@@ -48,9 +48,9 @@ import java.util.List;
  * The writer's commit gets NO_TXN, replays the ALTER, and, because the pending rows are not the first in
  * their segment, rolls them into a new segment: it copies the rows, re-creates the txn's event record there,
  * and only then sequences the txn. Every column DDL that the writer replays does that, not only ADD COLUMN.
- * The pre-sequencing barriers of the commit ran against the OLD segment, so everything the roll wrote needs
- * its own before the sequencer names it: the rolled event record (under ADAPTIVE with a group-commit window
- * it was only MS_ASYNC'd), the new segment's file names and its entry in the WAL directory.
+ * The pre-sequencing barriers of the commit ran against the old segment, so everything the roll writes needs
+ * its own barrier before the sequencer names it: the rolled event record (under ADAPTIVE with a group-commit
+ * window it is only MS_ASYNC'd), the new segment's file names and its entry in the WAL directory.
  * <p>
  * Nothing is written back by the kernel here: only the product's own barriers make bytes durable. The txn
  * was acknowledged (ADAPTIVE) or its commit returned (SYNC), so it must survive the crash. So must the

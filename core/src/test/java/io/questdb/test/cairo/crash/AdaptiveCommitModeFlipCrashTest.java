@@ -44,32 +44,26 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * The MIRROR of {@link AdaptiveRecoveryRollForwardCrashTest}: what happens to a table that crashed while
- * ADAPTIVE when the operator turns adaptive OFF and restarts.
+ * Counterpart of {@link AdaptiveRecoveryRollForwardCrashTest}: a table that crashed while adaptive, restarted
+ * after the operator turns adaptive off.
  *
- * <p>{@code RecoveryCoordinator.recover()} cannot decide whether to roll a table forward from the CURRENT
- * global {@code cairo.commit.mode} alone. That is a statement about how the table will be written NEXT, not about how
- * its materialized state was left. A table whose columns were applied lazily under adaptive and whose
- * process then died is torn ahead of its durable epoch regardless of what the config file says on the way
- * back up; skipping the roll-forward serves that torn state.
+ * <p>The current {@code cairo.commit.mode} says how the table will be written next, not how the crash left
+ * its state. A table whose columns were applied lazily before the crash is torn ahead of its durable epoch
+ * whatever the restart mode, so {@code RecoveryCoordinator.recover()} must still roll it forward.
  *
- * <p>Both arms below crash identically. They differ ONLY in the global mode the engine restarts under:
+ * <p>The two roll-forward tests crash identically and differ only in the restart mode:
  * <ul>
- *   <li>{@link #testCrashedAdaptiveTableRollsForwardWhenGlobalStaysAdaptive} — restarts adaptive. This is
- *       the arm {@link AdaptiveRecoveryRollForwardCrashTest} already covers; it is repeated here as the
- *       CONTROL that proves this harness really does construct a lazily-torn table.</li>
- *   <li>{@link #testCrashedAdaptiveTableRollsForwardAfterGlobalFlipToNosync} — restarts nosync. The rows
- *       must survive here too: the durable WAL still holds them and the durable epoch still names the cut
- *       to replay from. The table's FUTURE durability is nosync's business; its PAST is not.</li>
+ *   <li>{@link #testCrashedAdaptiveTableRollsForwardWhenGlobalStaysAdaptive} restarts adaptive. It is the
+ *       control that shows the harness really constructs a lazily torn table.</li>
+ *   <li>{@link #testCrashedAdaptiveTableRollsForwardAfterGlobalFlipToNosync} restarts nosync. The rows
+ *       survive here too: the durable WAL still holds them and the durable epoch still names the cut to
+ *       replay from.</li>
  * </ul>
  *
- * <p>Do not confuse this with a CLEAN downgrade, which
- * {@code AdaptiveUpgradeCompatTest#testDowngradeThenRebootPreservesDataAndIgnoresStaleEpoch} pins in the
- * opposite direction: there the running writer reconciled the table before the mode changed, the WAL purge
- * floor then dropped to the applied seqTxn, and rolling back to the frozen epoch would replay purged WAL.
- * The two cases are only distinguishable by a DURABLE record of the mode the table was last written under
- * — which is what the fix adds. A clean downgrade records the new mode after making the state durable; a
- * crash leaves the record saying ADAPTIVE.
+ * <p>Recovery decides from the table's save point, not from the instance mode. A start under a non-adaptive
+ * mode rolls the table forward and then removes the save point, so a later start cannot rewind onto WAL
+ * that the nosync purge floor has released ({@link #testDowngradedTableStopsRewindingOnceReconciled}). The
+ * clean downgrade, without a crash, is covered in {@code AdaptiveUpgradeCompatTest}.
  */
 public class AdaptiveCommitModeFlipCrashTest extends AbstractCrashConsistencyTest {
 
@@ -89,16 +83,12 @@ public class AdaptiveCommitModeFlipCrashTest extends AbstractCrashConsistencyTes
     }
 
     /**
-     * The repair must also CONVERGE. Rolling forward a table that no longer resolves to adaptive is right
-     * once; leaving it enrolled afterwards would make every subsequent startup rewind to an epoch that
-     * nosync never advances — and once the WAL purge floor drops to the applied seqTxn (the epoch floor
-     * applies only under ADAPTIVE), the WAL that rewind needs is gone. That is the loss
-     * {@code AdaptiveUpgradeCompatTest#testDowngradeThenRebootPreservesDataAndIgnoresStaleEpoch} guards.
-     *
-     * <p>So the start that rolls the table forward also takes it out of adaptive: recovery makes it durable and
-     * removes its save point. This test proves the whole sequence: crash adaptive, flip to nosync, recover, keep writing under nosync,
-     * purge the WAL under the nosync floor, restart again — everything survives, and the second restart is
-     * not relying on the epoch at all.
+     * The repair must also converge. A table left enrolled after the roll-forward would rewind at every later
+     * start to an epoch that nosync never advances, and once the WAL purge floor drops to the applied seqTxn
+     * (the epoch floor applies only under ADAPTIVE), the WAL that rewind needs is gone. The start that rolls
+     * the table forward therefore makes it durable and removes its save point. The test runs the whole
+     * sequence: crash adaptive, flip to nosync, recover, keep writing under nosync, purge the WAL under the
+     * nosync floor, restart again. Every row survives, and the second restart does not rely on the epoch.
      */
     @Test
     public void testDowngradedTableStopsRewindingOnceReconciled() throws Exception {
@@ -132,7 +122,7 @@ public class AdaptiveCommitModeFlipCrashTest extends AbstractCrashConsistencyTes
                 drainWalQueue();
                 Assert.assertEquals("roll-forward must rebuild every row", K + M, readVs(engine).size());
 
-                // The table is now reconciled: the start made it durable and removed its save point.
+                // The table is reconciled: the start made it durable and removed its save point.
                 try (Path p = new Path()) {
                     p.of(engine.getConfiguration().getDbRoot()).concat(tt);
                     Assert.assertFalse(
@@ -143,7 +133,7 @@ public class AdaptiveCommitModeFlipCrashTest extends AbstractCrashConsistencyTes
                 }
 
                 // Keep writing under nosync, then purge the WAL under the nosync floor: the epoch is frozen
-                // and now strictly below the live cut, so a rewind to it would be observably lossy.
+                // strictly below the live cut, so a rewind to it would lose rows.
                 for (int i = K + M; i < K + M + 3; i++) {
                     execute("insert into t values ('2024-10-02T0" + (i - K - M) + ":00:00.000000Z', " + i + ")");
                 }
@@ -195,7 +185,7 @@ public class AdaptiveCommitModeFlipCrashTest extends AbstractCrashConsistencyTes
                 drainWalQueue();
                 final TableToken tt = engine.verifyTableName("t");
 
-                // Disable the epoch so the next M rows are applied LAZILY — non-durable columns above the cut.
+                // Disable the epoch so the next M rows are applied lazily: non-durable columns above the cut.
                 setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
                 for (int i = K; i < K + M; i++) {
                     execute("insert into t values ('2024-10-01T0" + i + ":00:00.000000Z', " + i + ")");
@@ -203,9 +193,8 @@ public class AdaptiveCommitModeFlipCrashTest extends AbstractCrashConsistencyTes
                 drainWalQueue();
                 Assert.assertEquals("pre-crash must see all K+M rows", K + M, readVs(engine).size());
 
-                // Model the kernel writing back _txn/_cv without an msync from QuestDB: the commit POINTER
-                // survives at the post-epoch frontier while the column DATA it exposes does not. Same
-                // construction as AdaptiveRecoveryRollForwardCrashTest — see the rationale there.
+                // Model the kernel writing back _txn/_cv without an msync from QuestDB: the commit pointer
+                // survives at the post-epoch frontier while the column data it exposes does not.
                 final String tableDir = engine.getConfiguration().getDbRoot() + java.io.File.separator + tt.getDirName();
                 crashFf.markFileDurable(tableDir + java.io.File.separator + TableUtils.TXN_FILE_NAME);
                 crashFf.markFileDurable(tableDir + java.io.File.separator + TableUtils.COLUMN_VERSION_FILE_NAME);

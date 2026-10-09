@@ -47,52 +47,16 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * SP-D — the DECISIVE A/B that classifies the {@link AdaptiveSoakCrashTest} WAL-purge-floor finding.
- *
- * <p>The soak observed that under adaptive commit the WAL purge floor does not advance across the
- * harness's IN-PROCESS {@code resetForReboot}: each crash&rarr;recover&rarr;continue cycle retains ONE
- * fully-applied single-segment reboot-orphan {@code walN} dir (physically purgeable, but
- * {@code WalPurgeJob.broadSweep}'s {@code getCursor(safeToPurgeTxn)}-derived {@code nextToApply} keeps
- * it). All data oracles pass. The open question the soak flagged: would these orphans <b>accumulate
- * across reboots in production</b> (a real disk-hygiene leak), or is the retention an artifact of the
- * in-process test reboot model?
- *
- * <h3>The A/B (both arms mint an identical orphan via the same W=0 crash + in-process recover)</h3>
+ * Proves that recovery seeds the adaptive WAL purge floor from the restored epoch cut, so a fully applied
+ * {@code walN} directory a crash leaves behind (a reboot orphan) goes on the first purge after recovery and
+ * cannot accumulate across restarts. Two restart models mint the same orphan, with a power loss in an
+ * uncommitted WAL tail followed by in-process recovery:
  * <ul>
- *   <li><b>Model A — in-process {@code resetForReboot}</b> (what the soak does):
- *     <ol>
- *       <li>{@code A1}: purge immediately after recover &mdash; orphan <b>RECLAIMED</b>;</li>
- *       <li>{@code A2}: resume ingest (write &rarr; apply &rarr; a new durable epoch) then purge &mdash;
- *           orphan <b>STAYS RECLAIMED</b>.</li>
- *     </ol></li>
- *   <li><b>Model B — a REAL fresh-process restart</b> (close nothing of the orphan; open a BRAND-NEW
- *       {@link CairoEngine} on the SAME db-root, so {@code completeInit()} &rarr;
- *       {@code RecoveryCoordinator.recover()} runs exactly as a rebooted process):
- *     <ol>
- *       <li>{@code B1}: purge right after boot (quiescent) &mdash; orphan <b>RECLAIMED</b>, from the same
- *           seeded {@code durableEpochSeqTxn} as the in-process arm, <b>IDENTICAL</b> to Model A;</li>
- *       <li>{@code B2}: resume ingest then purge &mdash; orphan <b>STAYS RECLAIMED</b>.</li>
- *     </ol></li>
+ *   <li>Model A, the in-process {@code resetForReboot}: a purge right after recovery reclaims the orphan (A1),
+ *       and it stays reclaimed after more ingest and a new durable epoch (A2).</li>
+ *   <li>Model B, a new {@link CairoEngine} on the same db root, whose start runs recovery as a restarted
+ *       process does: the seeded floor equals Model A's, and the same two purges reclaim the orphan (B1, B2).</li>
  * </ul>
- *
- * <h3>Verdict — NO retention window (not a fresh-process leak; not accumulating)</h3>
- * A fresh process behaves <b>identically</b> to the in-process reset, and neither retains the orphan at
- * all. {@code RecoveryCoordinator}'s {@code pinRecoveredEpoch()} SEEDS {@code durableEpochSeqTxn} (the
- * adaptive WAL purge floor) from the restored {@code _snapshot} epoch cut, so the floor is correct the
- * instant recovery finishes and the very first purge &mdash; even on a table that never ingests again
- * &mdash; reclaims the sub-epoch WAL.
- *
- * <p>This supersedes the original SP-D classification. The soak's ONE-orphan-per-cycle observation came
- * from the floor being in-memory, defaulting to 0 (&ldquo;retain all WAL&rdquo;) and NOT restored on
- * boot, so only {@code ApplyWal2TableJob.advance()} ever set it and {@code getCursor(0)} listed every
- * on-disk {@code walN} as {@code nextToApply}; the retention was real but transient, lasting until the
- * first post-reboot durable epoch. Seeding the floor during recovery &mdash; recorded there as an
- * optional, provably-safe hygiene improvement and since implemented &mdash; removes that window
- * entirely, which is why {@code A1}/{@code B1} now reclaim where they previously retained.
- *
- * <p>This test PINS the seeded-floor property so a regression that reintroduced the retention window
- * (or, worse, turned it into a genuine cross-reboot leak) trips. See {@code AdaptiveSoakCrashTest}'s
- * WAL-dir growth note, which cross-references this classification.
  */
 public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashSweepTest {
 
@@ -108,27 +72,26 @@ public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashS
     public void testFreshRebootMatchesInProcessResetAndSelfHeals() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
-        // Epoch on every apply batch, so the durable epoch is deterministic and the "first post-boot
-        // epoch" that clears the transient retention is the first resumed-ingest apply.
+        // An epoch on every apply batch makes the durable epoch deterministic: the first resumed-ingest
+        // apply takes a new one.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
             runWithCrashFacade(() -> {
-                // ============ MODEL A: in-process resetForReboot (the soak's reboot model) ============
+                // Model A: an in-process resetForReboot.
                 final int recoveredA = buildOrphanInProcess("ta");
                 final TableToken ta = engine.verifyTableName("ta");
                 final List<String> aRecover = listWalDirs(ta);
                 final long aFloorAfterRecover = durableEpoch(engine, ta);
                 logState("A after in-process recover", ta, aRecover);
                 Assert.assertFalse("A: a reboot-orphan walN must exist after the crash+recover", aRecover.isEmpty());
-                // The purge floor is SEEDED from the restored durable epoch cut by
-                // RecoveryCoordinator.pinRecoveredEpoch(), so it is already correct the instant recovery
-                // finishes — it is no longer the in-memory 0 ("retain all WAL") it used to default to.
+                // RecoveryCoordinator.pinRecoveredEpoch() seeds the purge floor from the restored durable
+                // epoch cut, so the floor is correct as soon as recovery finishes.
                 Assert.assertTrue("A: recovery must seed the purge floor (durableEpochSeqTxn) from the "
                                 + "restored epoch cut, not leave it at 0; got " + aFloorAfterRecover,
                         aFloorAfterRecover > 0L);
 
-                // A1: purge immediately after recover (quiescent — floor still 0). RETAINS (soak finding).
+                // A1: a purge right after recovery, with no ingest, reclaims the orphan.
                 forceWalPurge(engine);
                 final List<String> aQuiescentPurge = listWalDirs(ta);
                 logState("A1 in-process quiescent purge", ta, aQuiescentPurge);
@@ -137,7 +100,7 @@ public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashS
                                 + "for the soak to observe; got " + aQuiescentPurge,
                         aQuiescentPurge.isEmpty());
 
-                // A2: resume ingest (new durable epoch advances the floor) then purge. RECLAIMS.
+                // A2: resume ingest, which takes a new durable epoch, then purge: the orphan stays reclaimed.
                 resumeIngest(engine, ta, recoveredA);
                 Assert.assertTrue("A2: resumed ingest must advance the purge floor past the orphan",
                         durableEpoch(engine, ta) > 0L);
@@ -148,7 +111,7 @@ public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashS
                                 + "forward, so a post-reboot epoch cannot resurrect WAL the purge already freed",
                         aAfterIngest.isEmpty());
 
-                // ============ MODEL B: a REAL fresh-process restart on the SAME db-root ============
+                // Model B: a new engine on the same db root, as a restarted process.
                 final int recoveredB = buildOrphanInProcess("tb");
                 final TableToken tb = engine.verifyTableName("tb");
                 final List<String> bRecover = listWalDirs(tb);
@@ -157,9 +120,8 @@ public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashS
                 Assert.assertEquals("B and A must mint an IDENTICAL orphan (same crash + recover path)",
                         aRecover.size(), bRecover.size());
 
-                // Release every handle so nothing is locked/mapped, then open a BRAND-NEW engine on the
-                // SAME db-root — completeInit() runs RecoveryCoordinator.recover() exactly as a rebooted
-                // process does. This is the faithful production-restart model the A/B hinges on.
+                // Release every handle so nothing stays locked or mapped, then open a new engine on the
+                // same db root: its completeInit() runs RecoveryCoordinator.recover() as a restarted process does.
                 releaseEngineHandles();
 
                 final List<String> bFreshQuiescentPurge;
@@ -171,14 +133,12 @@ public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashS
                     bFreshFloorAfterBoot = durableEpoch(restarted, rtb);
                     LOG.info().$("[EXP] B fresh engine post-boot: durableEpochSeqTxn=").$(bFreshFloorAfterBoot)
                             .$(" seqTxn=").$(restarted.getTableSequencerAPI().getTxnTracker(rtb).getSeqTxn()).I$();
-                    // DECISIVE: a fresh process resets the floor to 0 exactly like the in-process reset.
-                    // DECISIVE: a fresh process seeds the floor to the SAME restored epoch cut as the
-                    // in-process reset — the two reboot models remain indistinguishable.
+                    // A new process seeds the floor from the same restored epoch cut as the in-process reset.
                     Assert.assertEquals("B: a REAL fresh-process restart must seed the purge floor from the "
                                     + "restored epoch cut exactly like the in-process reset",
                             aFloorAfterRecover, bFreshFloorAfterBoot);
 
-                    // B1: purge right after boot (quiescent). RETAINS — identical to the in-process arm.
+                    // B1: a purge right after the start, with no ingest, reclaims the orphan, as in A1.
                     forceWalPurge(restarted);
                     bFreshQuiescentPurge = listWalDirs(tb);
                     LOG.info().$("[EXP] B1 fresh-engine quiescent purge: wals=").$(bFreshQuiescentPurge.toString()).I$();
@@ -188,7 +148,7 @@ public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashS
                                     + bFreshQuiescentPurge,
                             bFreshQuiescentPurge.isEmpty());
 
-                    // B2: resume ingest on the rebooted engine (new epoch) then purge. RECLAIMS.
+                    // B2: resume ingest on the restarted engine, then purge: the orphan stays reclaimed.
                     resumeIngest(restarted, rtb, recoveredB);
                     Assert.assertTrue("B2: resumed ingest on the rebooted engine must advance the floor",
                             durableEpoch(restarted, rtb) > 0L);
@@ -216,9 +176,9 @@ public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashS
     }
 
     /**
-     * Build a reboot-orphan on {@code name}: adaptive table, a durable prefix (applied + epoch'd), then a
-     * crashable W=0 tail torn by a simulated power loss and rolled back by the in-process recover. Returns
-     * the recovered committed-row count (the identity-prefix length that survived).
+     * Builds a reboot orphan on {@code name}: an adaptive table with a durable prefix (applied and covered by
+     * an epoch), then a W=0 tail torn by a simulated power loss and rolled back by in-process recovery. Returns
+     * the number of rows that survive recovery.
      */
     private int buildOrphanInProcess(String name) throws Exception {
         execute("drop table if exists " + name);
@@ -266,7 +226,7 @@ public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashS
     }
 
     /**
-     * Resume ingest on {@code eng}: PREFIX_ROWS more contiguous rows, applied (fires a new durable epoch).
+     * Resumes ingest on {@code eng}: PREFIX_ROWS more contiguous rows, applied, which takes a new durable epoch.
      */
     private void resumeIngest(CairoEngine eng, TableToken tt, int startId) {
         int id = startId;
@@ -319,7 +279,7 @@ public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashS
     }
 
     /**
-     * Run the WAL broad-sweep to completion on {@code eng} with a strictly-increasing clock (see the soak).
+     * Runs the WAL purge broad sweep to completion on {@code eng} with a strictly increasing clock.
      */
     private void forceWalPurge(CairoEngine eng) {
         eng.releaseAllWalWriters();

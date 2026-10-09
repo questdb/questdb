@@ -15,12 +15,8 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
 
     @Before
     public void assumePosix() {
-        // The facade under test IS the crash-consistency harness, and the harness is POSIX-only:
-        // AbstractCrashConsistencyTest.assumeCrashHarnessSupported() gates every consumer, because the
-        // model rewrites files under live handles (Windows forbids that) and its namespace half is built
-        // on parent-directory fsync, which Windows does not have (no directory handles to fsync -- see
-        // FilesFacade.renameDurable). Self-tests of a harness that never runs on Windows do not run on
-        // Windows either.
+        // The crash harness is POSIX-only: its model rewrites files under live handles, which Windows
+        // forbids, and relies on parent-directory fsync, which Windows lacks (see FilesFacade.renameDurable).
         Assume.assumeFalse("crash harness is POSIX-only", Os.isWindows());
     }
 
