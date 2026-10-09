@@ -3907,6 +3907,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     pinnedTxn
             );
         }
+        final long otherTxn = tracker.getOtherPinnedEpochTxn();
+        if (otherTxn >= 0) {
+            txnScoreboard.releaseTxn(
+                    tracker.isPinnedEpochSlotA() ? TxnScoreboard.EPOCH_ID_B : TxnScoreboard.EPOCH_ID_A,
+                    otherTxn
+            );
+        }
         tracker.clearPinnedEpoch();
     }
 
@@ -14284,7 +14291,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     // On an enrolled adaptive table the last durable epoch may still name the superseded directory, so it is
     // removed after the statement's epoch moves the pin past it: one epoch per statement, however many
-    // partitions it changes. AlterOperation takes that epoch.
+    // partitions it changes. AlterOperation takes that epoch. The older save point's pin still covers it, so a
+    // purge after the next save point (the async purge, or the writer's next open) removes it.
     private void removePartitionDirAfterSavePoint(long timestamp, long partitionNameTxn) {
         if (enrolledAdaptive) {
             partitionRemovalsAfterSavePoint.add(timestamp, partitionNameTxn);
@@ -16348,7 +16356,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (enrolledAdaptive) {
             advanceDurableEpochBestEffort(operation);
             if (partitionRemovalsAfterSavePoint.size() > 0) {
-                // The epoch moved the pin past these directories; after a failed epoch the async purge takes them.
+                // Removed only where no pin covers them; the rest go to a later purge.
                 partitionRemoveCandidates.clear();
                 partitionRemoveCandidates.addAll(partitionRemovalsAfterSavePoint);
                 partitionRemovalsAfterSavePoint.clear();
@@ -16476,9 +16484,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long epochTxn = getTxn();
         final long priorEpochTxn = tracker.getPinnedEpochTxn();
         final boolean priorSlotA = tracker.isPinnedEpochSlotA();
-        // First epoch uses slot A; thereafter alternate to the free slot.
+        // First epoch uses slot A; thereafter alternate to the other slot.
         final boolean newSlotA = priorEpochTxn < 0 || !priorSlotA;
         final int newSlotId = newSlotA ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B;
+        // The other slot holds the pin of the generation this save point overwrites, which stops being a fallback
+        // once the write below truncates its file.
+        final long otherEpochTxn = tracker.getOtherPinnedEpochTxn();
+        if (otherEpochTxn >= 0) {
+            txnScoreboard.releaseTxn(newSlotId, otherEpochTxn);
+            tracker.setPinnedEpoch(priorEpochTxn, priorSlotA, -1);
+        }
         if (!txnScoreboard.incrementTxn(newSlotId, epochTxn)) {
             // Do NOT release the prior pin; leave the current save point and frontier intact and retry later.
             LOG.error().$("epoch pin slot busy, skipping epoch publish [table=").$(tableToken)
@@ -16507,13 +16522,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw th;
         }
 
-        // Step 4: complete the ping-pong handover only after the new save point is durable.
-        if (priorEpochTxn >= 0 && !(priorSlotA == newSlotA && priorEpochTxn == epochTxn)) {
-            txnScoreboard.releaseTxn(priorSlotA ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B, priorEpochTxn);
-        }
-        tracker.setPinnedEpoch(epochTxn, newSlotA);
+        // Step 4: the prior save point becomes the other generation, which recovery falls back to when this one is
+        // damaged, so it keeps its pin until the next save point overwrites it.
+        tracker.setPinnedEpoch(epochTxn, newSlotA, priorEpochTxn);
 
-        // Step 5: publish the durable frontier (WAL-purge floor) + cadence timestamp, LAST.
+        // Step 5: publish the durable frontier + cadence timestamp, LAST. The WAL purge also keeps the WAL from
+        // the other generation (WalPurgeJob reads the lowest save point).
         tracker.setDurableEpochSeqTxn(epochSeqTxn);
         engine.getMetrics().walMetrics().incrementEpochAdvances();
         tracker.setLastEpochTs(nowMs);

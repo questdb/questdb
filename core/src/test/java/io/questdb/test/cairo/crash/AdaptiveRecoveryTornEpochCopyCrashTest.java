@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DurableEpochManifest;
+import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
@@ -39,6 +40,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
@@ -79,6 +82,75 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
     private static final int K = 4; // rows before the epoch
     private static final int M = 5; // rows applied lazily AFTER the epoch (live _txn/_cv advance past it)
     private static final String RECOVERY_EVENTS = "questdb_wal_adaptive_recovery_events_total";
+
+    /**
+     * Recovery falls back to the older generation when the newest one is damaged on media or rejected on its
+     * content, also after the WAL purge and the partition purge ran past the newest one. Both purges must keep what
+     * the older generation needs, the WAL after its cut and the partition versions it names, after appends and after
+     * an O3 rewrite between the two save points; the WAL before the older cut still goes.
+     */
+    @Test
+    public void testFallbackAfterPurgesKeepsEveryRow() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        try {
+            assertMemoryLeak(() -> {
+                int iteration = 0;
+                for (boolean rejectedOnContent : new boolean[]{false, true}) {
+                    for (boolean o3Rewrite : new boolean[]{false, true}) {
+                        final String context = (rejectedOnContent ? "rejected on content" : "damaged on media")
+                                + (o3Rewrite ? " after an O3 rewrite" : " after appends");
+                        final String name = "p" + iteration++;
+                        execute("create table " + name + " (ts timestamp, v long) timestamp(ts) partition by day wal");
+                        final TableToken tt = engine.verifyTableName(name);
+                        for (int i = 0; i < 12; i++) {
+                            // The O3 row lands inside the first day, which then gets a new partition version.
+                            final String ts = i == 5 && o3Rewrite ? "2024-10-01T00:30" : i < 4 ? "2024-10-01T0" + i + ":00" : "2024-10-02T" + (10 + i) + ":00";
+                            execute("insert into " + name + " values ('" + ts + ":00.000000Z', " + i + ")");
+                            if (i == 3 || i == 7) {
+                                drainWalQueue();
+                                takeSavePoint(tt);
+                                engine.releaseAllWalWriters();
+                            }
+                            if (i == 7) {
+                                if (rejectedOnContent) {
+                                    rewriteNewestHeaderWithWrongColumnVersion(tt);
+                                }
+                                runPurgeJobs();
+                                Assert.assertFalse(context + ": the WAL before the older save point goes", walDirExists(tt, 1));
+                            }
+                        }
+                        drainWalQueue();
+                        // A kill: no close-time save point.
+                        engine.releaseAllWriters();
+                        engine.releaseAllReaders();
+                        engine.releaseAllWalWriters();
+                        if (!rejectedOnContent) {
+                            corruptRange(tt, 0, TableUtils.TXN_FILE_NAME, true);
+                        }
+                        engine.getTxnScoreboardPool().remove(tt);
+                        engine.getTableSequencerAPI().resetForReboot(tt);
+                        new RecoveryCoordinator(engine).recover();
+                        Assert.assertEquals(context + ": recovery falls back to the older generation", 4, readTxnSeqTxn(tt));
+                        engine.notifyWalTxnRepublisher(tt);
+                        drainWalQueue();
+                        Assert.assertFalse(context + ": table suspended", engine.getTableSequencerAPI().isSuspended(tt));
+                        final List<Long> rows = readVs(name);
+                        rows.sort(null);
+                        Assert.assertEquals(context, List.of(0L, 1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L, 11L), rows);
+                        dropSweepTable(tt);
+                        engine.releaseAllWriters();
+                        engine.releaseAllReaders();
+                    }
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        }
+    }
 
     /**
      * A newest generation that passes its checksums but fails a content check, for each kind of definite
@@ -923,6 +995,33 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
         }
     }
 
+    // The newest generation passes its checksums, but its header records a column version its _txn section does not.
+    private void rewriteNewestHeaderWithWrongColumnVersion(TableToken tt) {
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (TxReader tx = new TxReader(ff); Path p = new Path()) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(tt);
+            final int rootLen = p.size();
+            tx.ofRO(p.concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+            Assert.assertTrue(tx.unsafeLoadAll());
+            DurableEpochManifest.write(engine.getConfiguration(), tt, p.trimTo(rootLen), rootLen, 0, tx.getSeqTxn(), tx.getTxn(), tx.getColumnVersion() + 1, tx.getMetadataVersion());
+        }
+    }
+
+    private void runPurgeJobs() {
+        final long step = engine.getConfiguration().getWalPurgeInterval() * 1000L + 1_000_000L;
+        final long[] tick = {1L};
+        try (WalPurgeJob job = new WalPurgeJob(engine, engine.getConfiguration().getFilesFacade(), () -> (tick[0] += step))) {
+            job.run();
+            job.run();
+        }
+        engine.releaseAllReaders();
+        try (O3PartitionPurgeJob job = new O3PartitionPurgeJob(engine, 1)) {
+            //noinspection StatementWithEmptyBody
+            while (job.run()) {
+            }
+        }
+    }
+
     /**
      * Points {@code p} at the file that holds the save point's copy of {@code fileName} in {@code generation},
      * and returns the copy's offset and length in it: the separate copy file of the older layout, else the
@@ -1032,6 +1131,13 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
                 }
                 default -> throw new AssertionError(mode);
             }
+        }
+    }
+
+    private boolean walDirExists(TableToken tt, int walId) {
+        try (Path p = new Path()) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(WalUtils.WAL_NAME_BASE).put(walId);
+            return engine.getConfiguration().getFilesFacade().exists(p.$());
         }
     }
 

@@ -40,8 +40,9 @@ public interface TxnScoreboard extends QuietCloseable {
     // txn, so to honour INV-5's pin-before-release ordering across epochs (the new epoch's
     // partition-versions must be protected from purge BEFORE the prior epoch's protection is
     // dropped, leaving no unprotected window for a concurrent O3PartitionPurgeJob), advance()
-    // alternates between EPOCH_ID_A and EPOCH_ID_B: pin the NEW txn into the free slot, then release
-    // the PRIOR txn from the other slot. Both are INDEPENDENT of CHECKPOINT_ID and of each other.
+    // alternates between EPOCH_ID_A and EPOCH_ID_B: the slot of the generation being overwritten takes the
+    // NEW txn, and the PRIOR txn stays pinned in the other slot, as recovery may fall back to it. Both are
+    // INDEPENDENT of CHECKPOINT_ID and of each other.
     // See TxnScoreboardV2.toInternalId() for the id->slot mapping.
     int EPOCH_ID_A = -2;
     int EPOCH_ID_B = -3;

@@ -2150,7 +2150,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             final TableToken tableToken = engine.verifyTableName(tableName);
             final io.questdb.cairo.wal.seq.SeqTxnTracker tracker =
                     engine.getTableSequencerAPI().getTxnTracker(tableToken);
-            tracker.setPinnedEpoch(1, true);
+            tracker.setPinnedEpoch(1, true, -1);
             tracker.setDurableEpochSeqTxn(0);
 
             engine.releaseInactive();

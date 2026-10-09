@@ -70,10 +70,13 @@ public class SeqTxnTracker {
     // ApplyWal2TableJob.advance() when an epoch publishes. Read+written ONLY by the apply worker that
     // holds the table writer (single-threaded per table) -> plain long, no CAS (mirrors lastEpochTs).
     private long rowsSinceEpoch = 0;
+    // The pin of the other save point generation, held in the slot pinnedEpochTxn does not use, or -1 if none.
+    // Recovery falls back to that generation when the current one is damaged, so its partition versions stay
+    // until the next save point overwrites it.
+    private volatile long otherPinnedEpochTxn = -1;
     // The epoch partition-version txn currently PINNED in the scoreboard, or -1 if none. advance()
-    // pins the new epoch txn in the FREE ping-pong slot, then releases this prior one from the other
-    // slot (INV-5 pin-before-release; the brief double-pin is safe). Like the scoreboard itself these
-    // are in-memory, reset on restart; recovery re-establishes the pin.
+    // pins the new epoch txn in the FREE ping-pong slot, and this one becomes the other pin. Like the
+    // scoreboard itself these are in-memory, reset on restart; recovery re-establishes the pins.
     private volatile long pinnedEpochTxn = -1;
     // Which ping-pong slot currently holds pinnedEpochTxn: true => EPOCH_ID_A, false => EPOCH_ID_B.
     // The next epoch pins into the OTHER slot. Initial value is arbitrary (no pin held yet).
@@ -261,6 +264,10 @@ public class SeqTxnTracker {
     /**
      * The epoch txn currently pinned in the scoreboard, or -1 if none.
      */
+    public long getOtherPinnedEpochTxn() {
+        return otherPinnedEpochTxn;
+    }
+
     public long getPinnedEpochTxn() {
         return pinnedEpochTxn;
     }
@@ -728,28 +735,32 @@ public class SeqTxnTracker {
     }
 
     /**
-     * Record the epoch txn now pinned in the scoreboard (or -1 when none) and which ping-pong slot
-     * holds it (true => EPOCH_ID_A). Set after advance() completes the pin handover.
+     * Record the epoch txn now pinned in the scoreboard (or -1 when none), which ping-pong slot
+     * holds it (true => EPOCH_ID_A), and the other generation's pin in the other slot (or -1). Set after
+     * advance() completes the pin handover.
      */
-    public synchronized void setPinnedEpoch(long pinnedEpochTxn, boolean slotIsA) {
+    public synchronized void setPinnedEpoch(long pinnedEpochTxn, boolean slotIsA, long otherPinnedEpochTxn) {
         this.pinnedEpochTxn = pinnedEpochTxn;
         this.pinnedEpochSlotIsA = slotIsA;
+        this.otherPinnedEpochTxn = otherPinnedEpochTxn;
     }
 
     public synchronized void clearPinnedEpoch() {
         pinnedEpochTxn = -1;
         pinnedEpochSlotIsA = false;
+        otherPinnedEpochTxn = -1;
         durableEpochSeqTxn = 0;
     }
 
     public boolean isRangeAvailableToEpoch(long fromTxn, long toTxn) {
         final long epochTxn = pinnedEpochTxn;
-        return epochTxn < fromTxn || epochTxn >= toTxn;
+        final long otherEpochTxn = otherPinnedEpochTxn;
+        return (epochTxn < fromTxn || epochTxn >= toTxn) && (otherEpochTxn < fromTxn || otherEpochTxn >= toTxn);
     }
 
     /**
-     * Re-establishes the epoch pin on a scoreboard the pool has just created for this table, in the slot
-     * {@link #setPinnedEpoch} recorded, so the next epoch's handover releases exactly this pin.
+     * Re-establishes the epoch pins on a scoreboard the pool has just created for this table, in the slots
+     * {@link #setPinnedEpoch} recorded, so the next epoch's handover releases exactly these pins.
      * <p>
      * This tracker, not the scoreboard, is the pin's source of truth: the pool frees a scoreboard as soon as
      * nothing references it, and its replacement starts blank. Everything that moves the pin -- the writer's
@@ -767,6 +778,12 @@ public class SeqTxnTracker {
             final int slotId = pinnedEpochSlotIsA ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B;
             final boolean pinned = scoreboard.incrementTxn(slotId, epochTxn);
             assert pinned : "epoch pin slot busy on a new scoreboard";
+        }
+        final long otherEpochTxn = otherPinnedEpochTxn;
+        if (otherEpochTxn > -1) {
+            final int slotId = pinnedEpochSlotIsA ? TxnScoreboard.EPOCH_ID_B : TxnScoreboard.EPOCH_ID_A;
+            final boolean pinned = scoreboard.incrementTxn(slotId, otherEpochTxn);
+            assert pinned : "other epoch pin slot busy on a new scoreboard";
         }
     }
 

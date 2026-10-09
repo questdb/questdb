@@ -597,11 +597,13 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         // names a cut at or above the seqTxn read, so it never needs WAL this sweep deletes.
         // In any mode, a table that holds a save point pin keeps the WAL from its save point: on a start outside
         // adaptive that is a refused conversion to non-WAL, which keeps its save point for the next start.
+        // Recovery falls back to the older generation when the newest one is damaged, so the floor is the lowest
+        // save point on disk: the WAL kept reaches back one save point interval further than the newest one.
         final int commitMode = engine.getConfiguration().getCommitMode();
         final int purgeFloorMode = LocalDurabilityPolicy.resolveCommitMode(commitMode, engine.getLocalDurabilityPolicy());
         final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
         if (purgeFloorMode == CommitMode.ADAPTIVE || tracker.getPinnedEpochTxn() > -1) {
-            safeToPurgeTxn = Math.min(safeToPurgeTxn, tracker.getDurableEpochSeqTxn());
+            safeToPurgeTxn = Math.min(safeToPurgeTxn, Math.min(tracker.getDurableEpochSeqTxn(), readAnchorFloorSeqTxn()));
         } else if (commitMode == CommitMode.ADAPTIVE && !tableToken.isView()) {
             // Views are skipped, as recovery skips them.
             safeToPurgeTxn = Math.min(safeToPurgeTxn, readAnchorFloorSeqTxn());
@@ -713,7 +715,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         anchorPath.of(configuration.getDbRoot()).concat(tableToken);
         final long floor = DurableEpochManifest.readLowestSeqTxn(ff, anchorPath, anchorPath.size(), tableToken.getTableId(), anchorScratch);
         if (floor != Long.MAX_VALUE) {
-            LOG.debug().$("keeping WAL from the adaptive anchor while local durability is disabled [table=").$(tableToken)
+            LOG.debug().$("keeping WAL from the lowest adaptive save point [table=").$(tableToken)
                     .$(", anchorSeqTxn=").$(floor)
                     .I$();
         }
