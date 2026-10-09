@@ -395,7 +395,7 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
             if (from + PAGE <= stale.length && !Arrays.equals(fresh, from, from + PAGE, stale, from, from + PAGE)) {
                 final byte[] image = fresh.clone();
                 System.arraycopy(stale, from, image, from, PAGE);
-                Assert.assertTrue("the live area must carry its own checksum stamp", isCvAreaStamped(image, version));
+                Assert.assertTrue("the live area must carry a checksum trailer", isCvAreaStamped(image, version));
                 Assert.assertFalse("the live area must be torn", isCvAreaVerified(image, version));
                 Assert.assertTrue("the previous area must be intact", isCvAreaVerified(image, version - 1));
                 writeFile(dir + COLUMN_VERSION_FILE_NAME, image);
@@ -436,7 +436,7 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
     private static boolean isCvAreaStamped(byte[] file, long areaVersion) {
         final long[] area = cvArea(file, areaVersion);
         return area[0] + area[1] + TableUtils.CV_CHECKSUM_TRAILER_SIZE <= file.length
-                && ByteBuffer.wrap(file).order(ByteOrder.LITTLE_ENDIAN).getLong((int) (area[0] + area[1])) == (TableUtils.CV_CHECKSUM_MAGIC ^ areaVersion);
+                && ByteBuffer.wrap(file).order(ByteOrder.LITTLE_ENDIAN).getLong((int) (area[0] + area[1])) == TableUtils.CV_CHECKSUM_MAGIC;
     }
 
     private static boolean isCvAreaVerified(byte[] file, long areaVersion) {

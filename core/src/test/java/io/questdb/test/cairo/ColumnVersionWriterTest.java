@@ -287,42 +287,6 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCvOldAllocatorReusesAreaWithStaleTrailer() throws Exception {
-        assertMemoryLeak(() -> {
-            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
-            try (Path path = new Path()) {
-                LPSZ cvPath = path.of(root).concat("_cv").$();
-                try (ColumnVersionWriter w = new ColumnVersionWriter(configuration, cvPath, true)) {
-                    for (int i = 1; i <= 4; i++) {
-                        w.upsert(1, 0, i, i);
-                        w.commit();
-                    }
-                }
-                Assert.assertEquals(4, peekLong(ff, cvPath, OFFSET_VERSION_64));
-                long oldOffset = peekLong(ff, cvPath, OFFSET_OFFSET_B_64);
-                long oldSize = peekLong(ff, cvPath, OFFSET_SIZE_B_64);
-                Assert.assertEquals(HEADER_SIZE, oldOffset);
-                Assert.assertEquals(BLOCK_SIZE_BYTES, oldSize);
-                // The released writer computes the next B offset from A without reserving a trailer.
-                // Its version-5 block replaces B's body, but leaves version-3's trailer untouched.
-                Assert.assertEquals(HEADER_SIZE + BLOCK_SIZE_BYTES + 16, peekLong(ff, cvPath, OFFSET_OFFSET_A_64));
-                Assert.assertEquals(TableUtils.CV_CHECKSUM_MAGIC ^ 3, peekLong(ff, cvPath, oldOffset + oldSize));
-                pokeLong(ff, cvPath, oldOffset + 2 * Long.BYTES, 5);
-                pokeLong(ff, cvPath, oldOffset + 3 * Long.BYTES, 55);
-                pokeLong(ff, cvPath, OFFSET_VERSION_64, 5);
-
-                ColumnVersionReader.resetBodyChecksumFallbackCount();
-                try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
-                    r.readSafe(configuration.getMillisecondClock(), 100);
-                    Assert.assertEquals(5, r.getVersion());
-                    Assert.assertEquals(55, r.getColumnTopQuick(1, 0));
-                    Assert.assertEquals(0, ColumnVersionReader.getBodyChecksumFallbackCount());
-                }
-            }
-        });
-    }
-
-    @Test
     public void testCvReadSafeNamesTornLiveAreaOnlyForItsOwnVersion() throws Exception {
         // The A/B fallback stays useful to a consumer of the PREVIOUS commit (a _txn that fell back alongside
         // it names exactly that version). A consumer of the torn commit itself is told so by name, and at once:
@@ -622,6 +586,45 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     for (int i = 0; i < 6; i++) {
                         Assert.assertEquals(100L + i, r.getColumnTopQuick(i + 1, i));
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCvTornBodyUnderAnEarlierCommitsTrailerIsTorn() throws Exception {
+        // The writer reuses the slot of the commit two back, so the new trailer lands where that commit's
+        // trailer sits. A crash can persist the new version word and part of the new body but not the new
+        // trailer. The trailer left in place does not describe the body: the live area is torn on every
+        // path that verifies it.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                LPSZ cvPath = path.of(root).concat("_cv").$();
+                try (ColumnVersionWriter w = new ColumnVersionWriter(configuration, cvPath, true)) {
+                    for (int i = 1; i <= 4; i++) {
+                        w.upsert(1, 0, i, i);
+                        w.commit();
+                    }
+                }
+                Assert.assertEquals(4, peekLong(ff, cvPath, OFFSET_VERSION_64));
+                // Commit 3 lives in B at the header; commit 4 in A right after it. Commit 5 goes back to B.
+                final long areaOffset = peekLong(ff, cvPath, OFFSET_OFFSET_B_64);
+                Assert.assertEquals(HEADER_SIZE, areaOffset);
+                Assert.assertEquals(BLOCK_SIZE_BYTES, peekLong(ff, cvPath, OFFSET_SIZE_B_64));
+                Assert.assertEquals(HEADER_SIZE + BLOCK_SIZE_BYTES + TableUtils.CV_CHECKSUM_TRAILER_SIZE, peekLong(ff, cvPath, OFFSET_OFFSET_A_64));
+                pokeLong(ff, cvPath, areaOffset + 2 * Long.BYTES, 5);
+                pokeLong(ff, cvPath, areaOffset + 3 * Long.BYTES, 55);
+                pokeLong(ff, cvPath, OFFSET_VERSION_64, 5);
+
+                ColumnVersionReader.resetBodyChecksumFallbackCount();
+                try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                    Assert.assertFalse("the live area must not verify", r.isAreaIntact(5));
+                    Assert.assertTrue("the previous area must verify", r.isAreaIntact(4));
+                    r.readSafe(configuration.getMillisecondClock(), 100);
+                    Assert.assertEquals(1, ColumnVersionReader.getBodyChecksumFallbackCount());
+                    Assert.assertEquals(4, r.getVersion());
+                    Assert.assertEquals(4, r.getColumnTopQuick(1, 0));
                 }
             }
         });

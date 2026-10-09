@@ -496,12 +496,10 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         }
     }
 
-    // Store [CV_CHECKSUM_MAGIC ^ nextVersion][checksum] after the data, before publishing
-    // nextVersion. The stamp distinguishes this commit from an old writer reusing the area
-    // without touching a trailer left by an earlier version.
+    // Store [CV_CHECKSUM_MAGIC][checksum] after the data, before publishing the next version.
     private void storeAreaChecksum(long areaOffset, long areaSize) {
         long checksum = TableUtils.calculateCvAreaChecksum(mem.addressOf(areaOffset), areaSize);
-        mem.putLong(areaOffset + areaSize, TableUtils.CV_CHECKSUM_MAGIC ^ (version + 1));
+        mem.putLong(areaOffset + areaSize, TableUtils.CV_CHECKSUM_MAGIC);
         mem.putLong(areaOffset + areaSize + Long.BYTES, checksum);
     }
 

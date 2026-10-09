@@ -244,16 +244,15 @@ public final class TableUtils {
     // (TX_OFFSET_LAG_MAX_TIMESTAMP_64, ends at 116) and TX_OFFSET_MAP_WRITER_COUNT_32 (128).
     // The stamp decides presence; a zero checksum with a matching stamp is torn, not absent.
     public static final long TX_OFFSET_BODY_CHECKSUM_64 = 116;
-    // Distinguishes this coverage (excluding structureVersion) from the previous development format,
-    // whose stamp was the bare txn. Old checksums load unverified until the next commit. Flipping the
-    // top bit keeps the two stamp formats 2^31 txns apart without using extra disk space.
+    // Keeps a stamp from matching a small count. Released binaries never wrote the stamp's gap, and their
+    // allocator places an area over the bytes of older, larger records, so a released record's gap can hold
+    // a stale count equal to its txn. Flipping the top bit makes that match need a count of 2^31 or more.
     public static final int TX_BODY_CHECKSUM_STAMP_XOR = 0x8000_0000;
     // The low 32 bits of the txn XOR TX_BODY_CHECKSUM_STAMP_XOR, in the remaining gap bytes [124,128).
-    // Without it a checksum cannot say WHICH record it describes, and an A/B area is written in place: a
-    // binary that predates the checksum overwrites the body and leaves the previous occupant's checksum
-    // sitting in the slot, where it reads as a mismatch on healthy data and costs the table its ability to
-    // open. The stamp makes the slot self-identifying -- a checksum whose stamp names a different txn is
-    // not this record's and says nothing about it, so it classifies as absent rather than as damage.
+    // Without it a checksum cannot say WHICH record it describes: a released record's slot holds whatever
+    // the gap held before. The stamp makes the slot self-identifying -- a checksum whose stamp names a
+    // different txn is not this record's and says nothing about it, so it classifies as absent rather than
+    // as damage, while a stamp that names the record makes a zero or wrong checksum a torn write.
     //
     // Outside the checksummed range (see calculateTxnBodyChecksum), so writing it cannot change the
     // checksum, and an older binary neither reads nor writes these bytes.
@@ -264,24 +263,21 @@ public final class TableUtils {
     public static final String WAL_2_TABLE_RESUME_REASON = "Resume WAL Data Application";
     public static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
     static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
-    // Magic base for the per-area _cv body-checksum trailer. The trailer is 16 bytes laid out at
-    // [offset + size, offset + size + 16): an 8-byte (MAGIC XOR area version) stamp followed by the
-    // 8-byte checksum. A checksum is verified only if the file holds the trailer and its stamp matches
-    // the selected area's version.
+    // Magic for the per-area _cv body-checksum trailer. The trailer is 16 bytes laid out at
+    // [offset + size, offset + size + 16): the 8-byte MAGIC followed by the 8-byte checksum. A checksum is
+    // verified only if the file holds the trailer and it starts with the MAGIC.
     //
     // WHY a magic (back-compat, the whole point): a legacy pre-checksum _cv is page-rounded (its writer
     // closes with close(false) => NO truncation) so its real on-disk length runs well past offset+size,
     // and the old no-gap allocator packs the next area right after the live one - so the 8 bytes at
     // offset+size are frequently NON-ZERO adjacent-area data, not zero. An EOF guard plus a zero sentinel
     // therefore both fail to recognise "absent", and the reader would run a checksum verify over an
-    // unchecksummed legacy area and falsely throw on a HEALTHY old table. A versioned 64-bit stamp
-    // makes accidental matches negligible and leaves a stale trailer from an older writer unverified,
-    // rather than treating its checksum as evidence about the new body. Additive: no migration, no
+    // unchecksummed legacy area and falsely throw on a HEALTHY old table. A 64-bit magic makes
+    // accidental matches negligible. Additive: no migration, no
     // _meta version bump; downgrade-safe because OFFSET_SIZE_{A,B} still records data-only size and
     // old readers never look at the trailer.
     //
-    // The base value spells ASCII " CVCHKSM" in little-endian order; the on-disk word is this value
-    // XOR the area's version, not the literal ASCII bytes.
+    // The value spells ASCII " CVCHKSM" in little-endian order.
     public static final long CV_CHECKSUM_MAGIC = 0x4D534B4843564320L;
     // On-disk size of the _cv body-checksum trailer: 8-byte stamp + 8-byte checksum.
     public static final int CV_CHECKSUM_TRAILER_SIZE = 2 * Long.BYTES;
@@ -514,14 +510,12 @@ public final class TableUtils {
      * the write and read sides agree as long as they pass the same {@code size}).
      * <p>
      * PRESENCE / BACK-COMPAT: the checksum is part of a 16-byte trailer
-     * {@code [offset + size, offset + size + 16)} = {@code [CV_CHECKSUM_MAGIC ^ areaVersion | checksum]}.
-     * The reader verifies only if the file is long enough AND the stamp at {@code offset + size}
-     * matches the selected area's version; absent or stale stamps are unverified. This keeps both
-     * page-rounded legacy pre-checksum files (whose trailing bytes may contain adjacent-area data)
-     * and bodies rewritten by older writers (which may leave stale trailers) readable. Because
-     * verification is stamp-gated rather than content/zero-gated, the genuine-{@code 0}
-     * -> {@code 1} remap below is no longer load-bearing; it is kept (harmless) only so the stored value
-     * is never the bare {@code 0} an even older reader might have treated as "absent".
+     * {@code [offset + size, offset + size + 16)} = {@code [CV_CHECKSUM_MAGIC | checksum]}.
+     * The reader verifies only if the file is long enough AND the MAGIC sits at {@code offset + size};
+     * otherwise the area is unverified. This keeps page-rounded legacy pre-checksum files (whose
+     * trailing bytes may contain adjacent-area data) readable. Presence is gated on the MAGIC, not on
+     * the checksum's value, so the genuine-{@code 0} -> {@code 1} remap below is not load-bearing; it
+     * keeps the contract of {@link #calculateTxnBodyChecksum(long, long, long)}.
      *
      * @param areaBaseAddr native address of the area body (offset 0 of the active A/B area, i.e. the
      *                     mapped address of the on-disk {@code offset})
