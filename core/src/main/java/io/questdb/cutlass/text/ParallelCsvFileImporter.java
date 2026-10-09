@@ -667,6 +667,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     updateImportStatus(CopyImportTask.STATUS_FINISHED, rowsHandled, rowsImported, errors);
                 } catch (Throwable t) {
                     cleanUp();
+                    // A failed device flush may report a write-back error of another table's files: stop the
+                    // engine, as every other adaptive flush does.
+                    if (configuration.getCommitMode() == CommitMode.ADAPTIVE && CairoException.isDataSyncFailure(t)) {
+                        throw cairoEngine.poisonOnDataSyncFailure(t);
+                    }
                     throw t;
                 } finally {
                     closeWriter();
