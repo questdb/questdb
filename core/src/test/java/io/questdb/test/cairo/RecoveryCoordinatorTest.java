@@ -3316,7 +3316,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 }
 
                 Assert.assertEquals("live files already at the epoch cut must not be rewritten", 0, rewrites.get());
-                Assert.assertEquals("live files already at the epoch cut must not be fsynced", 0, fsyncs.get());
+                Assert.assertEquals("a clean restart flushes only the selected save point's header", 1, fsyncs.get());
                 final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
                 Assert.assertEquals("a clean restart is not a recovery", 0L, tracker.getRecoveryIncarnation());
                 Assert.assertEquals("a clean restart is not a recovery",
