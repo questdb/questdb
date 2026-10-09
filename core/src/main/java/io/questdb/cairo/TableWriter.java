@@ -1516,20 +1516,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             clearTodoAndCommitMetaStructureVersion();
 
-            // The commit above is the ONLY _txn write of this operation (the parquet->native prepass
-            // publishes nothing on its own, see applyPendingParquetToNativeConversions), so this is the
-            // first point where _txn and _meta on disk agree at the ALTER's seqTxn. Under adaptive, cut the
-            // durable epoch here: it anchors recovery past the rewrite (no replay of the conversion on the
-            // next boot) and moves the epoch pin, so the purges below can reclaim the superseded column
-            // files and parquet dirs inline instead of leaving them to the async purge jobs until the next
-            // cadence epoch. Best-effort; WAL-only (the durable epoch is a WAL-apply mechanism).
+            // The commit above is the only _txn write of this operation (the parquet->native prepass
+            // publishes nothing, see applyPendingParquetToNativeConversions), so here _txn and _meta on disk
+            // first agree at the ALTER's seqTxn. Under adaptive, a save point here keeps recovery from
+            // replaying the conversion and moves the epoch pin, so the purges below reclaim the superseded
+            // column files and parquet directories inline. Best effort, WAL tables only.
             advanceDurableEpochAfter("column type change");
         } catch (Throwable th) {
             LOG.critical().$("could not change column type [table=").$(tableToken).$(", column=").$safe(columnName)
                     .$(", error=").$(th).I$();
             distressed = true;
-            // The prepass batch was never published: on-disk _txn still references the parquet dirs, and
-            // the next writer open reclaims the unreferenced native dirs as non-attached partitions.
+            // The prepass batch is unpublished: _txn on disk still references the parquet directories, and
+            // the next writer open removes the unreferenced native ones as non-attached partitions.
             pendingParquetToNativeConversions.clear();
             if (CairoException.isDataSyncFailure(th)) {
                 engine.handleDataSyncFailure(th);
@@ -1721,13 +1719,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * directory so the surrounding column-type change can open its output files there. Empty
      * batch is a no-op.
      * <p>
-     * Deliberately writes <b>nothing</b> to {@code _txn}. The batch is published by the column
-     * conversion's final commit ({@link #clearTodoAndCommitMetaStructureVersion}) together with
-     * the new {@code _meta}, so the ALTER remains a single {@code _txn} write: no on-disk
-     * {@code _txn} ever names the ALTER's seqTxn while {@code _meta} still describes the old
-     * type. An intermediate {@code _txn} here used to do exactly that, and an adaptive epoch (or
-     * a crash in a syncing mode) taken in that window bound the OLD metadata to the NEW seqTxn,
-     * after which recovery skipped the ALTER and restored the wrong column type.
+     * Writes nothing to {@code _txn}. The column conversion's final commit
+     * ({@link #clearTodoAndCommitMetaStructureVersion}) publishes the batch together with the new
+     * {@code _meta}, so the ALTER stays a single {@code _txn} write: no {@code _txn} on disk names
+     * the ALTER's seqTxn while {@code _meta} still describes the old type. A save point or a crash
+     * in that window would bind the old metadata to the new seqTxn, and recovery would skip the ALTER.
      * <p>
      * Until that final commit the on-disk {@code _txn} keeps referencing the parquet directories,
      * so they must not be removed here; {@link #purgeCommittedParquetToNativeSources} reclaims
@@ -3402,25 +3398,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Brings this table's adaptive durable-epoch anchor in line with the engine's
+     * Brings this table's save point (its durable-epoch anchor) in line with the engine's
      * {@link LocalDurabilityPolicy}. The WAL apply job calls it before each batch, while it holds the writer, so
      * it never races this writer's own epochs. It costs one volatile read unless the policy has changed since
      * the last call, or this writer has not reconciled yet; then it costs a stat.
      *
      * <p>Under {@link LocalDurabilityPolicy#REPLICA_SKIP} no epoch advances the anchor and the WAL purge job
-     * keeps no epoch floor, so an anchor left in place falls behind WAL that gets deleted, and the next startup
-     * rewinds the table onto WAL that no longer exists. Before applying anything on top of it, the writer makes
-     * the table durable, removes the anchor, and releases the epoch pin that protected the anchor's partitions.
-     * Tables usually reach a replica without an anchor already (the demote clear removes it); this catches the
-     * rest: an anchor another thread could not delete, one an in-flight epoch wrote after the demote clear, and
-     * one published by a path that does not know about replicas. The removal is best effort: while the anchor
-     * survives, the WAL purge job keeps the WAL it needs, and the next batch retries.
+     * keeps no epoch floor, so an anchor left in place falls behind deleted WAL and the next startup would
+     * rewind the table onto it. Before applying anything, the writer makes the table durable, removes the
+     * anchor and releases the epoch pin of the anchor's partitions. The demote clear removes most anchors; this
+     * catches one another thread could not delete, one an in-flight epoch wrote after the demote clear, and one
+     * a path that does not know about replicas published. While the anchor survives, the WAL purge job keeps
+     * the WAL it needs, and the next batch retries the removal.
      *
      * <p>Under {@link LocalDurabilityPolicy#ALWAYS_ON}, a table a replica tenure left has no anchor, and its
      * applied state is only as durable as the replica kept it. Before a commit is applied lazily on top of it,
-     * publish a full baseline at the live cut, as enrolment does. Failing to publish fails the batch, like a
-     * failed enrolment: applying lazily without an anchor would let a power loss tear transactions the WAL has
-     * already acknowledged.
+     * the writer publishes a full baseline at the live cut, as enrolment does, and a failed publish fails the
+     * batch: applying lazily without an anchor would let a power loss tear transactions the WAL acknowledged.
      */
     public void reconcileDurableEpochAnchor() {
         // Views are not rolled forward by recovery, so their anchors never matter.
@@ -3767,8 +3761,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 rollbackIndexes();
                 rollbackSymbolTables(true);
                 columnVersionWriter.readUnsafe();
-                // Both dirty sets now describe a table state this writer has just discarded, so they can no
-                // longer be trusted to bound the next epoch: fall back to the full walk once.
+                // Both dirty sets describe a table state this writer has discarded, so they cannot bound the
+                // next epoch: it walks every column once.
                 epochWriteSetIncomplete = true;
                 closeActivePartition(false);
                 purgeUnusedPartitions();
