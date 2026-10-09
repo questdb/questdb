@@ -1251,7 +1251,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     ff.fsync(parquetMetaFd);
                                 }
                             } catch (Throwable t) {
-                                if (CairoException.isDataSyncFailure(t)) {
+                                // ASYNC promises nothing on a power loss: a failed fsync there only fails the attach
+                                if (CommitMode.isPowerLossDurable(effectiveCommitMode) && CairoException.isDataSyncFailure(t)) {
                                     distressed = true;
                                     engine.handleDataSyncFailure(t);
                                 }
@@ -1269,7 +1270,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     try {
                                         ff.fsyncAndClose(dirFd);
                                     } catch (Throwable failure) {
-                                        if (CairoException.isDataSyncFailure(failure)) {
+                                        if (CommitMode.isPowerLossDurable(effectiveCommitMode) && CairoException.isDataSyncFailure(failure)) {
                                             distressed = true;
                                             engine.handleDataSyncFailure(failure);
                                         }

@@ -104,6 +104,11 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
+    public void testAdaptiveAttachParquetFailedDirFsyncIsFailStop() throws Exception {
+        assertAttachParquetSyncFailure("adaptive", 1);
+    }
+
+    @Test
     public void testAdaptiveConvertToParquetWalFailedDataFsyncIsFailStop() throws Exception {
         assertConvertToParquetSyncFailure("adaptive", true, new FsyncFailureFacade("produceParquetFromNative", 0, false));
     }
@@ -144,6 +149,16 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
+    public void testAsyncAttachParquetFailedDirFsyncIsNotFailStop() throws Exception {
+        assertAttachParquetSyncFailure("async", 1);
+    }
+
+    @Test
+    public void testAsyncAttachParquetFailedPmFsyncIsNotFailStop() throws Exception {
+        assertAttachParquetSyncFailure("async", 0);
+    }
+
+    @Test
     public void testAsyncConvertToParquetNonWalFailedPmFsyncIsNotFailStop() throws Exception {
         // ASYNC fsyncs _pm and the partition directory but not data.parquet, so the first fsync is that of _pm
         assertConvertToParquetSyncFailure("async", false, new FsyncFailureFacade("produceParquetFromNative", 0, false));
@@ -158,6 +173,33 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testNoSyncAddColumnFailedDirFsyncIsNotFailStop() throws Exception {
         assertAddColumnDirFsyncFailureIsNotFailStop("nosync");
+    }
+
+    @Test
+    public void testNoSyncAttachParquetTakesNoFsync() throws Exception {
+        // NOSYNC regenerates _pm without an fsync, as the base does, so no failed sync can stop the engine there
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        final FsyncFailureFacade ff = new FsyncFailureFacade("attachPartition", 0, false);
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, s SYMBOL INDEX, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'a', 1.0),
+                        ('2024-01-02T00:00:00.000000Z', 'b', 2.0),
+                        ('2024-01-03T00:00:00.000000Z', 'a', 3.0)
+                    """);
+            stageParquetForAttach();
+            ff.isArmed = true;
+            try {
+                execute("ALTER TABLE x ATTACH PARTITION LIST '2024-01-01'");
+            } finally {
+                ff.isArmed = false;
+            }
+            Assert.assertEquals("NOSYNC must take no fsync in ATTACH", 0, ff.failureCount);
+            Assert.assertFalse(engine.isDurabilityFailed());
+            assertAllColumns();
+            releaseEngineHandles();
+        });
     }
 
     @Test
@@ -634,6 +676,25 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
+     * ATTACH of a parquet partition without {@code _pm} regenerates {@code _pm}, then fsyncs it and the partition
+     * directory, in every mode but NOSYNC. One of those fsyncs fails with a data-sync error. Under SYNC and
+     * ADAPTIVE the engine must be poisoned; under ASYNC, which promises nothing on a power loss, the statement
+     * fails and the engine keeps taking writes, as in the base.
+     *
+     * @param skipCount 0 fails the {@code _pm} fsync, 1 the partition directory fsync
+     */
+    private void assertAttachParquetSyncFailure(String commitMode, int skipCount) throws Exception {
+        assertSyncFailure(
+                commitMode,
+                false,
+                this::stageParquetForAttach,
+                () -> execute("ALTER TABLE x ATTACH PARTITION LIST '2024-01-01'"),
+                new FsyncFailureFacade("attachPartition", skipCount, false),
+                !"async".equals(commitMode)
+        );
+    }
+
+    /**
      * ALTER COLUMN TYPE converts the column of each native partition in a conversion task, which fsyncs the new
      * column files, data before aux, under SYNC and ADAPTIVE. One of those fsyncs fails with a data-sync error.
      * The engine must be poisoned, as for a failed directory barrier around the same statement.
@@ -1097,6 +1158,22 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         crashFf = facade;
         crashFf.setDbRoot(root);
         assertMemoryLeak(crashFf, body);
+    }
+
+    /**
+     * Converts the first partition to parquet, detaches it and leaves it ready to attach without its {@code _pm},
+     * which ATTACH then regenerates.
+     */
+    private void stageParquetForAttach() throws Exception {
+        convertFirstPartitionToParquet();
+        execute("ALTER TABLE x DETACH PARTITION LIST '2024-01-01'");
+        try (Path detached = new Path(); Path attachable = new Path()) {
+            final String tableDir = engine.verifyTableName("x").getDirName();
+            detached.of(root).concat(tableDir).concat("2024-01-01").put(TableUtils.DETACHED_DIR_MARKER).$();
+            attachable.of(root).concat(tableDir).concat("2024-01-01").put(configuration.getAttachPartitionSuffix()).$();
+            Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(detached.$(), attachable.$()));
+            Assert.assertTrue(Files.remove(attachable.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$()));
+        }
     }
 
     /**
