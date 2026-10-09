@@ -230,6 +230,16 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     }
 
     @Test
+    public void testInsertSelectInTransactionAfterPlanWentStaleMidCopy_nonWal() throws Exception {
+        testInsertSelectInTransactionAfterPlanWentStaleMidCopy(false);
+    }
+
+    @Test
+    public void testInsertSelectInTransactionAfterPlanWentStaleMidCopy_wal() throws Exception {
+        testInsertSelectInTransactionAfterPlanWentStaleMidCopy(true);
+    }
+
+    @Test
     public void testInsertSelectInTransactionAfterSourceTableAltered() throws Exception {
         testInsertSelectInTransactionAfterPlanWentStale(
                 "src_tbl",
@@ -1518,6 +1528,79 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns(expected);
+        });
+    }
+
+    private void testInsertSelectInTransactionAfterPlanWentStaleMidCopy(boolean isWal) throws Exception {
+        // The simple protocol compiles an INSERT from its text on every execution, so only the
+        // extended modes hold a plan that can go stale.
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, _, _, _) -> {
+            final String walClause = isWal ? "WAL" : "BYPASS WAL";
+            execute("CREATE TABLE src (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY " + walClause);
+            execute("CREATE TABLE dst (ts TIMESTAMP, x INT, pages STRING) TIMESTAMP(ts) PARTITION BY DAY " + walClause);
+            execute("INSERT INTO src VALUES ('2026-01-01T00:00:00.000000Z', 1), ('2026-01-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+
+            // touch() opens the cursor of its sub-query when the copy reads the first row, so this
+            // plan finds out that src changed only after the copy started a row in the writer.
+            try (
+                    PreparedStatement insertSelect = connection.prepareStatement("""
+                            INSERT INTO dst
+                            SELECT '2026-01-03T00:00:00.000000Z'::TIMESTAMP, 7, touch(SELECT * FROM src)
+                            FROM long_sequence(1)
+                            """);
+                    Statement statement = connection.createStatement()
+            ) {
+                // Run more than once, so that the server caches the plan, by its text or in the
+                // named statement.
+                Assert.assertEquals(1, insertSelect.executeUpdate());
+                Assert.assertEquals(1, insertSelect.executeUpdate());
+
+                execute("ALTER TABLE src ADD COLUMN y INT");
+                drainWalQueue();
+
+                connection.setAutoCommit(false);
+                Assert.assertEquals(1, statement.executeUpdate("INSERT INTO dst (ts, x) VALUES ('2026-01-03T00:00:00.000000Z', 42)"));
+                if (isWal) {
+                    // The failed copy rolls back the WAL writer, and with it the row the earlier
+                    // INSERT parked there. A retry cannot bring that row back, so the statement
+                    // has to fail instead of reporting success.
+                    try {
+                        insertSelect.executeUpdate();
+                        Assert.fail("the stale plan rolled the transaction's earlier row back, the INSERT should have failed");
+                    } catch (SQLException e) {
+                        assertMessageMatches(e, "cached query plan cannot be used because table schema has changed \\[table=src");
+                    }
+                } else {
+                    // The failed row leaves the non-WAL writer distressed, with the earlier row
+                    // still counted as uncommitted. The statement retries on that writer and
+                    // reports success, and the writer then refuses to commit. The contract is that
+                    // the client sees a failure and the transaction does not commit without its
+                    // earlier row: the statement reporting success before the COMMIT fails is what
+                    // the server does today, not a requirement, and a server that failed the
+                    // statement itself would meet the contract too.
+                    Assert.assertEquals(1, insertSelect.executeUpdate());
+                    try {
+                        connection.commit();
+                        Assert.fail("the writer is distressed, the COMMIT should have failed");
+                    } catch (SQLException e) {
+                        assertMessageMatches(e, "Table 'dst' is distressed");
+                    }
+                }
+                connection.rollback();
+                connection.setAutoCommit(true);
+            }
+            drainWalQueue();
+
+            // The client saw a failure for either table kind, and the transaction left none of
+            // its rows behind: dst holds the two rows committed before it began.
+            assertQuery("SELECT x, count() FROM dst ORDER BY x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tcount
+                            7\t2
+                            """);
         });
     }
 

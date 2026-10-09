@@ -40,6 +40,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.TxnScoreboardPoolV2;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -7749,6 +7750,17 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testUpdateFromViewRedefinedDuringStatementClosesStalePlan() throws Exception {
+        // /exec compiles the UPDATE against the old view body. The view changes before the plan
+        // opens its cursor, so /exec compiles the statement again. It has to close the first plan,
+        // and the rows have to come from the new body.
+        assertUpdateClosesStalePlanAfterViewRedefined(
+                "UPDATE upd SET w = vw.v FROM vw WHERE upd.k = vw.k",
+                "[[1,110],[2,120],[3,130]]"
+        );
+    }
+
+    @Test
     public void testUpdateO3MaxLagAndMaxUncommittedRowsIsIgnoredIfPartitionByIsNONE() throws Exception {
         importWithO3MaxLagAndMaxUncommittedRowsTableExists(true, false, PartitionBy.NONE, 180_000_000, 1, 300000000, 1000);
     }
@@ -7756,6 +7768,18 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testUpdateO3MaxLagAndMaxUncommittedRowsIsIgnoredIfValuesAreSmallerThanZero() throws Exception {
         importWithO3MaxLagAndMaxUncommittedRowsTableExists(true, true, PartitionBy.DAY, -1, -1, 300000000, 1000);
+    }
+
+    @Test
+    public void testUpdateWhereSubQueryOnViewRedefinedDuringStatementClosesStalePlan() throws Exception {
+        // As testUpdateFromViewRedefinedDuringStatementClosesStalePlan, with the view read by a
+        // sub-query of the WHERE clause. The sub-query joins, so its plan holds native memory from
+        // the moment the compiler builds it, with or without JIT. The old view body yields no
+        // value above 100, which updates no row, and the new body updates all three.
+        assertUpdateClosesStalePlanAfterViewRedefined(
+                "UPDATE upd SET w = 1 WHERE w < (SELECT count() FROM vw JOIN src ON vw.k = src.k WHERE vw.v > 100)",
+                "[[1,1],[2,1],[3,1]]"
+        );
     }
 
     private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, String expectedResponseHeader) {
@@ -8005,6 +8029,83 @@ public class IODispatcherTest extends AbstractTest {
             printTelemetryEventAndOrigin(cursor, reader.getMetadata(), sink);
             TestUtils.assertEquals("100\t1\n1\t2\n101\t1\n", sink);
         }
+    }
+
+    /**
+     * Sends {@code updateSql} to /exec while another session redefines the view it reads, between
+     * the statement's compile and its execution. /exec takes the writer of the statement's target
+     * only to execute a compiled plan, so the hook redefines the view the first time the request
+     * takes that writer. Nothing here waits on time: the hook returns once the concurrent
+     * {@code ALTER VIEW} has committed.
+     */
+    private void assertUpdateClosesStalePlanAfterViewRedefined(String updateSql, String expectedDataset) throws Exception {
+        getSimpleTester().run((engine, sqlExecutionContext) -> {
+            // A WAL table refuses to read another table in an UPDATE when the statement compiles.
+            engine.execute("CREATE TABLE src (ts TIMESTAMP, k INT, v INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            engine.execute("CREATE TABLE upd (ts TIMESTAMP, k INT, w INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            engine.execute(
+                    """
+                            INSERT INTO src VALUES
+                            ('2024-01-01T00:00:00', 1, 10),
+                            ('2024-01-02T00:00:00', 2, 20),
+                            ('2024-01-03T00:00:00', 3, 30)
+                            """,
+                    sqlExecutionContext
+            );
+            engine.execute(
+                    """
+                            INSERT INTO upd VALUES
+                            ('2024-01-01T00:00:00', 1, 0),
+                            ('2024-01-02T00:00:00', 2, 0),
+                            ('2024-01-03T00:00:00', 3, 0)
+                            """,
+                    sqlExecutionContext
+            );
+            engine.execute("CREATE VIEW vw AS (SELECT k, v FROM src)", sqlExecutionContext);
+
+            final AtomicInteger writerGetCount = new AtomicInteger();
+            final AtomicReference<Throwable> alterViewFailure = new AtomicReference<>();
+            engine.setPoolListener((factoryType, _, tableToken, event, _, _) -> {
+                if (factoryType == PoolListener.SRC_WRITER
+                        && (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE)
+                        && tableToken != null
+                        && "upd".equals(tableToken.getTableName())
+                        && writerGetCount.incrementAndGet() == 1) {
+                    final Thread alterViewThread = new Thread(() -> {
+                        try (SqlExecutionContext alterViewContext = TestUtils.createSqlExecutionCtx(engine)) {
+                            engine.execute("ALTER VIEW vw AS (SELECT k, v + 100 AS v FROM src)", alterViewContext);
+                        } catch (Throwable th) {
+                            alterViewFailure.set(th);
+                        } finally {
+                            Path.clearThreadLocals();
+                        }
+                    });
+                    alterViewThread.start();
+                    try {
+                        alterViewThread.join();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        alterViewFailure.compareAndSet(null, e);
+                    }
+                }
+            });
+            try {
+                testHttpClient.assertGet("/exec", "{\"dml\":\"OK\",\"updated\":3}", updateSql);
+            } finally {
+                engine.setPoolListener(null);
+            }
+            if (alterViewFailure.get() != null) {
+                throw new AssertionError("concurrent ALTER VIEW failed", alterViewFailure.get());
+            }
+            // The stale plan took the writer once and the recompiled plan took it once more.
+            Assert.assertEquals(2, writerGetCount.get());
+            testHttpClient.assertGet(
+                    "/exec",
+                    "{\"query\":\"SELECT k, w FROM upd\",\"columns\":[{\"name\":\"k\",\"type\":\"INT\"},{\"name\":\"w\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":"
+                            + expectedDataset + ",\"count\":3}",
+                    "SELECT k, w FROM upd"
+            );
+        });
     }
 
     @NotNull

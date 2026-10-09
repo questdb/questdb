@@ -25,11 +25,14 @@
 package io.questdb.test.cutlass.qwp;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.str.Path;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -42,6 +45,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Round-trip tests for non-SELECT statements over QWP egress. The server
@@ -342,6 +347,22 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
     }
 
     @Test
+    public void testUpdateFromViewRedefinedDuringStatementClosesStalePlan() throws Exception {
+        // Egress compiles the UPDATE against the old view body. The view changes before the plan
+        // opens its cursor, so egress compiles the statement again. It has to close the first
+        // plan, and the rows have to come from the new body.
+        assertUpdateClosesStalePlanAfterViewRedefined(
+                "UPDATE upd SET w = vw.v FROM vw WHERE upd.k = vw.k",
+                """
+                        k\tw
+                        1\t110
+                        2\t120
+                        3\t130
+                        """
+        );
+    }
+
+    @Test
     public void testUpdateReportsRowsAffected() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startFragmented()) {
@@ -385,6 +406,23 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testUpdateWhereSubQueryOnViewRedefinedDuringStatementClosesStalePlan() throws Exception {
+        // As testUpdateFromViewRedefinedDuringStatementClosesStalePlan, with the view read by a
+        // sub-query of the WHERE clause. The sub-query joins, so its plan holds native memory from
+        // the moment the compiler builds it, with or without JIT. The old view body yields no
+        // value above 100, which updates no row, and the new body updates all three.
+        assertUpdateClosesStalePlanAfterViewRedefined(
+                "UPDATE upd SET w = 1 WHERE w < (SELECT count() FROM vw JOIN src ON vw.k = src.k WHERE vw.v > 100)",
+                """
+                        k\tw
+                        1\t1
+                        2\t1
+                        3\t1
+                        """
+        );
     }
 
     /**
@@ -504,6 +542,86 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
                     altered.countDown();
                     serverMain.getEngine().setPoolListener(previousListener);
                 }
+            }
+        });
+    }
+
+    /**
+     * Sends {@code updateSql} over egress while another session redefines the view it reads,
+     * between the statement's compile and its execution. Egress takes the writer of the
+     * statement's target only to execute a compiled plan, so the hook redefines the view the
+     * first time the request takes that writer. Nothing here waits on time: the hook returns once
+     * the concurrent {@code ALTER VIEW} has committed.
+     */
+    private void assertUpdateClosesStalePlanAfterViewRedefined(String updateSql, String expected) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    TestServerMain serverMain = startFragmented();
+                    QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")
+            ) {
+                // A WAL table refuses to read another table in an UPDATE when the statement compiles.
+                serverMain.execute("CREATE TABLE src (ts TIMESTAMP, k INT, v INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                serverMain.execute("CREATE TABLE upd (ts TIMESTAMP, k INT, w INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                serverMain.execute("""
+                        INSERT INTO src VALUES
+                        ('2024-01-01T00:00:00', 1, 10),
+                        ('2024-01-02T00:00:00', 2, 20),
+                        ('2024-01-03T00:00:00', 3, 30)
+                        """);
+                serverMain.execute("""
+                        INSERT INTO upd VALUES
+                        ('2024-01-01T00:00:00', 1, 0),
+                        ('2024-01-02T00:00:00', 2, 0),
+                        ('2024-01-03T00:00:00', 3, 0)
+                        """);
+                serverMain.execute("CREATE VIEW vw AS (SELECT k, v FROM src)");
+                client.connect();
+
+                final CairoEngine engine = serverMain.getEngine();
+                final AtomicInteger writerGetCount = new AtomicInteger();
+                final AtomicReference<Throwable> alterViewFailure = new AtomicReference<>();
+                final PoolListener previousListener = engine.getPoolListener();
+                engine.setPoolListener((source, thread, token, event, segment, position) -> {
+                    if (previousListener != null) {
+                        previousListener.onEvent(source, thread, token, event, segment, position);
+                    }
+                    if (source == PoolListener.SRC_WRITER
+                            && (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE)
+                            && token != null
+                            && "upd".equals(token.getTableName())
+                            && writerGetCount.incrementAndGet() == 1) {
+                        final Thread alterViewThread = new Thread(() -> {
+                            try (SqlExecutionContext alterViewContext = TestUtils.createSqlExecutionCtx(engine)) {
+                                engine.execute("ALTER VIEW vw AS (SELECT k, v + 100 AS v FROM src)", alterViewContext);
+                            } catch (Throwable th) {
+                                alterViewFailure.set(th);
+                            } finally {
+                                Path.clearThreadLocals();
+                            }
+                        });
+                        alterViewThread.start();
+                        try {
+                            alterViewThread.join();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            alterViewFailure.compareAndSet(null, e);
+                        }
+                    }
+                });
+                try {
+                    final ExecResult result = executeExec(client, updateSql);
+                    Assert.assertEquals(1, result.completedCount);
+                    Assert.assertEquals(CompiledQuery.UPDATE, result.opType);
+                    Assert.assertEquals(3, result.rowsAffected);
+                } finally {
+                    engine.setPoolListener(previousListener);
+                }
+                if (alterViewFailure.get() != null) {
+                    throw new AssertionError("concurrent ALTER VIEW failed", alterViewFailure.get());
+                }
+                // The stale plan took the writer once and the recompiled plan took it once more.
+                Assert.assertEquals(2, writerGetCount.get());
+                serverMain.assertSql("SELECT k, w FROM upd", expected);
             }
         });
     }

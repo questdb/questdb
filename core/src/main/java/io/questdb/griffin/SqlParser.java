@@ -793,6 +793,27 @@ public class SqlParser {
     }
 
     /**
+     * Borrows a lexer for a lookahead and sets it to read {@code content} from {@code from}. The
+     * lookaheads read with a lexer of their own because the parse's lexer cannot be rewound
+     * cleanly: {@code goToPosition} moves the read offset but leaves the unparsed-token deque and
+     * the lookahead slots holding whatever a scan consumed, which then surfaces as a spurious parse
+     * error in the statement that follows.
+     * <p>
+     * The view lexer pool configures the borrowed lexer as it does every SQL lexer, and the
+     * lookaheads read it through {@link SqlUtil#fetchNext}, as the parse does. So a lookahead
+     * tokenises quoted text and skips comments exactly as the parse will, down to block comments
+     * that nest, a {@code --} comment that ends at a lone carriage return and a quoted comment
+     * terminator inside a block comment. The caller releases the lexer back to the pool before it
+     * returns.
+     */
+    private GenericLexer borrowLookaheadLexer(CharSequence content, int from) {
+        final GenericLexer lookahead = viewLexers.next();
+        lookahead.of(content);
+        lookahead.goToPosition(from);
+        return lookahead;
+    }
+
+    /**
      * Returns a lexer set to read {@code source} from {@code position}: the body of a view, for
      * {@link #compileViewQuery} to expand the view from, or the text a sub-query was declared in,
      * for {@link #parseDeclaredQuery} to parse a copy of the sub-query from. The caller adds the
@@ -1436,6 +1457,38 @@ public class SqlParser {
         return false;
     }
 
+    /**
+     * Looks past a run of {@code AUDITED} and {@code OVERRIDABLE} words, starting just after the
+     * first of them, to decide whether they mark a declaration. A variable name after them makes
+     * them markers. So does {@code SELECT}, or {@code :=} straight after them or after one more
+     * token - text that a query opening with a table name cannot continue with. There the
+     * declaration lacks its variable, or the variable its {@code @}, and the marker loop reports
+     * that. Anything else leaves the words to the query, where the first names a table and the
+     * next, if any, its alias.
+     */
+    private boolean isMarkedDeclarationAhead(CharSequence content, int from) {
+        final GenericLexer lookahead = borrowLookaheadLexer(content, from);
+        try {
+            CharSequence tok = SqlUtil.fetchNext(lookahead);
+            while (tok != null && (isAuditedKeyword(tok) || isOverridableKeyword(tok))) {
+                tok = SqlUtil.fetchNext(lookahead);
+            }
+            if (tok == null) {
+                return false;
+            }
+            if (tok.charAt(0) == '@' || isSelectKeyword(tok) || Chars.equals(tok, ":=")) {
+                return true;
+            }
+            tok = SqlUtil.fetchNext(lookahead);
+            return tok != null && Chars.equals(tok, ":=");
+        } catch (SqlException e) {
+            // An unclosed quote, which the parse reports when it reads the same text.
+            return false;
+        } finally {
+            viewLexers.release(lookahead);
+        }
+    }
+
     private boolean isUnboundedPreceding(GenericLexer lexer, CharSequence tok) throws SqlException {
         if (isUnboundedKeyword(tok)) {
             tok = tok(lexer, "'preceding'");
@@ -1449,6 +1502,58 @@ public class SqlParser {
 
     private boolean isUnexpectedRightParenInTopLevelSelect(CharSequence tok) {
         return Chars.equals(tok, ')') && !(subQueryMode || createTableMode || copyMode || createViewMode);
+    }
+
+    /**
+     * Looks ahead from just after {@code :=} to decide whether the right-hand side is a value list
+     * rather than a parenthesised scalar. Only a comma directly inside the outermost brackets makes
+     * it a list - commas nested in a function call or an inner bracket belong to that call. The
+     * lookahead reads tokens, as {@link #borrowLookaheadLexer} describes, so a comma inside quoted
+     * text or a comment is never mistaken for a separator.
+     */
+    private boolean isValueListAhead(CharSequence content, int from) {
+        final GenericLexer lookahead = borrowLookaheadLexer(content, from);
+        try {
+            CharSequence tok = SqlUtil.fetchNext(lookahead);
+            if (tok == null || !Chars.equals(tok, '(')) {
+                return false;
+            }
+            // A bracketed subquery is not a list. Its select list, ORDER BY and GROUP BY put commas
+            // at the very depth a separator sits at, so without this a subquery would be read as a
+            // list and reported as a misused one, rather than getting the error that describes what
+            // was actually written. A subquery may open with its own DECLARE, whose declarations
+            // are comma-separated too.
+            tok = SqlUtil.fetchNext(lookahead);
+            if (tok == null || isSelectKeyword(tok) || isWithKeyword(tok) || isDeclareKeyword(tok)) {
+                return false;
+            }
+            // An empty bracket pair is a list with nothing in it, never a scalar. Claiming it here
+            // costs nothing - it is invalid either way - and buys an error that names the mistake
+            // instead of the arity complaint the scalar parse produces for the same text.
+            if (Chars.equals(tok, ')')) {
+                return true;
+            }
+            int depth = 1;
+            do {
+                if (Chars.equals(tok, '(') || Chars.equals(tok, '[')) {
+                    depth++;
+                } else if (Chars.equals(tok, ')') || Chars.equals(tok, ']')) {
+                    if (--depth == 0) {
+                        // closed the outermost bracket without meeting a separator
+                        return false;
+                    }
+                } else if (depth == 1 && Chars.equals(tok, ',')) {
+                    return true;
+                }
+                tok = SqlUtil.fetchNext(lookahead);
+            } while (tok != null);
+            return false;
+        } catch (SqlException e) {
+            // An unclosed quote, which the parse reports when it reads the same text.
+            return false;
+        } finally {
+            viewLexers.release(lookahead);
+        }
     }
 
     private ExpressionNode literal(GenericLexer lexer, CharSequence name) {
@@ -1476,6 +1581,23 @@ public class SqlParser {
 
     private ExpressionNode nextLiteral(CharSequence token, int position) {
         return SqlUtil.nextLiteral(expressionNodePool, token, position);
+    }
+
+    /**
+     * Returns the offset of the first token at or after {@code from}, or the length of
+     * {@code content} when no token follows. It skips comments as the parse does, see
+     * {@link #borrowLookaheadLexer}.
+     */
+    private int nextTokenPosition(CharSequence content, int from) {
+        final GenericLexer lookahead = borrowLookaheadLexer(content, from);
+        try {
+            return SqlUtil.fetchNext(lookahead) != null ? lookahead.lastTokenPosition() : content.length();
+        } catch (SqlException e) {
+            // An unclosed quote, which is where the next token starts.
+            return lookahead.lastTokenPosition();
+        } finally {
+            viewLexers.release(lookahead);
+        }
     }
 
     private CharSequence notTermTok(GenericLexer lexer) throws SqlException {
@@ -4363,17 +4485,26 @@ public class SqlParser {
      * would copy, which names what the statement reads too often. The read that crosses the
      * budget would name less: it often sits in the text of another declaration, parsed again for
      * a copy of that one, and a read in an expression keeps no position, because the sub-query
-     * has replaced the variable there by the time the read copies it. Every copy also checks the
-     * statement's parse budget, see {@link #checkParseBudget}, at the same position.
+     * has replaced the variable there by the time the read copies it. A sub-query declared in the
+     * body of a view is the exception: its position is one in that body's text, which means
+     * nothing in the statement's, so the error points at the statement's read of the outermost
+     * view the parser is expanding instead. Every copy also checks the statement's parse budget,
+     * see {@link #checkParseBudget}, which takes the sub-query's position and points at that read
+     * of the outermost view whenever the parser is expanding one.
      */
     private IQueryModel parseDeclaredQuery(ExpressionNode query, SqlParserCallback sqlParserCallback) throws SqlException {
+        final int index = declaredQueries.indexOf(query);
+        assert index > -1 : "addDeclaredQueries() records every sub-query in a declared value";
         if (++declaredQueryCopyCount > MAX_DECLARED_QUERY_COPIES) {
-            throw SqlException.$(query.position, "declared sub-queries are read too many times [max=")
+            // A sub-query declared in the body of a view has a position in that body's text,
+            // which means nothing in the statement's, so the error points at the statement's
+            // read of the outermost view the parser is expanding instead, as checkParseBudget()
+            // does. A sub-query the statement declared keeps its position, even when the body
+            // of a view reads it.
+            throw SqlException.$(declaredQueryViewDepths.getQuick(index) > 0 ? viewReferencePosition : query.position, "declared sub-queries are read too many times [max=")
                     .put(MAX_DECLARED_QUERY_COPIES).put(']');
         }
         checkParseBudget(query.position);
-        final int index = declaredQueries.indexOf(query);
-        assert index > -1 : "addDeclaredQueries() records every sub-query in a declared value";
         final GenericLexer queryLexer = borrowViewLexer(declaredQuerySources.getQuick(index), query.position);
         // parseAsSubQuery() switches subQueryMode off when it returns. The read sits mid-statement,
         // possibly inside a sub-query that still needs the flag to accept its closing ')', so this
@@ -4402,227 +4533,6 @@ public class SqlParser {
                 viewsBeingCompiled.add(parkedViewsBeingCompiled.popLast());
             }
         }
-    }
-
-    /**
-     * Borrows a lexer for a lookahead and sets it to read {@code content} from {@code from}. The
-     * lookaheads read with a lexer of their own because the parse's lexer cannot be rewound
-     * cleanly: {@code goToPosition} moves the read offset but leaves the unparsed-token deque and
-     * the lookahead slots holding whatever a scan consumed, which then surfaces as a spurious parse
-     * error in the statement that follows.
-     * <p>
-     * The view lexer pool configures the borrowed lexer as it does every SQL lexer, and the
-     * lookaheads read it through {@link SqlUtil#fetchNext}, as the parse does. So a lookahead
-     * tokenises quoted text and skips comments exactly as the parse will, down to block comments
-     * that nest, a {@code --} comment that ends at a lone carriage return and a quoted comment
-     * terminator inside a block comment. The caller releases the lexer back to the pool before it
-     * returns.
-     */
-    private GenericLexer borrowLookaheadLexer(CharSequence content, int from) {
-        final GenericLexer lookahead = viewLexers.next();
-        lookahead.of(content);
-        lookahead.goToPosition(from);
-        return lookahead;
-    }
-
-    /**
-     * Looks past a run of {@code AUDITED} and {@code OVERRIDABLE} words, starting just after the
-     * first of them, to decide whether they mark a declaration. A variable name after them makes
-     * them markers. So does {@code SELECT}, or {@code :=} straight after them or after one more
-     * token - text that a query opening with a table name cannot continue with. There the
-     * declaration lacks its variable, or the variable its {@code @}, and the marker loop reports
-     * that. Anything else leaves the words to the query, where the first names a table and the
-     * next, if any, its alias.
-     */
-    private boolean isMarkedDeclarationAhead(CharSequence content, int from) {
-        final GenericLexer lookahead = borrowLookaheadLexer(content, from);
-        try {
-            CharSequence tok = SqlUtil.fetchNext(lookahead);
-            while (tok != null && (isAuditedKeyword(tok) || isOverridableKeyword(tok))) {
-                tok = SqlUtil.fetchNext(lookahead);
-            }
-            if (tok == null) {
-                return false;
-            }
-            if (tok.charAt(0) == '@' || isSelectKeyword(tok) || Chars.equals(tok, ":=")) {
-                return true;
-            }
-            tok = SqlUtil.fetchNext(lookahead);
-            return tok != null && Chars.equals(tok, ":=");
-        } catch (SqlException e) {
-            // An unclosed quote, which the parse reports when it reads the same text.
-            return false;
-        } finally {
-            viewLexers.release(lookahead);
-        }
-    }
-
-    /**
-     * Looks ahead from just after {@code :=} to decide whether the right-hand side is a value list
-     * rather than a parenthesised scalar. Only a comma directly inside the outermost brackets makes
-     * it a list - commas nested in a function call or an inner bracket belong to that call. The
-     * lookahead reads tokens, as {@link #borrowLookaheadLexer} describes, so a comma inside quoted
-     * text or a comment is never mistaken for a separator.
-     */
-    private boolean isValueListAhead(CharSequence content, int from) {
-        final GenericLexer lookahead = borrowLookaheadLexer(content, from);
-        try {
-            CharSequence tok = SqlUtil.fetchNext(lookahead);
-            if (tok == null || !Chars.equals(tok, '(')) {
-                return false;
-            }
-            // A bracketed subquery is not a list. Its select list, ORDER BY and GROUP BY put commas
-            // at the very depth a separator sits at, so without this a subquery would be read as a
-            // list and reported as a misused one, rather than getting the error that describes what
-            // was actually written. A subquery may open with its own DECLARE, whose declarations
-            // are comma-separated too.
-            tok = SqlUtil.fetchNext(lookahead);
-            if (tok == null || isSelectKeyword(tok) || isWithKeyword(tok) || isDeclareKeyword(tok)) {
-                return false;
-            }
-            // An empty bracket pair is a list with nothing in it, never a scalar. Claiming it here
-            // costs nothing - it is invalid either way - and buys an error that names the mistake
-            // instead of the arity complaint the scalar parse produces for the same text.
-            if (Chars.equals(tok, ')')) {
-                return true;
-            }
-            int depth = 1;
-            do {
-                if (Chars.equals(tok, '(') || Chars.equals(tok, '[')) {
-                    depth++;
-                } else if (Chars.equals(tok, ')') || Chars.equals(tok, ']')) {
-                    if (--depth == 0) {
-                        // closed the outermost bracket without meeting a separator
-                        return false;
-                    }
-                } else if (depth == 1 && Chars.equals(tok, ',')) {
-                    return true;
-                }
-                tok = SqlUtil.fetchNext(lookahead);
-            } while (tok != null);
-            return false;
-        } catch (SqlException e) {
-            // An unclosed quote, which the parse reports when it reads the same text.
-            return false;
-        } finally {
-            viewLexers.release(lookahead);
-        }
-    }
-
-    /**
-     * Returns the offset of the first token at or after {@code from}, or the length of
-     * {@code content} when no token follows. It skips comments as the parse does, see
-     * {@link #borrowLookaheadLexer}.
-     */
-    private int nextTokenPosition(CharSequence content, int from) {
-        final GenericLexer lookahead = borrowLookaheadLexer(content, from);
-        try {
-            return SqlUtil.fetchNext(lookahead) != null ? lookahead.lastTokenPosition() : content.length();
-        } catch (SqlException e) {
-            // An unclosed quote, which is where the next token starts.
-            return lookahead.lastTokenPosition();
-        } finally {
-            viewLexers.release(lookahead);
-        }
-    }
-
-    /**
-     * Parses a {@code (a, b, c)} value list into a {@link ExpressionNode#VALUE_LIST} marker.
-     * <p>
-     * Elements are parsed one at a time: the expression parser stops at a comma that is not inside
-     * brackets, and the opening bracket is consumed here rather than by it, so each element ends at
-     * its own separator. Elements are stored in reverse source order, the convention every
-     * multi-argument node uses, which lets {@link #spliceValueLists} copy them straight across.
-     */
-    private ExpressionNode parseValueList(
-            GenericLexer lexer,
-            IQueryModel model,
-            SqlParserCallback sqlParserCallback
-    ) throws SqlException {
-        expectTok(lexer, '(');
-        // Taken after the bracket is read, so that a misused list is reported at the bracket
-        // rather than at the whitespace in front of it - getPosition() before the read is the
-        // raw offset the last token left behind, which is wherever `:=` ended.
-        final int listPos = lexer.lastTokenPosition();
-        // Members are appended in source order and reversed at the end, so the list is built in
-        // place. A shared scratch list could not be used here: an element may hold a subquery
-        // carrying its own DECLARE, which re-enters this method while this list is still open.
-        final ExpressionNode list = expressionNodePool.next().of(ExpressionNode.VALUE_LIST, "()", 0, listPos);
-        boolean isFirstElement = true;
-        while (true) {
-            // A bracketed element that holds its own separator is a nested list, and refusing it is
-            // the point: the expression parser reads `('b','c')` as a parenthesised scalar and
-            // evaluates it to its last member, so `('a', ('b','c'))` would quietly become
-            // `('a','c')`. Discarding members without saying so is what a declared list exists to
-            // stop doing, and the variable spelling of the same mistake - `@b := (@a, 'z')` - is
-            // already refused. The same lookahead that decided this was a list decides it for the
-            // element, so the two agree by construction. `(1+2)` has no separator and stays a
-            // parenthesised scalar, as it does anywhere else.
-            //
-            // Where the element starts differs between the first member and the rest: nothing is
-            // unparsed after the opening bracket, so getPosition() is the read offset there, while
-            // every later member has had its first token read and pushed back, which leaves
-            // getPosition() past it and lastTokenPosition() on it.
-            final CharSequence content = lexer.getContent();
-            final int elementStart = isFirstElement
-                    ? nextTokenPosition(content, lexer.getPosition())
-                    : lexer.lastTokenPosition();
-            if (isValueListAhead(content, elementStart)) {
-                throw SqlException.$(elementStart, "nested lists are not supported, list members have to be values");
-            }
-            isFirstElement = false;
-            // expr() returns the last operand the element's parse builds and leaves any other on
-            // the tree builder's stack. Such an operand is one nothing in the element consumed: the
-            // sub-query in `$1 (SELECT 1)`, or the `1` in `1 = (2, 3)`, where `=` takes both
-            // members of the bracketed pair. Dropping it would change the list without a word.
-            // The operand left over can be the marker a searched CASE takes as its first operand,
-            // when a bracketed pair in a branch supplies the CASE one operand too many. The marker
-            // has no text and no position, so the error points at the member instead.
-            final int operandCountLo = expressionTreeBuilder.size();
-            final ExpressionNode element = expr(lexer, model, sqlParserCallback, model.getDecls(), null);
-            if (expressionTreeBuilder.size() > operandCountLo) {
-                final ExpressionNode dangling = expressionTreeBuilder.poll();
-                throw SqlException.$(dangling.position > -1 ? dangling.position : elementStart, "dangling expression");
-            }
-            if (element == null) {
-                throw SqlException.$(lexer.lastTokenPosition(), "value expected in list");
-            }
-            if (model.getDecls().size() == 0) {
-                // expr() leaves the member unchecked while the block declares nothing, which holds
-                // for a list in the block's first declaration. The visitor checks it as a later
-                // declaration's member is checked; with nothing declared it replaces nothing.
-                recursiveReplace(element, rewriteDeclaredVariablesInExpressionVisitor.ofFirstDeclaration(model.getDecls(), null, content));
-            }
-            list.args.add(element);
-            // The list's own closing bracket has to be read through the local-brace helper: while a
-            // view body is being expanded the parser is in subquery mode, where the plain token
-            // read reports ')' as end of input because it belongs to the enclosing subquery. That
-            // makes the difference between a list in a view and the same list typed as a query.
-            final CharSequence sep = tokIncludingLocalBrace(lexer, "',' or ')'");
-            if (Chars.equals(sep, ')')) {
-                break;
-            }
-            if (!Chars.equals(sep, ',')) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("',' or ')' expected in list, but was '").put(sep).put('\'');
-            }
-            // A trailing comma closes the list, which is the only way to write a list of one:
-            // `('a')` is indistinguishable from a parenthesised scalar, and reads as one. IN accepts
-            // either, but an audited parameter renders a list as a JSON array and a scalar as a
-            // value, so a report needs a way to keep the shape stable across a one-member read.
-            final CharSequence next = tokIncludingLocalBrace(lexer, "value or ')'");
-            if (Chars.equals(next, ')')) {
-                break;
-            }
-            lexer.unparseLast();
-        }
-        // Reverse in place to the order every multi-argument node uses, which lets spliceIn copy
-        // the members straight across. paramCount stays 0 - see ExpressionNode.VALUE_LIST.
-        for (int i = 0, j = list.args.size() - 1; i < j; i++, j--) {
-            final ExpressionNode swap = list.args.getQuick(i);
-            list.args.setQuick(i, list.args.getQuick(j));
-            list.args.setQuick(j, swap);
-        }
-        return list;
     }
 
     private IQueryModel parseDml(
@@ -7105,6 +7015,105 @@ public class SqlParser {
         }
     }
 
+    /**
+     * Parses a {@code (a, b, c)} value list into a {@link ExpressionNode#VALUE_LIST} marker.
+     * <p>
+     * Elements are parsed one at a time: the expression parser stops at a comma that is not inside
+     * brackets, and the opening bracket is consumed here rather than by it, so each element ends at
+     * its own separator. Elements are stored in reverse source order, the convention every
+     * multi-argument node uses, which lets {@link #spliceValueLists} copy them straight across.
+     */
+    private ExpressionNode parseValueList(
+            GenericLexer lexer,
+            IQueryModel model,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        expectTok(lexer, '(');
+        // Taken after the bracket is read, so that a misused list is reported at the bracket
+        // rather than at the whitespace in front of it - getPosition() before the read is the
+        // raw offset the last token left behind, which is wherever `:=` ended.
+        final int listPos = lexer.lastTokenPosition();
+        // Members are appended in source order and reversed at the end, so the list is built in
+        // place. A shared scratch list could not be used here: an element may hold a subquery
+        // carrying its own DECLARE, which re-enters this method while this list is still open.
+        final ExpressionNode list = expressionNodePool.next().of(ExpressionNode.VALUE_LIST, "()", 0, listPos);
+        boolean isFirstElement = true;
+        while (true) {
+            // A bracketed element that holds its own separator is a nested list, and refusing it is
+            // the point: the expression parser reads `('b','c')` as a parenthesised scalar and
+            // evaluates it to its last member, so `('a', ('b','c'))` would quietly become
+            // `('a','c')`. Discarding members without saying so is what a declared list exists to
+            // stop doing, and the variable spelling of the same mistake - `@b := (@a, 'z')` - is
+            // already refused. The same lookahead that decided this was a list decides it for the
+            // element, so the two agree by construction. `(1+2)` has no separator and stays a
+            // parenthesised scalar, as it does anywhere else.
+            //
+            // Where the element starts differs between the first member and the rest: nothing is
+            // unparsed after the opening bracket, so getPosition() is the read offset there, while
+            // every later member has had its first token read and pushed back, which leaves
+            // getPosition() past it and lastTokenPosition() on it.
+            final CharSequence content = lexer.getContent();
+            final int elementStart = isFirstElement
+                    ? nextTokenPosition(content, lexer.getPosition())
+                    : lexer.lastTokenPosition();
+            if (isValueListAhead(content, elementStart)) {
+                throw SqlException.$(elementStart, "nested lists are not supported, list members have to be values");
+            }
+            isFirstElement = false;
+            // expr() returns the last operand the element's parse builds and leaves any other on
+            // the tree builder's stack. Such an operand is one nothing in the element consumed: the
+            // sub-query in `$1 (SELECT 1)`, or the `1` in `1 = (2, 3)`, where `=` takes both
+            // members of the bracketed pair. Dropping it would change the list without a word.
+            // The operand left over can be the marker a searched CASE takes as its first operand,
+            // when a bracketed pair in a branch supplies the CASE one operand too many. The marker
+            // has no text and no position, so the error points at the member instead.
+            final int operandCountLo = expressionTreeBuilder.size();
+            final ExpressionNode element = expr(lexer, model, sqlParserCallback, model.getDecls(), null);
+            if (expressionTreeBuilder.size() > operandCountLo) {
+                final ExpressionNode dangling = expressionTreeBuilder.poll();
+                throw SqlException.$(dangling.position > -1 ? dangling.position : elementStart, "dangling expression");
+            }
+            if (element == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "value expected in list");
+            }
+            if (model.getDecls().size() == 0) {
+                // expr() leaves the member unchecked while the block declares nothing, which holds
+                // for a list in the block's first declaration. The visitor checks it as a later
+                // declaration's member is checked; with nothing declared it replaces nothing.
+                recursiveReplace(element, rewriteDeclaredVariablesInExpressionVisitor.ofFirstDeclaration(model.getDecls(), null, content));
+            }
+            list.args.add(element);
+            // The list's own closing bracket has to be read through the local-brace helper: while a
+            // view body is being expanded the parser is in subquery mode, where the plain token
+            // read reports ')' as end of input because it belongs to the enclosing subquery. That
+            // makes the difference between a list in a view and the same list typed as a query.
+            final CharSequence sep = tokIncludingLocalBrace(lexer, "',' or ')'");
+            if (Chars.equals(sep, ')')) {
+                break;
+            }
+            if (!Chars.equals(sep, ',')) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("',' or ')' expected in list, but was '").put(sep).put('\'');
+            }
+            // A trailing comma closes the list, which is the only way to write a list of one:
+            // `('a')` is indistinguishable from a parenthesised scalar, and reads as one. IN accepts
+            // either, but an audited parameter renders a list as a JSON array and a scalar as a
+            // value, so a report needs a way to keep the shape stable across a one-member read.
+            final CharSequence next = tokIncludingLocalBrace(lexer, "value or ')'");
+            if (Chars.equals(next, ')')) {
+                break;
+            }
+            lexer.unparseLast();
+        }
+        // Reverse in place to the order every multi-argument node uses, which lets spliceIn copy
+        // the members straight across. paramCount stays 0 - see ExpressionNode.VALUE_LIST.
+        for (int i = 0, j = list.args.size() - 1; i < j; i++, j--) {
+            final ExpressionNode swap = list.args.getQuick(i);
+            list.args.setQuick(i, list.args.getQuick(j));
+            list.args.setQuick(j, swap);
+        }
+        return list;
+    }
+
     @SuppressWarnings("SameParameterValue")
     @NotNull
     private ExecutionModel parseWith(
@@ -7261,172 +7270,6 @@ public class SqlParser {
         model.setSampleByOffset(isZeroOffsetToken(offsetExpr.token) ? ZERO_OFFSET : offsetExpr);
         tok = optTok(lexer);
         return tok;
-    }
-
-    // Join ON-clause sub-queries are unsupported and rejected during expression parsing, but
-    // declared variables are literals at parse time and only expand to their definition later, in
-    // rewriteKnownStatements. A variable bound to a sub-query (e.g. "@q := (SELECT ...)" used as
-    // "ON x IN @q") would therefore slip past the parse-time block and compile to surprising
-    // cross-join semantics. parseJoin now expands declared variables before dispatching the ON
-    // clause, then uses this visitor to walk the rewritten criteria and reject any sub-query node;
-    // the shorthand column branches reject expanded QUERY nodes directly. So a declared sub-query
-    // errors the same as the literal one at every nesting depth and in every ON-clause position --
-    // criteria, single-column shorthand, and multi-column lists alike.
-    private void rejectJoinSubQuery(ExpressionNode node) throws SqlException {
-        if (node.type == ExpressionNode.QUERY) {
-            throw SqlException.$(node.position, "query is not allowed here");
-        }
-    }
-
-    private void rewriteCase(ExpressionNode node) {
-        if (node.type == ExpressionNode.FUNCTION && isCaseKeyword(node.token)) {
-            tempExprNodes.clear();
-            ExpressionNode literal = null;
-            ExpressionNode elseExpr;
-            boolean convertToSwitch = true;
-            final int paramCount = node.paramCount;
-
-            final int lim;
-            if ((paramCount & 1) == 0) {
-                elseExpr = node.args.getQuick(0);
-                lim = 0;
-            } else {
-                elseExpr = null;
-                lim = -1;
-            }
-
-            // args are in inverted order, hence last list item is the first arg
-            ExpressionNode first = node.args.getQuick(paramCount - 1);
-            if (first.token != null) {
-                // simple case of 'case' :) e.g.
-                // case x
-                //   when 1 then 'A'
-                //   ...
-                node.token = "switch";
-                return;
-            }
-            int thenRemainder = elseExpr == null ? 0 : 1;
-            for (int i = paramCount - 2; i > lim; i--) {
-                if ((i & 1) == thenRemainder) {
-                    // this is "then" clause, copy it as is
-                    tempExprNodes.add(node.args.getQuick(i));
-                    continue;
-                }
-                ExpressionNode where = node.args.getQuick(i);
-                if (where.type == ExpressionNode.OPERATION && where.token.charAt(0) == '=') {
-                    ExpressionNode thisConstant;
-                    ExpressionNode thisLiteral;
-                    if (where.lhs.type == ExpressionNode.CONSTANT && where.rhs.type == ExpressionNode.LITERAL) {
-                        thisConstant = where.lhs;
-                        thisLiteral = where.rhs;
-                    } else if (where.lhs.type == ExpressionNode.LITERAL && where.rhs.type == ExpressionNode.CONSTANT) {
-                        thisConstant = where.rhs;
-                        thisLiteral = where.lhs;
-                    } else {
-                        convertToSwitch = false;
-                        // not supported
-                        break;
-                    }
-
-                    if (literal == null) {
-                        literal = thisLiteral;
-                        tempExprNodes.add(thisConstant);
-                    } else if (Chars.equals(literal.token, thisLiteral.token)) {
-                        tempExprNodes.add(thisConstant);
-                    } else {
-                        convertToSwitch = false;
-                        // not supported
-                        break;
-                    }
-                } else {
-                    convertToSwitch = false;
-                    // not supported
-                    break;
-                }
-            }
-
-            if (convertToSwitch) {
-                int n = tempExprNodes.size();
-                node.token = "switch";
-                node.args.clear();
-                // else expression may not have been provided,
-                // in which case it needs to be synthesized
-                if (elseExpr == null) {
-                    elseExpr = SqlUtil.nextConstant(expressionNodePool, "null", node.position);
-                }
-                node.args.add(elseExpr);
-                for (int i = n - 1; i > -1; i--) {
-                    node.args.add(tempExprNodes.getQuick(i));
-                }
-                node.args.add(literal);
-                node.paramCount = n + 2;
-            } else {
-                // remove the 'null' marker arg
-                node.args.remove(paramCount - 1);
-                node.paramCount = paramCount - 1;
-
-                // 2 args 'case', e.g. case when x>0 then 1
-                if (node.paramCount < 3) {
-                    node.rhs = node.args.get(0);
-                    node.lhs = node.args.get(1);
-                    node.args.clear();
-                }
-            }
-        }
-    }
-
-    private void rewriteConcat(ExpressionNode node) {
-        if (node.type == ExpressionNode.OPERATION && isConcatOperator(node.token)) {
-            node.type = ExpressionNode.FUNCTION;
-            node.token = CONCAT_FUNC_NAME;
-            addConcatArgs(node.args, node.rhs);
-            addConcatArgs(node.args, node.lhs);
-            node.paramCount = node.args.size();
-            if (node.paramCount > 2) {
-                node.rhs = null;
-                node.lhs = null;
-            } else {
-                // Both operands of '||' contribute at least one argument, so paramCount is 2 here.
-                // Move the folded arguments back into rhs/lhs, which is where the rest of the
-                // compiler looks for them below three, and drop the now stale args list. Without
-                // this, folding a single-argument CONCAT would leave rhs pointing at the nested
-                // call while args held the flattened pair.
-                node.rhs = node.args.getQuick(0);
-                node.lhs = node.args.getQuick(1);
-                node.args.clear();
-            }
-        }
-    }
-
-    /**
-     * Rewrites count(*) expressions to count().
-     *
-     * @param node expression node, provided by tree walking algo
-     */
-    private void rewriteCount(ExpressionNode node) {
-        if (node.type == ExpressionNode.FUNCTION && isCountKeyword(node.token)) {
-            if (node.paramCount == 1) {
-                // special case, typically something like
-                // case value else expression end
-                // this can be simplified to "expression" only
-
-                ExpressionNode that = node.rhs;
-                if (Chars.equalsNc(that.token, '*')) {
-                    if (that.rhs == null && node.lhs == null) {
-                        that.paramCount = 0;
-                        node.rhs = null;
-                        node.paramCount = 0;
-                    }
-                }
-            }
-        }
-    }
-
-    private void rewriteCountAndWindowExpressions(ExpressionNode node) throws SqlException {
-        if (node.windowExpression != null) {
-            rewriteWindowExpression(node.windowExpression);
-        }
-        rewriteCount(node);
     }
 
     /**
@@ -7616,160 +7459,170 @@ public class SqlParser {
         }
     }
 
-    /**
-     * Splices declared value lists into the {@code IN} that references them, and rejects them
-     * anywhere else.
-     * <p>
-     * By the time this runs, {@code recursiveReplace} has swapped each {@code @var} literal for its
-     * declared right-hand side, so a list variable shows up as a {@link ExpressionNode#VALUE_LIST}
-     * child of the {@code IN} node. Splicing its elements into that node's argument list produces
-     * exactly the shape the parser builds for a written-out {@code IN (a, b, c)}, so every existing
-     * IN overload - SYMBOL, STRING, CHAR, LONG, TIMESTAMP interval - applies unchanged, and each
-     * element keeps its own type. That is what makes this work for bind variables of any type
-     * without a typed-array literal to hold them.
-     *
-     * @param isStrict when set, a list left in any position other than an {@code IN} argument is
-     *                 an error; cleared while parsing a declare's own right-hand side
-     */
-    private void spliceValueLists(ExpressionNode node, boolean isStrict) throws SqlException {
-        if (node == null) {
-            return;
+    // Join ON-clause sub-queries are unsupported and rejected during expression parsing, but
+    // declared variables are literals at parse time and only expand to their definition later, in
+    // rewriteKnownStatements. A variable bound to a sub-query (e.g. "@q := (SELECT ...)" used as
+    // "ON x IN @q") would therefore slip past the parse-time block and compile to surprising
+    // cross-join semantics. parseJoin now expands declared variables before dispatching the ON
+    // clause, then uses this visitor to walk the rewritten criteria and reject any sub-query node;
+    // the shorthand column branches reject expanded QUERY nodes directly. So a declared sub-query
+    // errors the same as the literal one at every nesting depth and in every ON-clause position --
+    // criteria, single-column shorthand, and multi-column lists alike.
+    private void rejectJoinSubQuery(ExpressionNode node) throws SqlException {
+        if (node.type == ExpressionNode.QUERY) {
+            throw SqlException.$(node.position, "query is not allowed here");
         }
-        switch (node.paramCount) {
-            case 0:
-                break;
-            case 1:
-                spliceValueLists(node.rhs, isStrict);
-                break;
-            case 2:
-                spliceValueLists(node.lhs, isStrict);
-                spliceValueLists(node.rhs, isStrict);
-                break;
-            default:
-                for (int i = 0, n = node.paramCount; i < n; i++) {
-                    spliceValueLists(node.args.getQuick(i), isStrict);
-                }
-                break;
-        }
-        // Window clauses have to be walked here for the same reason recursiveReplace walks them:
-        // a declared variable is substituted inside PARTITION BY, ORDER BY and the frame bounds, so
-        // a list reaches them too. Missing them left an IN inside a window partition unspliced -
-        // the marker survived into function resolution and surfaced as `unknown function name: ()()`
-        // rather than either working or being refused.
-        if (node.windowExpression != null) {
-            final WindowExpression wc = node.windowExpression;
-            final ObjList<ExpressionNode> partitionBy = wc.getPartitionBy();
-            for (int i = 0, n = partitionBy.size(); i < n; i++) {
-                spliceValueLists(partitionBy.getQuick(i), isStrict);
-                if (isStrict) {
-                    rejectValueList(partitionBy.getQuick(i));
-                }
+    }
+
+    private void rewriteCase(ExpressionNode node) {
+        if (node.type == ExpressionNode.FUNCTION && isCaseKeyword(node.token)) {
+            tempExprNodes.clear();
+            ExpressionNode literal = null;
+            ExpressionNode elseExpr;
+            boolean convertToSwitch = true;
+            final int paramCount = node.paramCount;
+
+            final int lim;
+            if ((paramCount & 1) == 0) {
+                elseExpr = node.args.getQuick(0);
+                lim = 0;
+            } else {
+                elseExpr = null;
+                lim = -1;
             }
-            final ObjList<ExpressionNode> orderBy = wc.getOrderBy();
-            for (int i = 0, n = orderBy.size(); i < n; i++) {
-                spliceValueLists(orderBy.getQuick(i), isStrict);
-                if (isStrict) {
-                    rejectValueList(orderBy.getQuick(i));
-                }
+
+            // args are in inverted order, hence last list item is the first arg
+            ExpressionNode first = node.args.getQuick(paramCount - 1);
+            if (first.token != null) {
+                // simple case of 'case' :) e.g.
+                // case x
+                //   when 1 then 'A'
+                //   ...
+                node.token = "switch";
+                return;
             }
-            final ExpressionNode loExpr = wc.getRowsLoExpr();
-            if (loExpr != null) {
-                spliceValueLists(loExpr, isStrict);
-                if (isStrict) {
-                    rejectValueList(loExpr);
+            int thenRemainder = elseExpr == null ? 0 : 1;
+            for (int i = paramCount - 2; i > lim; i--) {
+                if ((i & 1) == thenRemainder) {
+                    // this is "then" clause, copy it as is
+                    tempExprNodes.add(node.args.getQuick(i));
+                    continue;
                 }
-            }
-            final ExpressionNode hiExpr = wc.getRowsHiExpr();
-            if (hiExpr != null) {
-                spliceValueLists(hiExpr, isStrict);
-                if (isStrict) {
-                    rejectValueList(hiExpr);
-                }
-            }
-        }
-        if (node.token != null && SqlKeywords.isInKeyword(node.token)) {
-            spliceIn(node);
-        }
-        if (isStrict) {
-            switch (node.paramCount) {
-                case 0:
-                    break;
-                case 1:
-                    rejectValueList(node.rhs);
-                    break;
-                case 2:
-                    rejectValueList(node.lhs);
-                    rejectValueList(node.rhs);
-                    break;
-                default:
-                    for (int i = 0, n = node.paramCount; i < n; i++) {
-                        rejectValueList(node.args.getQuick(i));
+                ExpressionNode where = node.args.getQuick(i);
+                if (where.type == ExpressionNode.OPERATION && where.token.charAt(0) == '=') {
+                    ExpressionNode thisConstant;
+                    ExpressionNode thisLiteral;
+                    if (where.lhs.type == ExpressionNode.CONSTANT && where.rhs.type == ExpressionNode.LITERAL) {
+                        thisConstant = where.lhs;
+                        thisLiteral = where.rhs;
+                    } else if (where.lhs.type == ExpressionNode.LITERAL && where.rhs.type == ExpressionNode.CONSTANT) {
+                        thisConstant = where.rhs;
+                        thisLiteral = where.lhs;
+                    } else {
+                        convertToSwitch = false;
+                        // not supported
+                        break;
                     }
+
+                    if (literal == null) {
+                        literal = thisLiteral;
+                        tempExprNodes.add(thisConstant);
+                    } else if (Chars.equals(literal.token, thisLiteral.token)) {
+                        tempExprNodes.add(thisConstant);
+                    } else {
+                        convertToSwitch = false;
+                        // not supported
+                        break;
+                    }
+                } else {
+                    convertToSwitch = false;
+                    // not supported
                     break;
+                }
+            }
+
+            if (convertToSwitch) {
+                int n = tempExprNodes.size();
+                node.token = "switch";
+                node.args.clear();
+                // else expression may not have been provided,
+                // in which case it needs to be synthesized
+                if (elseExpr == null) {
+                    elseExpr = SqlUtil.nextConstant(expressionNodePool, "null", node.position);
+                }
+                node.args.add(elseExpr);
+                for (int i = n - 1; i > -1; i--) {
+                    node.args.add(tempExprNodes.getQuick(i));
+                }
+                node.args.add(literal);
+                node.paramCount = n + 2;
+            } else {
+                // remove the 'null' marker arg
+                node.args.remove(paramCount - 1);
+                node.paramCount = paramCount - 1;
+
+                // 2 args 'case', e.g. case when x>0 then 1
+                if (node.paramCount < 3) {
+                    node.rhs = node.args.get(0);
+                    node.lhs = node.args.get(1);
+                    node.args.clear();
+                }
+            }
+        }
+    }
+
+    private void rewriteConcat(ExpressionNode node) {
+        if (node.type == ExpressionNode.OPERATION && isConcatOperator(node.token)) {
+            node.type = ExpressionNode.FUNCTION;
+            node.token = CONCAT_FUNC_NAME;
+            addConcatArgs(node.args, node.rhs);
+            addConcatArgs(node.args, node.lhs);
+            node.paramCount = node.args.size();
+            if (node.paramCount > 2) {
+                node.rhs = null;
+                node.lhs = null;
+            } else {
+                // Both operands of '||' contribute at least one argument, so paramCount is 2 here.
+                // Move the folded arguments back into rhs/lhs, which is where the rest of the
+                // compiler looks for them below three, and drop the now stale args list. Without
+                // this, folding a single-argument CONCAT would leave rhs pointing at the nested
+                // call while args held the flattened pair.
+                node.rhs = node.args.getQuick(0);
+                node.lhs = node.args.getQuick(1);
+                node.args.clear();
             }
         }
     }
 
     /**
-     * Expands any {@link ExpressionNode#VALUE_LIST} arguments of an {@code IN} node in place.
-     * <p>
-     * {@code IN} keeps its arguments in reverse source order with the tested value last, and a value
-     * list holds its elements in that same order, so expansion is a straight copy. The leftmost
-     * argument is the value being tested rather than a list member, so it is carried across
-     * untouched.
+     * Rewrites count(*) expressions to count().
+     *
+     * @param node expression node, provided by tree walking algo
      */
-    private void spliceIn(ExpressionNode node) {
-        final int n = node.paramCount;
-        if (n < 2) {
-            return;
-        }
-        boolean hasValueList = false;
-        for (int i = 0; i < n - 1; i++) {
-            final ExpressionNode arg = n == 2 ? (i == 0 ? node.rhs : node.lhs) : node.args.getQuick(i);
-            if (arg != null && arg.type == ExpressionNode.VALUE_LIST) {
-                hasValueList = true;
-                break;
-            }
-        }
-        if (!hasValueList) {
-            return;
-        }
-        // Reused rather than allocated per splice: spliceValueLists finishes a child subtree, this
-        // call included, before it starts the parent's, and nothing here re-enters the parser.
-        final ObjList<ExpressionNode> spliced = splicedArgs;
-        spliced.clear();
-        for (int i = 0; i < n; i++) {
-            final ExpressionNode arg = n == 2 ? (i == 0 ? node.rhs : node.lhs) : node.args.getQuick(i);
-            if (i < n - 1 && arg != null && arg.type == ExpressionNode.VALUE_LIST) {
-                for (int j = 0, m = arg.args.size(); j < m; j++) {
-                    spliced.add(arg.args.getQuick(j));
+    private void rewriteCount(ExpressionNode node) {
+        if (node.type == ExpressionNode.FUNCTION && isCountKeyword(node.token)) {
+            if (node.paramCount == 1) {
+                // special case, typically something like
+                // case value else expression end
+                // this can be simplified to "expression" only
+
+                ExpressionNode that = node.rhs;
+                if (Chars.equalsNc(that.token, '*')) {
+                    if (that.rhs == null && node.lhs == null) {
+                        that.paramCount = 0;
+                        node.rhs = null;
+                        node.paramCount = 0;
+                    }
                 }
-            } else {
-                spliced.add(arg);
             }
         }
-        node.args.clear();
-        // Without brackets the parser builds IN as a binary operator - SET_OPERATION carrying
-        // lhs/rhs - while a written-out `IN (...)` is a FUNCTION. Expanding one into the other
-        // means adopting that type as well, whatever the member count: downstream, the JIT filter
-        // compiler routes on it, so a node left as SET_OPERATION silently drops off the JIT path
-        // while still returning the right rows. That is why the type is set on both branches, and
-        // why the equivalence is asserted on the plan and not only on the rows.
-        node.type = ExpressionNode.FUNCTION;
-        if (spliced.size() == 2) {
-            // A one-member list leaves IN with a single value to test against, which is the binary
-            // shape `IN (a)` is parsed as: lhs and rhs, no args. Handing it the multi-argument
-            // shape instead leaves lhs null for everything downstream that reads it.
-            node.rhs = spliced.getQuick(0);
-            node.lhs = spliced.getQuick(1);
-            node.paramCount = 2;
-        } else {
-            // The operator shape reads lhs/rhs, which expansion past two arguments empties.
-            node.args.addAll(spliced);
-            node.paramCount = spliced.size();
-            node.lhs = null;
-            node.rhs = null;
+    }
+
+    private void rewriteCountAndWindowExpressions(ExpressionNode node) throws SqlException {
+        if (node.windowExpression != null) {
+            rewriteWindowExpression(node.windowExpression);
         }
+        rewriteCount(node);
     }
 
     private ExpressionNode rewriteDeclaredVariables(
@@ -8213,6 +8066,162 @@ public class SqlParser {
     }
 
     /**
+     * Expands any {@link ExpressionNode#VALUE_LIST} arguments of an {@code IN} node in place.
+     * <p>
+     * {@code IN} keeps its arguments in reverse source order with the tested value last, and a value
+     * list holds its elements in that same order, so expansion is a straight copy. The leftmost
+     * argument is the value being tested rather than a list member, so it is carried across
+     * untouched.
+     */
+    private void spliceIn(ExpressionNode node) {
+        final int n = node.paramCount;
+        if (n < 2) {
+            return;
+        }
+        boolean hasValueList = false;
+        for (int i = 0; i < n - 1; i++) {
+            final ExpressionNode arg = n == 2 ? (i == 0 ? node.rhs : node.lhs) : node.args.getQuick(i);
+            if (arg != null && arg.type == ExpressionNode.VALUE_LIST) {
+                hasValueList = true;
+                break;
+            }
+        }
+        if (!hasValueList) {
+            return;
+        }
+        // Reused rather than allocated per splice: spliceValueLists finishes a child subtree, this
+        // call included, before it starts the parent's, and nothing here re-enters the parser.
+        final ObjList<ExpressionNode> spliced = splicedArgs;
+        spliced.clear();
+        for (int i = 0; i < n; i++) {
+            final ExpressionNode arg = n == 2 ? (i == 0 ? node.rhs : node.lhs) : node.args.getQuick(i);
+            if (i < n - 1 && arg != null && arg.type == ExpressionNode.VALUE_LIST) {
+                for (int j = 0, m = arg.args.size(); j < m; j++) {
+                    spliced.add(arg.args.getQuick(j));
+                }
+            } else {
+                spliced.add(arg);
+            }
+        }
+        node.args.clear();
+        // Without brackets the parser builds IN as a binary operator - SET_OPERATION carrying
+        // lhs/rhs - while a written-out `IN (...)` is a FUNCTION. Expanding one into the other
+        // means adopting that type as well, whatever the member count: downstream, the JIT filter
+        // compiler routes on it, so a node left as SET_OPERATION silently drops off the JIT path
+        // while still returning the right rows. That is why the type is set on both branches, and
+        // why the equivalence is asserted on the plan and not only on the rows.
+        node.type = ExpressionNode.FUNCTION;
+        if (spliced.size() == 2) {
+            // A one-member list leaves IN with a single value to test against, which is the binary
+            // shape `IN (a)` is parsed as: lhs and rhs, no args. Handing it the multi-argument
+            // shape instead leaves lhs null for everything downstream that reads it.
+            node.rhs = spliced.getQuick(0);
+            node.lhs = spliced.getQuick(1);
+            node.paramCount = 2;
+        } else {
+            // The operator shape reads lhs/rhs, which expansion past two arguments empties.
+            node.args.addAll(spliced);
+            node.paramCount = spliced.size();
+            node.lhs = null;
+            node.rhs = null;
+        }
+    }
+
+    /**
+     * Splices declared value lists into the {@code IN} that references them, and rejects them
+     * anywhere else.
+     * <p>
+     * By the time this runs, {@code recursiveReplace} has swapped each {@code @var} literal for its
+     * declared right-hand side, so a list variable shows up as a {@link ExpressionNode#VALUE_LIST}
+     * child of the {@code IN} node. Splicing its elements into that node's argument list produces
+     * exactly the shape the parser builds for a written-out {@code IN (a, b, c)}, so every existing
+     * IN overload - SYMBOL, STRING, CHAR, LONG, TIMESTAMP interval - applies unchanged, and each
+     * element keeps its own type. That is what makes this work for bind variables of any type
+     * without a typed-array literal to hold them.
+     *
+     * @param isStrict when set, a list left in any position other than an {@code IN} argument is
+     *                 an error; cleared while parsing a declare's own right-hand side
+     */
+    private void spliceValueLists(ExpressionNode node, boolean isStrict) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        switch (node.paramCount) {
+            case 0:
+                break;
+            case 1:
+                spliceValueLists(node.rhs, isStrict);
+                break;
+            case 2:
+                spliceValueLists(node.lhs, isStrict);
+                spliceValueLists(node.rhs, isStrict);
+                break;
+            default:
+                for (int i = 0, n = node.paramCount; i < n; i++) {
+                    spliceValueLists(node.args.getQuick(i), isStrict);
+                }
+                break;
+        }
+        // Window clauses have to be walked here for the same reason recursiveReplace walks them:
+        // a declared variable is substituted inside PARTITION BY, ORDER BY and the frame bounds, so
+        // a list reaches them too. Missing them left an IN inside a window partition unspliced -
+        // the marker survived into function resolution and surfaced as `unknown function name: ()()`
+        // rather than either working or being refused.
+        if (node.windowExpression != null) {
+            final WindowExpression wc = node.windowExpression;
+            final ObjList<ExpressionNode> partitionBy = wc.getPartitionBy();
+            for (int i = 0, n = partitionBy.size(); i < n; i++) {
+                spliceValueLists(partitionBy.getQuick(i), isStrict);
+                if (isStrict) {
+                    rejectValueList(partitionBy.getQuick(i));
+                }
+            }
+            final ObjList<ExpressionNode> orderBy = wc.getOrderBy();
+            for (int i = 0, n = orderBy.size(); i < n; i++) {
+                spliceValueLists(orderBy.getQuick(i), isStrict);
+                if (isStrict) {
+                    rejectValueList(orderBy.getQuick(i));
+                }
+            }
+            final ExpressionNode loExpr = wc.getRowsLoExpr();
+            if (loExpr != null) {
+                spliceValueLists(loExpr, isStrict);
+                if (isStrict) {
+                    rejectValueList(loExpr);
+                }
+            }
+            final ExpressionNode hiExpr = wc.getRowsHiExpr();
+            if (hiExpr != null) {
+                spliceValueLists(hiExpr, isStrict);
+                if (isStrict) {
+                    rejectValueList(hiExpr);
+                }
+            }
+        }
+        if (node.token != null && SqlKeywords.isInKeyword(node.token)) {
+            spliceIn(node);
+        }
+        if (isStrict) {
+            switch (node.paramCount) {
+                case 0:
+                    break;
+                case 1:
+                    rejectValueList(node.rhs);
+                    break;
+                case 2:
+                    rejectValueList(node.lhs);
+                    rejectValueList(node.rhs);
+                    break;
+                default:
+                    for (int i = 0, n = node.paramCount; i < n; i++) {
+                        rejectValueList(node.args.getQuick(i));
+                    }
+                    break;
+            }
+        }
+    }
+
+    /**
      * Returns the model a {@code FROM @var} reads a declared sub-query through: the model the
      * declaration parsed if no other read has taken it, and a copy of it otherwise.
      * <p>
@@ -8633,7 +8642,14 @@ public class SqlParser {
                 final int countedLo = declaredVariableNodeCount;
                 countDeclaredValueNodes(value);
                 if (declaredVariableNodeCount > MAX_DECLARED_VARIABLE_NODES) {
-                    throw SqlException.$(node.position, "declared variables expand to too many expression nodes [max=")
+                    // A reference in the body of a view has a position in that body's text,
+                    // which means nothing in the statement's, so the error points at the
+                    // statement's read of the outermost view the parser is expanding instead,
+                    // as checkParseBudget() does. parseDeclaredQuery() takes the views off
+                    // viewsBeingCompiled while it parses a copy of a sub-query the statement
+                    // declared, so a reference in the statement's own text keeps its position,
+                    // even when the body of a view reads that sub-query.
+                    throw SqlException.$(viewsBeingCompiled.size() > 0 ? viewReferencePosition : node.position, "declared variables expand to too many expression nodes [max=")
                             .put(MAX_DECLARED_VARIABLE_NODES).put(']');
                 }
                 final int takenLo = expressionNodePool.getPos() + windowExpressionPool.getPos();

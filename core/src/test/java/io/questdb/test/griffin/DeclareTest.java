@@ -2039,6 +2039,86 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareVariableAsSubQueryReadInFunctionArguments() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (l LONG)");
+            execute("INSERT INTO k VALUES (1), (2), (3)");
+            drainWalQueue();
+            // A node with more than two operands keeps them in an argument list instead of its
+            // two child links, so the pass that counts the reads of a declared sub-query has to
+            // walk that list as well. A read it misses below such a node goes uncounted: the FROM
+            // read then takes the declaration's model from under it, and code generation meets the
+            // sub-query without a model.
+            //
+            // @q is 3, the highest l, and each statement that returns rows reads four of them: that
+            // one from @q, then 1, 2 and 3 from k. A read that loses the ORDER BY yields 1 instead,
+            // which changes the first row FROM returns and the rows the expression finds equal to
+            // @q.
+            //
+            // A CASE with two branches and an ELSE has five operands. The parser reads the select
+            // list ahead of FROM, so the read below the CASE takes the declaration's model and FROM
+            // parses a copy.
+            assertQuery("""
+                    DECLARE @q := (SELECT l FROM k ORDER BY l DESC LIMIT 1)
+                    SELECT l, CASE WHEN l = @q THEN 'max' WHEN l = 2 THEN 'two' ELSE 'other' END c
+                    FROM (SELECT * FROM @q UNION ALL SELECT l FROM k)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            l\tc
+                            3\tmax
+                            1\tother
+                            2\ttwo
+                            3\tmax
+                            """);
+            // coalesce() with three arguments. A FROM read in a CTE takes the model first, so the
+            // read below coalesce() parses the copy and registers it for the optimiser.
+            assertQuery("""
+                    DECLARE @q := (SELECT l FROM k ORDER BY l DESC LIMIT 1)
+                    WITH c AS (SELECT * FROM @q UNION ALL SELECT l FROM k)
+                    SELECT l, coalesce(CASE WHEN l = @q THEN 'max' END, CASE WHEN l = 2 THEN 'two' END, 'other') c
+                    FROM c
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            l\tc
+                            3\tmax
+                            1\tother
+                            2\ttwo
+                            3\tmax
+                            """);
+            // A function of three arguments, with the read in the second one.
+            assertQuery("""
+                    DECLARE @q := (SELECT l FROM k ORDER BY l DESC LIMIT 1)
+                    SELECT l, substring('minmax', 1 + 3 * (l = @q)::INT, 3) c
+                    FROM (SELECT * FROM @q UNION ALL SELECT l FROM k)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            l\tc
+                            3\tmax
+                            1\tmin
+                            2\tmin
+                            3\tmax
+                            """);
+            // An argument that is the sub-query itself needs the walk to write its result back:
+            // FROM reads first, in a CTE, so the copy parsed for the argument has to take the
+            // argument's place in the list. Left in place, the declaration's node has no model once
+            // FROM took it, and code generation trips over it. dateadd() takes no sub-query, so the
+            // statement ends with the error it gets with the sub-query written in place.
+            assertQuery("DECLARE @q := (SELECT 1L x) WITH c AS (SELECT * FROM @q) SELECT x, dateadd('d', -1, @q) FROM c")
+                    .noLeakCheck()
+                    .fails(67, "there is no matching function `dateadd` with the argument types: (CHAR, INT, CURSOR)");
+        });
+    }
+
+    @Test
     public void testDeclareVariableAsSubQueryReadInWindowClause() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE k (s SYMBOL, l LONG)");
@@ -3333,12 +3413,20 @@ public class DeclareTest extends AbstractSqlParserTest {
                             count\tsum
                             600\t1200
                             """);
-            // One more read of v_q parses the 101st copy, inside v_q. The error points at the
-            // sub-query in the body of v_q, a position in the body's text rather than in the
-            // statement's, so the test checks the message only.
-            assertQuery("SELECT count(), sum(l) FROM (" + fourReads + " UNION ALL SELECT * FROM v_q)")
+            // One more read of v_q parses the 101st copy, inside v_q. The sub-query it would copy
+            // sits in the body of v_q, at a position that means nothing in the statement's text,
+            // so the error points at the statement's read of v_q instead.
+            final String oneMoreRead = "SELECT count(), sum(l) FROM (" + fourReads + " UNION ALL SELECT * FROM v_q)";
+            assertQuery(oneMoreRead)
                     .noLeakCheck()
-                    .failsWith(error);
+                    .fails(oneMoreRead.lastIndexOf("v_q"), error);
+            // The same copy in a view the statement reads through another one: v_n1 expands v_q,
+            // which the statement never names. The error points at the statement's read of v_n1,
+            // the outermost view the parser is expanding.
+            final String oneMoreNestedRead = "SELECT count(), sum(l) FROM (" + fourReads + " UNION ALL SELECT * FROM v_n1)";
+            assertQuery(oneMoreNestedRead)
+                    .noLeakCheck()
+                    .fails(oneMoreNestedRead.lastIndexOf("v_n1"), error);
 
             // The copies inside the views and the copies of the statement's own sub-queries share
             // that budget. Three reads of v_n2 parse 75 copies, and 26 reads of @one 25 more.
@@ -4681,6 +4769,85 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclaredListInWindowFrameBounds() throws Exception {
+        assertMemoryLeak(() -> {
+            // A frame bound is an expression, and the parser substitutes declared variables inside
+            // it, so a list reaches an IN there and the splice pass has to visit both bounds of the
+            // frame, as it visits PARTITION BY and ORDER BY. A bound it does not visit keeps the
+            // list's marker, which fails function resolution with `unknown function name: ()()`.
+            //
+            // A bound has to be a constant, so each IN below tests a constant against the list,
+            // and its result, cast to 1 or 0, is the bound's offset. Every statement has to match
+            // the list written out in full.
+            //
+            // The start of the frame: 2 is in the list, so the frame holds the row before and the
+            // current row. With 2 out of the list it holds the current row alone, and the sums
+            // are 1, 2, 3, 4, 5.
+            final String expectedStart = """
+                    x\ts
+                    1\t1.0
+                    2\t3.0
+                    3\t5.0
+                    4\t7.0
+                    5\t9.0
+                    """;
+            assertQuery("SELECT x, sum(x) OVER (ORDER BY x ROWS BETWEEN (2 IN (1, 2))::INT PRECEDING AND CURRENT ROW) s FROM long_sequence(5)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedStart);
+            assertQuery("DECLARE @l := (1, 2) SELECT x, sum(x) OVER (ORDER BY x ROWS BETWEEN (2 IN @l)::INT PRECEDING AND CURRENT ROW) s FROM long_sequence(5)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedStart);
+            // The end of the frame: 1 is in the list, so the frame holds the three rows before the
+            // current one. With 1 out of the list it takes in the current row too, and the sums
+            // are 1, 3, 6, 10, 14.
+            final String expectedEnd = """
+                    x\ts
+                    1\tnull
+                    2\t1.0
+                    3\t3.0
+                    4\t6.0
+                    5\t9.0
+                    """;
+            assertQuery("SELECT x, sum(x) OVER (ORDER BY x ROWS BETWEEN 3 PRECEDING AND (1 IN (1, 2))::INT PRECEDING) s FROM long_sequence(5)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedEnd);
+            assertQuery("DECLARE @l := (1, 2) SELECT x, sum(x) OVER (ORDER BY x ROWS BETWEEN 3 PRECEDING AND (1 IN @l)::INT PRECEDING) s FROM long_sequence(5)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedEnd);
+            // Both bounds of one frame read the list: 2 is in it and 3 is not, so the frame starts
+            // two rows back and ends at the current row.
+            final String expectedBoth = """
+                    x\ts
+                    1\t1.0
+                    2\t3.0
+                    3\t6.0
+                    4\t9.0
+                    5\t12.0
+                    """;
+            assertQuery("SELECT x, sum(x) OVER (ORDER BY x ROWS BETWEEN 2 * (2 IN (1, 2))::INT PRECEDING AND (3 IN (1, 2))::INT PRECEDING) s FROM long_sequence(5)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedBoth);
+            assertQuery("DECLARE @l := (1, 2) SELECT x, sum(x) OVER (ORDER BY x ROWS BETWEEN 2 * (2 IN @l)::INT PRECEDING AND (3 IN @l)::INT PRECEDING) s FROM long_sequence(5)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedBoth);
+            // A bare list is no more usable as a bound than anywhere else, and has to say so
+            // rather than leak the marker downstream.
+            assertQuery("DECLARE @l := (1, 2) SELECT x, sum(x) OVER (ORDER BY x ROWS BETWEEN @l PRECEDING AND CURRENT ROW) s FROM long_sequence(5)")
+                    .noLeakCheck()
+                    .fails(14, "declared list can only be used on the right-hand side of IN");
+            assertQuery("DECLARE @l := (1, 2) SELECT x, sum(x) OVER (ORDER BY x ROWS BETWEEN 2 PRECEDING AND @l PRECEDING) s FROM long_sequence(5)")
+                    .noLeakCheck()
+                    .fails(14, "declared list can only be used on the right-hand side of IN");
+        });
+    }
+
+    @Test
     public void testDeclaredListInsideView() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE k (s SYMBOL)");
@@ -5587,6 +5754,71 @@ public class DeclareTest extends AbstractSqlParserTest {
                     "nodes",
                     17_380
             );
+        });
+    }
+
+    @Test
+    public void testDeclaredVariablesExpandToTooManyNodesInsideViews() throws Exception {
+        assertMemoryLeak(() -> {
+            // A list of 5,999 members, so every read of a variable that holds it copies 6,000
+            // nodes, and the 17th read in a statement takes it past its budget of 100,000.
+            final StringBuilder ids = new StringBuilder("(0");
+            for (int i = 1; i < 5_999; i++) {
+                ids.append(", ").append(i);
+            }
+            ids.append(')');
+            // The body of v_ids reads its own list ten times, so one expansion of it copies 60,000
+            // nodes, and v_outer reads v_ids.
+            execute("CREATE VIEW v_ids AS (DECLARE @ids := " + ids + " SELECT x FROM long_sequence(3) WHERE x IN @ids" + " AND x IN @ids".repeat(9) + ')');
+            execute("CREATE VIEW v_outer AS (SELECT x FROM v_ids WHERE x > 1)");
+            // The body of v_param reads the list its caller sets 17 times.
+            execute("CREATE VIEW v_param AS (DECLARE OVERRIDABLE @ids := (1, 2) SELECT x FROM long_sequence(3) WHERE x IN @ids" + " AND x IN @ids".repeat(16) + ')');
+            // The body of v_lim reads the value its caller sets twice.
+            execute("CREATE VIEW v_lim AS (DECLARE OVERRIDABLE @lim := 0 SELECT x FROM long_sequence(3) WHERE x >= @lim AND x <= @lim)");
+            drainWalAndViewQueues();
+            final String error = "declared variables expand to too many expression nodes [max=100000]";
+
+            // A statement that reads v_ids twice expands the body twice, and the second expansion's
+            // seventh read of @ids is the statement's 17th. That read sits in the body of v_ids, at
+            // a position far past the end of the statement, so the error points at the statement's
+            // read of the view the parser is expanding instead, the second one.
+            final String readTwice = "SELECT * FROM v_ids UNION ALL SELECT * FROM v_ids";
+            assertQuery(readTwice)
+                    .noLeakCheck()
+                    .fails(readTwice.lastIndexOf("v_ids"), error);
+            // The same read in a view the statement reads through another one: v_outer expands
+            // v_ids, which the statement never names. The error points at the statement's read of
+            // v_outer, the outermost view the parser is expanding.
+            final String readTwiceThroughView = "SELECT * FROM v_outer UNION ALL SELECT * FROM v_outer";
+            assertQuery(readTwiceThroughView)
+                    .noLeakCheck()
+                    .fails(readTwiceThroughView.lastIndexOf("v_outer"), error);
+            // A caller's list read in the body of a view. The 17th read sits in the body of
+            // v_param, at a position that lands inside the caller's list in the statement's text,
+            // so the error points at the statement's read of v_param instead.
+            final String callerList = "DECLARE @ids := " + ids + " SELECT * FROM v_param";
+            assertQuery(callerList)
+                    .noLeakCheck()
+                    .fails(callerList.lastIndexOf("v_param"), error);
+
+            // A read in the statement's own text keeps its position, whichever view the parser is
+            // expanding when it comes to the read. The sub-query of @lim reads @ids ten times. The
+            // second read of @lim in v_lim parses a copy of that sub-query from the statement's
+            // text, outside v_lim, and the copy's seventh read of @ids is the statement's 17th.
+            final StringBuilder callerQuery = new StringBuilder("DECLARE @ids := ").append(ids)
+                    .append(", @lim := (SELECT max(x) FROM long_sequence(3) WHERE ");
+            int refusedReadPosition = -1;
+            for (int i = 1; i <= 10; i++) {
+                callerQuery.append(i == 1 ? "x IN " : " AND x IN ");
+                if (i == 7) {
+                    refusedReadPosition = callerQuery.length();
+                }
+                callerQuery.append("@ids");
+            }
+            callerQuery.append(") SELECT * FROM v_lim");
+            assertQuery(callerQuery)
+                    .noLeakCheck()
+                    .fails(refusedReadPosition, error);
         });
     }
 
