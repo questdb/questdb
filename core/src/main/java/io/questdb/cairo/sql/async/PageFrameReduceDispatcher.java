@@ -313,13 +313,12 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     public boolean consumeUnordered(
             int workerId,
             RingQueue<UnorderedPageFrameReduceTask> queue,
-            MCSequence subSeq,
-            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
+            MCSequence subSeq
     ) {
         if (hasNoPendingTasks(subSeq)) {
             return true;
         }
-        final Fiber fiber = reserveFiber(stealingFrameSequence);
+        final Fiber fiber = reserveFiber(null);
         if (fiber == null) {
             return true;
         }
@@ -335,25 +334,23 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                 if (cursor > -1) {
                     final UnorderedPageFrameReduceTask reduceTask = queue.get(cursor);
                     final UnorderedPageFrameSequence<?> frameSequence = reduceTask.getFrameSequence();
-                    final int frameIndex = reduceTask.getFrameIndex();
                     final long frameSequenceId = reduceTask.getFrameSequenceId();
                     reduceTask.clear();
                     subSeq.done(cursor);
                     signalProgress(frameSequence);
-                    if (frameSequenceId != frameSequence.getId()) {
-                        LOG.error()
-                                .$("skipping stale task [expected=").$(frameSequence.getId())
-                                .$(", got=").$(frameSequenceId)
-                                .I$();
+                    // Claim before launching, so that a leftover ticket costs no fiber launch.
+                    final int frameIndex = frameSequence.claimFrame(frameSequenceId);
+                    if (frameIndex < 0) {
                         return false;
                     }
                     try {
                         fiberTask = taskPool.acquireLeased();
                     } catch (Throwable th) {
+                        frameSequence.retireTicket(frameSequenceId);
                         completeFailedUnorderedAcquisition(frameSequence, th);
                         throw th;
                     }
-                    fiberTask.ofUnordered(workerId, queue, subSeq, frameIndex, frameSequence);
+                    fiberTask.ofUnordered(workerId, queue, subSeq, frameIndex, frameSequence, frameSequenceId);
                     hasLaunchOwnership = false;
                     launch(fiber, reservationEpoch, fiberTask, workerId > -1);
                     return false;
@@ -736,13 +733,15 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                 task.clear();
                 subSeq.done(cursor);
                 signalProgress(frameSequence);
-                if (frameSequenceId == frameSequence.getId()) {
-                    if (frameSequence.isActive()
-                            && frameSequence.cancelIfChanged(SqlExecutionCircuitBreaker.STATE_CANCELLED)) {
-                        LOG.info().$("cancelling in-flight query, dispatcher is quiescing [frameSequenceId=")
-                                .$(frameSequenceId).I$();
-                    }
-                    frameSequence.getDoneLatch().countDown();
+                frameSequence.retireTicket(frameSequenceId);
+                // A ticket names no frame, so there is no latch to count down: the owner closes
+                // the claims on cancellation and waits only for the frames claimed so far.
+                if (frameSequenceId == frameSequence.getId()
+                        && frameSequence.hasUnclaimedFrames()
+                        && frameSequence.isActive()
+                        && frameSequence.cancelIfChanged(SqlExecutionCircuitBreaker.STATE_CANCELLED)) {
+                    LOG.info().$("cancelling in-flight query, dispatcher is quiescing [frameSequenceId=")
+                            .$(frameSequenceId).I$();
                 }
             } else {
                 return cursor == -1;
