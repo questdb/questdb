@@ -532,8 +532,9 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     /**
      * A power loss at every durability operation of a table's first save point (taken when a table created
      * without one enrols at writer open), of its first periodic save point (a new generation) and of a later one
-     * (a generation rewritten in place). The last row of each sweep loses power after the save point, more rows
-     * and a WAL purge under the new floor.
+     * (a generation rewritten in place), and of the idle save point the apply job takes when the WAL purge job asks
+     * for one, at the newest save point's state and over rows applied after it. The last row of each sweep loses
+     * power after the save point, more rows and a WAL purge under the new floor.
      */
     @Test
     public void testPowerLossAtEveryDurabilityOperationOfSavePoint() throws Exception {
@@ -591,6 +592,61 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                     powerLossAndCheck(s, crashed
                             ? which + ", power loss after durability operation " + op
                             : which + " completed, then rows and a WAL purge under its floor");
+                    if (!crashed) {
+                        break;
+                    }
+                }
+            }
+            for (int tail = 0; tail < 2; tail++) {
+                final String which = tail == 0 ? "idle save point at the newest save point's state" : "idle save point over rows applied after the newest save point";
+                for (int op = 1; op <= MAX_SWEEP; op++) {
+                    setCommitMode("adaptive");
+                    final Scenario s = newScenario("i" + tail + "_" + op);
+                    insertRows(s, 0, 2);
+                    drainWalQueue();
+                    engine.releaseAllWalWriters();
+                    publishSavePoint(s);
+                    if (tail == 0) {
+                        // A second save point at the applied state; the first one is older.
+                        insertRows(s, 1, 2);
+                        drainWalQueue();
+                        engine.releaseAllWalWriters();
+                        publishSavePoint(s);
+                        markDurableBaseline();
+                    } else {
+                        // Applied lazily: only the WAL holds these rows until a save point flushes them. Per-inode
+                        // journaling, so that only the save point's own flush makes their columns durable.
+                        faultFf.modelSharedJournal = false;
+                        markDurableBaseline();
+                        tracker(s).setLastEpochTs(nowMs());
+                        insertRows(s, 1, 2);
+                        drainWalQueue();
+                        engine.releaseAllWalWriters();
+                    }
+                    // The table has taken no save point for an interval: the WAL purge job asks for one.
+                    tracker(s).setLastEpochTs(0);
+                    purgeWal();
+                    final boolean crashed = crashAtOperation(s, op, () -> drainWalQueue());
+                    if (!crashed) {
+                        // The newest save point stands on the applied state, and without a tail so does the older one.
+                        if (tracker(s).getDurableEpochSeqTxn() != tracker(s).getWriterTxn()
+                                || (tail == 0 && tracker(s).getOtherPinnedEpochTxn() != tracker(s).getPinnedEpochTxn())) {
+                            rowFailures.add(s.table + " [" + which + "]: no idle save point at the applied state");
+                        }
+                        // The rest of the idle spell: after a tail, the next request puts the older save point on the
+                        // applied state too, and the WAL purge then frees the WAL that held the tail.
+                        tracker(s).setLastEpochTs(0);
+                        purgeWal();
+                        drainWalQueue();
+                        if (tracker(s).getOtherPinnedEpochTxn() != tracker(s).getPinnedEpochTxn()) {
+                            rowFailures.add(s.table + " [" + which + "]: the older save point is not on the applied state");
+                        }
+                        purgeWal();
+                    }
+                    powerLossAndCheck(s, crashed
+                            ? which + ", power loss after durability operation " + op
+                            : which + " completed, then the idle spell's last save point and a WAL purge under its floor");
+                    faultFf.modelSharedJournal = true;
                     if (!crashed) {
                         break;
                     }

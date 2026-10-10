@@ -299,6 +299,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     // Ping ApplyWal2TableJob to clean up the table files
                     engine.notifyWalTxnCommitted(tableToken);
                 }
+            } else if (lastTxn > -1) {
+                requestIdleSavePoint();
             }
         } catch (CairoException ce) {
             LOG.error().$("broad sweep failed [table=").$(tableToken)
@@ -720,6 +722,41 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     /**
      * Check if the segment directory has any outstanding ".pending" marker files in the ".pending" directory.
      */
+    // An adaptive table keeps the WAL and the partition and column versions its older save point names. On a table
+    // that gets no further write, nothing else replaces that save point, so once the table has taken no save point
+    // for one interval, ask the apply job for one more at the current state: both generations then stand on it and
+    // the queued purges free the rest. Equal pins mean equal save points, since every _txn write moves the txn. A
+    // table whose save points both name its applied state asks nothing, so an idle table asks once per idle spell
+    // (twice when its last write left a tail with no save point). The time gate repeats in the apply job.
+    private void requestIdleSavePoint() {
+        final long intervalMs = configuration.getAdaptiveEpochIntervalMs();
+        if (intervalMs < 0
+                || tableToken.isView()
+                || tableToken.isLiveView()
+                || LocalDurabilityPolicy.resolveCommitMode(configuration.getCommitMode(), engine.getLocalDurabilityPolicy()) != CommitMode.ADAPTIVE
+                || engine.isWalApplySuspended(tableToken)) {
+            return;
+        }
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken);
+        if (tracker == null || tracker.isSuspended() || tracker.isDurableFrontierFenced()) {
+            return;
+        }
+        final long pinnedEpochTxn = tracker.getPinnedEpochTxn();
+        final long otherPinnedEpochTxn = tracker.getOtherPinnedEpochTxn();
+        if (pinnedEpochTxn < 0
+                || ((otherPinnedEpochTxn < 0 || otherPinnedEpochTxn == pinnedEpochTxn)
+                && tracker.getDurableEpochSeqTxn() >= tracker.getWriterTxn())) {
+            return;
+        }
+        final long nowMs = configuration.getMicrosecondClock().getTicks() / 1000L;
+        final long lastEpochTs = tracker.getLastEpochTs();
+        if (lastEpochTs > 0 && nowMs >= lastEpochTs && nowMs - lastEpochTs < intervalMs) {
+            return;
+        }
+        tracker.requestIdleEpoch();
+        engine.notifyWalTxnCommitted(tableToken);
+    }
+
     private boolean segmentHasPendingTasks(int walId, int segmentId) {
         return walDirectoryPolicy.isInUse(setSegmentPath(tableToken, walId, segmentId));
     }

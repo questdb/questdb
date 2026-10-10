@@ -59,10 +59,13 @@ public class SeqTxnTracker {
     // apply batch or clean close takes one regardless of the cadence. Cleared when a save point publishes.
     // Written only by the thread that holds the table writer; RESUME WAL reads it before it takes the writer.
     private volatile boolean durableEpochOwed;
+    // Set by WalPurgeJob when the table's older save point is behind its current state and no save point has
+    // been taken for one interval; the next apply run that applies nothing takes one more save point.
+    private volatile boolean idleEpochRequested;
     // Wall-clock ms of the table's last save point, for the adaptive cadence gate; 0 means none yet, so the
-    // first apply batch under adaptive is eligible. Only the apply worker that holds the table writer reads
-    // and writes it, so it needs no CAS.
-    private long lastEpochTs = 0;
+    // first apply batch under adaptive is eligible. Only the apply worker that holds the table writer writes it,
+    // so it needs no CAS; WalPurgeJob reads it for the idle save point request.
+    private volatile long lastEpochTs = 0;
     // Rows applied to this table since its last save point, for the adaptive backlog gate.
     // ApplyWal2TableJob.advance() resets it when a save point publishes. Same single-thread access as lastEpochTs.
     private long rowsSinceEpoch = 0;
@@ -161,6 +164,18 @@ public class SeqTxnTracker {
     public SeqTxnTracker(CairoConfiguration configuration) {
         this.pressureControl = new TableWriterPressureControlImpl(configuration);
         this.metrics = configuration.getMetrics();
+    }
+
+    /**
+     * Returns whether WalPurgeJob asked for an idle save point since the last call, and clears the request. Apply
+     * worker only.
+     */
+    public boolean consumeIdleEpochRequest() {
+        if (idleEpochRequested) {
+            idleEpochRequested = false;
+            return true;
+        }
+        return false;
     }
 
     public long getDedupSignalCoveredSeqTxn() {
@@ -684,6 +699,13 @@ public class SeqTxnTracker {
             }
         }
         return min;
+    }
+
+    /**
+     * Asks the apply job for one more save point at the table's current state; see {@link #consumeIdleEpochRequest}.
+     */
+    public void requestIdleEpoch() {
+        idleEpochRequested = true;
     }
 
     /**

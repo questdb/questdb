@@ -613,7 +613,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     // this is the main place the table's column state becomes durable; a graceful writer close
                     // also takes a final epoch (TableWriter.doClose). Materialized view and view block files
                     // (_mv.s, _mv, _view) are gated at each write site by LocalDurabilityPolicy.resolveCommitMode.
-                    if (totalTransactionCount > 0) {
+                    // A run that applies nothing takes the idle save point WalPurgeJob asked for, under the same
+                    // gates: it puts both save point generations on the current state, so the purges free what
+                    // the older one kept.
+                    final boolean idleEpochRequested = seqTxnTracker.consumeIdleEpochRequest();
+                    if (totalTransactionCount > 0 || idleEpochRequested) {
                         maybeAdvanceDurableEpoch(tableToken, writer, rowsAdded);
                     }
 
