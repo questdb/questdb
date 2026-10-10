@@ -994,6 +994,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             long requestId
     ) throws Exception {
         final short type = cq.getType();
+        // rows_affected is an unsigned varint on the wire: a statement without a
+        // row count (DDL, parse-time-executed) reports 0, never a negative sentinel.
         long rowsAffected = 0;
         switch (type) {
             case CompiledQuery.INSERT:
@@ -1045,7 +1047,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 // VACUUM, CHECKPOINT, BEGIN / COMMIT / ROLLBACK, DEALLOCATE,
                 // TABLE_RESUME / SUSPEND / SET_TYPE, CREATE/ALTER USER, etc.)
                 // need no further execute -- the compiler already did the work.
-                rowsAffected = cq.getAffectedRowsCount();
+                // They carry no row count.
                 break;
             }
         }
