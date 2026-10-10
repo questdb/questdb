@@ -57,6 +57,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.ColumnarRowAppender;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.SymbolMapDiff;
@@ -6219,6 +6220,94 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRebaseWalSeedsAppliedAloneThenEachInsertApplied() throws Exception {
+        // An idle REBASE: the apply job reaches the two empty seed transactions before any new row and applies
+        // them on their own. That must leave the table as it was, and every later insert, applied in a pass of
+        // its own, must become visible.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            // in order in the same day, out of order before the table's min (a new partition), a later day
+            final String[] inserts = {"2022-02-24T01:00:00.000000Z", "2022-02-23T23:00:00.000000Z", "2022-02-26T01:00:00.000000Z"};
+            for (boolean empty : new boolean[]{true, false}) {
+                final String name = empty ? "empty_table" : "table_with_rows";
+                execute("create table " + name + " (x long, ts timestamp) timestamp(ts) partition by day wal");
+                String min = null;
+                String max = null;
+                int rowCount = 0;
+                if (!empty) {
+                    min = max = "2022-02-24T00:00:00.000000Z";
+                    rowCount = 1;
+                    execute("insert into " + name + " values (0, '" + min + "')");
+                }
+                drainWalQueue();
+                execute("alter table " + name + " suspend wal");
+                execute("alter table " + name + " rebase wal");
+                drainWalQueueBounded(name + " seeds");
+                assertRebasedTableState(name, name + " seeds", 2, min, max, rowCount);
+
+                for (int i = 0; i < inserts.length; i++) {
+                    final String ts = inserts[i];
+                    execute("insert into " + name + " values (" + (i + 1) + ", '" + ts + "')");
+                    final String label = name + " insert " + ts;
+                    drainWalQueueBounded(label);
+                    min = min == null || ts.compareTo(min) < 0 ? ts : min;
+                    max = max == null || ts.compareTo(max) > 0 ? ts : max;
+                    rowCount++;
+                    assertRebasedTableState(name, label, 3 + i, min, max, rowCount);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRebaseWalSeedsAppliedWithTheFirstInsertKeepTheMinTimestamp() throws Exception {
+        // The two empty seed transactions REBASE WAL writes are applied in one block with the first insert when
+        // no apply pass runs in between. A transaction with no rows must not move the table's min or max
+        // timestamp; the seeds record min and max timestamp 0.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            final String[][] cases = {
+                    // row before the REBASE (null: an empty table), first insert after it, expected min, expected max
+                    {"2022-02-24T00:00:00.000000Z", "2022-02-24T01:00:00.000000Z", "2022-02-24T00:00:00.000000Z", "2022-02-24T01:00:00.000000Z"},
+                    {"2022-02-24T00:00:00.000000Z", "2022-02-23T23:00:00.000000Z", "2022-02-23T23:00:00.000000Z", "2022-02-24T00:00:00.000000Z"},
+                    {"2022-02-24T00:00:00.000000Z", "2022-02-26T01:00:00.000000Z", "2022-02-24T00:00:00.000000Z", "2022-02-26T01:00:00.000000Z"},
+                    {null, "2022-02-24T01:00:00.000000Z", "2022-02-24T01:00:00.000000Z", "2022-02-24T01:00:00.000000Z"},
+            };
+            int n = 0;
+            for (String[] c : cases) {
+                final String name = "t" + n++;
+                execute("create table " + name + " (x long, ts timestamp) timestamp(ts) partition by day wal");
+                final int rowCount = c[0] != null ? 2 : 1;
+                if (c[0] != null) {
+                    execute("insert into " + name + " values (1, '" + c[0] + "')");
+                }
+                drainWalQueue();
+                execute("alter table " + name + " suspend wal");
+                execute("alter table " + name + " rebase wal");
+                // No apply pass between the REBASE and the insert.
+                execute("insert into " + name + " values (2, '" + c[1] + "')");
+                drainWalQueue();
+                final String label = name + " insert=" + c[1];
+                Assert.assertFalse(label, engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(name)));
+                assertQuery("select table_min_timestamp, table_max_timestamp from tables() where table_name = '" + name + "'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("table_min_timestamp\ttable_max_timestamp\n" + c[2] + '\t' + c[3] + '\n');
+                assertQuery("select min(ts), max(ts), count() from " + name)
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("min\tmax\tcount\n" + c[2] + '\t' + c[3] + '\t' + rowCount + '\n');
+                assertQuery("select count() from table_partitions('" + name + "') where minTimestamp < '2022'")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n0\n");
+            }
+        });
+    }
+
+    @Test
     public void testWalApplySuspendForcesAllNonStructuralAlters() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
         assertMemoryLeak(() -> {
@@ -6772,6 +6861,19 @@ public class WalWriterTest extends AbstractCairoTest {
                 .wal();
     }
 
+    // drainWalQueue() that fails instead of spinning for ever when the apply job keeps reporting work.
+    private static void drainWalQueueBounded(String label) {
+        try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+            final CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
+            do {
+                int runs = 0;
+                while (walApplyJob.run()) {
+                    Assert.assertTrue(label + ": the WAL apply job keeps reporting work", ++runs < 100);
+                }
+            } while (checkWalTransactionsJob.run());
+        }
+    }
+
     private static int rowsCrossingAppendPages(long requestedPageSize) {
         // PropServerConfiguration wraps CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE
         // in Files.ceilPageSize(), and Files.PAGE_SIZE is the OS allocation
@@ -6954,6 +7056,40 @@ public class WalWriterTest extends AbstractCairoTest {
             assertTrue(cursor.hasNext());
             assertEquals(DROP_TABLE_WAL_ID, cursor.getWalId());
         }
+    }
+
+    // Applied up to the sequencer, not suspended, the rows and the table's min and max as expected (null min and
+    // max: no rows), and no partition without rows.
+    private void assertRebasedTableState(String name, String label, long txn, String min, String max, int rowCount) throws Exception {
+        Assert.assertFalse(label, engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(name)));
+        assertQuery("select writerTxn, sequencerTxn from wal_tables() where name = '" + name + "'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("writerTxn\tsequencerTxn\n" + txn + '\t' + txn + '\n');
+        final String minText = min != null ? min : "";
+        final String maxText = max != null ? max : "";
+        if (min != null) {
+            assertQuery("select table_min_timestamp, table_max_timestamp from tables() where table_name = '" + name + "'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_min_timestamp\ttable_max_timestamp\n" + min + '\t' + max + '\n');
+        } else {
+            // No rows: the values of a table that never had any.
+            try (TableReader reader = engine.getReader(engine.verifyTableName(name))) {
+                Assert.assertEquals(label, Long.MAX_VALUE, reader.getMinTimestamp());
+                Assert.assertEquals(label, Long.MIN_VALUE, reader.getMaxTimestamp());
+            }
+        }
+        assertQuery("select min(ts), max(ts), count() from " + name)
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("min\tmax\tcount\n" + minText + '\t' + maxText + '\t' + rowCount + '\n');
+        assertQuery("select count() from table_partitions('" + name + "') where numRows = 0")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("count\n0\n");
     }
 
     private void assertWalFileExist(Path path, TableToken tableName, String walName, int segment, String fileName) {

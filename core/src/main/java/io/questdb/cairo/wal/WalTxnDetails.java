@@ -486,11 +486,13 @@ public class WalTxnDetails implements QuietCloseable {
                 lastSegmentId = segmentId;
             }
 
-            long minTimestamp = sortedBySegmentTxnSlice.getMinTimestamp(i);
-            long maxTimestamp = sortedBySegmentTxnSlice.getMaxTimestamp(i);
             isLastSegmentUse = isLastSegmentUse | sortedBySegmentTxnSlice.isLastSegmentUse(i);
             roHi = sortedBySegmentTxnSlice.getRoHi(i);
             long committedRowsCount = roHi - roLo;
+            // A transaction with no rows adds no timestamps to the block. REBASE WAL seeds that older
+            // versions wrote record 0 here.
+            long minTimestamp = committedRowsCount > 0 ? sortedBySegmentTxnSlice.getMinTimestamp(i) : Long.MAX_VALUE;
+            long maxTimestamp = committedRowsCount > 0 ? sortedBySegmentTxnSlice.getMaxTimestamp(i) : Long.MIN_VALUE;
             allInOrder = allInOrder && minTimestamp >= copyTasks.getMaxTimestamp() && sortedBySegmentTxnSlice.isTxnDataInOrder(i);
             copyTasks.addTxn(roLo, relativeSeqTxn, committedRowsCount, copyTaskCount, minTimestamp, maxTimestamp);
 
