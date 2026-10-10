@@ -24,6 +24,8 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
@@ -36,14 +38,18 @@ import org.junit.Test;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Fuzzes the filters after a RIGHT or FULL join in a correlated LATERAL body, see
  * {@link LateralJoinNullRejectionTest}, on random data: NULL and duplicate outer keys, random
  * typed values, random combinations of filters, random bind variable values, and scalar
  * sub-queries with a WHERE of their own. Each query must return the rows that the body returns per
- * outer row, or fail with the LateralJoinRewriter error that rejects the filter.
+ * outer row, or fail with the LateralJoinRewriter error that rejects the filter. A body that fails
+ * on its own must fail because of its filter, so the filter must fail on the table alone, and the
+ * query must fail too.
  */
 public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     private static final String ERROR_SUFFIX = "is not supported in a correlated lateral sub-query";
@@ -82,6 +88,8 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             // the rewriter fails on this shape, but must never return other rows than the reference
             new Shape("{T} t FULL JOIN refunds r ON t.x = r.k AND r.k = {K} WHERE {P}", false, true)
     };
+    // queries whose filter is valid, so the reference ran and the query was checked against it
+    private int validCount;
 
     @Test
     public void testFuzzDenseNulls() throws Exception {
@@ -96,6 +104,38 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     @Test
     public void testFuzzSparseNulls() throws Exception {
         fuzz(18, 0.1, 6, 10);
+    }
+
+    // The body may fail only because of its filter, e.g. a filter that does not apply to the column
+    // type. Then the filter fails on the table alone as well, and the query, which runs the same
+    // filter, fails too. A filter that fails only while it runs, e.g. on a scalar sub-query that
+    // returns more than one row, fails only in a plan that runs it.
+    private static void assertFilterFails(
+            String filter,
+            String reference,
+            SqlException referenceError,
+            String sql,
+            String bindSuffix,
+            List<String> failures
+    ) {
+        final FilterOutcome outcome = runOnTableAlone(filter, bindSuffix);
+        if (outcome == FilterOutcome.RUNS) {
+            failures.add("FAILED although its filter runs on the table alone, [" + referenceError.getPosition() + "] "
+                    + referenceError.getFlyweightMessage() + bindSuffix + "\n    " + reference);
+            return;
+        }
+        try {
+            sink.clear();
+            printSql(sql);
+            if (outcome == FilterOutcome.COMPILE_ERROR) {
+                failures.add("RETURNED ROWS although its filter does not compile, [" + referenceError.getPosition() + "] "
+                        + referenceError.getFlyweightMessage() + bindSuffix + "\n    " + sql);
+            }
+        } catch (SqlException ignore) {
+            // fails as well
+        } catch (Throwable e) {
+            throw new AssertionError("failed with " + e + bindSuffix + "\n    " + sql, e);
+        }
     }
 
     // passes every column through, or computes it with a cast to its own type, whose type the
@@ -157,6 +197,28 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         return rows;
     }
 
+    private static FilterOutcome runOnTableAlone(String filter, String bindSuffix) {
+        final String sql = "SELECT id FROM trades t WHERE " + filter;
+        try {
+            final RecordCursorFactory factory;
+            try {
+                factory = select(sql);
+            } catch (SqlException ignore) {
+                return FilterOutcome.COMPILE_ERROR;
+            }
+            try (factory; RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                while (cursor.hasNext()) {
+                    // the filter may fail while it runs
+                }
+            } catch (SqlException ignore) {
+                return FilterOutcome.RUN_ERROR;
+            }
+            return FilterOutcome.RUNS;
+        } catch (Throwable e) {
+            throw new AssertionError("failed with " + e + bindSuffix + "\n    " + sql, e);
+        }
+    }
+
     private static void setBindVariable(String type, Object value) throws SqlException {
         switch (type) {
             case "short" -> bindVariableService.setShort(0, (Short) value);
@@ -168,7 +230,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         }
     }
 
-    private void assertRandomQuery(Rnd rnd, int outerRowCount, List<String> failures) throws SqlException {
+    private void assertRandomQuery(Rnd rnd, List<String> outerRows, List<String> failures) throws SqlException {
         bindVariableService.clear();
         final Bind bind = new Bind();
         final StringBuilder filter = new StringBuilder(randomPredicate(rnd, bind));
@@ -189,24 +251,29 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         final String body = shape.body.replace("{T}", table).replace("{P}", filter);
         final String sql = "SELECT o.id, l.tid, l.rid FROM orders o " + lateralJoin
                 + " (SELECT t.id tid, r.id rid FROM " + body.replace("{K}", "o.k") + ") l";
+        final String bindSuffix = bind.type != null ? " $1=" + bind.value : "";
 
-        // per outer row: the body with the outer key as a literal
+        // per outer row: the body with the outer key as a literal, run once per key
         final List<String> expected = new ArrayList<>();
-        sink.clear();
-        printSql("SELECT id, k FROM orders");
-        final List<String> outerRows = rowsOf(sink);
-        Assert.assertEquals(outerRowCount, outerRows.size());
+        final Map<String, List<String>> bodyRowsByKey = new HashMap<>();
         for (int i = 0, n = outerRows.size(); i < n; i++) {
             final String[] outer = outerRows.get(i).split("\t");
             final String key = outer[1].equals("null") ? "NULL" : outer[1];
-            try {
-                sink.clear();
-                printSql("SELECT t.id tid, r.id rid FROM " + body.replace("{K}", key));
-            } catch (Throwable e) {
-                // the filter does not apply to the column type
-                return;
+            List<String> bodyRows = bodyRowsByKey.get(key);
+            if (bodyRows == null) {
+                final String reference = "SELECT t.id tid, r.id rid FROM " + body.replace("{K}", key);
+                try {
+                    sink.clear();
+                    printSql(reference);
+                } catch (SqlException e) {
+                    assertFilterFails(filter.toString().replace("{K}", key), reference, e, sql, bindSuffix, failures);
+                    return;
+                } catch (Throwable e) {
+                    throw new AssertionError("failed with " + e + bindSuffix + "\n    " + reference, e);
+                }
+                bodyRows = rowsOf(sink);
+                bodyRowsByKey.put(key, bodyRows);
             }
-            final List<String> bodyRows = rowsOf(sink);
             for (int j = 0, m = bodyRows.size(); j < m; j++) {
                 expected.add(outer[0] + '\t' + bodyRows.get(j));
             }
@@ -215,6 +282,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             }
         }
         Collections.sort(expected);
+        validCount++;
 
         try {
             sink.clear();
@@ -222,14 +290,14 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             final List<String> actual = rowsOf(sink);
             Collections.sort(actual);
             if (!actual.equals(expected)) {
-                failures.add("WRONG ROWS " + actual + ", expected " + expected + (bind.type != null ? " $1=" + bind.value : "") + "\n    " + sql);
+                failures.add("WRONG ROWS " + actual + ", expected " + expected + bindSuffix + "\n    " + sql);
             }
         } catch (SqlException e) {
             if (!shape.isAnyErrorAllowed && !Chars.contains(e.getFlyweightMessage(), ERROR_SUFFIX)) {
-                failures.add("failed with [" + e.getPosition() + "] " + e.getFlyweightMessage() + "\n    " + sql);
+                failures.add("failed with [" + e.getPosition() + "] " + e.getFlyweightMessage() + bindSuffix + "\n    " + sql);
             }
         } catch (Throwable e) {
-            failures.add("failed with " + e + "\n    " + sql);
+            throw new AssertionError("failed with " + e + bindSuffix + "\n    " + sql, e);
         }
     }
 
@@ -291,13 +359,18 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             final Rnd rnd = TestUtils.generateRandom(LOG);
             final List<String> failures = new ArrayList<>();
             int queryCount = 0;
+            validCount = 0;
             for (int round = 0; round < rounds; round++) {
                 createTables(rnd, nullRate, maxOuterRows, maxRows);
                 sink.clear();
                 printSql("SELECT count() FROM orders");
                 final int outerRowCount = Integer.parseInt(rowsOf(sink).getFirst());
+                sink.clear();
+                printSql("SELECT id, k FROM orders");
+                final List<String> outerRows = rowsOf(sink);
+                Assert.assertEquals(outerRowCount, outerRows.size());
                 for (int q = 0; q < QUERIES_PER_ROUND; q++) {
-                    assertRandomQuery(rnd, outerRowCount, failures);
+                    assertRandomQuery(rnd, outerRows, failures);
                     queryCount++;
                 }
                 execute("DROP TABLE orders");
@@ -307,8 +380,15 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             }
             bindVariableService.clear();
             if (!failures.isEmpty()) {
-                Assert.fail(failures.size() + " of " + queryCount + " queries failed:\n" + String.join("\n", failures.subList(0, Math.min(20, failures.size()))));
+                Assert.fail(failures.size() + " of " + queryCount + " queries failed (" + validCount + " with a valid filter):\n"
+                        + String.join("\n", failures.subList(0, Math.min(20, failures.size()))));
             }
+            // About 60% of the filters apply to their column types. A generator that made only
+            // invalid filters would check no rows and pass.
+            Assert.assertTrue(
+                    "only " + validCount + " of " + queryCount + " queries have a valid filter",
+                    validCount * 4 >= queryCount
+            );
         });
     }
 
@@ -342,6 +422,10 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
                 return rnd.nextBoolean() ? ref + ' ' + op + ' ' + operand : operand + ' ' + op + ' ' + ref;
             }
         }
+    }
+
+    private enum FilterOutcome {
+        COMPILE_ERROR, RUN_ERROR, RUNS
     }
 
     private static class Bind {
