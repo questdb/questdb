@@ -818,15 +818,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         try {
             // Each appendData + getSequencerTxn pair is one sequencer transaction (segment_txn 0 and 1 ->
             // seqTxn 1 and 2). Both seeds are identical 0-row commits, so no per-txn state needs resetting
-            // in between (currentTxnStartRowNum and segmentRowCount both stay 0). They record the timestamps
-            // of an empty transaction, the values the sequencer records for them too.
+            // in between (currentTxnStartRowNum and segmentRowCount both stay 0). Their min and max timestamps
+            // stay 0: the apply ignores the timestamps of a transaction with no rows, while a min of
+            // Long.MAX_VALUE would read as a forced full commit and send the seeds one by one through
+            // TableWriter.processWalCommit, which opens a partition at that timestamp on an empty table.
             for (int i = 0; i < REBASE_SEED_TXN_COUNT; i++) {
                 lastSegmentTxn = events.appendData(
                         WalTxnType.DATA,
                         0,
                         0,
-                        Long.MAX_VALUE,
-                        -1,
+                        0,
+                        0,
                         false,
                         WAL_DEFAULT_BASE_TABLE_TXN,
                         WAL_DEFAULT_LAST_REFRESH_TIMESTAMP,
