@@ -917,7 +917,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void addPhysicallyWrittenRows(long rows) {
         physicallyWrittenRowsSinceLastCommit.add(rows);
-        metrics.tableWriterMetrics().addPhysicallyWrittenRows(rows);
+        tableWriterMetrics().addPhysicallyWrittenRows(rows);
     }
 
     public long apply(AbstractOperation operation, long seqTxn) {
@@ -1547,7 +1547,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void commit() {
-        commit(0);
+        commit(0, configuration.getCommitMode());
+    }
+
+    /**
+     * Commits like {@link #commit()}, but does not sync the column files and {@code _txn}, whatever
+     * the configured commit mode. The committed rows are visible to readers straight away and
+     * survive a process crash, but an OS crash or power loss can lose them, or leave {@code _txn}
+     * pointing at rows whose column data never reached the disk, the same as under
+     * {@link CommitMode#NOSYNC}. A later {@link #commit()} that commits rows syncs the rows this
+     * commit left behind, too: it syncs each column's mapped append page, and the configured commit
+     * mode syncs the pages that were unmapped in between (partition switch, page roll).
+     * <p>
+     * Meant for a writer of node-local data that is cheap to lose, which commits too often to
+     * afford a sync each time and syncs on its own schedule instead, if at all. An O3 commit still syncs
+     * according to the configured commit mode.
+     */
+    public void commitNoSync() {
+        commit(0, CommitMode.NOSYNC);
     }
 
     /**
@@ -1621,10 +1638,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void commitSeqTxn() {
         if (txWriter.inTransaction()) {
-            metrics.tableWriterMetrics().incrementCommits();
-            syncColumns();
+            tableWriterMetrics().incrementCommits();
+            syncColumns(configuration.getCommitMode());
         }
-        commitTxWriterAndPublishPendingPostingSealPurges();
+        commitTxWriterAndPublishPendingPostingSealPurges(configuration.getCommitMode());
     }
 
     public void commitWalInsertTransactions(
@@ -1706,7 +1723,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.setLagTxnCount(0);
             txWriter.setLagOrdered(true);
 
-            commit00();
+            commit00(configuration.getCommitMode());
             lastWalCommitTimestampMicros = wallClockMicros;
             housekeep(wallClockMicros);
             shrinkO3Mem();
@@ -1722,7 +1739,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Keep in memory last committed seq txn, but do not write it to _txn file.
         assert txWriter.getLagTxnCount() == (seqTxn - txWriter.getSeqTxn());
         long rowsCommitted = txWriter.getRowCount() - initialCommittedRowCount;
-        metrics.tableWriterMetrics().addCommittedRows(rowsCommitted);
+        tableWriterMetrics().addCommittedRows(rowsCommitted);
     }
 
     @Override
@@ -2731,12 +2748,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void ic(long o3MaxLag) {
-        commit(o3MaxLag);
+        commit(o3MaxLag, configuration.getCommitMode());
     }
 
     @Override
     public void ic() {
-        commit(metadata.getO3MaxLag());
+        commit(metadata.getO3MaxLag(), configuration.getCommitMode());
     }
 
     public boolean inTransaction() {
@@ -3517,7 +3534,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 o3MasterRef = -1;
                 LOG.info().$("tx rollback complete [table=").$(tableToken).I$();
                 processCommandQueue(false, Long.MAX_VALUE);
-                metrics.tableWriterMetrics().incrementRollbacks();
+                tableWriterMetrics().incrementRollbacks();
             } catch (Throwable e) {
                 LOG.critical().$("could not perform rollback [table=").$(tableToken).$(", msg=").$(e).I$();
                 distressed = true;
@@ -5665,9 +5682,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * <b>Pending rows</b>
      * <p>This method will cancel pending rows by calling {@link #rowCancel()}. Data in the partially appended row will be lost.</p>
      *
-     * @param o3MaxLag if > 0 then do a partial commit, leaving the rows within the lag in a new uncommitted transaction
+     * @param o3MaxLag   if > 0 then do a partial commit, leaving the rows within the lag in a new uncommitted transaction
+     * @param commitMode how to sync the column files and _txn, see {@link CommitMode}
      */
-    private void commit(long o3MaxLag) {
+    private void commit(long o3MaxLag, int commitMode) {
         checkDistressed();
         physicallyWrittenRowsSinceLastCommit.reset();
 
@@ -5714,9 +5732,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Capture wall clock once for TTL wall clock comparison in housekeep()
             final long wallClockMicros = configuration.getMicrosecondClock().getTicks();
 
-            commit00();
+            commit00(commitMode);
             housekeep(wallClockMicros);
-            metrics.tableWriterMetrics().addCommittedRows(rowsAdded);
+            tableWriterMetrics().addCommittedRows(rowsAdded);
             if (!o3) {
                 // If `o3`, the metric is tracked inside `o3Commit`, possibly async.
                 addPhysicallyWrittenRows(rowsAdded);
@@ -5731,12 +5749,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void commit00() {
+    private void commit00(int commitMode) {
         updateIndexes();
-        syncColumns();
+        syncColumns(commitMode);
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        commitTxWriterAndPublishPendingPostingSealPurges();
+        commitTxWriterAndPublishPendingPostingSealPurges(commitMode);
         // A data commit on a FORMAT PARQUET table creates parquet partitions through
         // the O3 path, but unlike CONVERT/ATTACH it does not otherwise refresh the
         // metadata cache. Left stale, MetadataCache.hasParquetPartitions stays false
@@ -5771,8 +5789,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         publishDeferredPostingSealPurges(txWriter.getTxn(), false);
     }
 
-    private void commitTxWriterAndPublishPendingPostingSealPurges() {
-        txWriter.commit(denseSymbolMapWriters);
+    private void commitTxWriterAndPublishPendingPostingSealPurges(int commitMode) {
+        txWriter.commit(commitMode, denseSymbolMapWriters);
         long currentTableTxn = txWriter.getTxn();
         publishPendingPostingSealPurges(currentTableTxn);
         publishDeferredPostingSealPurges(currentTableTxn, false);
@@ -7603,7 +7621,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 throw e;
             }
 
-            metrics.tableWriterMetrics().incrementO3Commits();
+            tableWriterMetrics().incrementO3Commits();
         } finally {
             o3FinishInFlight = false;
         }
@@ -7990,7 +8008,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3LastPartitionMaxSplits());
             processPartitionRemoveCandidates();
-            metrics.tableWriterMetrics().incrementCommits();
+            tableWriterMetrics().incrementCommits();
             enforceTtl(wallClockMicros);
             scaleSymbolCapacities();
         } catch (Throwable e) {
@@ -14868,7 +14886,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Commit the new transaction with the partitions squashed
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        commitTxWriterAndPublishPendingPostingSealPurges();
+        commitTxWriterAndPublishPendingPostingSealPurges(configuration.getCommitMode());
     }
 
     private int squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(long timestampMax) {
@@ -14980,8 +14998,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         setAppendPosition(0, false);
     }
 
-    private void syncColumns() {
-        final int commitMode = configuration.getCommitMode();
+    private void syncColumns(int commitMode) {
         // Always commit indexers: PostingIndexWriter buffers add() calls in native
         // memory and only publishes them to the memory-mapped files during commit().
         // Without this, readers see keyCount=0 until the writer is closed (seal).
@@ -15020,6 +15037,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 m2.sync(async);
             }
         }
+    }
+
+    // System tables (sys.*, telemetry, query trace) are written by background jobs, not by users.
+    // Counting their commits and rows would show write activity on an idle node, so they are left out.
+    private TableWriterMetrics tableWriterMetrics() {
+        return tableToken.isSystem() ? Metrics.DISABLED.tableWriterMetrics() : metrics.tableWriterMetrics();
     }
 
     private void throwApplyBlockColumnShuffleFailed(int columnIndex, int columnType, long totalRows, long rowCount) {
