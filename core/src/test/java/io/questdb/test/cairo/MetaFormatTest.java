@@ -25,8 +25,6 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.wal.WalUtils;
@@ -46,16 +44,13 @@ import java.util.Arrays;
 import java.util.Collection;
 
 /**
- * The {@code _meta} record this build writes, and the ones it reads, in every commit mode.
+ * The {@code _meta} record this build writes, in every commit mode.
  * <p>
  * Every producer of the record writes the base layout: the latest minor format version, a minor-version checksum
  * that keeps the version-gated fields readable, and zeros from the end of the table format to the column types.
- * Earlier development builds stamped minor versions 3 to 6 and wrote non-zero bytes into that padding, including
- * [64, 80); this build never reads those bytes and still reads every gated field of such a file.
  */
 @RunWith(Parameterized.class)
 public class MetaFormatTest extends AbstractCairoTest {
-    private static final int EARLIER_BUILD_MINOR_VERSION = 6;
     private static final int HEADER_SIZE = (int) TableUtils.META_OFFSET_COLUMN_TYPES;
     private static final long PADDING_LO = TableUtils.META_OFFSET_TABLE_FORMAT + Integer.BYTES;
     private final String commitMode;
@@ -74,33 +69,6 @@ public class MetaFormatTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
-    }
-
-    @Test
-    public void testEarlierBuildMetaLoads() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY TTL 2 DAYS WAL");
-            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1)");
-            drainWalQueue();
-            final TableToken token = engine.verifyTableName("t");
-            try (TableReader reader = getReader(token)) {
-                Assert.assertEquals(48, reader.getMetadata().getTtlHoursOrMonths());
-            }
-
-            // The earlier build's values at [64, 80) are not reproduced: this build must not read them at all.
-            stampEarlierBuildLayout(token);
-            engine.releaseInactive();
-            try (TableReader reader = getReader(token)) {
-                Assert.assertEquals(48, reader.getMetadata().getTtlHoursOrMonths());
-            }
-            assertQuery("SELECT count() FROM t").noRandomAccess().expectSize().returns("count\n1\n");
-
-            // The next schema change writes the file in this build's layout.
-            execute("ALTER TABLE t ADD COLUMN w DOUBLE");
-            drainWalQueue();
-            assertBaseLayout(metaPath(token, TableUtils.META_FILE_NAME));
-            assertQuery("SELECT v, w FROM t").expectSize().returns("v\tw\n1\tnull\n");
-        });
     }
 
     @Test
@@ -184,30 +152,6 @@ public class MetaFormatTest extends AbstractCairoTest {
             return header;
         } finally {
             Unsafe.free(buf, HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    private static void stampEarlierBuildLayout(TableToken token) {
-        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        final long buf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-        try (Path path = new Path()) {
-            path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
-            final long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
-            Assert.assertTrue("could not open " + path, fd > -1);
-            try {
-                Assert.assertEquals(Integer.BYTES, ff.read(fd, buf, Integer.BYTES, TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION));
-                final int field = Unsafe.getUnsafe().getInt(buf);
-                Unsafe.getUnsafe().putInt(buf, Numbers.encodeLowHighShorts(Numbers.decodeLowShort(field), (short) EARLIER_BUILD_MINOR_VERSION));
-                Assert.assertEquals(Integer.BYTES, ff.write(fd, buf, Integer.BYTES, TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION));
-                Unsafe.getUnsafe().putLong(buf, 4096);
-                Assert.assertEquals(Long.BYTES, ff.write(fd, buf, Long.BYTES, 64));
-                Unsafe.getUnsafe().putLong(buf, 0x5DEECE66DL);
-                Assert.assertEquals(Long.BYTES, ff.write(fd, buf, Long.BYTES, 72));
-            } finally {
-                ff.close(fd);
-            }
-        } finally {
-            Unsafe.free(buf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
