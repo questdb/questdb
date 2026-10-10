@@ -121,6 +121,12 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         }
     }
 
+    // The hash table that a CROSS or nested loop LEFT join reading the master side of every key consults,
+    // see SqlCodeGenerator.generateJoins().
+    public JoinKeyFilter getJoinKeyFilter() {
+        return cursor;
+    }
+
     @Override
     public int getScanDirection() {
         return masterFactory.getScanDirection();
@@ -178,7 +184,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
-    private class HashJoinRecordCursor extends AbstractJoinCursor {
+    private class HashJoinRecordCursor extends AbstractJoinCursor implements JoinKeyFilter {
         private final Map joinKeyMap;
         private final JoinRecord recordA;
         private final RecordChain slaveChain;
@@ -212,6 +218,17 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         @Override
         public Record getRecord() {
             return recordA;
+        }
+
+        @Override
+        public boolean hasMatch(Record record) {
+            // hasNext() and size() build the table before they read the master
+            if (!isMapBuilt) {
+                return true;
+            }
+            final MapKey key = joinKeyMap.withKey();
+            key.put(record, masterKeySink);
+            return key.findValue() != null;
         }
 
         @Override

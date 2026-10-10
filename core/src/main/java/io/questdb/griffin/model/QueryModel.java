@@ -169,6 +169,7 @@ public class QueryModel implements IQueryModel {
     private int modelType = ExecutionModel.QUERY;
     private IQueryModel nestedModel;
     private boolean nestedModelIsSubQuery = false;
+    private boolean nullRejectingOnClause;
     private int orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
     // position of the order by clause token
     private int orderByPosition;
@@ -463,6 +464,7 @@ public class QueryModel implements IQueryModel {
         expressionModels.clear();
         distinct = false;
         nestedModelIsSubQuery = false;
+        nullRejectingOnClause = false;
         unionModel = null;
         orderHash.clear();
         modelPosition = 0;
@@ -1380,6 +1382,11 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public boolean isNullRejectingOnClause() {
+        return nullRejectingOnClause;
+    }
+
+    @Override
     public boolean isOptimisable() {
         return true;
     }
@@ -1872,6 +1879,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setNestedModelIsSubQuery(boolean nestedModelIsSubQuery) {
         this.nestedModelIsSubQuery = nestedModelIsSubQuery;
+    }
+
+    @Override
+    public void setNullRejectingOnClause(boolean nullRejectingOnClause) {
+        this.nullRejectingOnClause = nullRejectingOnClause;
     }
 
     @Override

@@ -517,6 +517,11 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     boolean isNestedModelIsSubQuery();
 
+    // True for a LEFT join without join keys whose ON clause is false whenever the models before it are
+    // NULL. It returns the same rows before and after a keyed RIGHT or FULL join written after it, see
+    // SqlOptimiser.constrainRightAndFullJoinsAfterPrefix().
+    boolean isNullRejectingOnClause();
+
     boolean isOptimisable();
 
     boolean isOrderDescendingByDesignatedTimestampOnly();
@@ -646,6 +651,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setNestedModel(IQueryModel nestedModel);
 
     void setNestedModelIsSubQuery(boolean nestedModelIsSubQuery);
+
+    void setNullRejectingOnClause(boolean nullRejectingOnClause);
 
     void setOrderByAdviceMnemonic(int orderByAdviceMnemonic);
 

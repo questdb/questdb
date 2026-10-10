@@ -92,6 +92,13 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
         return false;
     }
 
+    // Skips the master rows whose key the INNER hash join that reads this join's rows cannot match, see
+    // SqlCodeGenerator.generateJoins(). The hash join drops every row of such a master row, matched or
+    // NULL-extended alike.
+    public void setJoinKeyFilter(JoinKeyFilter filter) {
+        cursor.keyFilterGate.setFilter(filter);
+    }
+
     @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return masterFactory.supportsUpdateRowId(tableToken);
@@ -101,6 +108,9 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
     public void toPlan(PlanSink sink) {
         sink.type("Nested Loop Left Join");
         sink.attr("filter").val(filter);
+        if (cursor.keyFilterGate.hasFilter()) {
+            sink.attr("joinKeyCheck").val(true);
+        }
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -119,11 +129,15 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
 
     private static class NestedLoopLeftRecordCursor extends AbstractJoinCursor {
         private final Function filter;
+        private final JoinKeyFilterGate keyFilterGate = new JoinKeyFilterGate();
         private final OuterJoinRecord record;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isMasterHasNextPending;
         private boolean isMatch;
         private boolean masterHasNext;
+        // the slave rows that the scan of the current master row has read, which JoinKeyFilterGate needs
+        // when the slave cursor does not know its size
+        private long slaveRowsInPass;
 
         public NestedLoopLeftRecordCursor(int columnSplit, Function filter, Record nullRecord) {
             super(columnSplit);
@@ -142,8 +156,9 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
             while (true) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (isMasterHasNextPending) {
-                    masterHasNext = masterCursor.hasNext();
+                    masterHasNext = nextMasterRow();
                     isMasterHasNextPending = false;
+                    slaveRowsInPass = 0;
                 }
 
                 if (!masterHasNext) {
@@ -151,11 +166,15 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
                 }
 
                 while (slaveCursor.hasNext()) {
+                    slaveRowsInPass++;
                     circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     if (filter.getBool(record)) {
                         isMatch = true;
                         return true;
                     }
+                }
+                if (keyFilterGate.isCountingSlaveRows()) {
+                    keyFilterGate.setSlaveRowCount(slaveRowsInPass);
                 }
 
                 if (!isMatch) {
@@ -191,12 +210,23 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
             record.hasSlave(true);
         }
 
+        private boolean nextMasterRow() {
+            while (masterCursor.hasNext()) {
+                if (!keyFilterGate.isRowDropped(record)) {
+                    return true;
+                }
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            }
+            return false;
+        }
+
         void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             filter.init(this, executionContext);
             record.of(masterCursor.getRecord(), slaveCursor.getRecord());
             isMasterHasNextPending = true;
+            keyFilterGate.of(slaveCursor.size());
             circuitBreaker = executionContext.getCircuitBreaker();
         }
     }

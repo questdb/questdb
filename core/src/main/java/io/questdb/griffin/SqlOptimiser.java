@@ -321,6 +321,9 @@ public class SqlOptimiser implements Mutable {
     private final IntList nullingAnchorByModelPos = new IntList();
     // Inverse permutation of getOrderedJoinModels(): model index -> execution-order position.
     private final IntList nullingExecPosByModel = new IntList();
+    // The non-equi RIGHT/FULL joins of the current level whose prefix recordNullingJoinPrefix pins, see
+    // isDeferredJoinModel.
+    private final IntHashSet nullingPrefixBoundaries = new IntHashSet();
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntSortedList orderingStack = new IntSortedList();
     // (parent, outer join) model index pairs. addFilterOrEmitJoin moves an equality between two ON
@@ -546,6 +549,7 @@ public class SqlOptimiser implements Mutable {
         nullingAnchorByExecPos.clear();
         nullingAnchorByModelPos.clear();
         nullingExecPosByModel.clear();
+        nullingPrefixBoundaries.clear();
         nullRejectedKeyedOuterJoins.clear();
         nullRejectionConjunctModels.clear();
         nullRejectionConjunctNodes.clear();
@@ -3437,6 +3441,41 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // Adds to models each LEFT join without join keys that returns the same rows before and after the RIGHT
+    // and FULL joins written after it, so a RIGHT or FULL join need not run it first. Every join written after
+    // it must be an INNER, CROSS or LEFT join, or a RIGHT or FULL join with join keys: they commute with it,
+    // as no ON clause reads it. A RIGHT or FULL join NULL-extends every model written before it, and the
+    // LEFT join's ON clause must be false for such a row whatever its own columns hold: one of its conjuncts
+    // compares a column of an earlier model, of a type that has NULL, with < or >, which is false for a NULL
+    // column, see LateralJoinRewriter.isNullRejectingConjunct(). The LEFT join then NULL-extends that row,
+    // as the RIGHT or FULL join does when the LEFT join runs first. Requires the reader lists of
+    // recordJoinModelRefs.
+    private void collectNullRejectingKeylessLeftJoins(IQueryModel parent, IntHashSet models) {
+        models.clear();
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        final int n = joinModels.size();
+        int lastNonCommutingIndex = 0;
+        for (int i = 1; i < n; i++) {
+            final int joinType = joinModels.getQuick(i).getJoinType();
+            if (joinType != IQueryModel.JOIN_INNER && joinType != IQueryModel.JOIN_CROSS
+                    && joinType != IQueryModel.JOIN_LEFT_OUTER && joinType != IQueryModel.JOIN_CROSS_LEFT
+                    && joinType != IQueryModel.JOIN_RIGHT_OUTER && joinType != IQueryModel.JOIN_FULL_OUTER) {
+                lastNonCommutingIndex = i;
+            }
+        }
+        for (int index = Math.max(lastNonCommutingIndex, 1); index < n; index++) {
+            final IQueryModel model = joinModels.getQuick(index);
+            if (model.getJoinType() != IQueryModel.JOIN_CROSS_LEFT
+                    || (model.getJoinContext() != null && !model.getJoinContext().isEmpty())
+                    || joinModelMaxRefs.getQuick(index) > index
+                    || isReadByOtherModel(index)
+                    || !hasNullRejectingComparison(parent, model.getOuterJoinExpressionClause(), index)) {
+                continue;
+            }
+            models.add(index);
+        }
+    }
+
     private void collectNullRejectionConjuncts(IQueryModel parent, ExpressionNode filter, int position) {
         if (filter == null) {
             return;
@@ -3902,6 +3941,8 @@ public class SqlOptimiser implements Mutable {
             recordJoinModelRefs(i, refs);
         }
         hasJoinModelReaders = true;
+        final IntHashSet nullRejectingLeftJoins = intHashSetPool.next();
+        collectNullRejectingKeylessLeftJoins(parent, nullRejectingLeftJoins);
         boolean isModel0Recorded = false;
         final IntHashSet unpinned = intHashSetPool.next();
         final IntHashSet timeSeriesJoinsAhead = intHashSetPool.next();
@@ -3931,6 +3972,11 @@ public class SqlOptimiser implements Mutable {
                 if (joinModelMaxRefs.getQuick(prefixIndex) > lastReadableIndex
                         || (isLeftJoin(joinModels.getQuick(prefixIndex).getJoinType()) && isReadByLaterModelItReads(prefixIndex, laterReaders))) {
                     unpinned.add(prefixIndex);
+                } else if (!isNonEqui && nullRejectingLeftJoins.contains(prefixIndex)) {
+                    // returns the same rows after the outer join, where doReorderTables appends it as master
+                    // does, see collectNullRejectingKeylessLeftJoins
+                    unpinned.add(prefixIndex);
+                    joinModels.getQuick(prefixIndex).setNullRejectingOnClause(true);
                 }
             }
             // A prefix model that reads an unpinned model must stay unpinned too: it cannot run before
@@ -6754,6 +6800,36 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
+    // Returns true when a conjunct of the ON clause of the join model at index compares a column of an
+    // earlier model, of a type that has NULL, with any operand using < or >, see
+    // collectNullRejectingKeylessLeftJoins.
+    private boolean hasNullRejectingComparison(IQueryModel parent, ExpressionNode onClause, int index) {
+        if (onClause == null) {
+            return false;
+        }
+        nullRejectedJoinStack.clear();
+        nullRejectedJoinStack.push(onClause);
+        while (!nullRejectedJoinStack.isEmpty()) {
+            final ExpressionNode node = nullRejectedJoinStack.pop();
+            if (node.token != null && joinOps.get(node.token) == JOIN_OP_AND) {
+                if (node.lhs != null) {
+                    nullRejectedJoinStack.push(node.lhs);
+                }
+                if (node.rhs != null) {
+                    nullRejectedJoinStack.push(node.rhs);
+                }
+                continue;
+            }
+            if (node.type == OPERATION && node.paramCount == 2
+                    && (Chars.equals(node.token, '<') || Chars.equals(node.token, '>'))
+                    && (isNullableColumnBefore(parent, node.lhs, index) || isNullableColumnBefore(parent, node.rhs, index))) {
+                nullRejectedJoinStack.clear();
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Returns true when every context-free RIGHT/FULL join at or after fromIndex has each model before it
     // as a context parent, which constrainRightAndFullJoinsAfterPrefix and recordNullingJoinPrefix record
     // unless a forward reference leaves the prefix unpinned.
@@ -6977,6 +7053,11 @@ public class SqlOptimiser implements Mutable {
     // first model to run gives the joins their designated timestamp, so the model that the query selects
     // from defers only on a level without a join that reads the designated timestamp of its master, see
     // prepareDeferredModels.
+    // A model that recordNullingJoinPrefix pins does not defer: the order that master gives such a prefix
+    // runs the model at its written position. Running it after the keyed joins instead is faster when a
+    // keyed join drops most rows and slower when one multiplies them, and the optimiser does not know
+    // which. SqlCodeGenerator lets the CROSS or LEFT join skip the rows that the INNER hash join right
+    // after it cannot match, see JoinKeyFilter, which saves most of what the later position saves.
     private boolean isDeferredJoinModel(ObjList<IQueryModel> joinModels, int index, boolean isFromModelDeferrable) {
         final IQueryModel model = joinModels.getQuick(index);
         final int joinType = model.getJoinType();
@@ -6996,6 +7077,7 @@ public class SqlOptimiser implements Mutable {
             final int dependentJoinType = dependent.getJoinType();
             final JoinContext context = dependent.getJoinContext();
             if (dependentIndex < index
+                    || nullingPrefixBoundaries.contains(dependentIndex)
                     || (dependentJoinType != IQueryModel.JOIN_RIGHT_OUTER && dependentJoinType != IQueryModel.JOIN_FULL_OUTER
                     && dependentJoinType != IQueryModel.JOIN_CROSS_RIGHT && dependentJoinType != IQueryModel.JOIN_CROSS_FULL)
                     || context == null || context.parents.excludes(index)) {
@@ -7646,6 +7728,29 @@ public class SqlOptimiser implements Mutable {
         );
     }
 
+    // Returns true when the node is a column of a model before the one at index, and the column's type has a
+    // NULL: a RIGHT or FULL join puts NULL in it, not false or 0 as in a BOOLEAN, BYTE or SHORT column.
+    private boolean isNullableColumnBefore(IQueryModel parent, ExpressionNode node, int index) {
+        if (node == null || node.type != LITERAL) {
+            return false;
+        }
+        final IntHashSet models = intHashSetPool.next();
+        models.clear();
+        try {
+            literalCollector.withModel(parent);
+            literalCollector.resetCounts();
+            traversalAlgo.traverse(node, literalCollector.to(models));
+        } catch (SqlException ignored) {
+            return false;
+        }
+        if (models.size() != 1 || models.get(0) >= index) {
+            return false;
+        }
+        final IQueryModel model = parent.getJoinModels().getQuick(models.get(0));
+        final int columnType = getQueryColumnType(model, getModelColumn(model, node.token));
+        return columnType > 0 && !LateralJoinRewriter.isTypeWithoutNull(columnType);
+    }
+
     // Returns true when every model the ON clause of the context-free join at index reads precedes it
     // and is part of the ordering graph, so doReorderTables cannot append it after that join.
     private boolean isOrderableRoot(IQueryModel parent, int index, IntHashSet refs) throws SqlException {
@@ -7726,6 +7831,17 @@ public class SqlOptimiser implements Mutable {
                     // the model reads readIndex, a later model that reads the model
                     return true;
                 }
+            }
+        }
+        return false;
+    }
+
+    // Returns true when the ON clause of a model other than the one at modelIndex reads it, see
+    // recordJoinModelRefs.
+    private boolean isReadByOtherModel(int modelIndex) {
+        for (int link = joinModelReaderHeads.getQuick(modelIndex); link != -1; link = joinModelReaderLinks.getQuick(link + 1)) {
+            if (joinModelReaderLinks.getQuick(link) != modelIndex) {
+                return true;
             }
         }
         return false;
@@ -9065,6 +9181,7 @@ public class SqlOptimiser implements Mutable {
             emittedJoinClauses.clear();
             outerJoinExpressionParents.clear();
             deferredInnerKeyEdges.clear();
+            nullingPrefixBoundaries.clear();
             joinModelPriorities.clear();
             joinModelsByPriority.clear();
             timeSeriesModelOnPredicates.clear();
@@ -10384,6 +10501,7 @@ public class SqlOptimiser implements Mutable {
     // model must execute before the boundary. tempIntHashSet marks a boundary whose prefix is
     // already recorded, so each boundary materializes its prefix only once.
     private void recordNullingJoinPrefix(IQueryModel parent, int boundaryIndex) {
+        nullingPrefixBoundaries.add(boundaryIndex);
         if (tempIntHashSet.add(boundaryIndex)) {
             for (int prefixIndex = 0; prefixIndex < boundaryIndex; prefixIndex++) {
                 recordOrderingConstraint(parent, prefixIndex, boundaryIndex);

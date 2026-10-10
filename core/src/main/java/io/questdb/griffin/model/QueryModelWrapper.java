@@ -893,6 +893,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public boolean isNullRejectingOnClause() {
+        return delegate.isNullRejectingOnClause();
+    }
+
+    @Override
     public boolean isOptimisable() {
         return false;
     }
@@ -1224,6 +1229,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setNestedModelIsSubQuery(boolean nestedModelIsSubQuery) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setNullRejectingOnClause(boolean nullRejectingOnClause) {
         throw new UnsupportedOperationException();
     }
 

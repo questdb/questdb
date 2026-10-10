@@ -82,6 +82,12 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
         return false;
     }
 
+    // Skips the master rows whose key the INNER hash join that reads this join's rows cannot match, see
+    // SqlCodeGenerator.generateJoins().
+    public void setJoinKeyFilter(JoinKeyFilter filter) {
+        cursor.keyFilterGate.setFilter(filter);
+    }
+
     @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return masterFactory.supportsUpdateRowId(tableToken);
@@ -90,6 +96,9 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Cross Join");
+        if (cursor.keyFilterGate.hasFilter()) {
+            sink.attr("joinKeyCheck").val(true);
+        }
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -101,6 +110,7 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
     }
 
     private static class CrossJoinRecordCursor extends AbstractJoinCursor {
+        private final JoinKeyFilterGate keyFilterGate = new JoinKeyFilterGate();
         private final JoinRecord record;
         private final RecordCursor.Counter tmpCounter;
         private SqlExecutionCircuitBreaker circuitBreaker;
@@ -112,6 +122,9 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
         private boolean masterHasNext;
         private long masterSize;
         private long slavePartialSize;
+        // the slave rows of the current master row so far, which JoinKeyFilterGate needs when the slave
+        // cursor does not know its size
+        private long slaveRowsInPass;
         private long slaveSize;
 
         public CrossJoinRecordCursor(int columnSplit) {
@@ -123,6 +136,13 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
             if (!isMasterHasNextPending && !masterHasNext) {
+                return;
+            }
+            if (keyFilterGate.hasFilter()) {
+                // the master rows that the filter drops do not count, so count the rows themselves
+                while (hasNext()) {
+                    counter.inc();
+                }
                 return;
             }
 
@@ -171,8 +191,9 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
         public boolean hasNext() {
             while (true) {
                 if (isMasterHasNextPending) {
-                    masterHasNext = masterCursor.hasNext();
+                    masterHasNext = nextMasterRow();
                     isMasterHasNextPending = false;
+                    slaveRowsInPass = 0;
                 }
 
                 if (!masterHasNext) {
@@ -181,9 +202,13 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
 
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (slaveCursor.hasNext()) {
+                    slaveRowsInPass++;
                     return true;
                 }
 
+                if (keyFilterGate.isCountingSlaveRows()) {
+                    keyFilterGate.setSlaveRowCount(slaveRowsInPass);
+                }
                 slaveCursor.toTop();
                 isMasterHasNextPending = true;
             }
@@ -196,6 +221,9 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
 
         @Override
         public long size() {
+            if (keyFilterGate.hasFilter()) {
+                return -1;
+            }
             long sizeA = masterCursor.size();
             long sizeB = slaveCursor.size();
             if (sizeA == -1 || sizeB == -1) {
@@ -208,6 +236,13 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
         @Override
         public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
             if (rowCount.get() == 0) {
+                return;
+            }
+            if (keyFilterGate.hasFilter()) {
+                // the master rows that the filter drops do not count, so skip the rows themselves
+                while (rowCount.get() > 0 && hasNext()) {
+                    rowCount.dec();
+                }
                 return;
             }
 
@@ -278,11 +313,22 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
             slavePartialSize = 0;
         }
 
+        private boolean nextMasterRow() {
+            while (masterCursor.hasNext()) {
+                if (!keyFilterGate.isRowDropped(record)) {
+                    return true;
+                }
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            }
+            return false;
+        }
+
         void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             record.of(masterCursor.getRecord(), slaveCursor.getRecord());
             isMasterHasNextPending = true;
+            keyFilterGate.of(slaveCursor.size());
             this.circuitBreaker = circuitBreaker;
 
             isSlavePartialSizeCalculated = false;

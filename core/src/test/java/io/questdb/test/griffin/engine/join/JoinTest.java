@@ -2662,8 +2662,10 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testCrossJoinBeforeRightJoinRunsBeforeLaterJoins() throws Exception {
-        // A join after the RIGHT JOIN pins the CROSS JOIN ahead of the RIGHT JOIN on master too (#7759).
-        // The CROSS JOIN runs after the keyed join and before the RIGHT JOIN.
+        // A join after the non-equi RIGHT JOIN keeps the joins written before it in written order, as on
+        // master, so the CROSS JOIN runs before the keyed join. It skips the rows of a that the keyed join
+        // drops, which master joins with every row of c first (#7759). A LEFT JOIN after the RIGHT JOIN keeps
+        // no such order, and the CROSS JOIN runs after the keyed join.
         assertMemoryLeak(() -> {
             createTablesForCrossJoinBeforeRightJoin();
             assertQuery("SELECT a.k, c.y, b.k bk, d.k dk, b2.k b2k FROM a CROSS JOIN c JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k JOIN b b2 ON b2.k = a.k")
@@ -2675,19 +2677,20 @@ public class JoinTest extends AbstractCairoTest {
                                   condition: b2.k=a.k
                                     Nested Loop Right Join
                                       filter: a.x>=d.k
-                                        Cross Join
-                                            Hash Join Light
-                                              condition: b.k=a.k
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            Cross Join
+                                              joinKeyCheck: true
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: a
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: b
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: c
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: d
@@ -2765,6 +2768,7 @@ public class JoinTest extends AbstractCairoTest {
                                         Hash Join Light
                                           condition: b.k=a.k
                                             Cross Join
+                                              joinKeyCheck: true
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: a
@@ -8606,6 +8610,289 @@ public class JoinTest extends AbstractCairoTest {
                         4	1
                         5	1
                         """));
+    }
+
+    @Test
+    public void testKeylessJoinBeforeKeyedJoinSkipsRowsThatKeyedJoinDrops() throws Exception {
+        // A join after the non-equi RIGHT JOIN keeps the joins written before it in written order, as on
+        // master, so the LEFT JOIN to c, which has no key, runs before the keyed join to b. It skips the rows
+        // of a whose k is not in b, which the keyed join drops anyway: 1, 3 and 5. The RIGHT JOIN reads its
+        // left side once per row of d, so the ON clause of the LEFT JOIN runs 2 x 3 x 3 = 18 times instead
+        // of 36. A key of the keyed join that reads c leaves the LEFT JOIN without the check.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            final String query = "SELECT a.k, c.y, b.k bk, d.k dk, b2.k b2k FROM a LEFT JOIN c ON a.x > c.y * 4 JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k JOIN b b2 ON b2.k = a.k";
+            final String expected = """
+                    k\ty\tbk\tdk\tb2k
+                    4\t1\t4\t7\t4
+                    4\t2\t4\t7\t4
+                    6\t1\t6\t7\t6
+                    6\t2\t6\t7\t6
+                    6\t3\t6\t7\t6
+                    """;
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: b2.k=a.k
+                                    Nested Loop Right Join
+                                      filter: a.x>=d.k
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            Nested Loop Left Join
+                                              filter: c.y*4<a.x
+                                              joinKeyCheck: true
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: d
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
+                            """)
+                    .returns(expected);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .fullFatJoins()
+                    .expectSize()
+                    .returns(expected);
+            // runs the light and the full-fat hash join
+            assertJoinFilterEvaluationCount(
+                    "SELECT a.k, c.y FROM a LEFT JOIN c ON test_latched_counter() AND a.x > c.y * 4 JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k JOIN b b2 ON b2.k = a.k",
+                    5,
+                    18
+            );
+            assertQuery("SELECT a.k, c.y, b.k bk, d.k dk, b2.k b2k FROM a LEFT JOIN c ON a.x > c.y * 4 JOIN b ON c.y = b.k RIGHT JOIN d ON a.x >= d.k JOIN b b2 ON b2.k = a.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanNotContaining("joinKeyCheck")
+                    .returns("""
+                            k\ty\tbk\tdk\tb2k
+                            4\t2\t2\t7\t4
+                            6\t2\t2\t7\t6
+                            """);
+        });
+    }
+
+    @Test
+    public void testKeylessJoinKeyCheckStopsWhenDropsSaveLittle() throws Exception {
+        // The check costs a lookup per row of g, and a dropped row saves joining it with the 3 rows of c.
+        // The first 1,024 rows of g1 all have a key in b, so the check stops, and every row of g1 joins c:
+        // 3,000 x 3 ON clause evaluations per read of the left side, 18,000 for the two rows of d. One row
+        // in ten of g10 has no key in b, and its 3 rows of c save less than the 10 lookups cost, so the check
+        // stops too, after it skipped the 102 such rows among the first 1,024: 18,000 - 102 x 3 = 17,694.
+        // Three rows in four of g4 have no key in b, which keeps the check on: 750 x 3 per read, 4,500. The
+        // rows do not depend on the check.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            execute("CREATE TABLE g1 AS (SELECT (CASE WHEN x <= 1_200 THEN 2 ELSE 1 END)::INT k, 18 x FROM long_sequence(3_000))");
+            execute("CREATE TABLE g10 AS (SELECT (CASE WHEN x % 10 = 0 THEN 1 ELSE 2 END)::INT k, 18 x FROM long_sequence(3_000))");
+            execute("CREATE TABLE g4 AS (SELECT (CASE WHEN x % 4 = 0 THEN 2 ELSE 1 END)::INT k, 18 x FROM long_sequence(3_000))");
+            assertJoinFilterEvaluationCount(
+                    "SELECT g1.k, c.y FROM g1 LEFT JOIN c ON test_latched_counter() AND g1.x > c.y JOIN b ON g1.k = b.k RIGHT JOIN d ON g1.x >= d.k JOIN b b2 ON b2.k = g1.k",
+                    3_600,
+                    18_000
+            );
+            assertJoinFilterEvaluationCount(
+                    "SELECT g10.k, c.y FROM g10 LEFT JOIN c ON test_latched_counter() AND g10.x > c.y JOIN b ON g10.k = b.k RIGHT JOIN d ON g10.x >= d.k JOIN b b2 ON b2.k = g10.k",
+                    8_100,
+                    17_694
+            );
+            assertJoinFilterEvaluationCount(
+                    "SELECT g4.k, c.y FROM g4 LEFT JOIN c ON test_latched_counter() AND g4.x > c.y JOIN b ON g4.k = b.k RIGHT JOIN d ON g4.x >= d.k JOIN b b2 ON b2.k = g4.k",
+                    2_250,
+                    4_500
+            );
+        });
+    }
+
+    @Test
+    public void testKeylessLeftJoinRunsAfterKeyedRightJoinWhenOnClauseRejectsNull() throws Exception {
+        // A RIGHT or FULL join with a key NULL-extends a, and the LEFT JOIN to c, for the rows of l without
+        // a match: 1 and 3. a.x > c.y * 4 is false when a.x is NULL, so the LEFT JOIN returns the same rows
+        // after the outer join, and runs last, as on master. a.x IS NULL OR ... is true for such a row, and
+        // >= is true for two NULLs, so these keep the LEFT JOIN before the outer join. Master runs them after
+        // it, and returns every row of c with l rows 1 and 3 for the first. A BYTE column has no NULL: the
+        // outer join puts 0 in it.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            execute("CREATE TABLE ab (k INT, x BYTE)");
+            execute("INSERT INTO ab VALUES (1, 3), (2, 6), (3, 9), (4, 12), (5, 15), (6, 18)");
+            final String rightJoinRows = """
+                    k\ty\tbk\tlk
+                    2\t1\t2\t2
+                    4\t1\t4\t4
+                    4\t2\t4\t4
+                    null\tnull\tnull\t3
+                    null\tnull\tnull\t1
+                    """;
+            assertQuery("SELECT a.k, c.y, b.k bk, l.k lk FROM a LEFT JOIN c ON a.x > c.y * 4 JOIN b ON a.k = b.k RIGHT JOIN l ON b.k = l.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Left Join
+                                  filter: c.y*4<a.x
+                                    Hash Right Outer Join Light
+                                      condition: l.k=b.k
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: l
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: c
+                            """)
+                    .returns(rightJoinRows);
+            assertQuery("SELECT a.k, c.y, b.k bk, l.k lk FROM a LEFT JOIN c ON a.x > c.y * 4 JOIN b ON a.k = b.k FULL JOIN l ON b.k = l.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Left Join
+                                  filter: c.y*4<a.x
+                                    Hash Full Outer Join Light
+                                      condition: l.k=b.k
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: l
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: c
+                            """)
+                    .returns("""
+                            k\ty\tbk\tlk
+                            2\t1\t2\t2
+                            4\t1\t4\t4
+                            4\t2\t4\t4
+                            6\t1\t6\tnull
+                            6\t2\t6\tnull
+                            6\t3\t6\tnull
+                            null\tnull\tnull\t3
+                            null\tnull\tnull\t1
+                            """);
+            assertQuery("SELECT a.k, c.y, b.k bk, l.k lk FROM a LEFT JOIN c ON a.x IS NULL OR a.x > c.y * 4 JOIN b ON a.k = b.k RIGHT JOIN l ON b.k = l.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Right Outer Join Light
+                                  condition: l.k=b.k
+                                    Nested Loop Left Join
+                                      filter: (a.x=null or c.y*4<a.x)
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: l
+                            """)
+                    .returns(rightJoinRows);
+            assertQuery("SELECT a.k, c.y, b.k bk, l.k lk FROM a LEFT JOIN c ON a.x >= c.y * 4 JOIN b ON a.k = b.k RIGHT JOIN l ON b.k = l.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Right Outer Join Light
+                                  condition: l.k=b.k
+                                    Nested Loop Left Join
+                                      filter: a.x>=c.y*4
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: l
+                            """)
+                    .returns("""
+                            k\ty\tbk\tlk
+                            2\t1\t2\t2
+                            4\t1\t4\t4
+                            4\t2\t4\t4
+                            4\t3\t4\t4
+                            null\tnull\tnull\t3
+                            null\tnull\tnull\t1
+                            """);
+            assertQuery("SELECT ab.k, c.y, b.k bk, l.k lk FROM ab LEFT JOIN c ON ab.x > c.y * 4 JOIN b ON ab.k = b.k RIGHT JOIN l ON b.k = l.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Right Outer Join Light
+                                  condition: l.k=b.k
+                                    Nested Loop Left Join
+                                      filter: c.y*4<ab.x
+                                        Hash Join Light
+                                          condition: b.k=ab.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: ab
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: l
+                            """)
+                    .returns(rightJoinRows);
+        });
     }
 
     @Test

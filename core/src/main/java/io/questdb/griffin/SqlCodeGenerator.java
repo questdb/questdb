@@ -245,6 +245,7 @@ import io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCursorFact
 import io.questdb.griffin.engine.join.HashOuterJoinFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.JoinKeyFilter;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.griffin.engine.join.JsonUnnestSource;
 import io.questdb.griffin.engine.join.LtJoinLightRecordCursorFactory;
@@ -1747,6 +1748,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return Chars.equalsIgnoreCase(masterAlias, token, 0, dot)
                 ? masterMetadata.getColumnIndexQuiet(token, dot + 1, token.length())
                 : -1;
+    }
+
+    // Connects a CROSS or nested loop LEFT join to the table of the INNER hash join that reads its rows,
+    // see JoinKeyFilter.
+    private static void setJoinKeyFilter(RecordCursorFactory keylessJoin, RecordCursorFactory hashJoin) {
+        final JoinKeyFilter filter;
+        if (hashJoin instanceof HashJoinLightRecordCursorFactory lightJoin) {
+            filter = lightJoin.getJoinKeyFilter();
+        } else if (hashJoin instanceof HashJoinRecordCursorFactory fullFatJoin) {
+            filter = fullFatJoin.getJoinKeyFilter();
+        } else {
+            return;
+        }
+        if (keylessJoin instanceof CrossJoinRecordCursorFactory crossJoin) {
+            crossJoin.setJoinKeyFilter(filter);
+        } else if (keylessJoin instanceof NestedLoopLeftJoinRecordCursorFactory leftJoin) {
+            leftJoin.setJoinKeyFilter(filter);
+        }
     }
 
     private static int getOrderByDirectionOrDefault(IQueryModel model, int index) {
@@ -3384,6 +3403,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 writeStringAsVarcharB,
                 writeTimestampAsNanosB
         );
+    }
+
+    // Returns true when every master key column of the join that processJoinContext() has just resolved
+    // precedes split, so the keys read only the master side of a join whose master has split columns.
+    private boolean areMasterKeysBelow(int split) {
+        final int n = listColumnFilterB.getColumnCount();
+        if (n == 0) {
+            return false;
+        }
+        for (int i = 0; i < n; i++) {
+            if (listColumnFilterB.getColumnIndexFactored(i) >= split) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private RecordCursorFactory createSpliceJoin(
@@ -6582,6 +6616,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         JoinRecordMetadata joinMetadata = null;
         RecordCursorFactory master = null;
         CharSequence masterAlias = null;
+        // the last CROSS or nested loop LEFT join built, and the column count of its master, see JoinKeyFilter
+        RecordCursorFactory keylessJoin = null;
+        int keylessJoinColumnSplit = 0;
         ObjList<RecordCursorFactory> pendingHorizonSlaves = null;
         ObjList<IQueryModel> pendingHorizonSlaveModels = null;
         boolean isHorizonJoinCompleted = false;
@@ -6712,6 +6749,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     );
                                     default -> throw new AssertionError("unreachable");
                                 };
+                                if (joinType == IQueryModel.JOIN_CROSS_LEFT) {
+                                    keylessJoin = master;
+                                    keylessJoinColumnSplit = masterMetadata.getColumnCount();
+                                }
                                 masterAlias = null;
                                 break;
                             case IQueryModel.JOIN_CROSS:
@@ -6752,6 +6793,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             slaveToFree,
                                             masterMetadata.getColumnCount()
                                     );
+                                    keylessJoin = master;
+                                    keylessJoinColumnSplit = masterMetadata.getColumnCount();
                                 }
                                 masterAlias = null;
                                 break;
@@ -7577,6 +7620,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     validateOuterJoinExpressions(slaveModel, "INNER");
                                 }
 
+                                // An INNER join right after a CROSS or nested loop LEFT join, whose keys all read
+                                // that join's master side, drops every row of a master row whose key it cannot
+                                // match. The CROSS or LEFT join then skips such a master row instead of joining it
+                                // with every row of its own slave. Read the keys now: the full-fat hash join
+                                // reuses listColumnFilterB.
+                                final RecordCursorFactory keyFilteredJoin = joinType == IQueryModel.JOIN_INNER
+                                        && master == keylessJoin
+                                        && areMasterKeysBelow(keylessJoinColumnSplit) ? keylessJoin : null;
                                 master = createHashJoin(
                                         joinMetadata,
                                         master,
@@ -7586,6 +7637,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         isMasterOnlyJoinFilter,
                                         slaveModel.getJoinContext()
                                 );
+                                if (keyFilteredJoin != null) {
+                                    setJoinKeyFilter(keyFilteredJoin, master);
+                                }
                                 masterAlias = null;
                                 break;
                         }
@@ -14681,16 +14735,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0; i < n; i++) {
             positions.setQuick(ordered.getQuick(i), i);
         }
-        // the latest execution position of the tables written before table i
+        // the latest execution position of the tables written before table i, and of those among them that
+        // must run before a RIGHT or FULL join with join keys: a LEFT join whose ON clause rejects the rows
+        // that such a join NULL-extends returns the same rows after it, see IQueryModel.isNullRejectingOnClause()
         int lastPrefixPosition = positions.getQuick(0);
+        int lastKeyedPrefixPosition = lastPrefixPosition;
         for (int i = 1; i < n; i++) {
             final IQueryModel joinModel = joinModels.getQuick(i);
+            final int joinType = joinModel.getJoinType();
             final int position = positions.getQuick(i);
-            if (isRightOrFullJoin(joinModel.getJoinType()) && lastPrefixPosition > position) {
-                final ExpressionNode name = joinModel.getTableNameExpr() != null ? joinModel.getTableNameExpr() : joinModel.getAlias();
-                throw SqlException.$(name != null ? name.position : joinModel.getModelPosition(), "could not determine join order for this table");
+            if (isRightOrFullJoin(joinType)) {
+                final boolean isKeyed = joinType == IQueryModel.JOIN_RIGHT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER;
+                if ((isKeyed ? lastKeyedPrefixPosition : lastPrefixPosition) > position) {
+                    final ExpressionNode name = joinModel.getTableNameExpr() != null ? joinModel.getTableNameExpr() : joinModel.getAlias();
+                    throw SqlException.$(name != null ? name.position : joinModel.getModelPosition(), "could not determine join order for this table");
+                }
             }
             lastPrefixPosition = Math.max(lastPrefixPosition, position);
+            if (!joinModel.isNullRejectingOnClause()) {
+                lastKeyedPrefixPosition = Math.max(lastKeyedPrefixPosition, position);
+            }
         }
     }
 
