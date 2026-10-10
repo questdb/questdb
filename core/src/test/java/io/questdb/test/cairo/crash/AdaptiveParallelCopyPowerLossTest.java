@@ -519,8 +519,8 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
                     }
                     execute("TRUNCATE TABLE t");
                     drainWalQueue();
-                    // A failed attach leaves imported partitions next to the table's own; a retry is refused until
-                    // they are removed, as its message says.
+                    // A failed attach leaves imported partitions next to the table's own as .attachable directories;
+                    // a retry fails to move its partitions onto them until they are removed.
                     removeLeftoverAttachables();
                 } else if (dropFailure == DropFailure.NONE) {
                     Assert.assertEquals(context + ": the created table is dropped", "", rows(engine));
