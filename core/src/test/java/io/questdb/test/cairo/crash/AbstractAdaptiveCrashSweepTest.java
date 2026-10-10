@@ -151,17 +151,21 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
     protected static final class SweepResult {
         public final int atomicCommitDurabilityOpCount;
         public final int cap;
+        public final int firstSweptK;
+        public final int lastSweptK;
         public final int n;
         public final boolean stoppedAtDeclaredBoundary;
         public final boolean truncated;
-        final int[] recoveredByK; // index 1..sweptPoints -> recovered committed-row count at that crash point
-        public final int sweptPoints;
+        final int[] recoveredByK; // index firstSweptK..lastSweptK -> recovered committed-row count at that crash point
+        public final int sweptPoints; // the size of the whole crash-point set, min(N, cap); a part sweeps a range of it
 
         SweepResult(
                 int n,
                 int atomicCommitDurabilityOpCount,
                 int cap,
                 int sweptPoints,
+                int firstSweptK,
+                int lastSweptK,
                 boolean truncated,
                 int[] recoveredByK
         ) {
@@ -169,13 +173,15 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
             this.atomicCommitDurabilityOpCount = atomicCommitDurabilityOpCount;
             this.cap = cap;
             this.sweptPoints = sweptPoints;
+            this.firstSweptK = firstSweptK;
+            this.lastSweptK = lastSweptK;
             this.stoppedAtDeclaredBoundary = atomicCommitDurabilityOpCount < n && !truncated;
             this.truncated = truncated;
             this.recoveredByK = recoveredByK;
         }
 
         /**
-         * Per-k recovered committed-row count; index {@code k} in {@code 1..sweptPoints} ({@code [0]} unused).
+         * Per-k recovered committed-row count; index {@code k} in {@code firstSweptK..lastSweptK}, every other entry 0.
          */
         public int[] recoveredByK() {
             return recoveredByK;
@@ -298,7 +304,7 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
             reclaimLingeringNonCacheFds(nonCacheFdBaseline);
         }
         Files.getMmapCache().asyncMunmap();
-        return new SweepResult(n, n, n + 1, n + 1, false, recoveredByK);
+        return new SweepResult(n, n, n + 1, n + 1, 1, n + 1, false, recoveredByK);
     }
 
     /**
@@ -337,6 +343,22 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
      * If {@code N > cap}, the truncation is logged and flagged on the result.
      */
     protected SweepResult forEachAdaptiveCrashPoint(AdaptiveCrashWorkload workload, int cap) throws Exception {
+        return forEachAdaptiveCrashPoint(workload, cap, 1, Integer.MAX_VALUE);
+    }
+
+    /**
+     * {@link #forEachAdaptiveCrashPoint(AdaptiveCrashWorkload, int)} restricted to crash points
+     * {@code firstK..min(lastK, N, cap)}, so a long sweep can be split into test methods that each end inside the
+     * test timeout. Every point starts from a fresh identical baseline, so a part sweeps exactly the points the whole
+     * sweep would in that range. A range that starts past the last crash point fails, so a shrunken workload cannot
+     * leave a part sweeping nothing.
+     */
+    protected SweepResult forEachAdaptiveCrashPoint(
+            AdaptiveCrashWorkload workload,
+            int cap,
+            int firstK,
+            int lastK
+    ) throws Exception {
         if (crashFf == null) {
             throw new IllegalStateException("call runWithCrashFacade(...) first");
         }
@@ -391,9 +413,19 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
                     .$(" -> sweeping ALL crash points 1..").$(sweptPoints).I$();
         }
 
+        Assert.assertTrue(
+                "crash points " + firstK + ".." + lastK + " must start inside the sweep's 1.." + sweptPoints,
+                firstK >= 1 && firstK <= lastK && firstK <= sweptPoints
+        );
+        final int lastSweptK = Math.min(lastK, sweptPoints);
+        if (firstK > 1 || lastSweptK < sweptPoints) {
+            LOG.info().$("[forEachAdaptiveCrashPoint] split sweep: this part runs only crash points ").$(firstK)
+                    .$("..").$(lastSweptK).$(" of 1..").$(sweptPoints).I$();
+        }
+
         final int[] recoveredByK = new int[sweptPoints + 1];
         // 2. Sweep: crash at each declared atomic-commit durability op k, recover, run the oracle.
-        for (int k = 1; k <= sweptPoints; k++) {
+        for (int k = firstK; k <= lastSweptK; k++) {
             final TableToken[] tokens = workload.setup(k);
             // Fresh, count-stable baseline: everything on disk now (prior tables and this table's pre-commit state) is
             // durable and inert to crash()/recover(); ops are armed relative to this point.
@@ -442,6 +474,6 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
         // Direct epoch-metadata reads use read-only mmaps, and the test harness has no scheduled AsyncMunmapJob, so
         // drain its queued mappings before the enclosing exact fd check.
         Files.getMmapCache().asyncMunmap();
-        return new SweepResult(n, atomicCommitOps, cap, sweptPoints, truncated, recoveredByK);
+        return new SweepResult(n, atomicCommitOps, cap, sweptPoints, firstK, lastSweptK, truncated, recoveredByK);
     }
 }
