@@ -49,6 +49,7 @@ import org.junit.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.stream.Stream;
 
@@ -293,6 +294,77 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
                 Assert.assertEquals(tracker(tt).getPinnedEpochTxn(), tracker(tt).getOtherPinnedEpochTxn());
             } finally {
                 capture.stop();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testIdleRequestsReachEveryTableUnderChurn() throws Exception {
+        // More tables go idle per pass than the cap allows: busy tables written every two intervals go idle in
+        // between, and some tables are written twice and then never again. Each table that stays idle gets its
+        // save point within a bounded number of passes, wherever it sits in the sweep order.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, INTERVAL_MS);
+        setProperty(PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 1);
+        assertMemoryLeak(() -> {
+            startClock();
+            // One job for every pass, as on a server: it carries the sweep position from one pass to the next.
+            try (WalPurgeJob purgeJob = new WalPurgeJob(engine, configuration.getFilesFacade(), configuration.getMicrosecondClock())) {
+                final int cap = WalPurgeJob.IDLE_SAVE_POINT_REQUESTS_PER_PASS;
+                final int churnCount = 5 * cap;
+                final int idleCount = cap;
+                final int tableCount = churnCount + idleCount;
+                final ObjList<TableToken> tables = new ObjList<>();
+                for (int i = 0; i < tableCount; i++) {
+                    execute("CREATE TABLE t" + i + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    tables.add(engine.verifyTableName("t" + i));
+                }
+                // Two save points per table, an interval apart, so each table's older save point is behind.
+                for (int day = 1; day < 3; day++) {
+                    tick(INTERVAL_MS);
+                    for (int i = 0; i < tableCount; i++) {
+                        execute("INSERT INTO t" + i + " VALUES ('2024-01-0" + day + "T00:00:00.000000Z', " + day + ")");
+                    }
+                    drainWalQueue();
+                }
+                tick(INTERVAL_MS);
+                // Two rounds of tableCount / cap passes, and the pass that starts the second round at the head.
+                final int maxPasses = 2 * ((tableCount + cap - 1) / cap) + 1;
+                final int[] servedAt = new int[idleCount];
+                Arrays.fill(servedAt, -1);
+                for (int pass = 0; pass < 2 * maxPasses; pass++) {
+                    for (int c = 0; c < churnCount; c++) {
+                        if ((pass + c) % 4 == 0) {
+                            execute("INSERT INTO t" + c + " VALUES ('2024-01-03T00:00:00.000000Z', " + pass + ")");
+                        }
+                    }
+                    drainWalQueue();
+                    purgeJob.drain(0);
+                    drainWalQueue();
+                    int served = 0;
+                    for (int i = 0; i < idleCount; i++) {
+                        final SeqTxnTracker tracker = tracker(tables.getQuick(churnCount + i));
+                        if (servedAt[i] < 0 && tracker.getPinnedEpochTxn() == tracker.getOtherPinnedEpochTxn()) {
+                            servedAt[i] = pass;
+                        }
+                        if (servedAt[i] >= 0) {
+                            served++;
+                        }
+                    }
+                    if (served == idleCount) {
+                        break;
+                    }
+                    tick(INTERVAL_MS / 2);
+                }
+                final StringSink failures = new StringSink();
+                for (int i = 0; i < idleCount; i++) {
+                    if (servedAt[i] < 0 || servedAt[i] >= maxPasses) {
+                        failures.put('t').put(churnCount + i).put(" has its idle save point at pass ").put(servedAt[i]).put('\n');
+                    }
+                }
+                Assert.assertEquals("", failures.toString());
+            } finally {
                 setCurrentMicros(-1);
             }
         });
