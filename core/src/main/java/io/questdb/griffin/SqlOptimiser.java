@@ -9879,7 +9879,7 @@ public class SqlOptimiser implements Mutable {
                         && model.getNestedModel().getTimestamp() != null
                         && model.getLimitLo() != null
                         && model.getLimitHi() == null
-                        && Chars.equals(model.getLimitLo().token, '-')
+                        && Chars.equalsNc(model.getLimitLo().token, '-')
         ) {
             IQueryModel nested = model.getNestedModel();
 
@@ -9988,7 +9988,7 @@ public class SqlOptimiser implements Mutable {
                             model.getOrderByAdvice().size() > 1
                                     && model.getTimestamp() != null
                                     && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token, model.getTimestamp().token)
-                                    && model.getLimitLo() != null && !Chars.equals(model.getLimitLo().token, '-'))
+                                    && model.getLimitLo() != null && !Chars.equalsNc(model.getLimitLo().token, '-'))
             );
         }
 

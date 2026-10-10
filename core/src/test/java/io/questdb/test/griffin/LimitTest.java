@@ -1485,6 +1485,63 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSubQueryLimitWithMultiTermOrderBy() throws Exception {
+        // the negative LIMIT rewrite for ORDER BY with more than one term read the LIMIT
+        // token, which a sub-query does not have, and failed with NullPointerException
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tsrc (g VARCHAR, k LONG, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tsrc VALUES
+                        ('a', 1, 10, '2024-01-01'),
+                        ('a', 2, 20, '2024-01-02'),
+                        ('b', 3, 30, '2024-01-03')
+                    """);
+            execute("CREATE TABLE dst (ts TIMESTAMP, k LONG)");
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, k FROM tsrc ORDER BY ts DESC, k LIMIT (SELECT 1)",
+                    50,
+                    "LIMIT expressions must be convertible to INT"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, k FROM tsrc ORDER BY ts, k LIMIT (SELECT 1)",
+                    45,
+                    "LIMIT expressions must be convertible to INT"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, k FROM tsrc ORDER BY k, ts LIMIT (SELECT 1)",
+                    45,
+                    "LIMIT expressions must be convertible to INT"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, k FROM tsrc ORDER BY ts DESC, k LIMIT (SELECT count() + 1 FROM tsrc)",
+                    50,
+                    "LIMIT expressions must be convertible to INT"
+            );
+            // a sub-query over a table function, to show that the rejected LIMIT does not leak
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, k FROM tsrc ORDER BY ts DESC, k LIMIT (SELECT count() + 1 FROM long_sequence(3))",
+                    50,
+                    "LIMIT expressions must be convertible to INT"
+            );
+            assertExceptionNoLeakCheck(
+                    "INSERT INTO dst SELECT ts, k FROM tsrc ORDER BY ts DESC, k LIMIT (SELECT 1)",
+                    66,
+                    "LIMIT expressions must be convertible to INT"
+            );
+            // the negative LIMIT rewrite still applies to a constant LIMIT
+            assertQuery("SELECT ts, k FROM tsrc ORDER BY ts, k LIMIT -2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tk
+                            2024-01-02T00:00:00.000000Z\t2
+                            2024-01-03T00:00:00.000000Z\t3
+                            """);
+        });
+    }
+
+    @Test
     public void testTopBottomRange() throws Exception {
         String expected = """
                 i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
